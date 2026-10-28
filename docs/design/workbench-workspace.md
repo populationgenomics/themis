@@ -1,7 +1,7 @@
 # Design: the workspace in the workbench
 
 **Related:** [`sheaf.md`](sheaf.md) (the repository format, and the hook the agent's pushes pass);
-[`sheaf-service.md`](sheaf-service.md) (the rpcs that read and publish a repository);
+[`sheaf-service.md`](sheaf-service.md) (the RPCs that read and publish a repository);
 [`sandbox-worker.md`](sandbox-worker.md) (the agent's side, whose mirror this design copies);
 [`document-widgets.md`](document-widgets.md) (the typed assets a widget draws); [`document-pane.md`](document-pane.md)
 (the pane that renders a revision, and its windows); [`workspace-model.md`](workspace-model.md) (the working document
@@ -15,30 +15,34 @@ widget shows, such as ticking an item of a checklist. This doc decides how the w
 curator's change becomes a commit in it.
 
 No server holds a readable copy of the repository. The service in front of the bucket moves whole packfiles and one
-small document, and the only git database is the one the sandbox worker builds for its session. So the workbench needs a
-copy of its own, and this design puts it in the browser. The browser builds that copy from the same packfiles the worker
-downloads and reads every revision from it. A server-side copy would have cost memory per open workspace and a `git`
-binary in a service that holds no git objects and ships none, and every read would have waited on it.
+small ref document, and the only server-side git database is the bare mirror the sandbox worker builds for its session.
+The workbench therefore needs a copy of its own, and this design puts that copy in the browser
+([`apps/web/src/workspace-copy/`](../../apps/web/src/workspace-copy/)). The browser builds its copy from the same
+packfiles the worker downloads and reads every revision from it. Keeping a copy on the server instead would have cost
+memory per open workspace and a `git` binary in a service that holds no git objects and ships none, and every read would
+have waited on it.
 
-With the repository in the browser, a curator's edit becomes the same act as the agent's. The browser builds a commit on
-the revision the curator was looking at and publishes it with the storage protocol's compare-and-swap. The BFF relays
-the publish after checking that the curator belongs to the Analysis's Project. If the agent pushed in the meantime, the
-browser rebases the curator's commit onto the agent's, with a whole file as the unit of conflict: the new commit is the
-agent's tree with the curator's files in place of the old ones. If the agent's push changed one of those files, the
-browser refuses the rebase, and the curator redoes the change on what the agent left.
+With the repository in the browser, a curator's edit follows the same protocol as the agent's. The browser builds a
+commit on the revision the curator was looking at and publishes it with the storage protocol's compare-and-swap. The web
+backend-for-frontend (BFF) relays the publish after checking that the curator belongs to the Analysis's Project. If the
+agent pushed in the meantime, the browser rebases the curator's commit onto the agent's tip, with a whole file as the
+unit of conflict: the new commit takes the agent's tree with the curator's edited files in place of the old ones. If the
+agent's push changed one of those files, the browser refuses the rebase, and the curator redoes the change on what the
+agent left.
 
-The browser is trusted as the sandbox worker is: no server checks the objects it publishes. The agent is the one writer
-that is checked: a hook outside its sandbox checks every push, and among its rules is that the agent's commits carry
-only the agent's name. The cost of the design is that every curator's browser holds the whole workspace, history and the
-agent's working files included. The repository is the only store of the workspace and of the working document's
-versions, so the agent's edits are durable once it commits them and a push lands, and not before.
+The browser is trusted in the same way the sandbox worker is: no server checks the git objects it publishes. The agent
+is the one writer whose pushes are checked, because a pre-receive hook outside its sandbox inspects every push and
+enforces that the agent's commits carry only the agent's name. The cost of this design is that every curator's browser
+holds the whole workspace, including its history and the agent's working files. The repository is the only durable store
+of the workspace and of the versions of the working document, so the agent's edits become durable only when the agent
+commits them and a push lands.
 
 ## Background
 
 The storage format is sheaf ([`sheaf.md`](sheaf.md)). A git repository is a set of objects (file contents, directory
-listings, commits) plus a few named pointers to commits, called refs. Sheaf stores the objects in packfiles, each under
-a key derived from its own bytes. It stores every ref, with the list of packfiles, in one small **ref document**. Here
-is a workspace after two pushes from the agent:
+listings, and commits) plus a few named pointers to commits, called refs. Sheaf stores the objects in packfiles, each
+under a key derived from its own bytes. It stores every ref, together with the list of packfiles, in one small **ref
+document**. Here is a workspace after two pushes from the agent:
 
 ```
 the Analysis's repository in sheaf's bucket
@@ -51,60 +55,64 @@ the Analysis's repository in sheaf's bucket
 ```
 
 A write uploads its new pack, then replaces the ref document on the condition that the document is still at the
-generation the writer read. That condition is all the concurrency control there is. Writers only move refs forward, and
-nothing is deleted, so every revision that was ever a tip stays readable, and the reflog ref records when each was
-current.
+generation the writer read. That conditional write is all the concurrency control the store uses. Writers only move refs
+forward and never delete packs or refs. Every revision that was ever a tip stays readable, and the reflog ref records
+when each tip was current.
 
-A publish can lose a race in two ways, and the storage protocol tells them apart. `ABORTED` means someone else published
-first but moved none of the branches this publish moves. Of the refs this publish moves, only sheaf's reflog ref has
-changed. Rebuilding the same change against the new document lands it. `FAILED_PRECONDITION` means a ref this publish
-moves has itself moved. That is git's non-fast-forward, and the writer has to redo its change on the new tip.
+A publish can lose a race in two ways, and the storage protocol distinguishes them. `ABORTED` means another writer
+published first but moved none of the branches this publish moves. Among the refs this publish touches, only sheaf's
+reflog ref has changed, so rebuilding the same change against the new document lands it. `FAILED_PRECONDITION` means a
+ref this publish moves has itself moved. That is git's non-fast-forward rejection, and the writer must redo its change
+on the new tip.
 
-The sheaf service ([`sheaf-service.md`](sheaf-service.md)) is the one account with access to the bucket. The worker uses
-three of its rpcs: read the ref document, fetch a pack, and publish. The service holds no git objects and parses none,
-so it checks only what the document shows: that names are well formed, that no ref is deleted, and that the reflog ref
-moves with every publish. What needs objects is the writer's job. The writer must only move a ref forward, write a
-correct reflog entry, and upload every object the new tips reach.
+The sheaf service ([`sheaf-service.md`](sheaf-service.md), implemented in
+[`themis/services/sheaf/`](../../themis/services/sheaf/)) holds the sole credential with access to the bucket. The
+sandbox worker uses three of its RPCs: read the ref document, fetch a pack, and publish. Because the service holds no
+git objects and parses none, it checks only what the ref document and pack stream show: that ref names are well formed,
+that no ref is deleted, and that the reflog ref advances with every publish. Checks that require git objects belong to
+the writer. The writer must move refs forward only, write a valid reflog entry, and upload every object reachable from
+the new tips.
 
 The agent's side shows the pattern this design follows. The sandbox holds two copies of the repository. The guest's
-clone belongs to the agent, and the model's code controls it completely. The sandbox worker keeps a second, bare copy on
-the host, in the one trusted process ([`sandbox-worker.md`](sandbox-worker.md)). The worker builds that copy through the
-first two rpcs. A pre-receive hook in it checks every push the agent makes, then publishes it through the third. The
-worker's copy is where the untrusted writer's pushes are checked, out of that writer's reach.
+clone belongs to the agent, and untrusted model code controls it completely. The sandbox worker keeps a second, bare
+copy on the host inside the trusted worker process ([`sandbox-worker.md`](sandbox-worker.md)). The worker builds that
+bare copy through the first two RPCs. A pre-receive hook in the mirror checks every push the agent makes and publishes
+it through the third RPC. The worker's copy is where the host checks the untrusted writer's pushes, out of that writer's
+reach.
 
-The curator's side has no such split. It rests on a trust model, which the rest of the doc relies on. Curators are
-members of their Project who act in good faith. The browser is trusted as the worker is: it meets the writer's contract
-by its own construction and tests, and no server checks the objects it publishes. Why no such check is needed is argued
-with the browser's write path (§"A curator's edit is a local commit, published with the store's compare-and-swap"). The
-write path adds no defence of its own against injected script, because a script running in the page could do anything
-the curator can, whichever write path it used. Keeping script off the page is the renderer's job everywhere in the
-workbench, which renders text the agent wrote, text the agent may have copied from a hostile page
-([`agent-output-rendering.md`](agent-output-rendering.md)).
+The curator's side has no such split because it rests on a different trust model. Curators are members of their Project
+who act in good faith. The browser is a trusted writer like the host worker: it meets the writer's contract by its own
+construction and tests, and no server checks the objects it publishes. §"A curator's edit is a local commit, published
+with the store's compare-and-swap" argues why server-side object checks are unnecessary. The write path adds no defence
+of its own against injected script, because any script running in the page could do whatever the curator can do
+regardless of the write path. Keeping script off the page is the renderer's job across the workbench, which renders
+agent-written text that may quote a hostile external source ([`agent-output-rendering.md`](agent-output-rendering.md)).
 
-Some constraints come from elsewhere:
+Three constraints from the rest of the system shape this design:
 
-- The BFF is the one place that checks Project membership. It answers a non-member as if the Analysis did not exist
+- The BFF is the single place that checks Project membership, answering a non-member as if the Analysis did not exist
   ([`workspace-model.md`](workspace-model.md) §Authorization).
-- A browser can receive a streamed response but cannot stream a request, so a client-streaming rpc such as `Publish` has
-  to reach the BFF as one message.
-- A widget whose asset is missing or malformed draws a placeholder, and the rest of the document renders
+- A browser can receive a streamed response but cannot stream a gRPC request body, so a client-streaming RPC such as
+  `Publish` must reach the BFF as one unary message.
+- A widget whose asset is missing or malformed draws a placeholder while the rest of the document renders normally
   ([`document-widgets.md`](document-widgets.md) §"Drawability is checked where the file is, and tolerated where it is
   shown").
 
 ## Non-goals
 
-- **Comments on the document.** Widget interactions come first, because each is a typed change to a typed asset. Where
-  comments live is an open question.
-- **Merging.** A curator's edit lands on the revision it was built on, or on the new tip with the curator's files
-  swapped in, while the agent has left those files unchanged. Nothing reconciles two versions of a file's bytes.
-- **An interface for the agent.** The agent reaches the repository with `git` through its sandbox; nothing here is
-  exposed inside the sandbox.
+- **Comments on the document.** Widget interactions come first because each is a typed change to a typed asset. Where
+  prose comments live remains an open question.
+- **Byte-level or element-level merging in the browser.** A curator's edit lands on the revision it was built on, or on
+  the new tip with the curator's edited files swapped in while the agent has left those files unchanged. Nothing in the
+  browser reconciles two concurrent versions of a file's bytes.
+- **An interface for the agent.** The agent reaches the repository with stock `git` inside its sandbox; nothing in this
+  design is exposed inside the sandbox.
 
 ## Design
 
 ### One widget edit, end to end
 
-A curator is reading the working document at commit `c41e…`. Its checklist of criteria is drawn from
+Suppose a curator is reading the working document at commit `c41e…`. Its checklist of criteria is drawn from
 `assets/review.binpb`, a serialized protobuf message of a few hundred bytes
 ([`document-widgets.md`](document-widgets.md) §"One widget, end to end"). The curator ticks PS3.
 
@@ -114,11 +122,14 @@ A curator is reading the working document at commit `c41e…`. Its checklist of 
    [ ] PM2  Absent from population controls
 ```
 
-The widget reads the asset at `c41e…`, decodes it, sets PS3's `checked` field and encodes it again. It hands the
-SharedWorker that owns the browser's copy the new file and the commit it was drawn from. The SharedWorker writes the new
-file, the two directory listings above it, a commit `9e27…` whose parent is `c41e…`, authored as the curator, and a
-reflog entry. It packs exactly those five objects, about 1 KB, and sends them to the BFF with the generation of the ref
-document it built against.
+The widget reads the asset at `c41e…`, decodes it, sets PS3's `checked` field, and encodes it again. It hands the new
+file bytes and the base commit `c41e…` to the `SharedWorker` that owns the browser's copy
+([`apps/web/src/workspace-copy/service.ts`](../../apps/web/src/workspace-copy/service.ts)). The `SharedWorker` writes
+the new file blob, the two directory trees above it (`assets` and the root tree), a commit `9e27…` whose parent is
+`c41e…` authored as the curator, and a reflog commit
+([`apps/web/src/workspace-copy/copy.ts`](../../apps/web/src/workspace-copy/copy.ts)). It packs those five objects into a
+packfile of about 1 KB and sends them to the BFF alongside the generation of the ref document it built against
+([`apps/web/src/workspace-copy/publish.ts`](../../apps/web/src/workspace-copy/publish.ts)).
 
 ```mermaid
 sequenceDiagram
@@ -138,79 +149,91 @@ sequenceDiagram
     Note over W: refs follow the new document, and PS3 shows as ticked
 ```
 
-The checkbox shows the new state from the click, marked as saving, so the curator waits only for the confirmation. A
-curator need not wait for one tick to save before making the next: each shows at once, and the SharedWorker publishes
-them in order. Each is built on the commit the previous publish produced. The widget compares the item there with the
-item the curator ticked by its label and citation, not by its tick. When they match, the new file comes from the asset
-at that commit, so a second tick keeps the first, and so does unticking an item ticked a moment before. When they
-differ, the item changed in between, and the tick is built on the commit it was drawn at instead. Its publish then meets
-a checklist that differs from the one it was drawn from and is refused, as §"A curator's edit is rebased onto the tip,
-file by file" describes, so the curator redoes that tick and no earlier one is lost. Batching edits into a periodic save
-would pay off only if the number of commits became a cost, which edits made by hand are unlikely to reach.
+The checkbox displays the new state immediately on click, marked as saving, so the curator waits only for confirmation.
+A curator does not need to wait for one tick to save before clicking the next: each click appears at once, and the
+`SharedWorker` publishes them in order. Each edit builds on the commit produced by the previous publish. The widget
+compares the item at that commit with the item the curator ticked by its protected content (its label and citation)
+rather than by its tick state. When the protected content matches, the widget builds the new file from the asset at that
+previous commit, so a second tick preserves the first, and unticking an item ticked a moment earlier works the same way.
+When the protected content differs because the item changed in between, the widget builds the edit on the commit from
+which it was originally drawn. When the `SharedWorker` publishes that edit, it sees that the checklist file at the tip
+differs from the edit's base commit and refuses the rebase (§"A curator's edit is rebased onto the tip, file by file").
+The curator then redoes only that tick, and no earlier tick is lost. Batching edits into a periodic save would pay off
+only if the commit count became a storage cost, which manual clicks are unlikely to reach.
 
-Had the agent pushed `d8f0…`, a commit that rewrote a paragraph of the working document, between the page load and the
-click, the service would have answered `FAILED_PRECONDITION`. The SharedWorker would then download the agent's new pack,
-find the checklist unchanged, build a new commit on `d8f0…` with the curator's file in place of the old one, and publish
-again. The sections below take these steps one at a time.
+If the agent had pushed commit `d8f0…` (rewriting a paragraph of `working_document.md` without touching the checklist)
+between the page load and the curator's click, the sheaf service would answer `FAILED_PRECONDITION`. The `SharedWorker`
+would then download the agent's new pack, confirm that `assets/review.binpb` is unchanged between `c41e…` and `d8f0…`,
+build a new commit on `d8f0…` with the curator's updated checklist file, and publish again. The sections below examine
+each part of this flow.
 
 ### Versions are the branch's history
 
-The working document is `working_document.md` at the tip of the collaborative branch, and the workbench shows that tip.
-The obvious alternative is an explicit publishing step: the agent marks some commits as versions, and the pane shows the
-last one marked. That keeps unfinished states out of a curator's view. It breaks on a curator's own edit, which lands on
-the tip: the pane would go on showing the last marked version, and the curator's change would stay unseen until the
-agent marked another.
+The working document is `working_document.md` at the tip of the collaborative branch, and the workbench renders that tip
+([`apps/web/src/components/workbench/working-document.ts`](../../apps/web/src/components/workbench/working-document.ts)).
+The obvious alternative is an explicit publishing step in which the agent marks certain commits as versions and the pane
+shows the latest marked commit. That keeps unfinished intermediate states out of a curator's view, but it breaks as soon
+as a curator edits a widget: the curator's commit lands on the branch tip, so a pane pinned to the last agent-marked
+version would hide the curator's own change until the agent next marked a version.
 
-So every push and every curator publish is a version, and a curator watching mid-session sees states the agent has not
-finished. For example, the document may name `assets/pedigree.binpb` a minute before the agent writes it. The renderer
-draws a placeholder naming the missing file and renders the rest. The linter in the sandbox applies the same rules while
-the agent still holds the file and can fix it.
+Instead, every agent push and every curator publish is a version, and a curator watching mid-session sees states the
+agent has not finished. For example, `working_document.md` may embed `assets/pedigree.binpb` a minute before the agent
+writes that file. The renderer draws a placeholder naming the missing file and renders the rest of the document. Inside
+the sandbox, the document linter applies the same rules while the agent still holds the file and can fix it.
 
-The workbench poll carries the branch's tip, which the BFF reads from the ref document on every tick. The tip is in one
-of four states: a commit, no commit yet, unavailable when the ref document could not be read on that tick, or damaged
-when the stored document does not parse. A window whose rendered commit differs from the tip brings the copy up to date
-and renders the new tip. When the tip is unavailable, the pane says that the workspace is unavailable and keeps what it
-shows, and the conversation's events keep arriving. Damage gets a state apart from an outage because a later tick does
-not repair it, so the pane says the workspace is damaged rather than asking the curator to wait. A failed read gets a
-state of its own because both alternatives cost something: reporting the tip as absent would be a silent wrong answer,
-and failing the whole poll would let a sheaf outage stop the conversation too.
+The workbench `Poll` response carries the branch's `workspace_tip`
+([`workbench.proto`](../../schema/proto/themis/workbench/models/workbench.proto)), which the BFF reads from the ref
+document on every poll tick. The tip is in one of four states: a commit ID, no commit yet, unavailable when the ref
+document could not be read on that tick, or damaged when the stored ref document fails to parse. A window whose rendered
+commit differs from the tip hydrates its local copy and renders the new tip. When the tip is unavailable, the pane
+reports that the workspace is unavailable while keeping the revision already on screen, and conversation events continue
+to arrive. Repository damage gets a separate state from a transient outage because a later poll tick will not repair a
+corrupt ref document, so the pane reports that the workspace is damaged rather than asking the curator to wait. A failed
+ref-document read gets its own state because both alternatives fail badly: reporting the tip as absent would be a silent
+wrong answer, and failing the entire `Poll` call would let a sheaf outage halt the conversation view as well.
 
-The version picker lists each tip the reflog recorded for the branch, newest first, timed by its reflog entry. A push of
-three commits moves the tip once, so it shows as one version, the state a reader could have seen. Its time comes from a
-record only trusted writers write, not from commit dates, which every writer chooses. Listing versions, opening an older
-one and comparing two are reads of the browser's copy and cost no request.
+The version picker lists each tip recorded for the branch in `refs/sheaf/reflog`, newest first, timestamped by its
+reflog entry. A push of three commits advances the branch tip once, so it appears in the picker as a single version
+representing the state a reader could have observed. Its timestamp comes from the reflog entry, which only trusted
+writers write, rather than from the commit header, which any writer can set. Listing versions, opening an older version,
+and comparing two versions are local reads against the browser's copy and make no network requests.
 
 ### The browser keeps its own copy of the repository
 
-The obvious design reads through a server. The sheaf service would keep a copy of each repository, return "the document
-at this commit, with every file it names" to the pane, and commit the curator's changed file itself. That keeps the
-agent's scripts and intermediate files on the backend, and the browser would hold only what it renders. It breaks on
-cost, on coupling and on download size:
+The obvious architecture reads through a server: the sheaf service would maintain a copy of each repository, return the
+working document at a commit along with every file it references, and commit the curator's edited file on the server.
+That would keep the agent's scripts and intermediate files on the backend while the browser held only what it rendered.
+However, a server-held copy breaks on resource cost, service coupling, and transfer size:
 
-- The sheaf service holds no git objects. A copy per repository would bring memory per open workspace, a `git` in its
-  image, and a choice between keeping each copy warm and rebuilding it per request, on the path of every uncached read
-  and every edit.
-- Returning "every file the document names" means parsing the document. That puts working-document rules into a generic
-  git service, with a second markdown walker beside the renderer's that can disagree with it about what the document
-  references.
-- The read's unit is a file at a commit, so after the one-field edit above the pane would download the document and
-  every asset again, 193 KB for a document with a figure and three assets, because every file now sits under the new
-  commit.
+- The sheaf service holds no git objects. Maintaining a server-side copy per repository would require memory per open
+  workspace, a `git` binary in the service image, and a choice between keeping copies warm in memory or rebuilding them
+  on the critical path of every uncached read and edit.
+- Returning "every file the document references" requires parsing `working_document.md` on the server. That puts
+  working-document markdown rules into a generic git storage service and introduces a second markdown walker beside the
+  browser renderer that could disagree about what files the document references.
+- Reading at the granularity of "files at a commit" means that after a one-field checklist edit, the pane would
+  re-download the markdown document and every embedded asset (193 KB for a document with one figure and three assets)
+  because every file now sits under a new commit ID.
 
-So the browser keeps the copy. One SharedWorker per origin owns every copy the browser holds: a bare repository per
-Analysis, kept by isomorphic-git in IndexedDB through its companion filesystem, LightningFS. Both libraries are
-MIT-licensed. The main window and its mirror windows ([`document-pane.md`](document-pane.md) §Windows) ask the
-SharedWorker for what they draw.
+Instead, the browser keeps the copy. A single `SharedWorker` per origin
+([`apps/web/src/workspace-copy/worker.ts`](../../apps/web/src/workspace-copy/worker.ts)) owns every repository copy the
+browser holds: one bare repository per Analysis, stored by `isomorphic-git` in IndexedDB through its companion
+filesystem, `LightningFS` (both MIT-licensed). The main workbench window and any pop-out mirror windows
+([`document-pane.md`](document-pane.md) §Windows) query the `SharedWorker` over a `MessagePort` for the files they
+render ([`apps/web/src/workspace-copy/client.ts`](../../apps/web/src/workspace-copy/client.ts)).
 
-Bringing a copy up to date, called hydrating it, follows the worker's steps:
+Bringing a browser copy up to date, called hydrating it
+([`apps/web/src/workspace-copy/hydrate.ts`](../../apps/web/src/workspace-copy/hydrate.ts)), follows the same sequence as
+the sandbox worker's mirror:
 
-1. Read the ref document, through the BFF.
-1. Ask for signed URLs to the packs the document lists that the copy lacks. The sheaf service returns each pack's size
-   with its URL.
-1. Download each pack from the bucket, check its SHA-256 against the id it was listed under, so that a truncated or
-   altered download fails before it is indexed, and index it. Check that the index holds as many objects as the pack's
-   header declares, because isomorphic-git skips an object it cannot resolve without saying so.
-1. Flush the copy's storage, then set its refs to exactly what the document says (§"Keeping the copy consistent").
+1. Read the ref document through the BFF.
+1. Request signed URLs for the packs listed in the ref document that the local copy does not yet have. The sheaf service
+   returns each pack's byte size alongside its signed URL.
+1. Download each missing pack from the bucket and verify its SHA-256 digest against the pack ID it was listed under, so
+   a truncated or altered download fails before indexing. Index the pack with `isomorphic-git`, then verify that the
+   resulting `.idx` file records as many objects as the pack's 12-byte header declares, because `isomorphic-git` skips
+   objects it cannot resolve without raising an error.
+1. Flush the copy's storage to IndexedDB, then set its refs to match the ref document (§"Keeping the copy consistent").
 
 ```
 IndexedDB, one database per Analysis
@@ -222,197 +245,229 @@ IndexedDB, one database per Analysis
   an_02b1   0.4 MB   last read 19 Sep, 16:02
 ```
 
-A revision is read from the copy. The renderer asks for the document at a commit, then for each file as it draws the
-directive that names it, so what is read is what is drawn. Every other file is in the copy too, which makes history
-features cheap to add: a comparison of two versions or a view of who changed a file is a git read with no interface of
-its own. The price is the first open, which downloads the workspace's whole history, and the residence described under
-§"Where things are stored".
+Every revision is read locally from this copy. The renderer reads `working_document.md` at a commit, and then reads each
+referenced asset from the copy as it draws the directive that names it. Because the copy holds the entire repository,
+history features require no new backend endpoints: comparing two revisions or inspecting who changed a file is a local
+git read. The cost of this approach is the initial download of the workspace's full history on first open, plus the
+local storage and memory footprint covered in the next section and §"Where things are stored".
 
 ### The copy is a cache
 
-The copy's refs say only what the ref document said, and losing the copy to eviction or a cleared browser costs a
-download. A curator's commit waiting on its publish is the one exception: it sits on a local-only ref, and the pane
-never shows it as a version.
+The browser copy's refs reflect only what the store's ref document reported, so losing the copy to eviction or clearing
+browser data costs only a re-download. A curator's commit waiting on an in-flight publish is the sole exception: it sits
+on a local-only `pending` ref, and the pane never renders `pending` as a document version.
 
-Compaction rolls a repository's packs into one new pack. It is sheaf's maintenance, run elsewhere, for example as a
-periodic background job, like a database's vacuum. The browser never runs it, and nothing it does triggers it.
+Compaction rolls a repository's loose packs into a single new pack. Compaction is sheaf's background maintenance
+([`sheaf.md`](sheaf.md) §"Living with append-only"), analogous to a database vacuum; the browser never triggers or runs
+compaction.
 
-Keeping the copy a cache sets its rules:
+Treating the browser copy strictly as a cache establishes four rules
+([`apps/web/src/workspace-copy/residency.ts`](../../apps/web/src/workspace-copy/residency.ts)):
 
-- **Refuse a repository too large before downloading it.** The pack sizes arrive with the URLs, so a repository over the
-  browser's budget is refused whole, in the same shape as the ceiling [`sheaf.md`](sheaf.md) puts in front of the
-  worker's download.
-- **Keep only the packs the document lists.** After each hydration the copy deletes packs the document no longer lists,
-  and it measures its own size by the ones it does. A compacted repository then takes its compacted size in the browser
-  too.
-- **Offer to clear the cache.** A curator can clear an Analysis's copy from the pane, beside the error a failed read of
-  the copy shows or from the pane's menu. The control says that it clears the browser's cache and reloads, and that
-  nothing saved is lost, because the copy is only a cache. The SharedWorker waits for the Analysis's lock, deletes the
-  copy whole as eviction does, and hydrates again, at the cost of one download. An edit not yet published is discarded
-  with the copy, so the pane asks first when there is one.
-- **Stay consistent through a killed browser and a deploy.** The copy's writes are ordered so that a browser killed at
-  any point leaves refs that name only objects the copy holds, and a hydration that stopped resumes where it stopped. A
-  lock per Analysis lets the SharedWorkers of two builds share the copies during a deploy. §"Keeping the copy
-  consistent" gives the mechanism.
+- **Refuse a repository that exceeds the browser's ceiling before downloading it.** Because pack byte sizes arrive with
+  the signed URLs, the `SharedWorker` rejects a repository whose total pack size exceeds the per-Analysis ceiling before
+  fetching any pack bytes, matching the pre-hydration ceiling in [`sheaf.md`](sheaf.md).
+- **Keep only the packs listed in the current ref document.** After each hydration, the `SharedWorker` deletes any local
+  pack files no longer listed in the manifest and records the copy's size as the sum of the listed packs. When a
+  repository is compacted on the backend, the browser's copy shrinks to the compacted size after its next hydration.
+- **Let the curator clear the cache explicitly.** A curator can clear an Analysis's local copy from the error banner of
+  a failed read or from the pane's menu. The control states that it clears the browser's cache and reloads without
+  losing any saved work. The `SharedWorker` waits for the Analysis's exclusive lock, deletes the copy's IndexedDB
+  database, and hydrates fresh from the store. Because deleting the copy discards any unpublished local edit, the pane
+  prompts for confirmation if an edit is still pending.
+- **Stay consistent across browser crashes and rolling deploys.** Writes to the copy are ordered so that a browser
+  killed at any instant leaves refs pointing only to objects already flushed to IndexedDB, and an interrupted hydration
+  resumes from the packs already indexed. A per-Analysis Web Lock lets the `SharedWorker` instances of two concurrent
+  frontend builds share the IndexedDB databases safely during a deploy (§"Keeping the copy consistent").
 
-When a repository has been compacted, the copy pays one full download, because the new pack's id is one it has never
-seen. A typical dev workspace is a few megabytes (§Appendix), so the browser downloads it again rather than working out
-which objects it already holds. Compaction also keeps the browser's reads fast. isomorphic-git looks an object up in
-each pack's index in turn, and a history read ran three times slower per commit across 21 packs than across one.
+When a repository is compacted, the browser pays one full download on its next hydration because the compacted pack has
+a new SHA-256 ID. Because a typical workspace is a few megabytes (§"Appendix: measurements"), re-downloading the
+compacted pack is simpler than inspecting which objects the local copy already has. Compaction also keeps browser reads
+fast: `isomorphic-git` checks each pack's `.idx` file linearly on object lookup, and reading history across 21 packs ran
+three times slower per commit than across a single pack.
 
-The copy costs memory as well as storage. isomorphic-git keeps every pack it has read in memory while its cache lives,
-so an open workspace costs about its pack bytes. Indexing a pack costs a multiple of the history it holds, not of its
-compressed size. At the measured sizes that is tens of megabytes; a history of a hundred megabytes compressed peaked
-above half a gigabyte while it was indexed (§Appendix).
+The local copy costs memory as well as disk space. `isomorphic-git` retains every pack it has read in memory while its
+cache object lives, so an open workspace consumes roughly its compressed pack size in heap memory
+([`apps/web/src/workspace-copy/service.ts`](../../apps/web/src/workspace-copy/service.ts) releases idle in-memory state
+after a timeout). Indexing a new pack allocates memory proportional to the uncompressed history it holds rather than to
+its compressed pack size: at typical workspace sizes that peak is tens of megabytes, whereas a 116 MB compressed pack
+peaked above 680 MB while indexing (§"Appendix: measurements").
 
 ### The BFF relays three calls as the web tier
 
-The browser needs three of sheaf's operations: read the ref document, get URLs for packs, and publish. It cannot call
-the sheaf service itself. It holds no credential the service accepts, and the service knows nothing of Projects, because
-the BFF is the one place that checks Project membership. So the BFF offers the browser three Workbench methods,
-`ReadWorkspaceRefDoc`, `SignWorkspacePackUrls` and `PublishWorkspace`
-([`workbench.proto`](../../schema/proto/themis/workbench/rpc/workbench.proto)), and each relays the sheaf rpc of the
-same purpose. For each call the BFF checks that the curator belongs to the Analysis's Project. It then calls the sheaf
-service as the web tier and names the Analysis through a session it derives for it
-([`rpc-authorization.md`](rpc-authorization.md)). The sheaf contract admits the web tier on `ReadRefDoc` and `Publish`,
-beside the worker, and `SignPackUrls` admits the web tier alone, since the worker streams packs through `FetchPack`.
+The browser needs three sheaf operations: reading the ref document, obtaining signed URLs for packs, and publishing a
+commit. The browser cannot call the sheaf service directly because it holds no Cloud Run invoker credential and the
+sheaf service has no knowledge of Projects. Instead, the BFF exposes three unary methods on the `Workbench` Connect
+service ([`workbench.proto`](../../schema/proto/themis/workbench/rpc/workbench.proto), implemented in
+[`apps/web/src/server/rpc/service.ts`](../../apps/web/src/server/rpc/service.ts) and
+[`apps/web/src/server/authorized-backend.ts`](../../apps/web/src/server/authorized-backend.ts)): `ReadWorkspaceRefDoc`,
+`SignWorkspacePackUrls`, and `PublishWorkspace`. On each call, the BFF verifies that the signed-in curator is a member
+of the Analysis's Project, mints a derived session token scoped to that Analysis
+([`rpc-authorization.md`](rpc-authorization.md)), and calls the sheaf service (`ReadRefDoc`, `SignPackUrls`, or
+`Publish`) as the web tier. The sheaf contract admits both the sandbox worker and the web tier on `ReadRefDoc` and
+`Publish`, and admits the web tier alone on `SignPackUrls`.
 
-The BFF masks upstream failures as internal errors, except the answers the browser acts on. Those are the refusals of
-`Publish` (`ABORTED`, `FAILED_PRECONDITION`, `RESOURCE_EXHAUSTED` and `INVALID_ARGUMENT`), a pack the document no longer
-lists when signing, and `DATA_LOSS` on any of the three. `INVALID_ARGUMENT` is relayed because the intent and the pack
-are the browser's own bytes. The unlisted pack, the service's `NOT_FOUND`, reaches the browser as `FAILED_PRECONDITION`,
-because on the Workbench surface `NOT_FOUND` means an Analysis outside the curator's membership. `DATA_LOSS` means the
-repository itself is damaged, and the browser never retries it.
+The BFF masks unexpected upstream failures as `INTERNAL` errors, passing through only the status codes the browser acts
+on:
 
-The service makes the checks every publish gets and adds none for the web tier. §"A curator's edit is a local commit,
-published with the store's compare-and-swap" argues why none is needed.
+- `Publish` rejections: `ABORTED`, `FAILED_PRECONDITION`, `RESOURCE_EXHAUSTED`, and `INVALID_ARGUMENT` (relayed because
+  the browser itself constructed the publish intent and pack bytes).
+- Unlisted pack on `SignPackUrls`: when the sheaf service returns `NOT_FOUND` because a requested pack is no longer in
+  the current manifest, the BFF remaps it to `FAILED_PRECONDITION` because `NOT_FOUND` on the Workbench surface means an
+  Analysis outside the curator's Project membership.
+- `DATA_LOSS` on any of the three calls, which indicates terminal repository corruption that the browser must not retry.
+
+The sheaf service runs the same document and pack-stream checks on a web-tier publish as on a worker publish and adds no
+extra object checks (§"A curator's edit is a local commit, published with the store's compare-and-swap").
 
 ### Packs come straight from the bucket, by URLs the sheaf service signs
 
-The obvious route for pack bytes is `FetchPack`, the rpc the worker uses, relayed by the BFF. It needs nothing new. It
-breaks on a first open, which downloads the whole repository: every byte would stream through the sheaf service and then
-the BFF, and neither does anything with it.
+The obvious way to deliver pack bytes to the browser is for the BFF to relay `FetchPack`, the server-streaming RPC the
+sandbox worker uses. That requires no new RPC on the sheaf service, but it breaks on a cold open of a workspace: every
+byte of the repository's history would stream through the sheaf service container and then through the BFF container,
+even though neither process inspects the bytes.
 
-The paper pane already serves bucket objects through URLs the web tier signs ([`document-pane.md`](document-pane.md)
-§"Backend seam"). Reusing that breaks on what a signed URL is. It carries the signer's own permission to read, so the
-web tier would need read access to every repository in sheaf's bucket, and it would have to know how sheaf lays keys
-out.
+The paper pane already serves bucket objects to the browser via V4 signed URLs minted by the web tier
+([`document-pane.md`](document-pane.md) §"Backend seam"). Reusing that mechanism for workspace packs breaks on IAM
+scope: a signed URL carries the signer's own read permission, so the web tier would need a read grant across every
+repository in sheaf's bucket and would have to duplicate sheaf's object-key layout.
 
-So the sheaf service signs, through `SignPackUrls` in [`sheaf.proto`](../../schema/proto/themis/rpc/sheaf.proto), and
-the BFF passes the URLs on. The service stays the one account with access to the bucket, and it signs only packs the
-current document lists, on these terms:
+Instead, the sheaf service signs the pack URLs through `SignPackUrls` in
+[`sheaf.proto`](../../schema/proto/themis/rpc/sheaf.proto)
+([`themis/services/sheaf/servicer.py`](../../themis/services/sheaf/servicer.py)), and the BFF forwards those URLs to the
+browser. The sheaf service remains the sole identity with access to the workspace bucket and signs URLs only for packs
+listed in the repository's current ref document:
 
-- One call names at most 256 packs, because each costs the service a signing request. A first open of a long-uncompacted
-  repository asks in batches.
-- Anyone holding a URL can read the pack until it expires. The SharedWorker keeps URLs in memory, fetches each once and
-  never navigates to one.
-- Each URL comes with its expiry. A failed download is signed again rather than retried, because an expired URL's
-  refusal can reach a browser as an opaque network error.
-- A pack the document no longer lists, after a compaction for example, comes back as `NOT_FOUND`, relayed to the browser
-  as `FAILED_PRECONDITION` (§"The BFF relays three calls as the web tier"), and the browser reads the document again.
+- One call caps how many packs it names because each pack costs the service an IAM signing request; a cold hydration of
+  a repository with many uncompacted packs requests URLs in batches.
+- Anyone holding a signed URL can read that pack until the URL expires, so the `SharedWorker` keeps signed URLs in
+  memory only, fetches each URL once, and never navigates a browser frame to one.
+- Each signed URL is returned with its expiration timestamp. When a pack download fails, the `SharedWorker` requests a
+  fresh signed URL rather than retrying the old one, because an expired GCS URL can surface to `fetch()` as an opaque
+  CORS or network failure.
+- If a requested pack is no longer listed in the current ref document (for example, because compaction replaced it), the
+  sheaf service returns `NOT_FOUND`, the BFF remaps that to `FAILED_PRECONDITION`, and the `SharedWorker` re-reads the
+  ref document.
 
-The bucket needs a CORS rule that admits the workbench's origin. The workbench's content security policy has to admit
-connections to sheaf's bucket, scoped to the bucket's path in the way the policy already scopes the bucket that serves
-papers. Offline, the fixture backend serves a seeded repository's document and packs through a route on the BFF, so the
-browser runs the same code in both modes.
+The workspace bucket configures a `GET` CORS rule admitting the workbench's web origin, and the workbench's Content
+Security Policy ([`apps/web/src/lib/csp.ts`](../../apps/web/src/lib/csp.ts)) admits `connect-src` requests to the sheaf
+bucket path, matching how it scopes the literature corpus bucket. In offline fixture mode, a route on the BFF serves the
+seeded repository's packs over HTTP so the browser runs the same download and verification path in both modes.
 
 ### A curator's edit is a local commit, published with the store's compare-and-swap
 
-The obvious interface for an edit is an rpc that takes a file's new bytes and the commit they were read at, and commits
-them on the server. It gives typed refusals, and the service builds the commit. It breaks on what building a commit
-needs: the directory listings along the file's path at the tip, which only a copy of the repository holds. The browser
-has one and the service does not.
+The obvious write interface for a curator edit is a high-level RPC that accepts a file's new bytes and the base commit
+ID, and builds the commit on the server. That gives typed refusals while keeping commit construction on the backend, but
+it breaks because building a git commit requires the parent directory trees along the edited file's path at the tip,
+which only a copy of the repository has. The browser already holds a copy of the repository, whereas the sheaf service
+does not.
 
-A `git push` from the browser, through the BFF, is the other obvious answer. It breaks because `receive-pack`, git's
-receiving end, needs a full copy of the repository, so the service would hold one anyway. The hook would also have to
-check the curator's identity, which paths a curator may write, and that a push is one commit on one branch. And git
-reports a hook's refusal only as text.
+Running `git push` from the browser through the BFF is the other obvious option. That breaks because `git receive-pack`
+requires a full server-side repository mirror, and the pre-receive hook would have to verify the curator's identity,
+restrict which paths a curator may touch, and enforce single-commit pushes, while returning refusals only as
+unstructured stderr text.
 
-So the browser builds the commit and publishes it with `Publish`, the rpc the worker's hook calls. It authors the commit
-as the email the BFF verified for the page's request. The BFF does not check the author again, under the trust model
-(§Background). The BFF takes the ref moves, the pack and the generation in one call under a size cap, checks membership,
-and streams them into the service.
+Instead, the browser builds the commit locally and publishes it through `PublishWorkspace`
+([`apps/web/src/workspace-copy/publish.ts`](../../apps/web/src/workspace-copy/publish.ts)), which streams into the same
+`Publish` RPC the worker's hook calls. The BFF supplies the verified IAP email of the signed-in curator, and the
+`SharedWorker` records that email as the commit's author and committer. Under the trust model in §Background, the BFF
+does not re-parse the pack to verify the commit header. The BFF receives the ref updates, the single packfile, and the
+base generation in one size-capped unary request, verifies Project membership, and streams the publish to the sheaf
+service.
 
-The browser meets the writer's side of the contract by construction. Before it commits, its write path checks that the
-new payload differs from its version at the edit's base only in the fields that hold a curator's judgement
-([`document-widgets.md`](document-widgets.md) §"Each writer's change is checked where it passes"). The commit's parent
-is the tip it read. The reflog entry names the previous entry and the new tip, in sheaf's format, and sheaf's own reader
-parses it. The pack holds exactly the new objects the commit reaches. isomorphic-git's pack writer stores every object
-whole, with no deltas against objects outside the pack, which is what the store requires of every pack.
+The browser satisfies the writer's contract by construction:
 
-The browser writes directory listings itself. Git sorts a listing's entries by the UTF-8 bytes of their names, while
-isomorphic-git's tree writer sorts them as JavaScript strings, which compare UTF-16 code units. The two orders differ
-when a directory holds a name with a character outside the Basic Multilingual Plane beside one with a character near its
-top, say `😀.md` beside `ｆ.md`. A listing in the wrong order fails git's own checks: `git fsck` fails on a mirror that
-holds it, and a clone that validates objects refuses it. Nothing is deleted, so it would stay in the history. So every
-listing the browser writes has to be byte-identical to what `git mktree` writes for the same entries, and that
-comparison is the test.
+- Before building a commit, the write path runs `checkUserEdit`
+  ([`apps/web/src/widgets/user-edit.ts`](../../apps/web/src/widgets/user-edit.ts)) to verify that the new asset bytes
+  differ from the base commit's version only in guard fields that hold a curator's judgement
+  ([`document-widgets.md`](document-widgets.md) §"Each writer's change is checked where it passes").
+- The commit's parent is the tip commit the edit was built on.
+- The new `refs/sheaf/reflog` commit names the previous reflog commit and the new branch tip as parents in sheaf's
+  reflog format.
+- The uploaded packfile contains the exact new objects reachable from the commit and reflog entry. `isomorphic-git`'s
+  pack writer (`packObjects`) writes every object whole without deltas against objects outside the pack, satisfying
+  sheaf's self-contained pack requirement.
 
-Each outcome of a publish has one response:
+The browser writes git tree objects using its own serializer rather than `isomorphic-git`'s tree writer
+([`apps/web/src/workspace-copy/copy.ts`](../../apps/web/src/workspace-copy/copy.ts)). Git sorts a tree's entries by the
+raw UTF-8 bytes of their filenames, whereas `isomorphic-git` sorts entries as JavaScript strings, which compare UTF-16
+code units. Those two sort orders diverge whenever a directory contains a filename with a character outside the Basic
+Multilingual Plane (encoded as a surrogate pair in UTF-16, `0xD800`–`0xDFFF`) alongside a character in
+`U+E000`–`U+FFFF`, such as `😀.md` beside `ｆ.md`. A tree object whose entries are out of UTF-8 byte order fails
+`git fsck` on any mirror that syncs it and is rejected by any `git clone` with object checks enabled; because sheaf
+never deletes objects, a malformed tree would remain in the repository history permanently. Writing tree objects
+directly and testing that their bytes match `git mktree` on the same entries closes that gap.
 
-- **Accepted.** The copy's refs follow the new document, and the pending ref goes.
-- **`ABORTED`.** An unrelated publish landed first. The commit is still right, because its parent is still the tip. The
-  browser rebuilds the reflog entry on the new reflog tip and packs the commit's objects again, since the lost attempt's
-  pack is in the bucket but no document names it. If the copy, once up to date, shows that the branch has moved since,
-  the browser answers as for `FAILED_PRECONDITION`.
-- **`FAILED_PRECONDITION`.** The branch moved. The browser brings its copy up to date and checks whether its pending
-  commit is reachable from the new tip. If it is, an earlier attempt landed and only its answer was lost, as when the
-  agent pushed on top of the curator's commit before the browser retried, and the edit is done. Otherwise the browser
-  rebuilds the commit on the new tip with the curator's files and publishes again, unless the agent changed one of those
-  files. Then the edit is not applied, and the curator redoes it on the new tip (§"A curator's edit is rebased onto the
-  tip, file by file").
-- **`RESOURCE_EXHAUSTED` or `INVALID_ARGUMENT`.** The publish is over a ceiling or malformed, and would fail again. The
-  curator is told the edit was not saved, and the widget returns to the state at the tip.
-- **`DATA_LOSS`.** The repository is damaged. The browser does not retry, and the curator is told that the workspace is
-  damaged and the edit was not saved.
-- **No answer**, because the call timed out, the network failed or the BFF masked a fault. The outcome is unknown, so
-  the browser sends the same publish again. That is safe, because a publish that already landed succeeds again, and one
-  the agent has since built on comes back as `FAILED_PRECONDITION` with the commit reachable.
-- **Anything else, or a spent retry budget,** is shown to the curator as an edit that was not saved.
+Each outcome of `PublishWorkspace` has a single deterministic handler in the `SharedWorker`:
 
-One case is left to the curator. The intent lives in the SharedWorker, so a worker that dies mid-publish, because every
-tab reloaded, takes the intent with it, and only the tip can say whether the publish landed. The widget draws what the
-tip holds and tells the curator their last change may not have been saved, so they can redo it if it is missing. A
-publish that did land shows up on the next poll, and the widget redraws with it.
+- **Accepted:** the local copy updates its refs to match the new ref document and deletes the local `pending` ref.
+- **`ABORTED`:** an unrelated publish landed first, leaving the target branch tip unchanged. Because the pending
+  commit's parent is still the branch tip, the commit object remains valid. The `SharedWorker` hydrates the updated ref
+  document, rebuilds the reflog commit on the new `refs/sheaf/reflog` tip, re-packs the commit and new reflog entry
+  (since the previous attempt's pack was orphaned), and publishes again. If hydrating reveals that the target branch has
+  also moved, the `SharedWorker` handles it as `FAILED_PRECONDITION`.
+- **`FAILED_PRECONDITION`:** the target branch moved. The `SharedWorker` hydrates its copy and checks whether the
+  pending commit is already an ancestor of the new branch tip. If it is, an earlier publish attempt succeeded whose
+  response was lost before the agent pushed on top of it, so the edit is complete. Otherwise, the `SharedWorker` rebases
+  the commit onto the new tip by swapping the curator's edited files into the new tip's tree and publishes again, unless
+  the agent also modified one of those files (§"A curator's edit is rebased onto the tip, file by file").
+- **`RESOURCE_EXHAUSTED` or `INVALID_ARGUMENT`:** the publish exceeded a service ceiling or was malformed and cannot
+  succeed on retry. The `SharedWorker` clears `pending`, restores the widget to the tip state, and tells the curator the
+  edit was not saved.
+- **`DATA_LOSS`:** the repository is damaged. The `SharedWorker` stops without retrying and tells the curator that the
+  workspace is damaged and the edit was not saved.
+- **No answer (network failure, timeout, or a fault masked as `INTERNAL`):** because the outcome is unknown, the
+  `SharedWorker` retries the exact same publish request. Retrying is idempotent: if the earlier attempt already landed
+  at the tip, the sheaf service returns success, and if the agent has already pushed on top of it, the service returns
+  `FAILED_PRECONDITION` and the ancestry check above recognises that the commit landed.
+- **Any other error or an exhausted retry budget:** the `SharedWorker` clears `pending` and reports to the curator that
+  the edit was not saved.
 
-The cost is a second implementation of the writer's contract, in TypeScript beside the hook's Python. Two server-side
-safeguards against a mistake in it are obvious. The sheaf service could parse and check every object a publish carries.
-Or it could refuse any publish that moves a ref backwards: the document cannot show ancestry, but the pack could, since
-it holds every commit between the old tip and the new. Neither is worth building. The service's two callers are the
-worker and the BFF relaying a browser, both trusted (§Background), and the agent's pushes already pass the hook, which
-refuses a rewind. What a mistake that got through would cost depends on its kind. A malformed object would stay in the
-history for good, because nothing is deleted. The one divergence from git's output that the comparison with git found
-(§Appendix) is the order of a directory listing, and the defence is the listing writer's byte comparison with
-`git mktree` above. Every other mistake is recoverable. A bug that corrupts the browser's copy wedges that copy alone,
-and clearing the cache repairs it. A rewind destroys nothing: if a buggy republish moved `main` from `d8f0…` back to a
-commit built on `c41e…`, `d8f0…` would stay reachable from the reflog, and the next forward move would bring it back.
+One failure mode is left to the curator to resolve. Because the in-flight publish intent lives in memory inside the
+`SharedWorker`, if every open workbench tab closes or reloads mid-publish and the `SharedWorker` terminates before
+receiving the response, the new worker drops `pending` on startup (`copy.clearPending()`) and only the branch tip can
+say whether the publish landed. The widget redraws from what the tip holds and warns the curator that their last change
+may not have been saved so they can redo it if missing; if the publish did land, it shows up on the next `Poll` and the
+widget redraws with it.
+
+This design costs a second implementation of sheaf's writer contract in TypeScript alongside the Python implementation
+in the worker's hook. Two server-side checks against bugs in the TypeScript writer would be obvious: the sheaf service
+could unpack and validate every object in a publish, or it could inspect only the commit chain in the uploaded pack to
+refuse a non-fast-forward rewind. Neither check is worth adding to the service. Both admitted callers (the host worker
+and the BFF relaying the browser) are trusted writers (§Background), and the agent's pushes already pass the host hook,
+which refuses a rewind. Moreover, the consequences of a bug in the browser writer are bounded: the one object-encoding
+divergence found against stock `git` (§"Appendix: measurements") is the UTF-16 tree sort fixed above, a bug that
+corrupts IndexedDB state affects only that browser and is repaired by clearing the cache, and even a bug that moved
+`refs/heads/main` backward from `d8f0…` to a commit parented on `c41e…` would not destroy `d8f0…` because `d8f0…`
+remains reachable from `refs/sheaf/reflog`, and the next forward move would bring it back.
 
 ### A curator's edit is rebased onto the tip, file by file
 
-The obvious thing to send again after `FAILED_PRECONDITION` is the commit built on `c41e…`, with only the expected old
-value updated. It would drop the agent's commit `d8f0…` from the branch, and with it whatever the agent changed. So the
-browser rebases the curator's commit onto `d8f0…`, the tip the refusal named, much as `git rebase` would. The new
-commit's parent is `d8f0…`, and its tree is `d8f0…`'s with the curator's files in place of the ones there. Suppose
-`d8f0…` rewrote a paragraph of the working document and left the checklist alone. The rebased commit carries the agent's
-paragraph beside the curator's tick.
+If `PublishWorkspace` fails with `FAILED_PRECONDITION` because the agent advanced `refs/heads/main` from `c41e…` to
+`d8f0…`, simply re-sending the commit parented on `c41e…` with the updated base generation would rewind the branch over
+`d8f0…` and discard the agent's work. Instead, the `SharedWorker` rebases the curator's commit onto `d8f0…`
+([`apps/web/src/workspace-copy/publish.ts`](../../apps/web/src/workspace-copy/publish.ts)). The new commit has `d8f0…`
+as its parent, and its root tree is `d8f0…`'s tree with the curator's edited files substituted in place of the files at
+those paths. If `d8f0…` rewrote a paragraph of `working_document.md` and left `assets/review.binpb` untouched, the
+rebased commit preserves both the agent's new paragraph and the curator's checklist tick.
 
-git stops a rebase with a conflict when the commit being moved and the commit it moves onto changed the same lines. The
-browser applies that rule to whole files. It refuses the rebase when the agent changed one of the curator's files
-between `c41e…`, the commit the widget was drawn from, and `d8f0…`: a different blob or mode at that path, a file
-created or deleted there, or a file where the path needs a directory. The edit is then not applied. The SharedWorker
-tells the widget which file changed and at which tip, and the widget redraws from that tip and asks the curator to redo
-the tick on what is now there.
+Whereas `git rebase` stops with a conflict when two commits modify overlapping lines of a file, the browser treats an
+entire file as the unit of conflict. It refuses the rebase whenever any file the curator edited changed between the
+edit's base commit `c41e…` and the new tip `d8f0…`: a different blob OID or file mode at that path, a file created or
+deleted there, or a file replacing a directory along the path. When the file changed, the `SharedWorker` drops the
+pending edit and reports which file changed and at which tip commit; the widget redraws from `d8f0…` and asks the
+curator to redo their tick on the updated content.
 
-Swapping the curator's file in regardless would undo whatever the agent changed in it, and merging the two versions
-would put a tick where the curator never looked. Suppose `d8f0…` had rewritten PS3's citation while the curator was
-ticking PS3. A merge would keep the agent's citation and the curator's tick, and the tick would then vouch for a
-citation the curator never saw. The guard rule in [`document-widgets.md`](document-widgets.md) (§"A user's judgement
-stands only while what it judges is unchanged") keeps every tick beside the content it was given on, because a push by
-the agent that changes what a tick judges has to clear the tick. A merge in the browser would break the same property
-from the curator's side.
+Overwriting the file at `d8f0…` with the curator's version would silently revert the agent's changes to that file, while
+merging the two versions would attach the curator's tick to content the curator never saw. Suppose `d8f0…` rewrote PS3's
+citation while the curator was ticking PS3. Merging the two edits would keep the agent's new citation alongside the
+curator's tick, making the tick vouch for a citation the curator never inspected. The widget guard rule in
+[`document-widgets.md`](document-widgets.md) (§"A user's judgement stands only while what it judges is unchanged")
+requires the agent to clear a tick whenever it changes the content that tick judges; merging in the browser would
+violate the same invariant from the curator's side.
 
-A text format would not make a merge safe either. Written as textproto, the curator's tick and an agent's rewording of
-PS3's label touch different lines:
+Storing widget payloads as text would not make line-based merging safe either. Written in protobuf text format, the
+curator's tick and an agent's edit to PS3's label touch adjacent but non-overlapping lines:
 
 ```
 c41e… (drawn)              curator's commit           d8f0… (agent)
@@ -424,167 +479,204 @@ items {                    items {                    items {
 }                          }                          }
 ```
 
-So a line merge succeeds without a conflict, and its result puts the curator's tick under a label the curator never saw.
+A line-based merge would succeed without conflict and place the curator's tick on a claim whose meaning was inverted.
 
-The refusal is coarser than the guard rule. Any change the agent makes to the file stops the rebase, so an agent's
-change to PM2 while the curator ticks PS3 costs the curator the PS3 tick as well, and they tick it again. The rule errs
-the cheap way, because a redo costs a click, whereas a tick left on unseen content is a false attestation in the record.
+Whole-file refusal is coarser than the element-level guard rule: any change the agent makes to `assets/review.binpb`
+blocks the rebase, so if the agent edits PM2 while the curator ticks PS3, the curator must re-click PS3 on the new
+revision. That errs on the cheap side, because re-clicking costs one interaction, whereas leaving a tick on altered
+content records a false attestation.
 
-A merge at the level of the payload's elements would save that click. The widget would keep the curator's change as a
-typed operation, "set PS3 checked", and the browser would apply it again to the asset at `d8f0…` whenever the agent's
-change left PS3's protected content alone, matching elements by the same keys as the guard rule. The PS3 tick would then
-land beside the agent's PM2 change. The agent's side does resolve a conflicting widget file element by element: when it
-rebases onto a curator's commit, its widget helper rebuilds the file on the curator's version and carries each judgement
-across where what it judges is unchanged ([`document-widgets.md`](document-widgets.md) §"Each writer's change is checked
-where it passes"). There the conflict is routine, because the agent rewrites its assets as its work proceeds. In the
-browser it is rare, and that is why the browser keeps the file-level refusal. Each window renders the new tip as soon as
-the poll reports it, so a click meets a moved tip only when the agent pushed in the seconds before it, and the redo then
-costs one click.
+An element-level merge in the browser could avoid that extra click: the widget could record the curator's action as a
+typed operation ("set `PS3.checked = true`") and re-apply it to the asset at `d8f0…` whenever PS3's protected content is
+unchanged, matching elements by `(element_key)` just as the guard rule does. On the agent's side, conflicts are resolved
+element by element: when the agent rebases onto a curator's commit, its `update` helper rebuilds the widget asset on top
+of the curator's version and carries each unchanged judgement across ([`document-widgets.md`](document-widgets.md)
+§"Each writer's change is checked where it passes"). Element-level resolution is worthwhile on the agent's side because
+the agent routinely rewrites widget assets as its analysis progresses. In the browser, concurrent edits to the same
+widget asset are rare because each open window polls and renders the new branch tip within seconds of a push, so a
+curator's click races the agent only when a push lands in the seconds right before the click. That rarity is why the
+browser keeps whole-file refusal rather than duplicating schema-aware merge rules in TypeScript: refusing a same-file
+collision keeps the browser's rebase mechanism independent of widget schemas at the cost of a rare extra click.
 
-The widget makes the new file by decoding the asset and encoding it again, and the asset may come from a newer agent SDK
-than the browser's build. Say the agent's build added a field 9 the browser's build does not know. The decode keeps
-field 9 as an unknown field and the encode writes it back unchanged. protobuf-es does this by default (§Appendix), and
-nothing on this path may turn it off, because doing so would delete data the agent wrote whenever a curator clicks.
+When a widget modifies an asset, it decodes the protobuf message, mutates the guard field, and re-encodes the message.
+During a rolling deploy, the asset in the repository may have been written by a newer agent SDK that includes a protobuf
+field the browser's build does not yet know. Say the agent's build wrote field `9`. `protobuf-es` preserves unknown
+fields during decode and writes them back out during encode by default (§"Appendix: measurements"), and nothing on the
+browser's write path may disable unknown-field preservation, because doing so would silently strip field `9` whenever a
+curator clicked a widget.
 
 ### The agent's commits carry only the agent's name
 
-Everything in the sandbox belongs to the agent, author and committer lines included, so the agent could commit as
-`curator@example.org` for free. A commit under a curator's name would then read as the curator's judgement. So the hook
-refuses any new commit whose author or committer is not the agent's own name and email, and any annotated tag whose
-tagger is not, as the worker sets them in the guest's git configuration ([`sheaf.md`](sheaf.md) §"Protecting what the
-agent must not write"). A merge that brings in a curator's existing commit passes, because that commit is not new. A
-cherry-pick that copies one is refused, because the copy is a new commit under the curator's name.
+Inside the sandbox guest, the agent controls the working tree and every git header, so it could set `git config` or
+environment variables to author a commit as `curator@example.org`. If such a commit landed in the repository, it would
+be indistinguishable from a curator's own judgement. To prevent identity forgery, the worker's pre-receive hook
+([`themis/sheaf/wire/protect.py`](../../themis/sheaf/wire/protect.py)) rejects any new commit whose author or committer
+does not match the agent identity configured by the sandbox worker, as well as any new annotated tag whose tagger does
+not match ([`sheaf.md`](sheaf.md) §"Protecting what the agent must not write"). A merge commit by the agent that brings
+in an existing curator commit passes because the curator's commit object is already in the store and is not new; a
+cherry-pick of a curator's commit creates a new commit object and is rejected if it preserves the curator's author line.
 
-Only two paths write to a repository: the worker's hook and the BFF's publish. The hook holds the agent to its own name.
-The BFF's publish is reached only from a curator's browser, which authors the commit as the email the BFF verified for
-the signed-in curator, under the trust model in §Background. So a curator's name on a commit means that curator made it.
+Because only two paths can publish to a workspace repository—the sandbox worker's pre-receive hook (which holds the
+agent to the agent's identity) and the BFF's `PublishWorkspace` RPC (where the browser authors the commit using the
+curator email verified by the BFF)—a curator's email on a commit reliably means that curator authored it.
 
-The hook also keeps every commit readable by the browser. isomorphic-git refuses a directory listing that holds a name
-with a backslash, such as `back\slash.md`, although git accepts one, and it would then read nothing else in that
-directory. The hook refuses such a push, and the agent renames the file. [`sheaf.md`](sheaf.md) states the other shapes
-the hook refuses because git and the browser would read them differently.
+The pre-receive hook also enforces invariants that keep every pushed commit readable by `isomorphic-git` in the browser.
+For example, stock `git` permits a filename containing a backslash (such as `back\slash.md`), whereas `isomorphic-git`
+rejects any tree object containing a backslash in an entry name and fails to read the rest of that directory. The hook
+rejects pushes that introduce such paths so the agent renames the file before the push can land, alongside the commit
+header grammar rules detailed in [`sheaf.md`](sheaf.md) §"Protecting what the agent must not write".
 
 ### Where things are stored
 
-- **The bucket**: the packs and the ref document, as for every sheaf repository.
-- **The curator's browser**: the whole repository of each Analysis the curator has opened, until it is evicted.
-- **The BFF and the sheaf service**: nothing beyond the lifetime of a request.
+Workspace state is stored in three places:
 
-The repository is the one durable home of the working document. The obvious addition is a second store of document
-versions beside it, written by the sandbox worker after every command, which would keep an edit the agent had not yet
-committed. Such a store holds a history of its own, and the pane could only show one of the two, so the other would
-sooner or later disagree with it. So no service keeps a copy of the document outside the repositories.
+- **The workspace bucket:** the immutable packfiles and the mutable ref document (`refs.pb`), as for every sheaf
+  repository.
+- **The curator's browser:** a full bare copy of the repository for each Analysis the curator has opened, kept in
+  IndexedDB until evicted.
+- **The BFF and the sheaf service:** no repository state beyond the lifetime of an in-flight request.
 
-Sheaf's bucket holds the repositories and nothing else. A grant on a bucket reaches every object in it, so a service
-granted a shared bucket could read and overwrite another service's objects: if the cost exporter wrote its snapshots
-into sheaf's bucket, its write grant would reach every Analysis's packs. One bucket per service keeps each grant to the
-objects that service owns.
+The workspace repository is the single durable home of the working document. An obvious temptation is to add a second
+database table of working-document versions written by the sandbox worker after every tool call so that edits the agent
+has not yet committed are still saved. Maintaining a second store creates a second version history, and because the
+document pane can render only one source of truth, the two stores would inevitably diverge. No service keeps a copy of
+the working document outside the sheaf repository.
 
-The cost falls on the agent's side. The worker makes no commits for the agent, so an edit becomes durable only when the
-agent commits it and a push lands, its own or the push the worker makes at teardown
-([`sandbox-worker.md`](sandbox-worker.md)). If the sandbox exits ungracefully, killed for running out of memory for
-example, the teardown push never runs, and whatever the agent changed after its last commit is lost.
+Sheaf's bucket holds workspace repositories and nothing else. Because Cloud Storage IAM grants apply at the bucket level
+unless scoped by conditions, sharing a bucket across services would let any service with a write grant overwrite objects
+belonging to another service; for example, if a cost exporter wrote snapshots into sheaf's bucket, its write grant would
+reach every Analysis's packfiles. Dedicating one bucket per service keeps each service's IAM grant scoped to the data it
+owns.
 
-The browser's copy holds every revision and the agent's working files, its scripts and intermediate outputs, as well as
-the document and its assets. It stays after sign-out. A curator removed from a Project keeps what they downloaded until
-it is evicted or they clear their browser: removal stops every later read but cannot reach the copy. This is accepted
-under the trust model (§Background), and because curators' workstations are their own. If the workbench ever runs on
-shared workstations, the change is a copy keyed by the signed-in identity and dropped when another identity signs in.
+Relying solely on the git repository puts the durability burden on the agent's commits. Because the sandbox worker never
+creates commits on the agent's behalf (apart from seeding `.gitignore` in an empty repository), an edit to the working
+document becomes durable only when the agent commits it and a push lands, either during a turn or during the worker's
+teardown push at session end ([`sandbox-worker.md`](sandbox-worker.md)). If the sandbox container terminates abruptly,
+such as from an out-of-memory kill, the teardown push does not run and any uncommitted changes since the agent's last
+commit are lost.
 
-Neither isomorphic-git nor LightningFS expires anything, so eviction is the workbench's own. Each copy is a database of
-its own. The SharedWorker records each copy's size and when it was last read, and over a byte budget it deletes the
-least recently read copy whole, skipping a copy whose lock is held. The browser may also clear the origin's storage
-itself, under disk pressure or, in Safari, after a week without a visit. The workbench does not ask for persistent
-storage, because losing a copy costs a download.
+Because the browser hydrates the entire repository, its IndexedDB copy contains every historical revision as well as the
+agent's scripts and intermediate files alongside `working_document.md` and its widget assets. That IndexedDB copy
+persists across sign-out. If a curator is removed from a Project, the BFF blocks all subsequent RPC calls for that
+Analysis, but the curator's browser retains whatever packs it had already downloaded until the copy is evicted or the
+browser storage is cleared. That trade-off is accepted under the curator trust model (§Background) and the assumption
+that curators use personal workstations. Supporting shared workstations would require keying IndexedDB databases by the
+signed-in user's identity and deleting the previous user's databases when a different identity signs in.
+
+Because neither `isomorphic-git` nor `LightningFS` evicts data automatically, the `SharedWorker` manages storage
+residency itself ([`apps/web/src/workspace-copy/residency.ts`](../../apps/web/src/workspace-copy/residency.ts),
+[`apps/web/src/workspace-copy/browser-storage.ts`](../../apps/web/src/workspace-copy/browser-storage.ts)). Each Analysis
+copy lives in its own IndexedDB database alongside a shared residency ledger that records each copy's byte size and last
+read timestamp. Whenever hydrating a copy would push total stored bytes across Analyses over the browser's storage
+budget, the `SharedWorker` deletes the least recently read copies whole until the new copy fits, skipping any copy whose
+Web Lock is currently held. The browser itself may also evict origin storage under disk pressure or after an extended
+period without visits, and the workbench does not request `navigator.storage.persist()` because re-hydrating an evicted
+copy costs only a download.
 
 ### Keeping the copy consistent
 
-The copy's storage and its locking follow three rules, which together give the guarantee §"The copy is a cache" relies
-on: refs name only objects the copy holds, whatever point a browser is killed at, and two builds never write one copy at
-once.
+The browser copy's storage adapter
+([`apps/web/src/workspace-copy/browser-storage.ts`](../../apps/web/src/workspace-copy/browser-storage.ts)) and locking
+layer ([`apps/web/src/workspace-copy/locks.ts`](../../apps/web/src/workspace-copy/locks.ts)) follow three rules so that
+refs in IndexedDB never point to missing objects, even if the browser crashes mid-write or two frontend builds run
+concurrently during a deploy:
 
-**Flush before every ref write, a local commit's included.** LightningFS keeps its list of files in memory and saves it
-half a second after the last write, while overwriting a ref reaches IndexedDB at once. A browser killed between the two
-would leave `refs/heads/main` naming a commit the copy no longer has. Flushing first applies the store's own rule to the
-copy: objects are durable before anything names them.
-
-**Resume where a hydration stopped.** The SharedWorker dies when every tab of the workbench reloads. The flush-first
-ordering is what makes that safe to resume from: packs already indexed stay, the refs have not moved, and the next
-hydration asks only for the packs still missing.
-
-**Hold a lock per Analysis.** Across a deploy, a tab on the old build and a tab on the new build run two different
-SharedWorkers over the same databases. Every write to a copy holds a Web Lock named for its Analysis exclusively, and
-every read holds it shared, so the two workers take turns as two tabs would. Eviction asks for the lock without waiting,
-so it skips a copy in use in either build's worker rather than deleting it under its reader. Clearing the cache on a
-curator's request waits for the lock instead, because the curator asked for that copy in particular.
+1. **Flush `LightningFS` before every ref update, including local commits.** `LightningFS` buffers its directory tree
+   (the superblock) in memory and flushes it to IndexedDB on a half-second debounce timer after the last file write,
+   whereas our ref store writes ref updates to IndexedDB immediately. If the browser crashed after a ref update landed
+   in IndexedDB but before `LightningFS` flushed the newly written pack or loose objects, `refs/heads/main` would name a
+   commit whose objects are missing from the database. Explicitly flushing `LightningFS` before writing any ref enforces
+   the same objects-before-refs ordering in IndexedDB that sheaf enforces in the bucket.
+1. **Resume interrupted hydrations from already-indexed packs.** The `SharedWorker` terminates whenever every open
+   workbench tab closes or reloads. Because packs and their `.idx` files are flushed to IndexedDB before any ref is
+   updated, an interrupted hydration leaves the already-indexed packs intact while the refs still reflect the previous
+   snapshot; the next hydration sees those packs on disk and requests signed URLs only for the packs still missing.
+1. **Coordinate access with a Web Lock per Analysis.** During a rolling deploy, a browser tab running the old frontend
+   build and a tab running the new build spawn two separate `SharedWorker` instances that share the origin's IndexedDB
+   databases. Every mutation to an Analysis's copy acquires an exclusive Web Lock named for that Analysis, and every
+   read acquires the lock in shared mode, serializing writes across both `SharedWorker` instances just as across tabs.
+   LRU eviction requests the exclusive lock with `ifAvailable: true` so it skips any copy currently in use by either
+   worker rather than deleting a database under an active reader. An explicit cache clear triggered by the curator waits
+   for the exclusive lock instead, because the curator asked to reset that specific Analysis.
 
 ## Alternatives considered
 
-- **A commit request that carries its own proof.** The browser sends the new file with the tip's commit and the
-  directory listings along the file's path. The service checks each object against the hashes it knows, builds the
-  commit from those objects with git's plumbing, and publishes it. That keeps typed refusals and a service-built commit
-  with no copy of the repository on any server, and it holds even against a browser that lies about the repository. It
-  lost for the reasons the service checks no objects in a publish (§"A curator's edit is a local commit, published with
-  the store's compare-and-swap"), and it would put object parsing and git's plumbing into a service that holds no
-  objects.
-- **A stored rendering: one archive per revision, written when a push lands and served by a signed URL.** The browser
-  would download one object per version and never index a pack. It lost because the archive is a second copy of a tree
-  git already stores immutably, a revision nobody rendered could not be shown, and the history features would still need
-  the repository.
-- **A curator branch that the agent merges.** Curators' commits would never race the agent's. It lost because a
-  curator's edit would stay off the working document until the agent next ran, and merging a changed binary asset would
-  fall to the agent.
-- **Curator edits as a replicated data type that merges without coordination.** Concurrent edits would converge with no
-  retry. It lost because coordination is available and cheap here, one compare-and-swap, and the writer that edits
-  alongside a curator is the agent, which writes files with `git` rather than operations such a type could merge.
+- **A commit request that carries its own cryptographic proof.** The browser could send the edited file bytes alongside
+  the tip commit object and the directory tree objects along the file's path; the service would verify that those
+  objects hash to the tip commit ID it knows, build the new tree and commit objects on the server using git plumbing,
+  and publish them. That would provide typed server-side refusals and a server-constructed commit without storing a copy
+  of the repository on the server, even if the browser lied about repository state. We rejected it for the same reason
+  the sheaf service does not parse objects on `Publish` (§"A curator's edit is a local commit, published with the
+  store's compare-and-swap"), and because it would add git object parsing and tree construction to a storage service
+  that holds no git objects.
+- **A stored rendering archive per revision, written on push and served via signed URL.** The browser would download a
+  single archive per version and never index git packfiles. We rejected it because the archive duplicates immutable
+  trees that git already stores in packfiles, revisions not pre-rendered could not be viewed, and history or diff views
+  in the workbench would still need the git repository.
+- **A separate curator branch that the agent merges.** Commits from curators would land on a dedicated branch and never
+  race the agent's pushes on `main`. We rejected it because a curator's widget edit would remain invisible on the
+  working document until an agent session next ran to merge it, and resolving binary widget conflicts would fall to the
+  agent during its turn.
+- **Representing curator edits as conflict-free replicated data types (CRDTs).** Concurrent edits would merge
+  automatically without compare-and-swap retries. We rejected it because single-object compare-and-swap coordination is
+  already available and cheap, and the concurrent writer alongside the curator is the agent, which commits whole files
+  with `git` rather than emitting CRDT operations.
 
 ## Open questions
 
-- **Which branch is the collaborative line.** `main` is the obvious choice. Whether an Analysis's branches ever map onto
-  refs is [`sheaf.md`](sheaf.md)'s open question. If they do, which branch the pane shows and which a curator's edit
-  lands on needs a rule.
-- **The numbers.** How long a signed URL lives, the size cap on a publish, and the browser's byte budget and
-  per-Analysis ceiling.
-- **Whether the store keeps an index beside each pack.** git builds a self-contained pack's index from the pack alone,
-  so the sheaf service could build one when a publish lands and sign its URL beside the pack's. The browser would skip
-  indexing: 6 ms against 1.8 s for a 111 MB pack, with no memory peak. It is a second object per pack that no build
-  needs to read, the shape [`sheaf.md`](sheaf.md) reserves for such additions, and the browser would trust the service
-  for offsets isomorphic-git does not check. The measured workspace sizes do not need it yet.
-- **Where comments on the prose live.** A comment anchored to a span of the document could sit inline, as a marker in
-  the markdown that moves with the text when the agent edits it, carrying the whole comment or naming a thread kept in a
-  file of its own. It could sit in a file beside the document, anchored by a quote, or stay in Cloud SQL, where
-  [`frontend-framework.md`](frontend-framework.md) §Comments puts it today. An inline marker is the one anchor that
-  survives the agent rewriting a paragraph, and also the one the agent can drop without anyone noticing.
+- **Which branch is the collaborative line.** `main` is the default choice. Whether an Analysis's conversation branches
+  ever map onto multiple git refs is an open question in [`sheaf.md`](sheaf.md) (§"Open questions"); if an Analysis uses
+  multiple branches, we will need a rule for which branch the document pane renders and edits.
+- **Tuning the numeric bounds.** The exact production values for signed URL lifetime, the byte ceiling on a browser
+  publish, and the browser's total storage budget and per-Analysis size ceiling remain to be tuned against production
+  workspaces.
+- **Storing a pre-built `.idx` file beside each packfile in the bucket.** Because git can build a self-contained pack's
+  `.idx` index from the `.pack` file alone, the sheaf service could generate the index when a publish lands and sign its
+  URL alongside the pack URL. That would let the browser skip local pack indexing (reducing a 116 MB pack's index step
+  from 1.8 s and a 680 MB memory peak to 6 ms and the pack's own size). A stored index is a sidecar object that no
+  reader is required to use, matching [`sheaf.md`](sheaf.md)'s rule for optional additions, though the browser would
+  trust the service for object offsets that `isomorphic-git` does not verify. At current workspace sizes, client-side
+  indexing is fast enough that stored indexes are unnecessary.
+- **Where prose comments on the working document live.** A comment anchored to a span of markdown prose could live
+  inline as a marker in `working_document.md` that moves with surrounding text as the agent edits it (either carrying
+  the comment body inline or referencing a thread file in the repository), in a sidecar file anchored by a quote, or in
+  Cloud SQL where [`frontend-framework.md`](frontend-framework.md) (§Comments) places it today. An inline markdown
+  marker is the only anchor that survives the agent rewriting surrounding paragraphs, but it is also the one the agent
+  can accidentally delete during an edit.
 
 ## Appendix: measurements
 
-These were measured in September 2026 against isomorphic-git 1.42.2, protobuf-es 2.13.0 and git 2.54.
+These measurements were taken in September 2026 against `isomorphic-git` 1.42.2, `@bufbuild/protobuf` (`protobuf-es`)
+2.13.0, and `git` 2.54.
 
-**Workspace sizes on dev.** Most dev workspaces were then uncompressed tar archives, written by the storage service that
-preceded the repository. They stand in for a workspace's content, since the sheaf repositories had little history yet:
+**Workspace sizes on dev.** Most dev workspaces at the time of measurement were uncompressed tar archives written by the
+storage service that preceded sheaf. They stand in for workspace content size, as the sheaf repositories on dev had
+little history yet:
 
 | Workspaces           | Median  | 90th percentile | Largest                       |
 | -------------------- | ------- | --------------- | ----------------------------- |
 | 27 tar archives      | 2.0 MiB | 5.1 MiB         | 114 MiB (the next is 6.3 MiB) |
 | 6 sheaf repositories | 1.2 KB  | 108 KB          | 108 KB                        |
 
-No sheaf repository on dev has been compacted, so each holds one pack per publish, and each publish lengthens the ref
-document's pack list by one entry.
+None of the sheaf repositories on dev had been compacted, so each held one pack per publish and each publish appended
+one entry to the ref document's pack manifest.
 
-**The browser as a writer.** A Node script stood in for the browser. It indexed a sheaf repository's packs with
-isomorphic-git, committed a changed file as a curator, wrote the reflog entry, packed the new objects and published them
-through sheaf's store. A fresh mirror then synced with a clean `git fsck --full`, a real clone showed the curator's
-commit, sheaf's reflog reader parsed the browser's entries (the first-publish root entry included), and an agent push on
-top of the curator's commit went through the hook. The commits and reflog entries were byte-identical to those
-`git commit-tree` writes for the same inputs. Directory listings matched `git mktree` except for the ordering defect
-described under §"A curator's edit is a local commit, published with the store's compare-and-swap", which the browser's
-own listing writer fixes. Both lost races replayed correctly: after `ABORTED` by rebuilding the reflog entry and the
-pack, after `FAILED_PRECONDITION` by rebuilding the commit on the new tip.
+**The browser as a writer.** A Node harness exercised the browser write path against a sheaf store: it indexed a
+repository's packs with `isomorphic-git`, committed a modified file as a curator, wrote the `refs/sheaf/reflog` commit,
+packed the new objects, and published them. A fresh `git` mirror then synced the repository and passed
+`git fsck --full`, a stock `git clone` checked out the curator's commit, sheaf's Python reflog reader parsed the
+browser's reflog entries (including the parentless root entry on a repository's first publish), and a subsequent agent
+push on top of the curator's commit passed the pre-receive hook. Commit objects and reflog commits produced by the
+browser were byte-identical to those written by `git commit-tree` for the same inputs. Tree objects matched `git mktree`
+except for the UTF-16 vs. UTF-8 entry-sorting divergence described in §"A curator's edit is a local commit, published
+with the store's compare-and-swap", which the browser's custom tree writer fixes. Both race recovery paths replayed
+cleanly: after `ABORTED` by rebuilding the reflog commit and pack against the new reflog tip, and after
+`FAILED_PRECONDITION` by rebasing the commit onto the new branch tip.
 
-**Hydration in a browser.** A SharedWorker running isomorphic-git over LightningFS hydrated generated workspaces (a
-markdown document edited on every commit, binary assets, images) from single self-contained packs, served locally. Times
-are in milliseconds inside the worker; the peak is the ArrayBuffer memory indexing held in Chrome, measured over the
-DevTools protocol.
+**Hydration in a browser.** A `SharedWorker` running `isomorphic-git` over `LightningFS` hydrated generated workspaces
+(a markdown working document edited on every commit alongside binary widget assets and raster images) from single
+self-contained packs served locally. Durations are in milliseconds inside the worker; the indexing peak is the
+`ArrayBuffer` heap memory held during indexing in Chrome, measured over the DevTools protocol:
 
 | Engine      | Pack   | Commits | Index | First read | Warm read | History read | Commit and pack | Indexing peak |
 | ----------- | ------ | ------- | ----- | ---------- | --------- | ------------ | --------------- | ------------- |
@@ -594,11 +686,13 @@ DevTools protocol.
 | WebKit 26.5 | 10 MB  | 300     | 203   | 10         | 1         | 7            | 8               |               |
 | WebKit 26.5 | 116 MB | 2,500   | 1,959 | 119        | 3         | 49           | 7               |               |
 
-Firefox could not be launched in the test environment and is untested. Every pack the browser made verified clean with
-git: no delta entries, indexable in an empty repository, and a clean `git fsck --strict` once added. Two pages sharing
-the SharedWorker read consistently while it hydrated, and a reload and a browser restart found the copy intact with no
-download. With an index built by git beside the 116 MB pack, indexing took 6 ms and the peak fell to the pack's size.
+Firefox could not be launched in the test environment and was not measured. Every pack produced by the browser verified
+cleanly with stock `git`: no delta entries, indexable in an empty repository, and passing `git fsck --strict`. Two open
+pages sharing the `SharedWorker` read consistently while the worker hydrated, and both a page reload and a full browser
+restart found the IndexedDB copy intact without re-downloading packs. When a pre-built `.idx` file generated by `git`
+was placed alongside the 116 MB pack, indexing took 6 ms and peak memory dropped to the pack's own byte size.
 
-**Unknown fields.** A payload carrying two fields its schema does not know went through the widget's round trip, which
-unpacks the `Any`, changes a known field, and packs it again. Both unknown fields came back unchanged. With
-unknown-field reading turned off, the same round trip dropped them.
+**Unknown fields.** A widget payload carrying two protobuf fields unknown to the browser's compiled schema was passed
+through the widget round trip (unpacking the outer `Any`, mutating a known guard field, and re-packing the `Any`). Both
+unknown fields survived byte-for-byte in the re-encoded output. When unknown-field retention was disabled in the decoder
+options, the same round trip dropped both fields.

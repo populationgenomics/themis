@@ -1,311 +1,323 @@
 # Design: database migrations
 
-**Status:** current **Related:** [`deployment.md`](deployment.md) (deploy identity and the pipeline this runs in),
-[`services.md`](services.md) (where `themis.migrate` sits in the `themis` tree), [`proto.md`](proto.md) (proto is
-wire/at-rest model authoring, not DDL), [`spike-infrastructure.md`](spike-infrastructure.md) §7 (forward-only schema in
-the shared dev environment)
+**Related:** [`deployment.md`](deployment.md) (deploy pipeline and ad-hoc branch deploys), [`services.md`](services.md)
+(where the migration runner sits in the service tree), [`proto.md`](proto.md) (wire and at-rest protobuf schemas, which
+carry no DDL), [`spike-infrastructure.md`](spike-infrastructure.md) (Cloud SQL database and forward-only schema in the
+shared dev environment)
 
 ## Overview
 
-The relational schema of the Cloud SQL Postgres database is a set of hand-written, forward-only SQL files under
-`themis/migrate/migrations/`, applied by a small runner (`themis.migrate`) as a deploy-pipeline step after `pulumi up`.
+Multiple backend services share one Cloud SQL Postgres database, and the shared development environment is deployed
+directly from unmerged feature branches as well as from `main`. Evolving tables, schemas, and per-service SQL privileges
+across those deploys requires a mechanism that uses no password credentials, keeps schema ownership away from runtime
+services, and prevents unmerged branches from silently skipping or corrupting each other's schema changes.
+
+The relational schema is defined by a single contiguous sequence of hand-written, forward-only SQL files in
+[`themis/migrate/migrations/`](../../themis/migrate/migrations/), applied by the
+[`themis/migrate/`](../../themis/migrate/) runner as a deploy-pipeline step after `pulumi up`. The runner connects as
+the deploy service account's IAM database user, which owns every schema object and grants narrow table privileges to
+runtime service accounts through `${VAR}` login substitutions supplied from Pulumi stack outputs. Before `pulumi up`
+rolls any service revision, a read-only preflight checks that every version recorded in the database's migration ledger
+matches the SHA-256 content hash of the file in the deployed tree.
+
+Using one hand-written, forward-only sequence gives cross-domain changes a total order and makes re-running the deploy
+pipeline safe even when unmerged branches have advanced the shared dev database ahead of `main`. Owning tables as the
+deploy identity ensures runtime service accounts cannot bypass their table-level `GRANT`s. Checking content hashes in
+both the preflight and the apply step turns branch version collisions and in-place edits of already-applied migrations
+into immediate deploy failures with recovery instructions, rather than runtime SQL errors against a mismatched schema.
 
 ## Background
 
-Pulumi provisions the instance, the application database, each service account's IAM DB-user login, and the project
-roles needed to reach the instance — and, beyond the migrator's role membership (below), nothing inside the database.
-Tables, indexes, schemas, and the table privileges that give each runtime SA its read/write split all arrive through
-migrations.
+Pulumi ([`infra/themis_infra/sql.py`](../../infra/themis_infra/sql.py)) provisions the Cloud SQL Postgres instance, the
+application database, each service account's IAM database login, and the GCP project roles required to reach the
+instance through the Cloud SQL connector. Beyond attaching the `cloudsqlsuperuser` role to the migrator's login, Pulumi
+manages nothing inside Postgres. Schemas, tables, indexes, and the table-level `GRANT` statements that give each runtime
+service account its read/write split all arrive through SQL migrations.
 
-One database is shared by several consumers (the auth service reads `session_context`; litcache mints into
-`litcache.crosswalk`), and hand-written SQL is the source of truth for their DDL. Proto authors the wire and at-rest
-models; it has no DDL surface and, being additive-only, no migration concept of its own.
+Several consumers share this single database: the auth service reads `session_context`, the literature cache writes and
+reads `litcache.crosswalk`, and the web application reads and writes the curation tables. Hand-written SQL is the source
+of truth for their DDL. Protobuf definitions ([`proto.md`](proto.md)) author wire and at-rest messages; they have no DDL
+surface and no migration mechanism of their own.
 
 ## Non-goals
 
-- **No down-migrations.** A correction is a new forward migration. The deployed schema only ever advances, which is what
-  makes re-running the deploy safe and what the shared dev environment relies on.
-- **No in-database privileges in Pulumi**, beyond the migrator's `cloudsqlsuperuser` role membership. Pulumi owns logins
-  and instance-level reachability; every table GRANT is a migration.
+- **Down-migrations.** Every schema correction is a new forward migration. Only advancing the deployed schema makes
+  re-running a deploy safe and allows the shared development environment to hold migrations from unmerged branches
+  without rolling them back when `main` is redeployed.
+- **In-database privileges in Pulumi.** Beyond the migrator's `cloudsqlsuperuser` role membership, Pulumi manages only
+  logins and instance-level reachability. Every table or schema `GRANT` is a migration.
 
 ## Design
 
-### Layout
+### One shared migration sequence
 
-```
-themis/migrate/
-  __init__.py
-  migrate.py     discover / render / split_statements / plan / run, the Ledger port, InMemoryLedger
-  cloudsql.py    CloudSqlLedger, apply_migrations and the read-only check (the live path)
-  config.py      the Cloud SQL and substitution inputs, read from the environment
-  __main__.py    entry point: load config, then apply, or with --check only check the ledger
-  migrations/    the committed NNNN_name.sql set
-  tests/
-```
+All migrations for the database live in [`themis/migrate/migrations/`](../../themis/migrate/migrations/) as a single
+sequence named `NNNN_name.sql`, numbered contiguously from `0001` and applied in ascending version order. Keeping one
+sequence and one ledger across the whole database gives cross-domain dependencies a total order: for example,
+`0001_session_context.sql` creates the `session_context` table and `0002_grants.sql` grants the auth service `SELECT` on
+that table.
 
-`migrate.py` is pure and dependency-free. Importing `cloudsql.py` pulls the Cloud SQL connector and pg8000, so outside
-`__main__` only the Docker-gated ledger test imports it; the hermetic tests import `migrate.py` and `config.py`.
+During discovery, the runner ([`themis/migrate/migrate.py`](../../themis/migrate/migrate.py)) rejects any filename that
+does not match `NNNN_name.sql` with a lowercase slug and any version set that is not contiguous from `1`. In
+[`test_migrations.py`](../../themis/migrate/tests/test_migrations.py), two checks run automatically across the committed
+migration directory — discovery (`test_committed_migrations_are_discoverable`, catching a version gap or malformed
+filename within one tree) and substitution-key pairing against `deploy.yml`
+(`test_deploy_provides_every_migration_substitution`) — while per-file tests render `${VAR}` placeholders with stand-in
+logins, pin statement counts, and assert statement ordering (adding a new migration's per-file test is on its author).
+An applied migration is never edited in place; adding a privilege, column, or table always requires a new migration
+file.
 
-### The migration set
+Database objects live in `public` unless a domain owns a group of tables that are created, owned, and granted together.
+When a domain benefits from stating ownership and schema-level `USAGE` grants once for the domain rather than table by
+table, its first migration creates a dedicated schema: the literature cache's crosswalk lives in `litcache` and the
+curation worksheet's tables ([`curation-surface.md`](curation-surface.md)) live in `curation`.
 
-One shared sequence for the whole database: `NNNN_name.sql`, forward-only, contiguous from `0001`, ordered by version.
-One ledger over one database gives cross-domain dependencies — `0002_grants.sql` granting over the table `0001` creates
-— a total order.
+To keep tests fast and free of cloud or container dependencies where possible,
+[`themis/migrate/`](../../themis/migrate/) separates pure migration logic from the live database adapter. Pure
+discovery, `${VAR}` rendering, statement splitting, ledger comparison, and planning have no database driver dependencies
+and are unit-tested against an in-memory ledger without starting Postgres. The live adapter in
+[`themis/migrate/cloudsql.py`](../../themis/migrate/cloudsql.py) pulls in the Cloud SQL Python Connector and `pg8000`;
+[`test_cloudsql.py`](../../themis/migrate/tests/test_cloudsql.py) exercises `CloudSqlLedger`, `read_ledger_read_only`,
+and the `--check` entry point against a throwaway Postgres container behind a Docker fixture, and
+[`test_committed_schema.py`](../../themis/migrate/tests/test_committed_schema.py) applies the committed SQL set via
+`CloudSqlLedger` to a throwaway Postgres container to test schema constraints. Domains whose own tests need live
+database tables apply the committed migrations from `themis/migrate/migrations/` rather than hand-writing schema
+fixtures, so the tested schema cannot drift from the deployed schema.
 
-`discover` rejects a filename that is not `NNNN_name.sql` (lowercase slug) and any version set that is not contiguous
-from 1. The unit tests run the committed set through it, so a gap or a duplicate version fails CI rather than reordering
-silently. CI sees a duplicate only once both files are in one tree, though. Two branches that each add their own `0013`
-are each valid alone, and their collision first shows up in a database both were deployed to; the runner's ledger check
-(below) catches it there. An applied migration is never edited, and the same check catches an edit wherever the ledger
-recorded the file's hash. A new privilege, column, or table is a new file.
+### Rendering, splitting, and applying migrations
 
-Objects land in `public` unless a domain owns a schema of its own. A schema is worth taking where a domain's tables are
-granted, owned and changed as one, so that all three can be stated about the domain rather than table by table:
-litcache's crosswalk sits in a `litcache` schema and the curation worksheet's tables
-([`curation-surface.md`](curation-surface.md) §Storage) in a `curation` schema, each created by the first migration that
-needs it.
+When the runner executes, it reads the applied migrations from the ledger, verifies that every applied row agrees with
+the committed file of the same version, and selects the committed versions absent from the ledger to apply in ascending
+order. When no versions are pending, the runner does nothing and exits cleanly, so every deploy runs it unconditionally.
 
-### Applying
+The runner enforces the forward-only rule before applying any SQL: if a pending version is at or below the highest
+applied version in the ledger, the runner raises an error and applies nothing. Because the committed set is contiguous
+and applied in version order, the ledger stays contiguous as well; a pending version can sit below an applied version
+only if someone deleted a row from the ledger by hand.
 
-`run(migrations, ledger, substitutions)` reads the applied migrations from the ledger and checks them against the
-committed set before it applies anything (the next section). It then takes the committed versions absent from the ledger
-and applies them ascending. Forward-only is enforced here: a pending version at or below the highest applied version
-raises. The committed set is contiguous and the runner applies it in order, so the ledger stays contiguous as well. A
-pending version can therefore sit below an applied one only where someone has removed a row from the ledger by hand, and
-the forward-only check guards against that. Two branches that claim the same version produce no pending version, since
-that version is already applied; the ledger check catches their collision instead. Nothing pending is a no-op, so every
-deploy can run the runner unconditionally.
+Before executing a migration, the runner substitutes `${VAR}` placeholders in its SQL text from a JSON substitution map
+parsed from the environment ([`themis/migrate/config.py`](../../themis/migrate/config.py)). Placeholders exist for
+`GRANT` migrations: a Cloud SQL IAM database login is the service account's email without the `.gserviceaccount.com`
+suffix, which is a Pulumi stack output rather than a static constant. A migration therefore writes
+`GRANT SELECT ON session_context TO "${AUTH_DB_USER}";`, and the deploy workflow supplies the login in the substitution
+map. The runner fails before executing any statement if a required connection variable is unset, if the substitution
+JSON is malformed, or if a migration references a `${VAR}` with no value in the map. CI tests parse
+[`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) and render every committed migration against the
+keys in the workflow's substitution map so a missing substitution key fails in CI rather than during deploy.
 
-`render` substitutes `${VAR}` placeholders and raises on a placeholder with no value. It exists for the GRANT
-migrations: an IAM DB-user login is the service account's email minus the `.gserviceaccount.com` suffix, a Pulumi output
-rather than a constant, so `0002_grants.sql` grants to `"${AUTH_DB_USER}"` and the deploy step supplies the value.
-
-`split_statements` splits the rendered SQL on top-level `;` because pg8000 executes one statement per call. It tracks
-single-quoted strings and `--` line comments so a `;` inside either is not a separator, and drops segments carrying no
-executable SQL (a trailing comment after the last `;` would otherwise be sent as an empty query, which Postgres
-rejects). Block comments and dollar-quoting are not modelled: a migration using either splits wrongly, and the splitter
-has no error path, so nothing detects it — see Alternatives considered for when that limit should be lifted.
-
-`Ledger` is the port. `applied_migrations()` returns each applied version with the name and content hash it was recorded
-under, and `record(migration, sql)` must apply the SQL and record all three atomically. `InMemoryLedger` backs the
-hermetic unit tests; `CloudSqlLedger` is the live implementation.
+Because `pg8000` executes one SQL statement per call, the runner splits the rendered file on top-level semicolons. The
+splitter tracks single-quoted string literals and `--` line comments so semicolons inside either (such as inside a
+single-quoted `CREATE FUNCTION` or `DO` body) do not split the statement, and it drops segments that contain only
+whitespace or comments so a trailing comment after the final semicolon is not sent to Postgres as an empty query. The
+cost of keeping the splitter this small is that `/* ... */` block comments and `$$ ... $$` dollar-quoted strings are not
+modelled: a migration using either will split at an internal semicolon without a parser error.
 
 ### Checking the ledger against the tree
 
-A version number is unique only within one tree. The shared dev environment is deployed from branches before they merge
-([`deployment.md`](deployment.md)), so dev's ledger can record, under a version, a migration other than the one the
-deployed tree has. That happens in two ways.
+Comparing only version numbers between the database ledger and the directory tree works when every deploy comes from a
+single linear branch. The shared dev environment, however, is deployed directly from feature branches via `deployed/dev`
+before those branches merge to `main` ([`deployment.md`](deployment.md)). Under branch deploys, comparing version
+numbers alone fails when unmerged branches claim the same version number or when an author edits an already-deployed
+migration in place:
 
-The first takes two branches. Suppose branch A deploys `0013_variant_notes.sql`, which adds a column to a table. Branch
-B, cut before A merged, then deploys its own `0013_case_flags.sql`. A runner that compared version numbers alone would
-find 13 applied and skip B's file. B's code would then query a column that B's migration was meant to create and never
-did, and the failure would surface at runtime as Postgres error 42703 (undefined column), far from its cause.
+1. **Two branches claim the same version number.** Suppose branch A deploys `0013_variant_notes.sql`, which adds a
+   column to a table. Branch B, cut before A merged, then deploys its own `0013_case_flags.sql`. A runner that checked
+   only version numbers would see version `13` already in the ledger and skip B's migration. B's service code would then
+   query a column that was never created, failing at runtime with Postgres error `42703` (undefined column).
+1. **One branch edits an already-deployed migration in place.** Suppose branch B deploys `0013_case_flags.sql` adding
+   `flagged boolean`. Review asks for `flagged_at timestamptz` instead, so the author edits `0013_case_flags.sql` in
+   place and redeploys. Because version `13` is already recorded under the same filename, a runner that checked only
+   version numbers and filenames would skip the edited file, leaving B's code querying a nonexistent `flagged_at`
+   column.
 
-The second takes only one. Suppose B's `0013_case_flags.sql` adds a column `flagged boolean` and B deploys it. Review
-then asks for `flagged_at timestamptz` instead, so B edits the file and deploys again. Version 13 is already applied, so
-the runner applies nothing, and B's code queries a `flagged_at` column that does not exist. The file kept its name, so
-comparing names alone would not catch this.
+To catch both cases, the ledger records the SHA-256 content hash of each migration file as committed on disk, before
+`${VAR}` placeholder rendering so that the hash does not depend on environment-specific database logins. Before applying
+any pending migrations, the runner compares every row in the ledger against the committed file of the same version:
 
-So the runner compares every applied row with the committed file of the same version. The ledger records the SHA-256 of
-each file it applies, and where a row carries one, the committed file's hash must match it. The hash covers the file as
-committed, before `render` fills in its placeholders, so it does not depend on the logins an environment substitutes.
-Rows applied before the ledger kept hashes have none, and for those the names must match. A file renamed without any
-other change still passes where a hash is recorded, since the database holds exactly what the file says.
+- **Row with a recorded `sha256`:** the committed file's SHA-256 hash must equal the recorded hash. If a file is renamed
+  without changing its contents, the check still passes because the database holds the exact SQL in the file. If the
+  hash differs, the runner raises an error naming the version, the committed file, and (when the recorded name also
+  differs) the migration name recorded in the ledger.
+- **Legacy row with `sha256 IS NULL`:** rows applied before the ledger stored content hashes have only their recorded
+  slug name, so the committed file's name must match the recorded name.
+- **Applied version absent from the deployed tree:** if the ledger holds version `0013` from branch A and the next
+  deploy runs from `main` (which stops at `0012`), the check passes. Because migrations are forward-only, refusing the
+  deploy would not undo `0013` and would block redeploying a known-good ref on `main`. Branch A's leftover migration
+  causes a conflict only when another tree introduces its own `0013`.
 
-The error lists every version that disagrees. For a row with a hash it reports that the content differs, and where the
-recorded name differs as well, it names the file the ledger recorded. In the first example, the content of
-`0013_case_flags.sql` differs from the file the ledger recorded as `0013_variant_notes.sql`. In the second, it differs
-from the file applied under its own name. Only a row without a hash is reported by name alone, because the name is all
-such a row has to compare.
+The ledger check runs twice during every deploy in [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml):
 
-The check runs twice in every deploy. A preflight runs it read-only before `pulumi up`, connecting with the settings the
-stack exported on its previous deploy, so a mismatch stops the deploy before any new revision goes live. It writes
-nothing to the database, not even the ledger table: a database without one reads as having applied nothing. The
-preflight skips only a stack that has no outputs yet, which has never been deployed and so has no database to check. The
-runner then repeats the check before it applies anything, under its advisory lock, and that check is authoritative,
-because the ledger can change between the two.
+```
+  deploy.yml start
+        │
+        ▼
+┌────────────────────────────────────────────────────────┐
+│ 1. Preflight: python -m themis.migrate --check         │
+│    (reads previous deploy's stack outputs, read-only)  │
+└───────┬───────────────────┬────────────────────────────┘
+        │ exit 0            │ exit 3 (ledger unreadable:
+        │ (matches or       │  broken login / unreachable DB)
+        │  new stack)       ▼
+        │             Emit warning, continue so pulumi up
+        │             can repair the login/infra
+        ├───────────────────┘
+        ▼
+┌────────────────────────────────────────────────────────┐
+│ 2. Build & push images, then run `pulumi up`           │
+│    (new Cloud Run revisions go live; DB users updated) │
+└───────┬────────────────────────────────────────────────┘
+        │
+        ▼
+┌────────────────────────────────────────────────────────┐
+│ 3. Migrate: python -m themis.migrate                   │
+│    (acquires pg_advisory_lock, re-checks ledger        │
+│     authoritatively, applies pending NNNN_name.sql)    │
+└────────────────────────────────────────────────────────┘
+```
 
-The two runs differ in what stops a deploy. The runner fails on anything that goes wrong. The preflight stops the deploy
-only on a finding, which is a row that disagrees with its committed file or a forward-only violation. If the preflight
-cannot connect to the database, authenticate, or read the ledger, it reports a warning that names the failure, and the
-deploy goes on to `pulumi up`. The preflight connects with the settings of the previous deploy, and those settings can
-be the thing that is broken. Suppose an ad-hoc deploy from a branch changed the migrator's login, and the new login does
-not work. The repair is to redeploy a good ref, whose `pulumi up` restores the login. A preflight that failed whenever
-it could not read the ledger would stop that redeploy before `pulumi up`, so dev could not be repaired through the
-pipeline at all. The entry point ([`__main__.py`](../../themis/migrate/__main__.py)) exits with one status for a finding
-and another for a ledger it could not read, and the workflow maps those statuses. It does not classify a failure by
-reading its output.
+Running the check in a read-only preflight before `pulumi up` stops a colliding or edited migration before any new
+service revision goes live. The preflight opens a read-only transaction and never creates or alters the
+`schema_migrations` table; a database without the table (or a stack with no outputs on its first bring-up) reads as
+having applied nothing.
 
-So a mismatch reaches the migrate step in two ways. The preflight may have been unable to read the ledger, or the ledger
-may have changed after the preflight read it, by a hand edit or a migration run outside the pipeline, since the pipeline
-serialises its own deploys. Either way the mismatch fails the migrate step. It then leaves what any other migrate
-failure leaves (How it runs): `pulumi up` has already put the new revisions live, none of the tree's pending migrations
-is applied, and the new code runs against the old schema until a deploy succeeds.
+The preflight and the post-`pulumi up` migration step differ in how they treat a ledger they cannot read:
 
-An applied version with no committed file passes the check. That is the state after A's deploy when `main`, which still
-ends at `0012`, is deployed next: dev keeps A's `0013`, and `main` has nothing pending. Whatever the leftover did to
-`main`'s code it has already done. Refusing the deploy would not undo it, since migrations are forward-only, and it
-would block deploys that work, such as redeploying a good ref after a branch's migration
-([`deployment.md`](deployment.md)). The leftover causes a collision only once the deployed tree gains a `0013` of its
-own, and the check catches it then.
+- **Exit code `1` (ledger finding — hash/name mismatch or forward-only gap):** stops both the preflight and the
+  migration step immediately.
+- **Exit code `3` (`--check` only: ledger unreadable — connection, authentication, or permission error):** `--check`
+  alone has this exit code so the preflight can distinguish *drifted* from *unreachable* and log a warning rather than
+  aborting (if the post-`pulumi up` apply step still cannot connect, it raises an unhandled error and fails hard with
+  exit code `1`). The preflight connects using the *previous* deploy's stack outputs, which may themselves be what is
+  broken. If an ad-hoc branch deploy broke the migrator's login, the repair is to redeploy a known-good ref whose
+  `pulumi up` restores the login; a preflight that failed hard on an unreadable ledger would block that repair before
+  `pulumi up` could run.
 
-While the ledger and a tree disagree, every deploy of that tree stops at the preflight with nothing changed. A stopped
-deploy whose error names both migrations is quicker to diagnose than a runtime error in code whose schema silently
-differs from the one it was written against. How the disagreement clears depends on which of the two colliding branches
-merges first:
+Because the preflight can warn past an unreadable ledger (or someone can modify the database out of band between the
+preflight and the migration step), the post-`pulumi up` check under the advisory lock is authoritative. If a mismatch is
+caught only at that second check, `pulumi up` has already rolled the services to their new revisions, no pending
+migrations are applied, and the new service code runs against the old schema until a deploy succeeds.
 
-- If A, whose migration dev's ledger holds, merges first, B rebases onto `main`, which now carries A's `0013`, and
-  renumbers its own migration past it to `0014_case_flags.sql`. B's tree then agrees with the ledger at 13, and its own
-  migration is pending.
-- If B merges first, `main` holds B's `0013`, which dev's ledger contradicts, so no deploy of `main` gets through until
-  dev's database is reconciled by hand. Someone decides whether what A's migrations created stays or goes, dropping it
-  unless A's renumbered migrations will tolerate finding it already there. They then delete A's rows from 13 up, since A
-  may have applied several migrations past `0012`. That leaves B's `0013` pending, and A renumbers its migrations past
-  B's when it rebases.
+#### Recovering from a ledger mismatch
 
-An edited migration, the second case, is fixed on its own branch: restore the file as it was deployed, and put the
-change in a new migration after it.
+While a tree and the database ledger disagree, every deploy of that tree stops at the preflight with nothing changed.
+How to clear the failure depends on whether two branches collided on a version number or a single migration was edited
+after being applied:
 
-The edit may already have merged, so that no branch is left to restore the file on, and `main` itself disagrees with
-dev's ledger. There are two ways out. Someone can reconcile dev by hand: apply the difference between the deployed file
-and the edited one as the migrator, so the new objects have the same owner as the rest, and then set the row's `sha256`
-to the edited file's hash. Or a change on `main` can restore the file as it was deployed and move the edit into a new
-migration. The second keeps every applied file unchanged, which is the rule the check enforces. The first is quicker
-when dev is the only database that applied the original.
+- **Two branches collided, and branch A (whose migration is in dev's ledger) merges first:** rebase branch B onto
+  `main`, which now contains A's `0013`, and renumber B's migration to `0014_case_flags.sql`. B's tree now matches the
+  ledger at `0013` and treats `0014` as pending.
+- **Two branches collided, and branch B merges first:** `main` now holds B's `0013`, which contradicts dev's ledger, so
+  deploys of `main` stop at the preflight until dev's database is reconciled by hand. Drop the objects created by A's
+  migrations (unless A's renumbered migrations will tolerate finding them already present) and delete A's rows from
+  `schema_migrations` from version `13` upward. That leaves B's `0013` pending for the next deploy of `main`, and branch
+  A renumbers its migrations past B's when it rebases.
+- **An applied migration was edited on an unmerged branch:** restore the original file on the branch to the exact bytes
+  that were deployed, and put the schema change into a new numbered migration after it.
+- **An applied migration was edited and already merged to `main`:** either restore the original file on `main` and move
+  the edit into a new migration (preserving the rule that applied files never change), or reconcile dev by hand by
+  applying the SQL delta as the migrator role (so the new objects have the same owner as the rest of the schema) and
+  updating the row's `sha256` in `schema_migrations` to match the edited file. Manual reconciliation in dev is faster
+  when dev is the only environment that applied the original file.
 
 ### The Cloud SQL ledger
 
-`CloudSqlLedger` tracks applied migrations in `schema_migrations` (`version` PK, `name`, `sha256`, `applied_at`). `name`
-holds the slug after the number, `session_context` for `0001_session_context.sql`, and `sha256` the content hash the
-ledger check compares. The column cannot arrive through a migration, because the runner reads it in its check before it
-applies anything. It is nullable, since rows applied before it existed have no hash.
+The live ledger in [`themis/migrate/cloudsql.py`](../../themis/migrate/cloudsql.py) tracks applied migrations in the
+`schema_migrations` table (`version` primary key, `name`, `sha256`, `applied_at`). Because the runner reads `sha256`
+during the ledger check before applying any numbered migration, neither the table nor the `sha256` column can be created
+by a numbered migration. The `sha256` column is nullable so that rows recorded before content hashing was added remain
+valid.
 
-The runner's first read creates the table where there is none, and adds the `sha256` column to a ledger that predates
-it. It issues each statement only when its read of the table's columns shows that piece missing. The obvious shortcut,
-`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` on every run, would demand more than it does. Postgres checks that the caller
-owns the table before it evaluates `IF NOT EXISTS`, and the statement takes an exclusive lock on the table. A migrator
-that reaches the ledger through a granted role, without owning it, could then not apply anything, and every run would
-lock the ledger against its readers. Once the table and the column exist, a run issues no DDL on the ledger.
+On its first read in apply mode, the runner inspects the existing columns of `schema_migrations` in the Postgres catalog
+and issues `CREATE TABLE` or `ALTER TABLE ... ADD COLUMN sha256 text` only when the table or column is missing. The
+obvious shortcut — running `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS sha256 text` unconditionally on every
+run — breaks when the migrator accesses the ledger through a granted role rather than owning the table directly, because
+Postgres verifies table ownership before evaluating `IF NOT EXISTS` and takes an `ACCESS EXCLUSIVE` lock on the table.
+Checking the catalog first ensures that once the table and column exist, normal runs issue no DDL against the ledger.
 
-Each `record` runs the migration's statements and inserts its version row in one transaction — Postgres DDL is
-transactional — so a migration that fails partway records no version and the next run retries it whole.
+Each migration is recorded by running its SQL statements and inserting its `schema_migrations` row inside a single
+Postgres transaction. Because Postgres DDL is transactional, a migration that fails on any statement rolls back its
+entire schema change along with its version row, leaving the migration cleanly re-runnable on the next deploy.
 
-`apply_migrations` holds a single IAM-authed connection (`themis.common.sql.iam_connect`, through the Cloud SQL
-connector) for the entire run and takes a session-level `pg_advisory_lock` on a fixed key. Two overlapping deploys
-therefore serialize: one applies, the other blocks and then finds nothing pending. The lock is session-level, so it is
-released when the connection closes, including on a crash.
-
-### Configuration
-
-All input is environment, and every required value is fail-loud: `THEMIS_SQL_CONNECTION_NAME` / `THEMIS_SQL_DATABASE` /
-`THEMIS_DB_USER` (the migrator's login), plus `THEMIS_MIGRATE_SUBSTITUTIONS`, a JSON object of string to string carrying
-the GRANT logins. Absent substitutions mean the empty map; a malformed value raises rather than rendering a partial
-GRANT.
+Across the whole apply run, the runner holds a single IAM-authenticated connection
+([`themis/common/sql.py`](../../themis/common/sql.py)) and acquires a session-level `pg_advisory_lock` on a fixed key.
+If two deploys overlap, one applies while the other blocks on the lock and then sees nothing pending. Because the lock
+is session-scoped, Postgres releases it automatically when the connection closes, including on a process crash. Because
+the Cloud SQL connector dials the Cloud SQL Admin API, `apply_migrations`, the apply path of `__main__.py`, the
+`connect` / `iam_connect` connector lifecycle, `pg_advisory_lock` serialization across concurrent sessions, and the
+workflow preflight step in `deploy.yml` have no local container test — they are verified by deploying to `dev`.
 
 ### How it runs
 
-`.github/workflows/deploy.yml`, run from a deployable ref (`main` or `deployed/<env>`), authenticates as
-`themis-deploy@` through Workload Identity Federation, runs the ledger preflight (`python -m themis.migrate --check`),
-builds and pushes the service images, runs `pulumi up`, then runs `uv run --group migrate python -m themis.migrate` with
-the stack's outputs as environment: `sql_connection_name`, `sql_database`, and `migrator_db_user`, plus every runtime
-SA's exported `*_db_user` login folded into `THEMIS_MIGRATE_SUBSTITUTIONS` under the `${VAR}` name its GRANT migration
-uses. The order is load-bearing in one direction — a GRANT's target DB user is a Pulumi resource, so it must exist
-before the migration granting to it runs.
+The deploy workflow ([`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)), triggered from `main` or
+`deployed/<env>`, authenticates as `themis-deploy@` via Workload Identity Federation, runs the read-only ledger
+preflight (`python -m themis.migrate --check`), builds and pushes the container images, runs `pulumi up`, and then runs
+`python -m themis.migrate` using the stack outputs from `pulumi up`.
 
-The consequence in the other direction is accepted, not avoided: `pulumi up` rolls every Cloud Run service to its new
-image before the migrations run, so a new revision is live against the previous schema until the migrate step completes
-— or, if that step fails, until the next successful deploy. Every migration must therefore be additive, and code reading
-a new table or column must tolerate its absence for at least one deploy window.
+Running migrations *after* `pulumi up` is required because `GRANT` migrations target IAM database users that `pulumi up`
+provisions; a service's database login must exist before a migration can grant privileges to it.
 
-A destructive migration is allowed only where that window costs nothing real: the environments it will run in hold no
-data worth keeping and no users to fail, and the migration's own doc names which reads and writes break and until when.
-The expand/contract shape the rule otherwise forces — write both columns, tolerate the absent one, drop it a deploy
-later — is a compatibility mode in every reader and writer of the column, so it is worth declining while an environment
-is still disposable and worth paying once it is not. `analysis-scenarios.md` §Storage is the worked instance:
-`0008_analysis_inputs` drops a `NOT NULL` column and deletes every row, and records the failing window it accepts.
+The cost of this ordering falls on service rollouts: `pulumi up` rolls every Cloud Run service to its new container
+image before the migration step runs. Every new revision therefore serves traffic against the *previous* database schema
+until the migration step completes — or, if the migration step fails, until the next successful deploy. Consequently,
+migrations must be additive by default, and application code reading a new table or column must tolerate its absence for
+at least one deploy window.
+
+An expand-and-contract sequence across multiple deploys (add the new column, write both, migrate readers, then drop the
+old column in a later deploy) requires maintaining a dual-schema compatibility path in every reader and writer, so it is
+worth declining while an environment is still disposable and worth paying once it is not. A single-step destructive
+migration is allowed only when the environments it will run against hold no data worth keeping and have no external
+users to disrupt, and when the owning design doc records which reads and writes fail during the deploy window and until
+when (for example, replacing `analyses.prompt` with `analyses.inputs NOT NULL` in
+[`analysis-scenarios.md`](analysis-scenarios.md), or the curation schema transitions in
+[`curation-surface.md`](curation-surface.md)).
 
 ### Identity and the ownership bootstrap
 
-The migrator is the deploy service account's own Cloud SQL IAM DB user, distinct from every runtime SA. A table's owner
-bypasses GRANTs, so owning the schema from an identity no runtime SA can impersonate is what makes the table-level
-GRANTs the whole of a service's rights. This is a database-level least-privilege split, not a defence against a
-compromised deploy identity, which can rewrite the migrations anyway.
+The migrator logs into Postgres as the deploy service account's own Cloud SQL IAM database user (`themis-deploy@`),
+distinct from every runtime service account. In Postgres, a table's owner bypasses all table-level `GRANT` restrictions.
+Having the deploy identity own every schema and table ensures that runtime service accounts cannot impersonate the owner
+and therefore hold only the privileges explicitly granted to them in migrations. This separation enforces least
+privilege between runtime services in the database; it does not defend against a compromised deploy identity, which can
+already modify migrations and IAM bindings.
 
-A freshly created Cloud SQL IAM user has a login and nothing else — no `CREATE` anywhere. `infra/__main__.py` therefore
-attaches `cloudsqlsuperuser` as a `database_roles` entry on the migrator's `sql.User`, applied through the Admin API;
-that is the password-free way to give an IAM user `CREATE` on `public`. It is broader than that one need — the role also
-carries `CREATEDB` and `CREATEROLE`, so the migrator can mint databases and roles.
+A freshly created Cloud SQL IAM database user has `LOGIN` and no `CREATE` privilege on `public`. Pulumi
+([`infra/__main__.py`](../../infra/__main__.py) and [`infra/themis_infra/sql.py`](../../infra/themis_infra/sql.py))
+therefore attaches `cloudsqlsuperuser` to the migrator's `sql.User` resource via the Cloud SQL Admin API, which is the
+password-free way to grant an IAM user `CREATE` on `public`. The cost is that `cloudsqlsuperuser` is broader than schema
+creation alone: it also carries `CREATEDB` and `CREATEROLE`, allowing the migrator login to create databases and roles.
 
-Adding a service to the database is: attach its login and connect roles in Pulumi, add a grants migration keyed on a
-`${VAR}`, and pass that login in the deploy step's substitution map.
-
-### Testing
-
-`migrate.py` and `config.py` are unit-tested against synthetic SQL and `InMemoryLedger`: `discover`'s ordering and its
-rejections (malformed filename, version gap), `render`'s substitution and its raise on an unsupplied placeholder,
-`split_statements` on semicolons inside strings and comments and on a trailing comment-only segment, `run`'s ordering,
-idempotency, substitution and forward-only rejection, the ledger check in each of its outcomes, and every config-loader
-path.
-
-Against the *committed* migrations, one test asserts the discovered roster — every name in version order — so a file
-added, renamed, or misnumbered fails there rather than at deploy. Beyond that the coverage is per file: a migration
-carrying `${VAR}` placeholders gets a test rendering it with stand-in logins and asserting the GRANT text it produces;
-one without gets its split asserted alone. Both pin a statement count, a value no legitimate change moves since applied
-migrations are never edited. Only the roster assertion is automatic — a new migration's own test is on its author.
-
-Two Docker-gated paths (behind the shared `docker_daemon` fixture) reach real Postgres, each standing up its own
-throwaway instance. `CloudSqlLedger` is driven directly on a raw pg8000 connection: the ledger table auto-creates and
-gains the hash column, a successful `record` commits and reads back with its hash, and a migration whose statements fail
-mid-way commits nothing — no version row and no partial DDL survive. A migrator that reaches a current ledger through a
-granted role, without owning it, applies over it. The read-only check runs against a database with no ledger and against
-one without the hash column, and leaves both unchanged, and Postgres rejects a write attempted inside its transaction.
-The `--check` entry point runs there too, with only the connector swapped out: it exits with the finding status on a
-mismatch and on a forward-only violation, and with the unreadable status on a failed login and on a login without read
-access to the ledger. Separately, a domain whose tests need live tables applies its own migration through
-`discover`/`render`/`split_statements` rather than hand-writing the schema in a fixture, so the tested schema cannot
-drift from the deployed one.
-
-`apply_migrations`, the apply path of `__main__`, and the preflight step in the workflow have no test. The advisory-lock
-serialization, the connector/connection lifecycle around `iam_connect`, the `run` → `CloudSqlLedger` wiring, and the
-preflight's reading of the stack outputs are therefore established only by a deploy — as is the execution of every
-migration no domain test applies for itself.
+Adding a new database-backed service requires provisioning its IAM database login and connector roles in Pulumi, adding
+a numbered `GRANT` migration parameterized by a `${VAR}` placeholder, and wiring the stack's exported login into the
+migration step's substitution map in [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml); a service's
+rights are the `GRANT`s in the migration that introduced them, and a grant that has not shipped is a migration nobody
+has written yet.
 
 ## Alternatives considered
 
-**alembic.** Rejected for now: what is used here is version ordering, a ledger table, and an apply, while alembic brings
-a revision graph, autogeneration against SQLAlchemy models (which do not exist here; SQL is the source of truth), and
-downgrade paths that are ruled out. Revisit if any of these hold:
-
-- a migration needs block comments or dollar-quoting, which the splitter would have to grow to parse;
-- the splitter grows meaningfully beyond its current narrow scope;
-- autogenerate, downgrade/branching, or a richer version graph becomes wanted — all of which alembic gives free.
-
-**A library-based statement split (sqlparse or equivalent).** Removes the hand-written parser at the cost of a
-dependency modelling far more SQL than the split needs. The current splitter is directly tested and its limits are
-declared; it is the second tripwire above.
-
-**Per-domain migration sets.** One sequence per owning package would let domains version independently, but cross-domain
-statements (a GRANT over another domain's table, a foreign key) then have no defined order, and the ledger needs a
-per-set namespace.
-
-**A Cloud Run Job instead of a CI step**, so CI would only trigger migrations rather than hold a DB login. It buys
-nothing: the deploy identity already provisions Cloud SQL and IAM, so a compromised runner can grant itself a login or
-rewrite the Job regardless.
-
-**A Pulumi-issued ownership grant** — `GRANT CREATE ON SCHEMA public` / `ALTER SCHEMA public OWNER TO` as a one-time
-step in the Pulumi program. Expressing SQL-level grants in Pulumi needs a Postgres provider, which dials the instance
-directly with a password login; the instance has no authorized networks, so the only route in is the Cloud SQL
-connector, which that provider does not speak. It would take a proxy process running beside `pulumi up` plus the stored
-password IAM auth exists to remove. The Admin API's `database_roles` reaches the same state with credentials the deploy
-already holds.
-
-**Migrating as the instance's built-in admin user.** Password-authenticated and shared, so it defeats IAM database auth
-and leaves no per-identity audit trail. Granting `cloudsqlsuperuser` to the migrator's IAM user gets the same `CREATE`
-rights while keeping the login federated.
-
-## Implementation state
-
-Shipped: the runner, the Cloud SQL ledger, the deploy-pipeline step that applies the set, and the preflight that checks
-the ledger before `pulumi up`. What the schema currently holds is `themis/migrate/migrations/` itself, and a service's
-rights are the GRANTs in the migration that introduced them; a grant that has not shipped is a migration nobody has
-written yet.
+- **Alembic.** Provides a general revision graph, autogeneration against SQLAlchemy models, downgrade paths, and full
+  SQL execution without a custom statement splitter. We did not adopt it because hand-written SQL is the sole source of
+  truth (there are no SQLAlchemy models), down-migrations are a non-goal, and a single linear sequence needs only a
+  version table and an apply loop. Revisit if migrations need block comments or dollar-quoting, if the statement
+  splitter grows beyond single-quoted strings and line comments, or if branching or autogeneration becomes useful.
+- **Library-based statement splitting (`sqlparse` or equivalent).** Parses full SQL lexical syntax (including block
+  comments and dollar-quoting) without maintaining a custom state machine. We kept the hand-written splitter because a
+  full SQL parser brings a third-party dependency modelling far more grammar than top-level semicolon splitting needs,
+  while the current splitter's scope and limits are small and directly tested.
+- **Per-domain migration sequences.** Letting each domain package maintain its own numbered migration directory would
+  allow domains to add migrations without colliding on version numbers across branches. However, cross-domain statements
+  (such as a `GRANT` on another domain's table or a cross-domain foreign key) would have no defined execution order, and
+  the ledger would require per-domain namespaces.
+- **Running migrations in a Cloud Run Job instead of a CI step.** Moving execution into a Cloud Run Job would mean the
+  GitHub Actions runner triggers the job rather than opening a database connection itself. Because the deploy service
+  account in CI already provisions Cloud SQL and IAM, a compromised CI runner could grant itself a database login or
+  replace the Job's container image anyway, so a Cloud Run Job adds operational indirection without changing the trust
+  boundary.
+- **Granting schema ownership through a Pulumi Postgres provider.** Issuing `GRANT CREATE ON SCHEMA public` or
+  `ALTER SCHEMA public OWNER TO` as a Pulumi resource would avoid granting `cloudsqlsuperuser` to the migrator. However,
+  the Pulumi Postgres provider dials the instance directly with a password login and does not speak the Cloud SQL
+  connector protocol. Because the instance has no authorized networks and requires the connector, using the provider
+  would require running a Cloud SQL Auth Proxy alongside `pulumi up` and storing a password secret that IAM
+  authentication exists to avoid.
+- **Migrating as the instance's built-in admin user.** The built-in `postgres` user already has superuser privileges
+  without attaching `cloudsqlsuperuser` to an IAM user, but it authenticates with a shared password, defeating IAM
+  database authentication and losing per-identity audit trails.

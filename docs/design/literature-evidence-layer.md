@@ -1,546 +1,594 @@
 # Design: the literature evidence layer
 
-**Related:** [`evidence-fulltext.md`](evidence-fulltext.md) (the steps that bring a paper up to date, including its
-text, and how readiness is derived from the store), [`litcache-manifest.md`](litcache-manifest.md) (the per-paper
-record: source lineages, content-addressed renderings, recorded licence), [`document-pane.md`](document-pane.md) (the
-workbench surface that reveals a paper and highlights a quote), [`evidence-interfaces.md`](evidence-interfaces.md) (the
-sibling fact interfaces in the same deployment, and the error taxonomy they share),
-[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (how an rpc becomes agent-callable), [`services.md`](services.md)
-(the service pattern this follows). Terms in [`../../GLOSSARY.md`](../../GLOSSARY.md).
+**Related:** [`evidence-fulltext.md`](evidence-fulltext.md) (full-text ingestion, conversion, and readiness derivation),
+[`litcache-manifest.md`](litcache-manifest.md) (per-paper manifest, source lineages, content-addressed renderings, and
+recorded licence), [`document-pane.md`](document-pane.md) (workbench paper reveal and quote highlighting),
+[`evidence-interfaces.md`](evidence-interfaces.md) (sibling fact interfaces and shared error taxonomy),
+[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (agent RPC exposure rules), [`services.md`](services.md) (service
+port and adapter pattern). Terms in [`../../GLOSSARY.md`](../../GLOSSARY.md).
 
 ## Overview
 
-An analysis run has to answer two questions about the published literature, and they are not the same question: *what
-has been published about this?* and *can I read it, and quote it?* The first is answered by public indexes that list far
-more than we hold; the second only by what Themis has ingested. This doc decides how one gRPC interface —
-[`literature.proto`](../../schema/proto/themis/rpc/literature.proto), served by the `evidence` deployment — answers both
-without letting either answer be mistaken for the other.
+An Analysis run asks two distinct questions about the published literature: *what has been published about this?* and
+*can we read and quote its full text?* Public literature indexes answer the first question across millions of papers,
+while only the corpus Themis has ingested and converted can answer the second. The literature evidence service
+([`literature.proto`](../../schema/proto/themis/rpc/literature.proto), implemented in
+[`themis/services/evidence/literature/`](../../themis/services/evidence/literature/)) answers both questions behind one
+gRPC interface while keeping discovery hits strictly separate from readable, citable papers.
 
-- **Discovery asks named sources, one rpc each, and returns what each one states.** Each answer keeps its source's own
-  shape — PubMed's own record behind a PMID, Europe PMC's hit for a search — and is never mapped into a schema its
-  source did not publish, so a further index arrives as its own rpc returning its own record shape, never as a change to
-  what an existing rpc means. A hit from any of them claims a paper *exists*; it never claims its text is readable.
-- **`MaybeIngestPapers` is the one door into the full-text store.** It takes an external identifier, scheme-qualified,
-  and answers with the internally minted `doc_id` that names the paper plus whether the store can serve its text,
-  starting a conversion where that text is still pending. Everything past the door — reads and citations — keys on
-  `doc_id` alone, and the citation grammar spells nothing else, so the door is enforced rather than taught.
-- **An abstract is readable and deliberately not quotable.** It rides on what a discovery rpc returns, so a run can
-  judge whether a paper matters without holding the paper — and it is then stated in prose, never quoted, because only a
-  rendering in the store has an anchor a quote can resolve against.
-- **Absence is modelled wherever it could be read as a fault**, and a fault is never reported as absence. "The index has
-  no abstract for this record" and "the store has no text for this paper" are answers a run can act on; a crosswalk
-  outage or a malformed identifier is not.
-- **The agent reads a paper whole, from a file.** `ReadMarkdown` streams the paper's rendering, however long, and the
-  agent's helper writes it to a file in the sandbox's scratch space. The agent then searches and reads that file with
-  ordinary tools. Nothing is cut to a budget, and the paper's text enters the agent's context only as the agent reads
-  it.
-- **Serving a paper never produces its text.** A paper the store cannot serve is a fact the run reports, and the
-  ingestion loop closes it out of band — because producing text on a request path turns a settled answer into a timeout
-  ([`evidence-fulltext.md`](evidence-fulltext.md)).
-- **A variant search returns candidates, not a verdict.** The variant literature index splits one variant across several
-  entities that share no records; the interface surfaces all of them, labelled with where they agree and where they
-  disagree, and leaves the choice to the caller.
-- **Reading is the foundation for a layer above it.** What a run reads here is distilled into shareable facts that each
-  cite the exact rendering text they came from. That is why a rendering is identified by its own bytes: a citation made
-  years ago has to resolve against the same text, or against nothing.
+In the discovery group, each RPC queries one named external index (`SearchEuropePmc`, `SearchLitVar`,
+`ListLitVarEntities`, `FetchPubmedArticles`) and returns records in that source's own schema alongside its match census,
+without mapping records into a shared schema or offering page cursors. Because the variant literature index splits one
+variant across multiple recogniser entities, `SearchLitVar` returns every candidate entity with per-identifier agreement
+verdicts rather than merging or filtering them. Discovery records carry inline abstracts so a run can triage papers and
+summarize findings in plain prose, but discovery results carry no store identifier and cannot be quoted.
+
+To read or cite a paper, a caller passes scheme-qualified external identifiers (`pmid:`, `doi:`, `pmcid:`) to
+`MaybeIngestPapers`, which is the single entry point into the full-text store. `MaybeIngestPapers` resolves or mints the
+internal UUID (`doc_id`), reports derived full-text readiness, and enqueues background conversion when text is still
+pending, without ever fetching or converting text on the serving path. Every store read (`ReadMarkdown`, `Validate`,
+`PollFullTexts`, `DescribePaper`, `ResolveContent`, `Locate`) and every citation directive (`:quote`, `:paper`) keys on
+`doc_id` alone. When a paper is ready, `ReadMarkdown` streams the complete canonical markdown rendering to a file in the
+sandbox workspace, named by the content hash of its bytes so both working-document quotes and reusable knowledge units
+extracted above this layer resolve permanently against the exact text that was read. Throughout the interface, expected
+absences are returned as structured fields in the response, while infrastructure failures and invalid inputs fail with
+gRPC status codes.
 
 ## Background
 
-**Why literature is a service and not a fetch.** Themis shares *facts* extracted from papers across Projects, each fact
-carrying a citation — a pointer to its source, not a copy of it — while the source documents themselves stay behind the
-institutional licensing of whoever obtained them ([`../PRODUCT.md`](../PRODUCT.md) §7). Sources are also untrusted
-content reached through a curated tool surface (§9). Both push the same way: reading literature is a typed call into a
-service we control, not something a run does for itself.
+Themis pools facts extracted from the scientific literature across Projects, where each fact carries a citation pointing
+to its source document while the source documents themselves remain governed by the institutional licensing of the user
+who obtained them ([`../PRODUCT.md`](../PRODUCT.md) §7). In addition, external publications are untrusted content that
+an agent must reach only through a curated tool surface ([`../PRODUCT.md`](../PRODUCT.md) §9). Literature access is
+therefore mediated by a typed gRPC service that we control rather than direct network fetches from inside a run.
 
-**Two consumers.** The sandboxed analysis agent finds papers, reads them, and cites them into a working document; it has
-no network and no cloud credentials, so every outbound call is the service's own. The workbench BFF (the web tier's
-backend-for-frontend) resolves a paper for the document pane and serves its bytes to the browser
+Two consumers call this service. First, the sandboxed analysis agent discovers papers, reads their markdown renderings,
+and cites them in a working document; because the sandbox has no network access and no cloud credentials, every outbound
+query and storage read happens inside the service on the agent's behalf. Second, the workbench backend-for-frontend
+(BFF) resolves paper metadata, storage locations, and quote highlight coordinates for the browser's document pane
 ([`document-pane.md`](document-pane.md#backend-seam-structured-over-connect-bytes-over-presigned-redirects)).
 
-**The three live indexes.** Keyword search asks Europe PMC, and for a reason PubMed cannot match: Europe PMC matches
-query terms against open-access full text, where a variant notation or an assay name routinely appears only in the body
-or a table, and its index carries preprints and PMC-only deposits no PubMed id names. The record behind a PMID, by
-contrast, is PubMed's own: efetch already serves a whole batch in one call, and its record is the one the full-text
-store embeds in a paper's canonical metadata — so a triage read and the store speak one bibliographic language, and the
-service carries no second account of the same paper. NCBI's LitVar2 is a variant-literature index built by running an
-entity recogniser over publication text. One property of LitVar2 shapes a large part of this contract: it keys an entity
-on *whichever identifier the recogniser found in the text* — an rsID, a ClinGen allele id, or a bare change string under
-a gene — never on a variant. One variant is therefore split across several entities that may share no record at all, and
-some entities are indexed under a numbering no currently valid identifier constructs.
+Behind the discovery RPCs sit three live public indexes, each chosen for what it indexes best:
 
-**The full-text store.** One bucket holds everything Themis has of a paper: the captured sources — publisher XML, PDFs —
-and the text converted from them. It is the **full-text store**, and it is what a public index's hits get checked
-against: an index says a paper exists, the store says whether we can serve its text. Nothing in this design has a second
-store. Its concrete name belongs to the infrastructure that creates it
-([`storage.py`](../../infra/themis_infra/storage.py), `fulltext_bucket`), and the interface takes it from its
-environment ([`config.py`](../../themis/services/evidence/literature/config.py)). The per-paper layout inside it — one
-directory per paper, holding the captured sources, the converted renderings, the figures and supplementary files, and a
-manifest that records what each lineage is and under what terms it was obtained — is **litcache**'s, and is
-[`litcache-manifest.md`](litcache-manifest.md)'s subject. Sources and derived artifacts such as renderings are written
-additively, each content-addressed by its own bytes: a re-fetch adds a revision, a re-conversion adds a rendering. So a
-citation against a rendering resolves to the exact bytes it was made against for as long as the paper exists.
+- **Europe PMC** indexes the full text of open-access articles, preprints, and PMC-only deposits that have no PubMed ID.
+  Keyword searches (`SearchEuropePmc`) ask Europe PMC because variant notations and assay names routinely appear only in
+  an article's body or tables rather than its title or abstract.
+- **PubMed (`efetch`)** serves the authoritative bibliographic record behind a PMID in a single batch call. Calling
+  `FetchPubmedArticles` returns the exact `PubmedArticle` or `PubmedBookArticle` structure that the full-text store
+  embeds in a paper's stored metadata, so triage reads and stored records share one bibliographic schema.
+- **NCBI LitVar2** runs an entity recogniser over publication text to index variant literature. LitVar2 keys each entity
+  on whichever identifier string the recogniser found in the text — an rsID, a ClinGen allele ID, or a bare amino-acid
+  or coding change under a gene — rather than on a normalized genomic variant. As a result, a single biological variant
+  is routinely split across several LitVar2 entities with disjoint or partially overlapping paper lists, and some
+  entities are indexed under legacy numbering that no current identifier constructs.
+
+Behind the store RPCs sits the **full-text store**, a single object-storage bucket that holds everything Themis has
+captured or derived for a paper. While a public index states that a paper exists, the full-text store determines whether
+Themis can serve its text. Inside the bucket, **litcache** ([`litcache-manifest.md`](litcache-manifest.md)) organises
+one directory per paper (`papers/{doc_id}/`) containing captured source files (publisher XML and PDFs), converted
+markdown renderings, extracted figures and supplementary files, and a manifest recording each lineage and the licence or
+access terms under which it was obtained. Sources and derived renderings are written additively and content-addressed by
+the SHA-256 hash of their bytes: re-fetching a source adds a revision, and re-running a converter adds a rendering. A
+citation recorded against a rendering hash therefore resolves to those exact bytes for as long as the paper remains in
+the store.
 
 ## Non-goals
 
-- **No production on the serving path.** Nothing that serves a paper fetches or converts its text. The reason is
-  [`evidence-fulltext.md`](evidence-fulltext.md)'s: the cheap production route takes seconds and the expensive one takes
-  minutes, so a request that waited for either would be a timeout dressed as an answer.
-- **No entitlement, for now.** The store is shared and nothing is gated per reader. The agent's reads carry the session
-  for the data cutoff. `MaybeIngestPapers` carries it because the conversion the call enqueues may spend model budget,
-  and only an admitted call may cause that ([`evidence-fulltext.md`](evidence-fulltext.md)). The browser's paper reads
-  carry none ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), a session is context). Gating a read by the reader's
-  institutional access is a requirement this interface will have to grow, and it will need a decision about what a
-  reader who may not open a paper sees instead.
-- **No external identifiers on the rpcs that serve a paper.** Resolution is its own step, so a request either names a
-  paper we hold or does not.
-- **No search over the papers the store holds.** The discovery group reaches live indexes only. A search scoped to the
-  store, keyword or semantic, is a different question — *what do we hold about X* rather than *what has been published
-  about X* — and would arrive as its own rpc behind the same interface, not as a mode of these.
+- **Fetching or converting full text on the serving path.** Serving RPCs only report whether full text is already ready
+  or read existing objects from the store. As detailed in [`evidence-fulltext.md`](evidence-fulltext.md), cheap XML
+  conversions take seconds and PDF transcriptions take minutes, so waiting for production inside a read RPC would turn a
+  lookup into a request timeout.
+- **No entitlement, for now.** Although each paper's manifest records its licence
+  ([`litcache-manifest.md`](litcache-manifest.md#recorded-licence)), the RPCs here do not yet inspect it: any
+  authenticated caller that reaches the service can read any paper in the store. Agent reads carry a session token to
+  enforce the evaluation data cutoff, and `MaybeIngestPapers` requires an admitted caller because enqueuing a conversion
+  can spend model budget ([`evidence-fulltext.md`](evidence-fulltext.md)), while browser reads through the BFF carry no
+  session ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). Gating a read by the reader's institutional access is
+  a requirement this interface will have to grow, and it will need a decision about what a reader who may not open a
+  cited paper sees instead.
+- **Accepting external identifiers on store read or citation RPCs.** Resolving a PMID, DOI, or PMCID to a `doc_id`
+  happens exclusively in `MaybeIngestPapers`, so every downstream RPC deals only in internal store identifiers.
+- **Searching over the subset of papers held in the full-text store.** Discovery RPCs query live public indexes to
+  answer what has been published. Searching specifically over papers already ingested into the store (by keyword or
+  embedding) answers a different question and would be added as a separate RPC rather than a flag on the live index
+  searches.
 
 ## Design
 
-### A discovery rpc is a query against one named source
+### One discovery RPC per named source
 
-Each rpc in the discovery group asks one named external index, and answers with what that index states.
-`SearchEuropePmc` returns Europe PMC's records, abstract inline; `SearchLitVar` returns LitVar2's entities, each with
-its ranked PMIDs; `FetchPubmedArticles` returns PubMed's own record whole — `PubmedArticle` for a journal record,
-`PubmedBookArticle` for a book record — from the source's own published schema rather than a re-modelling of it, so
-nothing is lost in a mapping and nothing invented in one.
+A tempting simplification for a literature service is to define a single `Search` RPC and a common `Article` message, or
+to reuse NLM's `PubmedArticle` schema for results returned by Europe PMC. That mapping breaks as soon as two indexes
+disagree on what a publication record contains. Europe PMC earns its place in the system specifically for records that
+do not fit NLM's journal-article DTD: preprints without a PMID where the publisher stands in for a journal, records with
+year-only publication dates that would have to invent a month and day to fit a structured date, and Europe PMC-specific
+flags such as `is_open_access` and `in_epmc`. Conversely, inventing a lowest-common-denominator record drops the
+detailed MeSH headings, grant lists, and book-chapter metadata that PubMed provides, while encouraging callers to treat
+records from different indexes as interchangeable.
 
-What the rule guards against is a *mapping*: a record re-modelled into a schema its source did not publish. The target
-can be a type invented to be common, or an existing source's schema borrowed for another source's hits; either way it
-carries only what the target has a field for, so each source either loses the fields that made it worth querying or
-bends the target's fields to mean something their owner never stated, and it invites code that handles "records" without
-knowing which index answered — the point at which the differences between indexes stop being visible and start being
-bugs. The store applies the same rule at rest: a paper's `metadata.pb` holds each index's record as that index states
-it, PubMed's in the proto generated from NLM's DTD and Crossref's and OpenAlex's as JSON text, the value each served,
-never one mapped into another's ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
-The one exception is Themis's own metadata fields, which `metadata.pb` holds beside that record. They lose nothing,
-because the records they are filled from stay beside them whole, and they are refilled from those records when their
-rule changes. Each holds plain text, or an identifier or term from one named scheme (ORCID's, NLM's MeSH), and is empty
-where an index cannot state it in that scheme. Two departures are deliberate. A paper's authors come from OpenAlex's
-record of the same work wherever the store holds one, beside the resolving index's record. And a fixed table maps
-Crossref's and OpenAlex's publication types onto NLM's, approximately
-([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)). Sharing is the opposite move, and
-it is why `FetchPubmedArticles` and the store carry PubMed's record the same way: through the schema's own converter,
-with every field the converter keeps and nothing invented.
+Instead, each discovery RPC queries one named external index and returns that source's own record shape:
 
-The same test is why `SearchEuropePmc` does not answer in `PubmedArticle`, although both rpcs carry a bibliography and
-an abstract. A hit is Europe PMC's JSON, not NLM's XML, so the answer would be a mapping — and the hits Europe PMC holds
-its seat for are the ones the message cannot hold. A preprint would arrive as a `MedlineCitation` with no PMID and a
-publisher standing in for a journal; a year-only date would gain a month and a day the index never stated; and the facts
-only this index states — that a hit is a preprint, that its text is open access — would have nowhere to land, where a
-record of Europe PMC's own can take them as fields. A source that answers in its own shape arrives as its own rpc with
-its own record message, and nothing already written against an existing rpc has to be re-read when it does.
+| RPC                   | External source | What it does                                                                                                                                                                            |
+| --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SearchEuropePmc`     | Europe PMC      | Runs a keyword query against the live index and returns ranked `EuropePmcArticle` records (with inline abstracts) plus the upstream match count (`total_found`).                        |
+| `FetchPubmedArticles` | PubMed `efetch` | Fetches PubMed's complete record (`PubmedArticle` for journal articles, `PubmedBookArticle` for book chapters such as GeneReviews) for a batch of PMIDs, plus `pmids_without_record`.   |
+| `SearchLitVar`        | NCBI LitVar2    | Resolves variant identifiers to candidate `LitVarVariantEntity` records, returning each entity's labels, per-identifier agreement verdict, total matched PMID count, and top PMIDs.     |
+| `ListLitVarEntities`  | NCBI LitVar2    | Lists every `LitVarVariantEntity` indexed under a gene symbol, ordered from most-published to least-published, to surface entities indexed under legacy or non-standard change strings. |
 
-Names carry the same concreteness. Every rpc names the source or payload it deals in — `SearchEuropePmc`,
-`FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `ReadMarkdown` — rather than a generic verb, and so does
-every record message that comes back. A generic `Search` returning a generic `Record` is a promise the interface cannot
-keep: the next source would either break it or be folded quietly into it, changing what an existing rpc means for
-callers already written against it.
+Every RPC and response message names the specific source or payload it handles (`SearchEuropePmc`,
+`FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `ReadMarkdown`) rather than using generic verbs. When a new
+literature index is added, it arrives as its own RPC with its own record message, leaving existing callers untouched.
+
+The variant literature RPCs (`SearchLitVar` and `ListLitVarEntities`) live on this literature interface rather than on
+the genomic variant interface or in a standalone two-RPC LitVar service (an exception to the one-interface-per-source
+default in [`evidence-interfaces.md`](evidence-interfaces.md)) because their output is literature: entities carrying
+ranked PMID lists that a caller turns into bibliographies through `FetchPubmedArticles`. Variant identifiers here are a
+search key for finding papers alongside keyword queries, and splitting them into a separate interface would divide
+literature discovery across two services for no consumer benefit.
+
+The full-text store applies the same source-fidelity rule at rest in a paper's `metadata.pb`
+([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)): it stores PubMed's record using
+the proto generated from NLM's DTD (`FetchPubmedArticles` and `metadata.pb` share the exact same schema converter) and
+stores Crossref and OpenAlex records verbatim as raw JSON strings. Beside those verbatim source records, `metadata.pb`
+populates Themis's own normalised fields — plain-text titles, abstracts, journals, and identifiers in one named scheme
+(ORCID iDs and NLM MeSH) — which leave the verbatim records intact and can be recomputed whenever the normalisation rule
+changes. Those normalised fields make two deliberate cross-source choices that only the store can make because it holds
+all sources for one `doc_id`: author attribution is taken from OpenAlex whenever an OpenAlex work record is present, and
+Crossref and OpenAlex publication types are mapped approximately onto NLM's vocabulary via a fixed lookup table.
 
 ```mermaid
 flowchart TD
-    subgraph discovery["discovery — one rpc per named source"]
-        Q["a variant, a gene, a question"] --> S["SearchEuropePmc"]
+    subgraph discovery["Discovery — one RPC per named external index"]
+        Q["Query: 'SCN1A p.Arg1648His' or variant IDs"] --> S["SearchEuropePmc(query='SCN1A Arg1648His')"]
         Q --> V["SearchLitVar · ListLitVarEntities"]
-        S --> E["Europe PMC records — abstract inline, keyed by PMID"]
-        V --> PMIDS["entities with ranked PMIDs"]
-        PMIDS --> F["FetchPubmedArticles"]
-        H["a PMID from a reference list or a clinical note"] --> F
-        F --> E2["PubMed records, whole — the record the store embeds in its metadata"]
+        S --> E["EuropePmcArticle (pmid='12345678', abstract inline)"]
+        V --> PMIDS["LitVarVariantEntity (rsid='rs121918625', pmids=['12345678', ...])"]
+        PMIDS --> F["FetchPubmedArticles(pmids=['12345678'])"]
+        H["External PMID from reference list or clinical note"] --> F
+        F --> E2["PubmedArticle / PubmedBookArticle (NLM DTD proto, abstract inline)"]
     end
-    subgraph store["the full-text store — keyed on doc_id throughout"]
-        M["ReadMarkdown — the canonical rendering, whole, into a file"] --> C["a quote directive, spelling that doc_id"]
+    subgraph store["Full-text store — keyed on doc_id throughout"]
+        M["ReadMarkdown(doc_id='018f...') -> RenderingHeader + byte chunks to scratch file"] --> C[":quote[018f..., verbatim quote] or :paper[018f...]"]
     end
-    E --> DOOR{"MaybeIngestPapers — which paper is this, and can the store serve its text?"}
+    E --> DOOR{"MaybeIngestPapers(external_ids=['pmid:12345678'])"}
     E2 --> DOOR
-    DOOR -->|"READY"| M
-    DOOR -->|"anything else"| N["reported as a fact; nothing here produces text"]
-    E -.->|"the abstract: readable, anchored in no rendering"| P["prose, with no directive"]
+    DOOR -->|"doc_id='018f...', READINESS_READY"| M
+    DOOR -->|"PENDING / NO_FULL_TEXT / FAILED"| N["Reported as a fact; serving path never waits for text"]
+    E -.->|"Abstract is readable for triage, not quotable"| P["Summarized in plain prose (no citation directive)"]
     E2 -.-> P
 ```
 
-### The door into the store: `MaybeIngestPapers`, over a minted `doc_id`
+### Searching by census instead of paging
 
-Nothing a source hands back is a key the store can take. Not every paper has a PMID or a DOI, and the ones that do often
-have several identifiers that arrive at different times, so the store's key is neither: it is an internally minted UUID,
-the `doc_id`, which names the paper's directory and is what every rpc that reads the store, and every citation, takes.
-`MaybeIngestPapers` is the one rpc that turns an external identifier into one — the single door from a discovery result
-into everything the store can do. A **crosswalk** table maps scheme-qualified external ids (`pmid:`, `doi:`, `pmcid:`,
-…) onto `doc_id`s.
+None of the three search RPCs (`SearchEuropePmc`, `SearchLitVar`, `ListLitVarEntities`) returns a pagination cursor.
+Instead, each response pairs its bounded list of results with the census count of everything that matched before the
+budget cut:
 
-Qualifying an id by its scheme is what keeps the door indifferent to which source produced it. A PMID goes through as
-`pmid:12345678`; a source that answers in DOIs instead needs nothing new on this side of the interface. The scheme also
-removes the guessing: a bare number could be a PMID and a bare `10.1/x` a DOI, but a wrong guess resolves to another
-paper.
+- `SearchEuropePmc` returns up to `max_results` articles (default 10, ceiling 25) alongside `total_found` from Europe
+  PMC.
+- `SearchLitVar` returns matched entities alongside `total_entities` (the count before the entity fan-out ceiling of 8),
+  and each `LitVarVariantEntity` carries up to `max_results` PMIDs (default 25, ceiling 50) alongside that entity's
+  `total_found` PMID count in LitVar2.
+- `ListLitVarEntities` returns up to `max_entities` entities (default 50, ceiling 200) alongside `total_entities` (the
+  count of entities on the gene after any `contains` substring filter, before the `max_entities` cut).
 
-Ingestion *mints* against that table, claiming all of a paper's identifiers in one transaction and adopting an incumbent
-where one exists, so concurrent ingestion workers converge on one `doc_id` per paper. Identifiers that turn out to
-bridge two separately-ingested works form an equivalence class: the linked `doc_id`s resolve to one deterministically
-chosen canonical member, recorded as an edge in the manifests. The table is the mint lock, not the system of record: it
-is rebuildable from the manifests, and a row claimed by an ingestion that never committed its manifest is harmless — it
-reads back as a paper the store does not hold.
+For example, if `SearchEuropePmc(query="SCN1A", max_results=10)` returns 10 articles and `total_found: 412`, the caller
+immediately sees that it is looking at the top 10 of 412 matches. If the caller needs different results, it refines the
+query, raises the budget up to the ceiling, or — when `SearchLitVar` reports `total_entities: 11` beside 8 returned
+entities — queries a specific dropped entity by passing its `litvar_id` (`litvar@rs121918625##`) back to `SearchLitVar`.
+The response does not echo the requested `max_results` or the server's ceiling, since the caller already knows what it
+asked for and can see the length of the returned slice.
 
-The **lookup** claims nothing. Minting *claims*, so minting to answer a read would hand back a fresh `doc_id` naming no
-manifest — permanently unresolvable — and would leave a crosswalk claim on someone else's DOI. `MaybeIngestPapers` does
-mint, for the ids the lookup missed, but only paired with the manifest commit that makes the claim resolvable, and only
-for an id an upstream answered for ([`evidence-fulltext.md`](evidence-fulltext.md)). That is the interface's one write,
-and its two halves are held differently: the crosswalk under `INSERT` alone, which cannot re-point or remove a claim,
-and the store under read-write, where the guarantee that a committed paper is never altered is the code's, not the
-grant's. Every other rpc reads the store's objects alone, which confines the interface's only relational dependency to
-this one method.
+Omitting pagination cursors trades away exhaustive walkability, which an analysis reading loop does not use: a run reads
+the top-ranked papers and narrows its query rather than paging through a thousand hits. In return, the service avoids
+per-call cursor state and stale-cursor failures while still telling the caller via two integers whether results were
+truncated and by how much.
 
-The lookup answers only for identifiers captured at ingest, so a caller holding a PMCID for a paper stored under its DOI
-and PMID misses even though the store has it — and the ingest behind the lookup cannot cover that miss either, its
-ladder keying on a PMID or a DOI. Closing the gap means resolving identifiers against one another in front of both,
-which puts a network round trip on a request path; it is deferred because ingestion captures a DOI and a PMID for most
-papers.
+### Returning candidate entities from LitVar2
 
-`Maybe` is load-bearing in the name: such a call may resolve nothing, bring in nothing and produce nothing.
+When a caller searches LitVar2 for a variant (for example, supplying `gene: "SCN1A"`, `hgvs_p: "p.Arg1648His"`,
+`rsid: "rs121918625"`, and `caid: "CA123456"`), the obvious design would be for the service to resolve those strings,
+keep only the LitVar2 entity that matches the variant, and return one merged list of PMIDs. That design fails because
+LitVar2 keys entities on the raw identifier strings its text recogniser extracted from papers, and the service has no
+way to tell whether a label mismatch comes from an alias in the paper or from a genuinely different variant:
 
-Production follows from the same call: a paper that comes back unsettled has its conversion enqueued by it. Resolution
-only ever *starts* production and never waits for it — the queue and the producer behind that enqueue are
-[`evidence-fulltext.md`](evidence-fulltext.md)'s. The *no production on the serving path* rule above is untouched by
-that, because what it bars is a request that serves a paper waiting on its text, and nothing here waits.
+- If an entity is labelled with a superseded gene alias (`FEB3A` instead of `SCN1A`), its gene symbol differs from the
+  request even though the entity indexes the exact variant the caller wants.
+- Conversely, if an entity carries a different ClinGen allele ID (`CA999999` instead of `CA123456`), the two IDs denote
+  different alleles by construction.
 
-**One spelling per identifier, folded at the boundary that owns it.** The crosswalk folds the case of the schemes whose
-identifiers are case-insensitive and no more, so two spellings that genuinely denote different identifiers stay
-different keys. The discovery rpcs never touch the crosswalk and fold a PMID's several spellings — bare digits, a
-`PMID:` prefix, zero padding — onto one. A malformed identifier is refused outright rather than looked up: a malformed
-key reaches nothing, and an answer of "no such paper" to a request that was never well-formed reads as a settled fact
-about what the store holds.
+Silently filtering out entities with differing labels risks dropping the only entity that holds a key paper, while
+silently unioning them mixes papers about different alleles. `SearchLitVar` therefore returns every entity reached by
+any supplied identifier, unmerged, and attaches an `IdentifierAgreement` verdict to each entity for each identifier kind
+(`rsid`, `caid`, `gene`, `hgvs_p`, `hgvs_c`):
 
-### What the store says about a paper
+```
+SearchLitVar(gene="SCN1A", hgvs_p="p.Arg1648His", rsid="rs121918625")
+  ├─ Entity 1: litvar@rs121918625## (total_found=18, pmids=["12345678", ...])
+  │    agreement: rsid=AGREES, gene=AGREES, hgvs_p=AGREES, caid=UNCOMPARED
+  └─ Entity 2: litvar@CA999999##    (total_found=3,  pmids=["87654321", ...])
+       agreement: rsid=DIFFERS, gene=AGREES, hgvs_p=UNSTATED, caid=UNCOMPARED
+```
 
-A paper can accumulate several renderings of its text — one converted from publisher XML, one transcribed from a PDF, an
-older one from a superseded converter. The read surface serves exactly one of them, the **canonical rendering**, picked
-by converter fidelity first (a rendering derived from source XML beats a transcription of a PDF) and recency on a tie.
-One choice, made in one place, is what lets the agent's read, the quote matcher and the document pane agree on which
-text a paper *is*; without it a quote validated against one rendering could fail to locate in another. The place is the
-write: the run that produces a rendering moves the manifest's `markdown` ref to it when it outranks the one named, and
-every reader follows the ref
-([`litcache-manifest.md`](litcache-manifest.md#a-ref-names-the-record-a-reader-should-use)).
+Each field takes one of four values: `AGREES` (the entity's label matches the request), `DIFFERS` (the entity states a
+conflicting label), `UNSTATED` (the caller supplied the identifier, but the entity carries no comparable label), or
+`UNCOMPARED` (the caller did not supply that identifier kind). Label disagreements are facts about how LitVar2 indexed
+the literature, so they are reported in the response rather than raised as errors, leaving the caller to weigh weak
+disagreements (gene aliases) against strong ones (conflicting ClinGen allele IDs).
 
-Two further per-paper facts cross the wire, and neither is stored anywhere:
+This candidate-entity contract has three explicit consequences for callers:
 
-- **Readiness** — whether full text is servable at all: `READY`, `PENDING`, or one of the two terminal outcomes
-  `NO_FULL_TEXT` and `FAILED`, plus `UNKNOWN_PAPER` for a `doc_id` the store holds no paper under. It is derived from
-  the store's layout on each read, and [`evidence-fulltext.md`](evidence-fulltext.md) owns both the derivation and the
-  reason there is no status store behind it.
-- **Text provenance** — the terms the canonical rendering's text is held under. A lineage recorded as free to read is
-  `OPEN_ACCESS` however it arrived, uploaded included; otherwise one recorded as institutionally captured, or an
-  uploaded revision, is `SUPPLIED`; a licensed, unknown or unplaceable lineage says neither. Open access is a claim
-  about the text's terms, so nothing defaults to it. `SUPPLIED` text reached the store only through a human's
-  institutional access, which is a thing a run should be able to state about what it relied on — but it is no less
-  citable for that.
+1. **Entity PMID sets overlap and must be deduplicated by the caller.** Records under a ClinGen allele entity are often
+   a subset of the records under an rsID entity for the same variant. A single PMID can appear under multiple returned
+   entities, so neither the `pmids` lists nor the `total_found` counts can be summed directly.
+1. **Entities carry PMIDs rather than inline bibliographies.** Returning full article records inside `SearchLitVar`
+   would force a shared record budget across candidate entities and complicate truncation accounting. Returning PMIDs
+   keeps the budget per entity, and the caller spends a `FetchPubmedArticles` call only on the PMIDs from the entities
+   it accepts.
+1. **An empty entity list is a valid answer about the index.** A paper that mentions a variant only in non-standard
+   prose is not indexed under any LitVar2 entity and must be found through `SearchEuropePmc`.
 
-Text provenance is named for the *text*, not for the fact: the `Provenance` message every other evidence rpc returns
-records where a *fact* came from, which is a different thing that happens to want the same English word.
+Merging entities across variants or combining bibliographic records across sources belongs above the discovery RPCs. In
+particular, cross-source bibliographic merging happens inside the store's `metadata.pb` normalisation, where all source
+records for a single `doc_id` sit side by side.
+
+### Entering the full-text store through `MaybeIngestPapers`
+
+External identifiers cannot serve as the primary key of the full-text store: preprints and book chapters may lack a PMID
+or a DOI, and a single paper often acquires multiple identifiers (a preprint DOI, a published DOI, a PMID, a PMCID) at
+different times. The store therefore keys every paper on an internally minted UUID, the `doc_id`, which names the
+paper's directory (`papers/{doc_id}/`) and is the only identifier accepted by store read RPCs and citation directives.
+
+`MaybeIngestPapers` is the single RPC that translates external identifiers into `doc_id`s. It accepts a batch of up to
+10 scheme-qualified external identifiers (`pmid:12345678`, `doi:10.1038/s41588-023-01521-x`, `pmcid:PMC7654321`) and
+maps them through the **crosswalk** table (`external_id -> doc_id`). Qualifying every identifier with its scheme
+(`pmid:`, `doi:`, `pmcid:`) keeps the RPC independent of which discovery source produced the hit and prevents ambiguous
+parsing between bare numbers and publisher strings.
+
+Each identifier kind is normalised at the boundary that owns it:
+
+- At the crosswalk boundary (`MaybeIngestPapers`), the service validates the `scheme:value` syntax and folds case only
+  for case-insensitive schemes (`doi:` values are lowercased; `pmid:` requires digits without leading zeros; `pmcid:`
+  requires `PMC` followed by digits), preserving case for schemes where case is significant.
+- At the PubMed and LitVar2 boundaries, which never touch the crosswalk, PMID inputs accept common display variants
+  (`PMID:12345678`, whitespace, or leading zeros) and normalise them to canonical digit strings.
+- Across all RPCs, a malformed identifier fails the entire call with `INVALID_ARGUMENT` rather than returning an empty
+  or unmatched result, so a syntax mistake is never mistaken for a paper that does not exist in the index or store.
+
+Inside `MaybeIngestPapers`, looking up an existing paper and minting a new `doc_id` are separated so that read misses
+never pollute the crosswalk:
+
+1. **Read-only lookup first.** A pure lookup never mints a `doc_id`. If a lookup minted a UUID without writing a paper
+   manifest, it would return a `doc_id` that points to nothing in object storage and would permanently claim that
+   external identifier in the crosswalk.
+1. **Verified ingest on a miss.** When an external identifier misses in the crosswalk, `MaybeIngestPapers` queries
+   upstream metadata indexes (PubMed, Crossref, OpenAlex) to verify that the identifier resolves to a real work
+   ([`evidence-fulltext.md`](evidence-fulltext.md)). Only when an upstream index answers does the service mint a
+   `doc_id` — claiming all of the work's known identifiers in a single crosswalk transaction or adopting an existing
+   `doc_id` if a concurrent worker already claimed one — and commit the paper's initial `metadata.pb` and
+   `manifest.json` to the store. If two separately ingested works later turn out to share an identifier, their `doc_id`s
+   form an equivalence class in the manifests that resolves deterministically to one canonical `doc_id`
+   ([`litcache-manifest.md`](litcache-manifest.md)). The crosswalk table is an idempotent mint lock rather than the
+   system of record: it can be rebuilt from the store's manifests, and a crosswalk row whose manifest write failed
+   simply reads back as `UNKNOWN_PAPER`.
+1. **Enqueueing conversion without waiting.** If the resolved paper's full-text readiness is `PENDING` (no markdown
+   rendering exists yet and conversion has not terminally failed), `MaybeIngestPapers` enqueues a background conversion
+   job and returns `READINESS_PENDING` immediately ([`evidence-fulltext.md`](evidence-fulltext.md)). The `Maybe` in the
+   RPC's name reflects that a call may match an already-ready paper, start a background ingest, or report that no
+   upstream index recognises the identifier (`UNKNOWN_PAPER`), all without blocking on full-text production.
+
+`MaybeIngestPapers` is the only RPC on the literature interface that writes to storage or touches the relational
+crosswalk database. Its permissions reflect its two-step write: the service holds `INSERT`-only privileges on the
+crosswalk table (so it can claim new identifiers but never delete or repoint existing claims) and read-write access on
+the full-text bucket (where code invariants guarantee that committed revisions and renderings are only added, never
+overwritten). Every other RPC on the service reads object storage or live HTTP indexes alone.
+
+Because the crosswalk contains only identifiers captured at ingestion, looking up a `pmcid:` for a paper that was
+ingested under only its DOI and PMID misses even though the paper is in the store — and `MaybeIngestPapers` cannot cover
+that miss either, because its metadata resolution ladder keys on a PMID or a DOI. Closing this gap means resolving
+identifiers against one another in front of both, which puts a network round trip on a request path; it is deferred
+because ingestion captures a DOI and a PMID for most papers.
+
+### Selecting the canonical rendering and deriving readiness and provenance
+
+A single paper in the store can accumulate multiple markdown renderings over time — for example, a transcription from an
+author manuscript PDF followed later by a direct conversion from publisher JATS XML, or a re-conversion after a parser
+upgrade. If the agent, the quote validator, and the workbench document pane each chose among renderings independently, a
+quote validated during a run could fail to locate when opened in the browser.
+
+To guarantee that every consumer sees the same text for a paper, the store defines a single **canonical rendering** at
+write time ([`litcache-manifest.md`](litcache-manifest.md#a-ref-names-the-record-a-reader-should-use)). Whenever an
+ingestion or conversion worker writes a new markdown rendering, it compares the new rendering against the paper's
+current `markdown` ref in `manifest.json`: a rendering converted from structured XML (`jats_xml`, `elsevier_xml`)
+outranks one transcribed from a PDF, and a newer rendering wins on a tie. Every read RPC simply follows the manifest's
+`markdown` ref.
+
+Alongside the canonical rendering, the store RPCs return two per-paper enums that are derived on each read from the
+manifest rather than stored in a separate status database:
+
+- **`Readiness`** reports whether full text can be served: `READY` (the `markdown` ref points to a rendering), `PENDING`
+  (conversion is still in progress or queued), `NO_FULL_TEXT` (no open-access or supplied source could be obtained),
+  `FAILED` (conversion failed terminally across available sources), or `UNKNOWN_PAPER` (the store holds no manifest for
+  that `doc_id` or external ID). [`evidence-fulltext.md`](evidence-fulltext.md) defines the exact derivation rules over
+  manifest lineages.
+- **`TextProvenance`** reports the access terms of the source lineage behind the canonical rendering: `OPEN_ACCESS` when
+  the lineage's recorded access disposition is free to read (including an uploaded PDF whose licence is open access),
+  `SUPPLIED` when the lineage came from an institutionally captured source or a user-uploaded PDF without an open-access
+  disposition, and `TEXT_PROVENANCE_UNSPECIFIED` when the disposition is licensed, unknown, or missing. Nothing defaults
+  to `OPEN_ACCESS` because open access is a positive claim about licensing; `SUPPLIED` lets a run state that a finding
+  relied on text provided through human institutional access while remaining fully citable.
+
+This enum is named `TextProvenance` to keep it distinct from the `Provenance` message returned by the genomic and
+clinical evidence interfaces ([`evidence-interfaces.md`](evidence-interfaces.md)), which records which upstream database
+version produced a structured fact.
 
 ### The store's read surface
 
-| rpc                 | what it does in the system                                                                                                                                                                                   |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `MaybeIngestPapers` | The door: a batch of scheme-qualified external ids in, the paper each names and that paper's readiness out, and a conversion where pending. The mandatory first step for a caller holding a PMID or a DOI.   |
-| `ReadMarkdown`      | The agent's read path: the canonical rendering streamed whole, after a header naming it — or a modelled statement that the paper has no servable text.                                                       |
-| `DescribePaper`     | What a paper offers, so the document pane can choose a default representation and list its figures and supplementary files.                                                                                  |
-| `ResolveContent`    | Names the storage object behind a chosen representation or file — a location, never bytes. Serving bytes to a browser is the BFF's job, and the BFF holds the authorisation boundary.                        |
-| `Locate`            | Where a quote sits inside a chosen representation, for the pane to highlight. A quote that is not there is a modelled outcome, not an error.                                                                 |
-| `Validate`          | Whether a quote locates in any representation at all — the agent's authoring-time check, and deliberately forgiving: an unknown paper and an absent quote both come back as a negative answer with a reason. |
-| `PollFullTexts`     | Readiness for a batch of `doc_id`s, producing nothing and enqueuing nothing.                                                                                                                                 |
+Once `MaybeIngestPapers` has returned a `doc_id`, six read-only RPCs serve the paper to the agent and the workbench BFF:
 
-Four mechanisms the table rests on:
+| RPC              | Caller | What it does                                                                                                                                                              |
+| ---------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PollFullTexts`  | Agent  | Returns current `Readiness` for a batch of up to 100 `doc_id`s from their manifests, without minting identifiers or enqueuing conversions.                                |
+| `ReadMarkdown`   | Agent  | Server-streaming RPC that yields a `RenderingHeader` (`rendering_key`, `size_bytes`, `provenance`) followed by raw UTF-8 byte chunks, or a single `FullTextUnavailable`.  |
+| `Validate`       | Agent  | Checks whether a verbatim quote locates inside a paper's canonical markdown rendering, returning `VALID`, `INVALID`, or `UNCHECKED` for each entry in a batch (up to 50). |
+| `DescribePaper`  | BFF    | Returns a paper's title, available representations (`has_markdown`, `markdown_from_xml`, `has_pdf`), `default_representation`, and extracted figures/supplementary files. |
+| `ResolveContent` | BFF    | Resolves a representation (`MARKDOWN` or `PDF`) or associated `file_path` to its bucket/object coordinates and MIME type so the BFF can stream or presign the bytes.      |
+| `Locate`         | BFF    | Locates a verbatim quote inside a chosen representation (`MARKDOWN` or `PDF`) and returns highlight coordinates (`MarkdownLocation` or `PdfLocation`) or `not_located`.   |
 
-- **Readiness and content are separate rpcs.** A batch that answered with each paper's text would blow past the message
-  budget, and a caller asking which of fifty papers is worth opening does not want fifty papers back. So readiness is a
-  cheap batch and content is a single-paper read.
-- **The agent's read is whole, and goes to a file.** Renderings vary by orders of magnitude: most main texts are tens of
-  kilobytes, a few pass a megabyte, and one paper's rendering is no guide to the next. `ReadMarkdown` serves the whole
-  rendering as a stream, opened by a header that names it: its key in the manifest (the hash of its bytes), its size and
-  its text provenance. Each message after the header carries a run of the bytes, small enough for gRPC's default message
-  limit, so no rendering is too long to serve. The guest's helper writes the stream to a file and keeps it only when the
-  bytes add up to the size and hash to the key, so a file at the path is a whole rendering and never a prefix that reads
-  like one. The agent quotes from that file, and the key says which rendering a quote was taken from.
-- **A batch has a ceiling, and it is the server's.** A readiness or resolution batch is refused past a fixed size,
-  because each entry costs the service reads it did not ask for. Nothing blocks server-side to make a batch wait: a
-  caller with somewhere to sleep waits there and asks again.
-- **One quote matcher, over markdown.** `Validate` and `Locate` share a single matcher run server-side over the
-  rendering's bytes, so what the agent validated while authoring is what the pane later resolves
-  ([`document-pane.md`](document-pane.md#highlight-resolution-server-side-one-matcher)). No producer resolves a quote
-  against a PDF yet, so against the live store `Locate` answers a PDF request `UNIMPLEMENTED` and `Validate` reports a
-  PDF-only paper as unchecked — the alternative, a "not located" for a quote that is plainly on the page, states the
-  opposite of the truth. The fixture's seeded locations are the offline surface, which is what the pane's highlight path
-  is built against before a producer exists.
+Four design choices shape how these six RPCs work together:
 
-### Searching the live indexes
+1. **Separating batch readiness from single-paper content.** Checking which of fifty candidate papers have servable text
+   is a cheap manifest check (`MaybeIngestPapers` or `PollFullTexts`), whereas returning fifty full-text renderings in
+   one batch response would exceed gRPC message limits and flood the caller with unread text. Readiness is therefore
+   queried in batches (capped at 10 external IDs for `MaybeIngestPapers` and 100 `doc_id`s for `PollFullTexts`), while
+   `ReadMarkdown` reads one paper at a time. No batch RPC blocks server-side waiting for a pending conversion to finish;
+   a caller that wants to wait sleeps in its own process and calls `PollFullTexts` again.
+1. **Streaming the complete rendering to a sandbox file.** Paper renderings range from tens of kilobytes to over a
+   megabyte, and truncating a paper to a token budget makes tables or methods sections at the end of a long paper
+   unreachable. `ReadMarkdown` instead streams the entire canonical rendering: the first frame is a `RenderingHeader`
+   carrying the manifest `rendering_key` (the SHA-256 hash of the markdown bytes), `size_bytes`, and `TextProvenance`,
+   followed by `bytes` chunks of at most 1 MiB so every frame stays well inside gRPC's 4 MiB default message limit.
+   Inside the sandbox, the agent's helper script writes the stream to a scratch file and retains the file only after
+   verifying that the received byte count matches `size_bytes` and its SHA-256 digest matches `rendering_key`. That
+   check guarantees the agent never reads a truncated prefix of a paper, and the agent then searches and reads the local
+   file with standard file tools so only the passages it inspects enter its model context.
+1. **Returning object coordinates to the BFF rather than proxying PDF bytes.** While the agent only reads markdown text,
+   the browser document pane also renders publisher PDFs and supplementary files that routinely exceed gRPC message size
+   limits. `ResolveContent` therefore returns the storage bucket, object key, and content type rather than raw bytes,
+   leaving the BFF (which holds the user authorisation boundary) to stream or presign the object for the browser.
+1. **Running one server-side quote matcher over markdown.** Both `Validate` (called by the agent while drafting) and
+   `Locate` (called by the BFF when a user clicks a quote) run the exact same matcher (`anchorite`) over the canonical
+   markdown rendering's bytes ([`document-pane.md`](document-pane.md#highlight-resolution-server-side-one-matcher)).
+   Consequently, any quote that passes `Validate` against a given rendering will highlight cleanly in the document
+   pane's markdown view. Because live quote matching against PDF page coordinates is not yet implemented, `Locate`
+   against a live PDF representation returns gRPC `UNIMPLEMENTED` and `Validate` on a PDF-only paper returns
+   `VALIDATION_OUTCOME_UNCHECKED` with `REASON_NO_USABLE_TEXT`. Returning `not_located` or `INVALID` for a PDF-only
+   paper would falsely claim that the quote is absent from the paper when the service simply cannot check the PDF yet.
+   The offline fixture backend seeds pre-computed `PdfLocation` bounding boxes so the document pane's PDF highlight UI
+   can be developed and tested ahead of a live PDF matcher.
 
-| rpc                   | what it does in the system                                                                                                                                                                                                                                             |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SearchEuropePmc`     | A keyword query against the live index, answered with ranked Europe PMC records and the index's own count of what matched.                                                                                                                                             |
-| `FetchPubmedArticles` | PubMed's own record, whole, for a batch of PMIDs — `PubmedArticle` for a journal record, `PubmedBookArticle` for a book record — ones reached from outside this service (a reference list, a submission's citation list, a clinical note) or selected from the census. |
-| `SearchLitVar`        | A variant's identifiers in, every LitVar2 entity they reached out — unmerged, each with the index's own labels, a per-identifier agreement verdict, its record count, and its top-ranked PMIDs.                                                                        |
-| `ListLitVarEntities`  | A gene's whole entity inventory, most-published first — the route to an entity indexed under a spelling no current identifier constructs.                                                                                                                              |
+### Separating expected absences from faults
 
-**A hit is existence, not readability.** Nothing in this group says the store can serve a paper's text;
-`MaybeIngestPapers` is what says that. The same gap is why the abstract riding on a record is readable but not quotable:
-a discovery result carries no `doc_id`, so there is no citation directive that could resolve against it.
+Across both discovery and store RPCs, the interface distinguishes expected data absences (which a run should reason
+about and report) from infrastructure or caller faults (which should fail the RPC or trigger a retry).
 
-**The variant census belongs to literature, not to a variant interface.** What `SearchLitVar` and `ListLitVarEntities`
-produce is literature — entities carrying ranked PMIDs, each one `FetchPubmedArticles` read away from its bibliography.
-Variant identifiers are one way of searching for papers, beside keywords; they are not a different kind of answer.
+On the store RPCs:
 
-### A search states its census instead of paging
+- **Single-paper lookup for an unknown `doc_id`** (`DescribePaper`, `ResolveContent`, `Locate`, `ReadMarkdown`) fails
+  with gRPC `NOT_FOUND`, because the caller passed a `doc_id` that does not exist in the store.
+- **Batch readiness or validation for an unknown paper** (`MaybeIngestPapers`, `PollFullTexts`, `Validate`) returns a
+  per-entry outcome (`READINESS_UNKNOWN_PAPER` or `REASON_UNKNOWN_PAPER`) rather than aborting the batch with
+  `NOT_FOUND`, so one unrecognised identifier never discards the results for the remaining entries in the batch.
+- **A known paper whose full text is not servable** returns a modelled `FullTextUnavailable` outcome in `ReadMarkdown`
+  carrying its `Readiness` (`PENDING`, `NO_FULL_TEXT`, or `FAILED`) rather than a gRPC error.
+- **A broken manifest invariant** — where `manifest.json` names a canonical `markdown` rendering key whose object is
+  missing from the bucket — fails with gRPC `INTERNAL`. Returning `NOT_FOUND` (which the shared retry policy treats as
+  terminal) would misreport data corruption as a normal missing paper. By contrast, requesting a representation or
+  associated file that the paper genuinely does not have in `ResolveContent` or `Locate` returns `NOT_FOUND`.
+- **Malformed identifiers or oversized batches** fail the entire request with `INVALID_ARGUMENT`. The service never
+  silently truncates an oversized input batch, because a dropped request item would be indistinguishable from an
+  identifier that matched nothing.
+- **Crosswalk database faults** distinguish transient outages from misconfiguration: an unreachable database fails with
+  `UNAVAILABLE` (which callers retry), whereas calling `MaybeIngestPapers` on a deployment configured without a
+  crosswalk DSN fails with `FAILED_PRECONDITION` (which is never retried).
 
-None of the three searches offers a page cursor. Instead each reports, alongside its results, a count of everything that
-matched before the budget — the index's own count where the index states one, the service's own census where the cut is
-the service's (the entity fan-out, a `contains` narrowing). Comparing that count against what came back tells a complete
-answer from a top-ranked prefix, and the way to more is a narrower query, a larger budget, or — for a candidate the
-fan-out ceiling dropped — the entity's own id. Nothing else is echoed: the budget a caller asked for it already knows,
-and the one the service applied is visible in what a cut answer carries.
+On the discovery RPCs, upstream index absences are likewise modelled in the response message. In `FetchPubmedArticles`,
+a PMID that does not exist in PubMed is listed in `pmids_without_record` rather than omitted silently or raised as an
+error; a PMID that points to a Bookshelf chapter (such as a GeneReviews entry) is returned in `book_articles` as a
+`PubmedBookArticle` alongside `articles`; and an article that has no abstract in PubMed arrives as a complete
+`PubmedArticle` with an empty abstract field. None of those outcomes can be fixed by retrying or by ingesting the paper.
+When an upstream HTTP index itself times out, rate-limits, or fails, the discovery adapter maps the failure onto the
+shared evidence error taxonomy ([`evidence-interfaces.md`](evidence-interfaces.md)) without retrying internally, leaving
+retry and backoff to the caller's gRPC retry helper.
 
-Paging is what we would owe callers if the goal were exhaustive retrieval. It is not: a run reads the most relevant
-handful and then narrows. A cursor would add per-call state, a stale-cursor failure mode, and an invitation to walk a
-thousand hits, in exchange for a completeness the reading loop does not use. The census gives the caller the one thing a
-cursor would have told it — *there is more, and how much* — for the price of a couple of integers.
+### Exposing literature RPCs to the sandboxed agent
 
-### A variant search answers with candidates
+Each RPC in [`literature.proto`](../../schema/proto/themis/rpc/literature.proto) declares individually whether it is
+exposed across the sandbox hatch via the `(themis.rpc.agent_exposed)` method option
+([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). Eight RPCs are exposed to the agent: `SearchEuropePmc`,
+`SearchLitVar`, `ListLitVarEntities`, `FetchPubmedArticles`, `MaybeIngestPapers`, `PollFullTexts`, `ReadMarkdown`, and
+`Validate`. The remaining three RPCs (`DescribePaper`, `ResolveContent`, and `Locate`) serve only the workbench BFF and
+are omitted from the sandbox hatch catalog.
 
-Because LitVar2 keys entities on whatever its recogniser found rather than on a variant, there is no reliable way for
-the service to decide which of the entities a request reached is the caller's variant. It could withhold the ambiguous
-ones; it does not. It returns every entity it reached, unmerged, and states the disagreement instead: for each kind of
-identifier the request supplied, a verdict on whether the entity's own labels agree, differ, say nothing comparable, or
-were never asked about.
+Even though `ResolveContent` already returns a paper's storage coordinates, the agent reads papers exclusively through
+`ReadMarkdown` for three reasons:
 
-That shape follows from what the service can and cannot know. A gene symbol that differs is weak evidence, because an
-alias or a superseded symbol produces one on an entity that *is* the caller's variant. Two differing ClinGen allele ids
-are strong evidence, because two such ids are two alleles by construction. The service cannot tell a label the request
-got wrong from one the index got wrong — so reporting the verdict and letting the caller weigh it beats silently
-dropping an entity that may be the only one carrying the relevant paper. For the same reason a disagreement is never
-raised as an error: it is a fact about how the index labelled something.
+1. **Centralised rendering and provenance logic.** The literature service owns canonical-rendering selection, readiness
+   derivation, and `TextProvenance` derivation; having the sandbox guest read bucket objects directly would duplicate
+   that logic inside the guest where it could drift.
+1. **Auditability at the hatch.** Every `ReadMarkdown` call crosses the sandbox hatch and is recorded in the session's
+   event log, providing a complete audit trail of which papers and rendering hashes a run read.
+1. **No storage credentials in the sandbox.** The sandboxed guest has no network route and no cloud storage credentials,
+   so a bucket/object coordinate returned by `ResolveContent` cannot be dereferenced from inside the sandbox.
 
-Three consequences the contract makes explicit rather than leaving to be discovered:
+The BFF's access pattern is the mirror image: the BFF runs with storage credentials and serves bytes to the browser via
+presigned URLs or streams, so `DescribePaper`, `ResolveContent`, and `Locate` exist specifically for it and require no
+evaluation session ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
 
-- The entity sets are not a partition. An allele-scoped entity's records are usually a subset of an rsID-scoped one's,
-  so one PMID arrives under several entities and neither the PMID lists nor the counts sum. Deduplicating before
-  counting anything is the caller's.
-- The census answers in PMIDs, not bibliographies: each entity carries its top-ranked PMIDs up to the request's budget,
-  beside the index's own total. Which of them deserve a bibliographic read is the caller's call, spent through
-  `FetchPubmedArticles`; an entity the fan-out ceiling dropped is re-asked by its id.
-- An empty answer is a fact about the index, not an error. A paper that names a variant in prose alone is indexed under
-  no entity at all, and is still reachable by keyword.
+Three of the agent-exposed discovery RPCs (`SearchEuropePmc`, `SearchLitVar`, and `ListLitVarEntities`) accept
+agent-composed strings such as keyword queries, gene symbols, HGVS strings, and LitVar entity IDs. Under the sandbox
+security model ([`security.md`](security.md) §What counts as an exfiltration channel), those strings are an accepted,
+bounded residual rather than an arbitrary exfiltration channel: each value is URL-encoded into a fixed query parameter
+or single path segment sent to a hardcoded public index endpoint (Europe PMC or NCBI LitVar2), so the agent cannot
+control the request destination, and every outbound query is logged at the hatch boundary.
 
-Unioning those entities into one answer per variant, and merging what several sources say about one paper, both belong
-to a layer above this contract. The store's own metadata normalisation is where cross-source merging has the knowledge
-to happen: it sees every source's record for a paper against one `doc_id`, which is precisely what a discovery rpc,
-holding one index's answer, does not.
+In practice, the agent's literature loop follows five steps:
 
-### Absence is a statement; a fault is a status
+```
+1. Discover PMIDs/DOIs via SearchEuropePmc, SearchLitVar, or ListLitVarEntities
+   (or start from a PMID in a clinical note or reference list)
+2. Triage candidate papers via FetchPubmedArticles or inline Europe PMC abstracts
+3. Resolve chosen external IDs via MaybeIngestPapers(["pmid:12345678", ...]) -> doc_id + Readiness
+4. For READY papers, stream ReadMarkdown(doc_id) into a verified scratch file and read/search locally
+5. Draft citations (:quote[doc_id, ...], :paper[doc_id]) and verify quotes with Validate
+```
 
-The failure vocabulary follows one rule: never let a transient failure look like a settled fact, and never let a settled
-fact look like a failure. Concretely:
+If `MaybeIngestPapers` or `PollFullTexts` reports that a paper's full text is unavailable (`PENDING`, `NO_FULL_TEXT`, or
+`FAILED`), the agent reports that state in its working document rather than attempting to work around it. Reading a
+paper's supplementary files from the agent is deferred: although the store holds extracted supplements and
+`DescribePaper` lists them for the browser, neither `DescribePaper` nor a supplement-reading RPC is exposed to the agent
+until supplementary files have converted text renderings of their own.
 
-- An unknown `doc_id` on the rpcs that serve a paper is `NOT_FOUND` — a broken reference, not a fact about the store.
-- In the two per-id batches it is a per-entry `UNKNOWN_PAPER` instead, because aborting the batch would lose the answers
-  for every other entry.
-- A known paper with no servable text is a modelled *unavailable* result carrying its state, not an error.
-- A rendering the manifest lists but the store cannot produce is `INTERNAL`: the store has broken its own invariant, and
-  `NOT_FOUND` — a status the shared taxonomy never retries — would file that fault as a settled answer about the paper.
-  An object the paper simply lacks, or lists without having fetched it yet, stays `NOT_FOUND`.
-- A batch that is malformed or oversized is `INVALID_ARGUMENT` — answered whole or refused, never trimmed to fit, since
-  a silently dropped entry comes back looking exactly like an identifier nothing is indexed under.
-- A crosswalk that cannot be reached fails the whole call `UNAVAILABLE`; a deployment that wires none fails
-  `FAILED_PRECONDITION`. The distinction matters because gRPC's default policy retries `UNAVAILABLE`, and no number of
-  retries configures a database.
-- A bibliographic lookup's outcomes are statements about the record, never faults: a PMID nothing is indexed under is
-  named in the response rather than left to be noticed as an omission, one indexed as a Bookshelf citation — a
-  GeneReviews chapter — arrives as PubMed's own book record, `PubmedBookArticle`, beside the journal records, and a
-  record the index carries no abstract under still arrives whole. None is retryable within a run, and none is answered
-  by ingesting the paper: all are things the index says.
+### Citing papers in working documents and knowledge units
 
-The discovery adapters make no attempt to retry an upstream themselves; they place an upstream failure on the error
-taxonomy the evidence interfaces share ([`evidence-interfaces.md`](evidence-interfaces.md)), and the caller's retry
-helper owns backoff.
+When an agent writes a working document, it cites literature from the full-text store using two markdown directives that
+the workbench renders interactively ([`agent-output-rendering.md`](agent-output-rendering.md),
+[`document-pane.md`](document-pane.md)):
 
-### The agent's reach: typed calls through the hatch
+- `:quote[doc_id, verbatim quote]` anchors a claim to a specific verbatim passage from the paper's canonical rendering.
+- `:paper[doc_id]` cites a paper as a whole without anchoring to a single passage.
 
-Exposure to the sandboxed agent is decided per rpc ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): the agent's
-reach is the discovery searches, resolving identifiers to papers, starting and polling full-text production, reading a
-paper's markdown and validating a quote, and marking each asserts the condition that doc sets — bounded cost, and
-outbound requests that are destination-fixed and query-only — for that rpc. `DescribePaper`, `ResolveContent` and
-`Locate` serve the BFF alone and are not marked.
+Clicking either directive in the workbench opens the paper in the document pane. For `:quote`, the BFF calls `Locate` to
+highlight the passage inside the displayed representation; if `Locate` returns `not_located` (for instance, because a
+rendering was updated after the quote was written), the workbench renders a drifted-citation warning rather than
+failing. Because both directives accept only a `doc_id`, the citation grammar itself enforces that every cited paper has
+passed through `MaybeIngestPapers`. Claims drawn from an abstract on a discovery record, a structured database fact, or
+a guideline specification use plain prose rather than `:quote` or `:paper`, since none of them has a rendering in the
+full-text store for a directive to resolve against.
 
-The read surface is shaped for that agent: the guest (the sandboxed process these calls serve) has no network and no
-storage credentials, so typed calls are its entire reach into the literature. That is also why the agent's read path is
-`ReadMarkdown` rather than the store directly, even though `ResolveContent` already names the object:
+Reading and citing a paper in one Analysis run also supports a higher-level layer above this interface: distilling a
+paper's full text into reusable **knowledge units**. A knowledge unit is an atomic assertion stripped of the original
+paper's phrasing and paired with a citation (`SourceAnchor`, defined in
+[`litcache-manifest.md`](litcache-manifest.md#quote-reference-model)) to the exact passage in the rendering from which
+it was extracted. A single paper yields many knowledge units. When a future run asks whether published functional assays
+show that a variant impairs channel function, the knowledge-unit layer retrieves the relevant atomic assertions,
+evaluates whether each supports or refutes the claim, and returns a cited tally (for example, four supporting reports
+and one conflicting report) without re-reading every paper from scratch. Whenever a user or agent wants to verify a
+load-bearing assertion against the primary literature, they follow its citation back into this interface through
+`Locate` and the document pane, just like a working document's `:quote` directive.
 
-- the service owns canonical-rendering selection and readiness and provenance derivation; a raw object read would
-  re-derive them inside the guest, where they could drift;
-- a read crosses the hatch (the sandbox's one channel out, a fixed allowlist of typed rpcs) and lands in the session's
-  event log, which is what makes it possible to see afterwards which papers a run relied on;
-- the location `ResolveContent` returns is useless in the guest by construction — nothing in the sandbox can follow it.
+Keeping knowledge units in a layer above the literature evidence service preserves the boundary between shareable facts
+and licensed source texts ([`../PRODUCT.md`](../PRODUCT.md) §7): knowledge units can be pooled across Projects and
+institutions because they carry pointers (`doc_id` and `rendering_key`) rather than copies of the paper, while opening
+the underlying paper text goes through the full-text store under the reader's access. Because a knowledge unit outlives
+the run that extracted it and must remain verifiable even after new source revisions are fetched or newer converters
+move a paper's `markdown` ref, its `SourceAnchor` records the content-addressed `rendering_key` returned in
+`ReadMarkdown`'s `RenderingHeader`. That content hash guarantees that the unit's quote resolves against the exact bytes
+from which it was extracted, or against nothing at all.
 
-The BFF path is the complement: it takes a location and serves the bytes to the browser itself. `ResolveContent` and
-`Locate` are useful only there, and neither reaches the guest's catalog. Those reads take no session: the corpus is
-shared, nothing paid starts, and a curator opening a paper is not an evaluation subject
-([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Callers).
+### Depositing supplied papers and switching backends
 
-Several channels in that reach do carry free text the agent composes: the keyword query, and the variant identifiers a
-search carries — a gene symbol, a coding or protein change, an entity id passed back from a listing. They are an
-accepted residual rather than a hole, because of the shape they are bounded to. Each crosses only as an encoded value on
-a fixed endpoint — a parameter's value or a single path segment — so what it can influence is which records or entities
-come back and nothing about where the request goes; there is no destination for it to name ([`security.md`](security.md)
-§What counts as an exfiltration channel). And the same typed, logged crossing that records which papers a run read
-records what it asked, so a string the agent composed is legible afterwards rather than an unobserved reach outward.
+When open-access harvesting cannot obtain a paper's full text, a human can supply the PDF under institutional access
+through two routes:
 
-The agent's working loop, in outline: discover or arrive with a PMID → through the door to a `doc_id` → capture the
-rendering to a file in scratch → search and read the file, and quote only from it → validate every quote while
-authoring. A paper the store cannot serve is reported, not worked around.
+1. **Institutional mirror deposit.** Outside the full-text store and outside this service, an institution can maintain a
+   durable **mirror** of PDFs acquired under its subscriptions. A **deposit** job takes each PDF from the mirror,
+   resolves its external identifiers, mints or adopts its `doc_id` in the crosswalk, writes the PDF to the store as an
+   institutionally captured source revision, and runs the standard PDF-to-markdown converter. Because crosswalk minting
+   adopts existing `doc_id`s, all store writes are content-addressed, and existing renderings short-circuit conversion,
+   re-running a deposit over the entire mirror is idempotent. The deposit runs under the ingestion worker identity
+   rather than the literature service identity, so the mirror remains the authoritative copy of those PDFs and disaster
+   recovery simply re-runs the deposit. Downstream, a deposited paper works like any other ready paper in the store,
+   distinguished only by its `SUPPLIED` text provenance. (The store and provenance contract support mirror deposits
+   today; the CLI or batch tooling that drives a mirror deposit is not built yet.)
+1. **Per-Analysis curator upload.** A curator can also upload PDFs directly onto an Analysis's literature list in the
+   workbench, reconciling each PDF against an index record before claiming a `doc_id`, as designed in
+   [`supplied-papers.md`](supplied-papers.md).
 
-A paper's supplementary files are not on this path yet. The store holds them, but the agent can neither list a paper's
-files nor read one: `DescribePaper` lists them for the browser alone, and `ReadMarkdown` serves only the main text. Both
-are follow-up work, once supplementary files have renderings of their own.
+Behind the gRPC servicer sits a single `LiteraturePort`
+([`themis/services/evidence/literature/`](../../themis/services/evidence/literature/)) with two implementations selected
+by one configuration switch (`live` vs `fixture`, following [`services.md`](services.md)). Whereas the `live` backend
+queries the full-text store bucket, the crosswalk database, and the three public HTTP indexes, the `fixture` backend
+serves deterministic in-memory records and seeded quote locations for tests and offline evaluation. Using a single
+switch across both discovery and store reads guarantees that a run is either completely live or completely offline;
+splitting the switch per data source would create hybrid modes (such as live index searches paired with fixture
+full-text reads) whose results cannot be interpreted.
 
-### Citing a paper
-
-A working document's literature claims are anchored by two markdown directives the workbench renders:
-`:quote[doc_id, verbatim quote]` for a passage the run read, and `:paper[doc_id]` for reliance on a paper without
-resting the claim on any single passage. Clicking either reveals the paper in the document pane; a quote resolves live
-through `Locate` into a highlight, and one that does not locate renders as a warning rather than an error — a citation
-that has drifted is worth showing as drifted.
-
-The grammar is `doc_id`-keyed end to end, and that is what makes the door mandatory rather than a convenience: there is
-no directive spelling that names a PMID. Abstracts, database facts and specification text are stated in prose with no
-directive at all, because none of them has an anchor in the store a directive could resolve against.
-
-### Knowledge units: the layer above reading
-
-A run that reads a paper and cites it has answered one question, once. Above this interface sits the layer that makes
-such an answer reusable: a paper's full text is distilled into **knowledge units** — atomic assertions, each stripped of
-the source's phrasing, each citing the exact text in a rendering it was drawn from. One paper yields many. A unit is a
-claim together with the evidence for it, not a summary of a paper.
-
-What that buys is a question answered without opening anything. Asked whether there is functional evidence that a
-variant impairs a channel's function, the layer pulls the units bearing on that claim, judges each as supporting or
-refuting it, and returns a cited tally — four supporting reports and one conflicting, say — from facts already
-distilled. The reading surface comes back in for the next step: whoever wants to check the load-bearing report follows
-its citation into the source text, which resolves to a passage in a rendering through `Locate`, exactly as a working
-document's `:quote` directive does. So the layer above answers from facts, and this interface is what makes an answer
-verifiable against the paper.
-
-That is also why the two are separate layers rather than one interface. A knowledge unit is a fact, and facts cross
-Project and institutional lines, each keeping a citation that points at its source rather than copying it
-([`../PRODUCT.md`](../PRODUCT.md) §7); reaching the text a citation names is a separate step, taken against the store,
-under whatever access the reader has. Nothing above has to hold a paper to use what was read from it.
-
-Content-addressed renderings are what make a unit's citation permanent, which is why that property is load-bearing here
-rather than merely tidy. A unit outlives the run that extracted it, so its citation has to still mean something after a
-better converter has produced a new rendering of the same paper and a re-fetch has added a source revision. Because a
-rendering is identified by its own bytes, the one a unit cites cannot change under it: the citation resolves against
-exactly the text it was made against, or against nothing. For an anchor to record which rendering that was
-([`litcache-manifest.md`](litcache-manifest.md) §Quote-reference model), the read has to hand back its hash, which is
-what `ReadMarkdown`'s header carries.
-
-### Supplied papers are ordinary papers
-
-A paper the open-access route cannot serve enters the store through a human. Such papers accumulate in a **mirror**: a
-durable, maintained collection of PDFs obtained under institutional access, kept outside the store and outside anything
-this interface reaches. The route the design admits off that mirror is a **deposit**: per PDF, resolve its identifiers,
-mint or adopt its `doc_id`, write the PDF as an institutionally-captured source, and produce the same markdown rendering
-by the same converter every non-open-access paper gets. Nothing downstream then treats the result as a special case —
-the one thing that distinguishes it is the recorded access disposition, which surfaces as `SUPPLIED` text provenance.
-
-A deposit is idempotent by construction, so the whole mirror can be re-run safely: the mint adopts incumbents, every
-write is content-addressed, and an existing rendering short-circuits the conversion. It runs under the ingestion
-identity, not the service's, so a deposit's PDF and rendering are no part of what the service may write. So the mirror,
-not the bucket, is the authoritative copy: everything the store holds for such a paper derives from it, and recovery is
-re-running the deposit rather than restoring the bucket. No tooling in the tree drives a deposit yet.
-
-A curator can also hand over the papers one Analysis needs, by dropping their PDFs on the Analysis's list of the
-literature it used. That route settles which paper each PDF is against an index record before anything is claimed, and
-its design is [`supplied-papers.md`](supplied-papers.md).
-
-### Offline or real, never half of each
-
-Behind the servicer sits one port, however many places its answers come from: the live backend reads two sources, the
-full-text store and the live indexes. A **single** switch chooses live or fixture ([`services.md`](services.md); the
-interface is [`literature/`](../../themis/services/evidence/literature/)). A run is therefore entirely offline or
-entirely real. A switch per source would buy a mode nobody wants — real papers with invented search results, or the
-reverse — and would make a fixture run's results impossible to interpret.
-
-The live store adapter proves the bucket readable at startup by listing it, and exits if it cannot. A bucket the service
-cannot read would otherwise answer every request "no such paper", which is indistinguishable from a store that genuinely
-holds nothing — the one failure mode that would let a run conclude, quietly and wrongly, that the literature says
-nothing.
+When the service starts in `live` mode, the store adapter verifies that it can read the full-text bucket by performing a
+1-key bucket listing before serving traffic, exiting immediately if the check fails. Without that startup probe, a
+misconfigured bucket name or missing storage IAM grant would cause every manifest read to miss and report
+`UNKNOWN_PAPER` or `NOT_FOUND`, allowing an analysis run to conclude silently and wrongly that Themis holds no full text
+for any paper.
 
 ## Alternatives considered
 
-- **One bibliographic record across the discovery rpcs**, whether a type invented to be common or `PubmedArticle`
-  borrowed for `SearchEuropePmc`'s hits. Rejected: both are mappings of a source's answer into a schema it did not
-  publish — see *A discovery rpc is a query against one named source*.
-- **Serving the PMID-keyed lookups from Europe PMC**, so the one index that answers search also answers the bibliography
-  behind the census and the batch fetch. Rejected: a PMID is PubMed's own key, efetch already serves a whole batch in
-  one call, and its record is the one the store embeds in a paper's canonical metadata — Europe PMC in that seat means a
-  second account of every paper across the service's own rpcs, and a batch lookup emulated through a search endpoint's
-  term disjunction. Europe PMC keeps the seat it earns: keyword search over open-access full text and preprints.
-- **Inline bibliographies on the variant census.** Rejected: filling records into `SearchLitVar`'s answer forces a
-  record budget shared across entities, and its truncation accounting — which entity's list was cut by budget rather
-  than by the index — is exactly the delicate part. The census in PMIDs keeps the budget per entity, and the caller —
-  who chooses which entities matter — spends the bibliographic read through `FetchPubmedArticles` on the PMIDs it
-  actually wants, at the price of one more call.
-- **Accepting external identifiers directly on the rpcs that serve a paper**, as an either-or in each request, instead
-  of a separate resolution step. Rejected: every one of those rpcs would then have to police an ambiguous request;
-  resolution has to happen explicitly anyway, since directives and saved copies are `doc_id`-keyed; and a dedicated rpc
-  is what confines the relational dependency to one method.
-- **Serving bytes rather than a location** from a single content rpc. Rejected: the guest consumes only text, publisher
-  PDFs routinely exceed the message budget, and the markdown rendering is the citable representation in any case. A
-  file-serving rpc can be added later if a need appears; declaring selectors that the rpc would refuse trades fail-loud
-  honesty for a symmetry nobody reads.
-- **Returning the agent's text in the reply, cut to a budget.** The rpc would return the rendering in one message,
-  clipped at a line boundary to a budget the caller asks for and the server caps. It is the simplest read, and the
-  budget protects the agent's context. But the agent's script writes the text to a file rather than printing it into
-  context, so the budget protects nothing, and the cut makes the tail of the longest papers unreachable. A cursor to
-  page past the cut would cost a call per page for a reader who wants the whole text anyway.
-- **Mounting the store into the sandbox.** The sandbox job would mount the bucket read-only, and a tool the agent calls
-  to open a paper would bind that paper's directory into the guest. The agent would read the store's own files in place:
-  nothing copied into the job's in-memory filesystem, and a large file read lazily, only as far as the agent reads it.
-  It was declined, for four reasons. It gives the job a read grant on the whole store, where the stream needs none. A
-  paper's directory would appear in the guest only from the next command on, because the worker launches a fresh guest
-  for every command and fixes its view of the filesystem at launch; so the tool must change the worker's sandbox
-  definition, and that definition is one more piece of session state. That state would also have to be rebuilt: a
-  session's later turns can run in a new job, which restores the workspace from its repository
-  ([`sandbox-worker.md` § The work item is acked once restore proves](sandbox-worker.md#the-work-item-is-acked-once-restore-proves))
-  but would know nothing of the papers opened before, so every one would have to be bound again. Its one apparent
-  saving, a round trip, is none: the agent spends one tool call either way, on a tool that opens papers or on a script
-  that captures them. And the copy it avoids is small. The largest supplementary files are mostly images: an 847 MB
-  spreadsheet in the store holds about 18,000 characters of text, and a 508 MB Word file about 8,500. Plain-text
-  supplements are the exception, at up to 75 MB of text, and that still fits the job's memory.
-- **A separate home for the variant-literature pair** — its own interface under `evidence-interfaces.md`'s
-  one-interface-per-source rule, or folded into the variant interface. Rejected: what it produces is literature, and a
-  two-rpc interface would buy a separation no consumer wants.
-- **Merging LitVar2's entities into one answer per variant.** Rejected: the merge would have to guess which entity is
-  the caller's, using exactly the labels the caller can see, and a wrong guess silently drops the papers under the
-  dropped entity. Reporting the disagreement costs the caller a decision and costs nobody a paper.
-- **A page cursor on the searches** — see *A search states its census instead of paging*.
-- **A status store for readiness, or producing text on a read** — rejected in
-  [`evidence-fulltext.md`](evidence-fulltext.md), and not restated here.
+- **Using one shared bibliographic record across discovery RPCs.** We considered inventing a common `Article` message or
+  reusing `PubmedArticle` for `SearchEuropePmc` hits. While a single message type simplifies caller code that only wants
+  a title and abstract, mapping Europe PMC's JSON into NLM's DTD drops preprint and open-access fields and forces fake
+  month/day values onto year-only dates, while a custom common schema drops PubMed's richer NLM metadata. Returning each
+  source's own schema preserves every field the source publishes.
+- **Serving PMID batch lookups from Europe PMC instead of PubMed `efetch`.** Using Europe PMC for `FetchPubmedArticles`
+  would reduce the service from three upstream HTTP clients to two. However, a PMID is PubMed's native key, `efetch`
+  natively serves batches of PMIDs in one request (whereas Europe PMC requires emulating batch lookup via an `EXT_ID`
+  boolean disjunction query), and the full-text store embeds PubMed's `PubmedArticle` proto in `metadata.pb`. Keeping
+  PubMed `efetch` avoids maintaining two different bibliographic schemas for the same PMID across discovery and storage.
+- **Returning inline bibliographic records inside `SearchLitVar`.** Embedding article records directly in each
+  `LitVarVariantEntity` would save the caller a follow-up `FetchPubmedArticles` call. However, because one variant fans
+  out to up to 8 overlapping entities, inline records would require a shared record budget across entities and complex
+  per-entity truncation reporting. Returning ranked PMID lists keeps truncation per entity (`pmids` vs `total_found`)
+  and lets the caller fetch full records only for the entities it accepts.
+- **Accepting external identifiers directly on store read RPCs.** Letting `ReadMarkdown`, `DescribePaper`, or `Validate`
+  accept either a `doc_id` or a `pmid:`/`doi:` string would save one RPC call when opening a paper. We rejected this
+  because citations (`:quote[doc_id, ...]`, `:paper[doc_id]`) and scratch files must key on `doc_id` anyway, and
+  isolating external-ID resolution inside `MaybeIngestPapers` keeps every other RPC free of crosswalk database
+  dependencies and upstream ingest side effects.
+- **Returning raw file bytes from `ResolveContent` or adding a general file-streaming RPC.** Streaming PDFs or
+  supplementary files through the gRPC service would unify metadata and byte delivery in one call, but publisher PDFs
+  and supplements routinely exceed gRPC message limits and the sandboxed agent only consumes markdown text. Having
+  `ResolveContent` return storage coordinates for the BFF while `ReadMarkdown` streams markdown to the agent matches
+  each caller's transport and security boundary.
+- **Returning `ReadMarkdown` in a single unary response truncated to a character budget.** A unary RPC that clips long
+  papers at a line boundary is simpler than server streaming and bounds context size if a caller prints the response
+  directly into an LLM prompt. Because our agent helper writes the rendering to a local file in the sandbox and inspects
+  it with search and file-reading tools, a server-side budget saves no model context and makes the end of long papers
+  (often containing supplementary tables or methods) unreachable without a multi-call paging loop.
+- **Mounting the full-text store bucket into the sandbox filesystem.** We considered mounting the full-text bucket
+  read-only into the sandbox job and providing a tool that binds `papers/{doc_id}/` into the guest container on demand,
+  which would avoid copying markdown bytes into the sandbox's in-memory filesystem and allow lazy reads of large files.
+  We rejected this for four reasons:
+  1. It requires granting the sandbox worker job IAM read access to the entire full-text bucket, whereas streaming via
+     `ReadMarkdown` keeps storage credentials strictly inside the `evidence` service.
+  1. Because the sandbox worker launches a fresh guest container with a fixed filesystem view on every command, a bind
+     mount requested by a tool could only take effect on the *next* command and would add mutable mount state to the
+     session definition.
+  1. Across multi-turn sessions that resume on a new sandbox worker job after workspace git restore
+     ([`sandbox-worker.md`](sandbox-worker.md#the-work-item-is-acked-once-restore-proves)), previously bound paper
+     directories would disappear unless re-bound from session state, whereas files written into the workspace or scratch
+     by `ReadMarkdown` follow ordinary file semantics.
+  1. It saves neither a tool call (the agent makes one call either way) nor meaningful memory: in our corpus, the
+     largest supplementary files are dominated by embedded images (an 847 MB spreadsheet contains roughly 18,000
+     characters of text, and a 508 MB Word document roughly 8,500 characters), and even the largest plain-text
+     supplements (up to 75 MB) fit comfortably in the sandbox job's memory.
 
 ## Open questions
 
-- **Surfacing retraction.** The manifest records a paper's retraction — flagged, never purged
-  ([`litcache-manifest.md`](litcache-manifest.md)) — but nothing on this read surface reports it, so a retracted paper
-  reads like any other and a run can cite it as live evidence. How the read surface and the citation directives carry
-  the flag needs a contract decision.
-- **A quote taken before a paper's text moved.** `Validate` checks a quote against the rendering the paper's `markdown`
-  ref names when it is called. The agent's file is the rendering that was named when the agent captured it. If a better
-  rendering lands in between, a quote copied faithfully from the file can fail to validate. Letting `Validate` take the
-  rendering key the capture returned would close the gap, and that key is already what a knowledge unit's anchor
-  records.
-- **Quoting a supplementary file.** Once the agent can read a supplementary file's rendering, the citation directives
-  still name a `doc_id` and nothing else, so a quote from that rendering could be neither validated nor highlighted.
-  Naming the file in the directive is a grammar decision for the working document.
-- **A Bookshelf accession at the door.** `MaybeIngestPapers` takes a scheme-qualified DOI, PMID or PMCID. A GeneReviews
-  chapter's URL carries its Bookshelf accession (`NBK…`) where a citation carries its PMID, and the store mints the
-  accession as an external id like the others
-  ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)); whether the door accepts
-  `bookid:` as a fourth scheme is undecided.
+- **Surfacing paper retractions on the read and citation surfaces.** The litcache manifest records retraction notices on
+  a paper without purging the paper ([`litcache-manifest.md`](litcache-manifest.md)), but none of the discovery or store
+  RPCs currently exposes a retraction flag, so an analysis run or document pane renders a retracted paper like any
+  other. We need to decide how `ReadMarkdown`, `DescribePaper`, and rendered `:quote` / `:paper` directives surface
+  retraction status.
+- **Validating quotes when a paper's canonical rendering advances mid-run.** `ReadMarkdown` returns the `rendering_key`
+  that was canonical when the agent captured the file, whereas `Validate` currently checks quotes against whichever
+  rendering the paper's `markdown` ref points to when `Validate` is called. If a higher-ranking XML rendering lands in
+  between, a verbatim quote copied from the agent's captured file can fail validation. Allowing `Validate` to accept the
+  optional `rendering_key` from `RenderingHeader` (matching what a knowledge unit's `SourceAnchor` already records)
+  would close this race.
+- **Citing and validating passages from supplementary files.** Once supplementary files gain markdown renderings and an
+  agent read path, `:quote[doc_id, verbatim quote]` still names only a `doc_id`, which is insufficient to tell
+  `Validate` or `Locate` which supplementary file the quote came from. Extending the directive grammar to name an
+  associated file is open.
+- **Accepting NCBI Bookshelf accessions (`bookid:NBK...`) in `MaybeIngestPapers`.** A GeneReviews chapter's URL carries
+  its Bookshelf accession (`NBK...`) where a citation carries its PMID, and the store already mints `bookid:NBK...` as
+  an external ID in the crosswalk alongside the chapter's `metadata.pb` record
+  ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)). Whether `MaybeIngestPapers`
+  should accept `bookid:` at the door alongside `pmid:`, `doi:`, and `pmcid:` is undecided.

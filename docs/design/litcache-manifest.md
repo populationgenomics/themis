@@ -1,857 +1,775 @@
-# Design: the litcache manifest
+# Literature cache manifest and paper model
 
-**Related:** [`proto.md`](proto.md) (how at-rest records are serialised, and how their schemas may change),
-[`evidence-fulltext.md`](evidence-fulltext.md) (the steps that bring a paper up to date, including its text, and how
-readiness is read off the store), [`literature-evidence-layer.md`](literature-evidence-layer.md) (the interface that
-serves the store to the agent and the browser), [`../plans/literature-cache.md`](../plans/literature-cache.md) (the
-build plan).
+**Related:** [`literature-evidence-layer.md`](literature-evidence-layer.md) (the evidence service that reads this
+store), [`evidence-fulltext.md`](evidence-fulltext.md) (how open-access fetch and PDF transcription populate sources and
+renderings), [`supplied-papers.md`](supplied-papers.md) (how user-supplied PDFs enter a paper's directory),
+[`document-pane.md`](document-pane.md) (how the workbench reveals papers and highlights quotes), [`proto.md`](proto.md)
+(protobuf-at-rest and upstream-JSON storage rules).
 
 ## Overview
 
-Themis's full-text store keeps each paper as a directory in a bucket, named by the paper's `doc_id`. Most of what a
-directory holds is bytes named by their own content hash: the PDF and XML a paper was fetched as, and the markdown made
-from them. A name of that kind says what the bytes are, but not whether they belong to the paper. One object in each
-directory says that: the manifest. A paper exists for every reader once its manifest is committed, and it holds exactly
-what the manifest names.
+The literature cache stores every paper under a Google Cloud Storage (GCS) prefix `papers/{doc_id}/`, where `doc_id` is
+a random UUID4 minted when the paper is first ingested. A single paper can be known by multiple external identifiers
+(such as a DOI, a PubMed ID, and a PubMed Central ID) that are discovered at different times, and its full text can
+arrive from multiple upstream sources (such as a publisher PDF and a PubMed Central JATS XML file) that are revised or
+re-converted independently. If the cache keyed directories by an external identifier or overwrote a single markdown file
+in place, late-arriving identifier links would force directory renames, and re-running a markdown converter would
+invalidate character offsets in existing citations.
 
-The manifest records two kinds of thing. It records what was *captured*: the source files, each a lineage of revisions
-that carries its own licence. And it records what was *derived* from them. Today the only derived artifact is a
-rendering, the markdown a reader quotes. The extractions that come next read a rendering and feed each other. A variant
-set is extracted from a rendering, a pedigree is built from variant sets, and a case report is written from a pedigree
-and the text.
-
-That chain is what shapes the design. Every derived artifact is recorded the same way, as a *record* keyed by the hash
-of its bytes, naming the hashes it was made from and how it was made. A chain of any depth is then a path from record to
-record. A paper can also hold several candidates at one level, such as a rendering converted from the publisher's XML
-and an older one transcribed from a PDF. So the manifest holds *refs* as well: one name per kind, each pointing at the
-record a reader should use. The run that produces a record moves the ref when the new record is the better one. The
-choice is therefore made once, when the record is written, and every reader follows the same name.
-
-Beside the manifest sits `metadata.pb`, the paper's bibliographic record as each index published it
-([The bibliographic record](#the-bibliographic-record-metadatapb)).
+Instead, each paper directory is committed by an atomic
+[`Manifest`](../../schema/proto/themis/litcache/models/litcache.proto) (`manifest.pb`) alongside a re-derivable
+bibliographic record (`metadata.pb`). Within `manifest.pb`, captured primary files (PDFs and XMLs) are modeled as
+append-only lineages of content-addressed revisions (`Manifest.sources`), and derived artifacts such as markdown
+conversions are stored as content-addressed entries in `Manifest.records` keyed by the SHA-256 hash of their output
+bytes. A pointer map (`Manifest.refs`) names the record that readers should use for each role (such as
+`refs["markdown"]`), while older renderings remain addressable by hash so existing quote caches never break. Beside the
+manifest, `metadata.pb` stores a [`SourcedMetadata`](../../schema/proto/themis/litcache/models/litcache.proto) message
+that pairs the normalized seven-field [`Metadata`](../../schema/proto/themis/litcache/models/litcache.proto) view
+consumers read with the complete upstream records (`MetadataSource`) from PubMed, Crossref, and OpenAlex, allowing
+normalized fields to be refilled from stored upstream records without re-querying external APIs.
 
 ## Background
 
-### A paper's directory, and why it needs a manifest
+Themis ingests biomedical literature from a pre-existing seed corpus of PDFs and Docling conversions, from live
+open-access fetches across PubMed Central (PMC) and Unpaywall, and from user-uploaded PDFs. Across these paths, four
+properties of scientific publishing shape the storage model:
 
-A paper's files are *content-addressed*: each is stored under a name made from the sha256 of its bytes. That has three
-consequences the rest of the design leans on. Writing the same bytes twice produces one object, so a write can be
-repeated safely. An object never changes after it is written, since different bytes would have a different name. And a
-reference to an object by its hash is also a check that the bytes are the ones meant.
+1. **Identifiers arrive piecemeal and sometimes collide.** A preprint is first ingested under a bioRxiv DOI, later
+   acquires a journal DOI and a PMID upon publication, and later still receives a PMCID when deposited in PMC. Two
+   workers can ingest different identifiers for the same work before any upstream index links them, or an upstream
+   record can erroneously attach a review's DOI to another paper.
+1. **Primary files and conversions evolve on separate clocks.** A paper may start with a scanned PDF transcribed by an
+   OCR model and later gain a publisher JATS XML converted deterministically by `litdown`, or the same PDF may be
+   re-transcribed when a vision model improves.
+1. **Access and licensing terms attach to the specific file, not the work.** A paper whose publisher PDF is restricted
+   to authenticated institutional readers often has an author manuscript in PMC under `CC-BY` that permits external
+   sharing.
+1. **No single bibliographic index is complete on its own.** PubMed curates Medical Subject Headings (MeSH) and NLM
+   publication types for biomedical articles and books, Crossref registers DOIs for non-Medline journal articles and
+   preprints, and OpenAlex disambiguates author profiles and ORCIDs across works much more completely than the per-paper
+   deposits in PubMed or Crossref.
 
-What a content-addressed name cannot say is whether the bytes belong to the paper. A writer that crashes halfway through
-storing a paper leaves objects behind, and they look exactly like the objects of a finished paper. So one object in the
-directory is named by its role rather than its content: `manifest.pb`. It is written last, and only if no manifest is
-there yet, so the first writer to finish wins and a second learns it lost. Readers go to the manifest and nowhere else.
-An object no manifest names is inert, which is what makes a crashed write harmless.
-
-The manifest is a binary protobuf, defined in
-[`litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto). The examples below show it as JSON for
-reading only.
-
-### What the manifest has to say
-
-A paper's primary artifact can change while its identifiers stay the same. PubMed Central reissues an article's XML as
-`PMC2992036.1` and later `PMC2992036.2`, and a publisher corrects a PDF without minting a new DOI. The change is to one
-file, not to the paper as a whole: a corrected XML leaves the PDF beside it untouched.
-
-Licence varies the same way, file by file. The JATS XML a paper is fetched as from PubMed Central's open-access subset
-can carry a CC-BY licence inside it, while a PDF of the same paper supplied by a person's institutional access carries
-none. A licence recorded once for the whole paper would be wrong for one of the two.
-
-A paper's text reaches a reader as markdown, and there is more than one way to make it. Converting the publisher's XML
-reproduces the paper faithfully. Transcribing a PDF with a vision model gets close, and an older converter got less
-close. So the route a rendering took decides how far it can be trusted, and a paper can hold renderings made by several
-routes at once.
-
-Quotes are stored against a rendering's bytes, because quoting is done on text. A quote made last month may refer to a
-rendering made from a revision the store has since replaced, and it has to keep resolving. It also has to be upgradeable
-to the current revision, by finding the same words in the newer text.
-
-### Derived artifacts depend on each other
-
-Renderings are the first artifact the store derives, and they will not be the last. Each extraction that follows reads
-something the store already holds and produces something a later step reads in turn. A rendering is made from a source
-revision, a variant set is extracted from a rendering, a pedigree is built from variant sets, and a case report is
-written from a pedigree together with the paper's text, so it depends on two artifacts of different kinds.
-
-At any level a paper can hold more than one candidate: two renderings, or two variant sets extracted with different
-prompts. A step can read only one of them, and which one it read is part of what it produced. A variant set extracted
-from an approximate rendering is a different result from one extracted from the faithful one.
+The protobuf schema for both `manifest.pb` and `metadata.pb` lives in
+[`schema/proto/themis/litcache/models/litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto).
 
 ## Design
 
-### Captured files are lineages of revisions
+### Identity and equivalence
 
-The obvious way to record what a paper was fetched as is one entry per paper: its PDF, its XML. That breaks on the first
-reissue, because there is then a second XML with the same role and nowhere to put it. A paper-wide snapshot, where each
-change produces a new version of the whole record, breaks the other way: it records a change to the XML as a change to
-the PDF too.
+The obvious way to name a paper's directory in GCS is by an external identifier such as its DOI or PMID. That breaks as
+soon as a paper is ingested by its PMID before its DOI is known, or when a preprint without a PMID is ingested by its
+DOI and later indexed by PubMed: any external identifier chosen as the directory key either is absent on some papers or
+changes when richer metadata arrives.
 
-So each captured artifact is a *lineage*, named by a stable handle such as `xml` or `pdf`, and a lineage holds an
-append-only list of *revisions*, one per fetched byte-set. A lineage's current revision is the one captured most
-recently, judged by its capture time and never by its position in the list. A reissue appends a revision to the `xml`
-lineage and leaves the `pdf` lineage alone. The handles in use are `pdf` and `xml`, one per media type. The handle is an
-open namespace rather than the media type, because two lineages could share a media type: XML converted from a scraped
-web page would enter as XML under a handle of its own.
+To keep directory paths stable, [`themis/litcache/crosswalk.py`](../../themis/litcache/crosswalk.py) assigns each paper
+a random UUID4 (`doc_id`) when it is first minted. Before writing to GCS, an ingestion worker classifies all known
+identifiers for the paper into normalized `{scheme}:{value}` keys via
+[`themis/litcache/identity.py`](../../themis/litcache/identity.py) and claims them in a single PostgreSQL transaction
+against `litcache.crosswalk (external_id PRIMARY KEY, doc_id)`. Identifier schemes are ordered by precedence:
 
-Licence and access sit on the lineage, because that is the level at which they vary. They hold across all of a lineage's
-revisions and differ between a paper's lineages. A lineage also records where its licence string came from. It was
-either read out of the fetched bytes, as a JATS `<license>` element is, or asserted by an access authority because the
-bytes carry none. The store keeps the raw string as the fetcher returned it, without mapping it onto an SPDX identifier.
-
-Each revision records where its bytes came from: the open-access source that served them, the seed corpus, a person's
-upload, or the open-access location Unpaywall lists for the paper. The last is how a paper ingested by its identifier
-alone comes to hold a PDF. Take the preprint `doi:10.21203/rs.3.rs-4272138/v1`. No source serves its XML, so the
-conversion lane fetched the PDF at Unpaywall's best open-access location and recorded it as the one revision of a `pdf`
-lineage. A PDF carries no licence in its bytes, so the lineage's terms are the ones Unpaywall states for that same
-location, `cc-by` and free to read, recorded as asserted. Unpaywall's terms describe one copy of a paper, which is why
-they are taken only with the copy they describe.
-
-Because the terms belong to the lineage, a revision joins a lineage only on that lineage's terms. A PDF obtained on
-different terms from a PDF the paper already holds, such as an open-access copy beside one captured through
-institutional access, is a lineage of its own under a handle of its own.
-
-Two lineages can therefore hold the same bytes. Say a curator supplies a PDF, captured through their library, and the
-identical file is later found at an open-access location. The same revision hash then sits in both lineages, under
-different terms. A record's dep names bytes, not a lineage, so a rendering transcribed from that PDF resolves to both.
-That needs no tie-break, because the bytes are the same: the least restrictive terms of any lineage holding them apply
-to them, and to everything derived from them. Free to read outranks every other access, so in the example the rendering
-is open access, whichever lineage the transcription read its bytes from. Nothing yet reads more than whether a text is
-open, so the order among the restricted kinds of access waits until something does.
-
-Supplementary files, such as figures and data tables, are recorded in a separate list that doubles as the register of
-files known but not yet fetched. A paper can list hundreds of them: one paper in the dev corpus lists 340, and more than
-half of all papers list some. A known file has a name but no content hash until it is fetched. A fetched file records
-the sha256 of its bytes and when it was fetched, and its bytes sit content-addressed beside the paper's other files.
-
-The hash is what lets a derived artifact name a supplementary file as its input, as a variant set extracted from a
-supplementary spreadsheet does. That only works if the hash stays listed for as long as anything depends on it. So the
-list is append-only. When a publisher reissues `mmc1.xlsx` with a corrected row, the corrected file is a second
-`mmc1.xlsx` entry with a later capture time, and the first entry stays. A variant set extracted from the first version
-still names bytes the manifest lists.
-
-A file's role is read from the XML rather than recorded. The publisher's original file name is kept, and the XML refers
-to files by that name: in a sample of 1,680 papers, 98.5% of their files are referenced, two thirds inside a figure and
-a quarter as supplementary material. A figure that the XML refers to by `href` is matched to the list by name when the
-XML is rendered.
-
-### Every derived artifact is a record, keyed by its bytes
-
-The obvious way to record a new kind of derived artifact is a map of its own on the manifest, the way renderings were
-recorded until now: a map from each rendering's hash to how it was made. Each kind would then be fully typed, and a
-reader of variant sets would never see a pedigree. That works for one level. It breaks at the second, because the
-artifacts depend on each other across kinds. Each per-kind map has to invent its own way of naming its inputs.
-Renderings named theirs by a lineage handle plus a revision hash. A reader following a case report back to the words it
-cites would have to learn every kind's scheme on the way down, and every new kind would add a map and a write path of
-its own.
-
-So every derived artifact is a *record* in one map on the manifest, keyed by the sha256 of the artifact's bytes. A
-record holds three things: the hashes it was derived from (its *deps*), when it was produced, and how it was made (its
-*construction*). The construction is a choice with one arm per kind. A rendering's arm names its converter, the
-converter's version, and the model where a vision model transcribed a PDF. A dep is a bare hash. Its role is read from
-what it resolves to: a source revision, a fetched supplementary file, or a record whose construction says what kind it
-is.
-
-Every extraction takes this shape, however many inputs it reads. A knowledge-unit extraction is one document of units,
-with the rendering it read as its dep. A variant extraction is likewise one document, with the rendering and any
-supplementary spreadsheet it read as its deps. A written description of a figure has two: the figure's image, and the
-PDF revision its bounding box was found in. The artifact's bytes sit beside the manifest, content-addressed at a path
-its kind determines, exactly as a rendering's markdown always has.
-
-The chain from the Background then looks like this, with toy hashes:
-
-```mermaid
-flowchart RL
-    R1["revision r1<br/>xml lineage"]
-    R2["revision r2<br/>pdf lineage"]
-    M1["record m1<br/>rendering: llm-ocr"]
-    M2["record m2<br/>rendering: litdown"]
-    V1["record v1<br/>variant set"]
-    P1["record p1<br/>pedigree"]
-    C1["record c1<br/>case report"]
-    M1 -->|dep| R2
-    M2 -->|dep| R1
-    V1 -->|dep| M1
-    P1 -->|dep| V1
-    C1 -->|dep| P1
-    C1 -->|dep| M1
+```
+doi > pmcid > pmid > pii > binhash
 ```
 
-Following a case report back to its text is now one walk: `c1` names `m1`, and `m1` names revision `r2` of the PDF
-lineage. The walk is the same whatever kinds it passes through.
+The highest-precedence key present is recorded on the manifest as `claim_key` (for example,
+`doi:10.1038/s41586-020-2649-2`), and the public bibliographic identifiers (`doi`, `pmid`, `pmcid`, and Bookshelf
+accession `bookid`) are stored in `Manifest.external_ids`.
 
-A new kind needs a new arm in the manifest's schema, which is a contract change and is reviewed as one. That is the
-right place for the review, because the construction is the part of a record a later reader relies on to judge it.
+When `crosswalk.mint` checks the incoming identifier set against existing rows, three cases arise:
 
-A dep does not say which input it was, so a reader that needs to know resolves it. A case report that read both the
-paper's rendering and a supplementary file's rendering tells them apart by following each one step further, to the
-source it was made from.
+```
+Case 1: No existing rows match
+  incoming {doi:10.1038/x, pmid:123} ──► mints fresh doc_id "a1b2..."
 
-Keying by bytes has a cost of its own. Two runs that produce identical bytes produce one record, and the record keeps
-only the deps and construction of the run that finished most recently. A rendering re-made by a newer converter version
-that happens to output the same markdown therefore records the newer version and loses the older. That is the right
-answer for the store's readers. A quote cites bytes, and identical text is the same text to everything that reads it.
+Case 2: All matching rows point to one doc_id
+  incoming {doi:10.1038/x, pmcid:PMC99}
+  existing  doi:10.1038/x ──► "a1b2..."  ──► adopts "a1b2...", inserts pmcid:PMC99
 
-### A ref names the record a reader should use
+Case 3: Matching rows point to two existing doc_ids (late-binding link)
+  incoming {doi:10.1101/pre, pmid:456}
+  existing  doi:10.1101/pre ──► "b4c5..."
+            pmid:456        ──► "f8e9..." ──► adopts canonical min("b4c5...", "f8e9...") = "b4c5...",
+                                              records Equivalence edges on both manifests
+```
 
-Several records of one kind can sit side by side, and a reader needs one of them. The obvious way to pick it is at read
-time: rank the candidates on each read and serve the best. That is how the canonical rendering was chosen until now, by
-converter fidelity with recency breaking a tie. It has real virtues. A re-render can never leave the choice stale,
-because nothing stored records the choice. And a change to the ranking takes effect on the next deploy.
+In the third case, two previously separate `doc_id`s are discovered to be the same work after both directories already
+exist in GCS. Merging and deleting one of the GCS directories in place would break any analysis or citation holding the
+retired `doc_id` and race with concurrent conversions writing to that prefix. Instead, both directories remain in place,
+and each manifest's `Equivalence` message records symmetric `edges` to the linked `doc_id`s along with the equivalence
+class's `canonical_doc_id` (defined deterministically as the lexicographically lowest `doc_id` in the connected
+component).
 
-It breaks at the second level of the chain. Which rendering a variant set was extracted from is part of the variant set,
-so the choice of rendering has to be made before the extraction runs and recorded with what it produced. Read-time
-ranking also puts the ranking in every reader. One reader ranks renderings by converter, another ranks variant sets by
-prompt version, and each has to agree with the writers about what "better" means. The read surface depends on that
-agreement: the agent's read, the quote matcher and the document pane have to serve the same text, or a quote validated
-against one rendering fails to locate in another ([`literature-evidence-layer.md`](literature-evidence-layer.md)).
-
-So the manifest stores the choice, as a map of *refs* from a name to a record's key. The run that produces a record
-moves the ref when its record is better than the one named. Each kind has its own rule for "better"; for an extraction
-it might be the newer prompt version. For a rendering it is the fidelity ranking: a rendering converted from source XML
-is preferred to a PDF transcription, a vision-model transcription is preferred to the older converter, and recency
-breaks a tie. The record and the ref that names it land in one write, and the manifest's schema refuses a ref that names
-no record it holds. Nobody moves a ref by hand.
-
-Names are simple. A kind's name refers to the paper itself: `markdown` names the rendering a reader is served, and
-`variants` names the current variant set. A supplementary file's record of the same kind is named after the file, as in
-`markdown/table-s2.docx`. Each question a reader asks then has a direct answer from the one manifest it has already
-read. It looks up the paper's text by name. It reaches each supplementary file's text by walking the manifest's list of
-files and looking up each file's name. And it finds every rendering ever made by filtering the records by kind.
-
-A stored ref can point at a record built on an input that has since been replaced. Take the figure above. Rendering
-`m2`, converted from the XML, lands after `m1`, so its run moves `markdown` from `m1` to `m2`. The `variants` ref still
-names `v1`, which was extracted from `m1`. Nothing is wrong with that. Rendering `m1` is still held, so `v1` and
-everything built on it stays consistent, and every quote in it still resolves. But `v1` is no longer built on the
-current text, and that is visible: a record is current when each of its deps is the record its kind's ref names, and
-`v1`'s dep is not. Records that are not current are the extraction lane's work, found by reading the store rather than
-recorded anywhere else. A reader that needs a consistent chain, such as a variant together with the words it cites,
-follows deps down from the record it starts at rather than looking up the current ref at each level.
-
-The cost of storing the choice is the read-time design's virtue turned around. A change to the ranking reaches existing
-refs only when something recomputes them, where a read-time ranking would have applied it on deploy.
+The PostgreSQL crosswalk table acts only as the concurrency lock during minting, while the GCS manifests remain the
+system of record. [`themis/litcache/rebuild.py`](../../themis/litcache/rebuild.py) can drop and reconstruct
+`litcache.crosswalk` in a single transaction at any time by scanning `papers/*/manifest.pb`, inverting
+`Manifest.external_ids`, and verifying that every manifest's `Equivalence` edges and `canonical_doc_id` agree.
+Equivalence classes only grow through ingestion; splitting a falsely merged class (for example, after an upstream record
+attaches the wrong DOI) is a manual operator repair with no automated path.
 
 ### Path layout
 
-The manifest and the bibliographic record sit at the paper's root, named by role. Everything else is content-addressed,
-under a directory for its kind:
+Every object for a paper lives under `papers/{doc_id}/` in the cache bucket, written by
+[`themis/litcache/writer.py`](../../themis/litcache/writer.py):
 
 ```
-manifest.pb
-metadata.pb
-sources/pdf/<rev-hex>.pdf
-sources/xml/<rev-hex>.xml
-renderings/<md-hex>.md
-supplementary/<hex>.jpg
+papers/{doc_id}/
+  manifest.pb                          # atomic commit point (protobuf Manifest)
+  metadata.pb                          # bibliographic record (protobuf SourcedMetadata)
+  sources/
+    xml/{sha256}.xml                   # raw JATS XML bytes, content-addressed
+    pdf/{sha256}.pdf                   # raw PDF bytes, content-addressed
+    pdf-2/{sha256}.pdf                 # second PDF lineage when captured under different terms
+  renderings/
+    {sha256}.md                        # rendered markdown, keyed by its own SHA-256
+    {sha256}.docling.json              # optional structured Docling output (CONVERTER_DOCLING)
+  figures/
+    {sha256}.{ext}                     # extracted or fetched figure images
+  supplementary/
+    {sha256}.{ext}                     # lazily fetched supplementary files
 ```
 
-A second revision appends `sources/xml/<new-rev-hex>.xml`, and a re-render appends `renderings/<new-md-hex>.md`. Old
-objects persist, so old quotes keep resolving. Every hash in the manifest and every filename stem is the same bare
-sha256 hex digest, with no prefix and no transform between the two.
+Writing a paper directory takes multiple GCS uploads, and GCS has no multi-object transactions. To prevent readers from
+observing a half-written paper, `writer.write_paper` writes all content-addressed blobs (`sources/`, `renderings/`,
+`figures/`, and `supplementary/`) first, validates the assembled `Manifest` against its protovalidate rules, and uploads
+`manifest.pb` last with `if_generation_match=0` (create-only). A paper exists in the cache if and only if its
+`manifest.pb` exists. If a worker crashes before uploading `manifest.pb`, the unreferenced content-addressed blobs are
+harmless and a subsequent run re-uploads identical bytes to the same paths idempotently before committing the manifest.
 
-`metadata.pb` sits beside the manifest and is the one artifact that may be regenerated after the commit: the manifest
-holds no hash of it, and its bytes derive from the paper's identifiers through the resolver ladder rather than from
-anything in the directory, so re-deriving it refreshes the bibliographic record while every source and rendering stays.
-Which changes that refresh serves, and which need the corpus rebuilt, is decided with the record
-([The bibliographic record](#the-bibliographic-record-metadatapb)).
+Subsequent updates to an existing paper—such as adding a newly fetched open-access source (`add_source`), recording a
+completed markdown rendering (`add_rendering`), or attaching associated files (`add_files`)—go through `writer.commit`.
+`commit` reads `manifest.pb` at its current GCS generation, applies the mutation in memory, validates the resulting
+`Manifest`, and writes it back with `if_generation_match=generation`, retrying from a fresh read if a concurrent writer
+advanced the generation first.
 
-The obvious place to write `metadata.pb` is with the other objects, before the manifest commits, so that a reader never
-finds a manifest without its record. That order is safe for the content-addressed objects because each is named by its
-content: two writers storing the same bytes produce one object, and two storing different bytes produce two.
-`metadata.pb` is named by the `doc_id` alone, and two seeds reach the same `doc_id` when they share an identifier. Say
-one seed is keyed by a DOI, and a second seed, keyed by the PMID of a different paper, names that DOI in its Docling
-origin by mistake. The crosswalk gives both one `doc_id`. Resolution is keyed by the identifiers each seed carries
-rather than by the DOI they share, so the second seed gets its PMID's PubMed record. If both writers pass the manifest
-check before either commits, the create-only commit stops the second manifest but not the second record, and whichever
-manifest commits can end up beside the other seed's record with nothing to notice it.
+If two ingestion workers race past the initial existence check for the same `doc_id`, the second writer's
+`if_generation_match=0` upload fails with `PreconditionFailed` and falls back to `_join_committed`. Before merging its
+blobs into the winner's manifest, `_join_committed` checks `_claims_only`: every identifier in the joining worker's
+`ExternalIds` must already be present in the committed manifest's `ExternalIds`. When a misassigned upstream identifier
+routes a different paper to an existing `doc_id`, the joining worker carries an identifier of its own that the winner's
+manifest does not list; `_join_committed` then leaves the winner's manifest and `metadata.pb` untouched rather than
+grafting another paper's full text or metadata onto the committed directory.
 
-So `metadata.pb` is written after the commit, and only from a record of the paper the manifest describes. The writer
-whose commit wins writes it straight away. Any other writer that finds the manifest committed, by the manifest check or
-by losing the commit, writes the record only when the paper is missing one and the ids its seed claimed are the ones the
-manifest records, since only then is its record the one a metadata refresh would resolve. That check covers the loser
-that is really the winner, too: a commit whose response is lost is retried by the storage client and fails as if another
-writer had won. Whichever of the two seeds above loses claims ids the other's manifest does not record, so it writes
-nothing.
+`metadata.pb` is uploaded immediately after `manifest.pb` commits. Keeping `metadata.pb` in a separate object from
+`manifest.pb` means that refreshing upstream bibliographic records or refilling `Metadata` fields
+([`themis/litcache/refresh.py`](../../themis/litcache/refresh.py)) never touches `manifest.pb` or contends with
+conversion workers updating `Manifest.records`.
 
-The cost is a window in which a committed paper has no record, a state the reader already handles by titling the paper
-with its DOI or PMID. If the writer stops inside that window, the record stays missing until the paper is next ingested,
-and a metadata refresh fills any paper still missing its record.
+[`themis/litcache/writer.py`](../../themis/litcache/writer.py) is the single write gate for every `papers/{doc_id}/`
+directory. No pipeline stage, conversion worker, or CLI script uploads `manifest.pb` or content-addressed blobs
+directly; routing every mutation through `writer.py` guarantees that content-addressed blobs land before the manifest
+references them, `buf validate` (protovalidate) checks pass before any write, and optimistic concurrency
+(`if_generation_match`) serializes concurrent writers on the same paper.
 
-The same race costs more when the loser has done real work. Bulk ingestion claims a paper's ids, then spends minutes
-fetching and converting before it commits. If an agent asks for the same paper in that window, the on-demand ingest
-commits a manifest holding only the paper's ids, and the bulk writer's commit fails. Its PDF and rendering are in the
-bucket, but nothing names them. For a paper that is not open access, the conversion lane cannot reach that PDF, so the
-paper ends with no text although its seed was converted.
+Bulk ingestion also writes a per-run log outside `papers/` under `runs/{run_id}/`. When a paper fails a stage during a
+Dataflow run, the pipeline classifies the failure into a three-tier dead-letter taxonomy under
+`runs/{run_id}/anomalies/{stage}/{shard}.jsonl`:
 
-So a writer that finds the manifest committed joins it rather than discarding its work. In one read-modify-write
-conditional on the manifest's generation, it adds its sources, renderings and files, and moves the `markdown` ref if a
-rendering it adds outranks the one named. It joins only when every id its manifest would record is one the committed
-manifest records. The weaker test, that none of its ids contradicts the manifest's, admits the second seed above: its
-PMID contradicts nothing in a manifest that records only the DOI, and its PDF would land in the other paper's directory.
+- **`transient`:** Upstream rate limits, network timeouts, or 5xx responses that a subsequent retry run can resolve.
+- **`permanent`:** Unresolvable identifiers (`MetadataUnresolvedError`), upstream structural precondition failures
+  (`RecordPreconditionError`), ambiguous OpenAlex works (`AmbiguousWorkError`), or unrecognized upstream source kinds
+  that require data repair or upstream fixes before retrying.
+- **`unhandled`:** Unexpected exceptions or schema drift (`SchemaDriftError`) indicating a bug or upstream contract
+  change that must be fixed in code.
 
-An on-demand ingest records the DOI, PMID and PMCID it was asked for or the index returned, which usually covers what a
-seed carries. Where it does not, the bulk writer still loses its work: a seed carrying a PMCID the index did not return,
-an alias DOI where the index returns the primary one, or a Bookshelf chapter, whose accession the on-demand path does
-not record. An open-access paper among them recovers when the conversion lane renders it again.
+Full-text conversion deliberately runs outside the Dataflow ingestion job. Fetching metadata and open-access archives is
+cheap, embarrassingly parallel network I/O suited to Dataflow workers, whereas PDF transcription (`CONVERTER_DOCLING`
+and `CONVERTER_LLM_OCR`) is slow, GPU- or model-API-rate-limited work that
+[`themis/litcache/produce.py`](../../themis/litcache/produce.py) runs selectively via the conversion queue.
 
-A join can leave a paper holding two seeds' work where a sequential run would have kept one: two PDFs of the same paper,
-each with its rendering, when both seeds reached the `doc_id` concurrently. The ranking picks the rendering served, as
-it does for any paper holding more than one.
+### Captured files are lineages of revisions
+
+If the cache modeled updates by versioning the whole paper (`v1`, `v2`), fetching a corrected JATS XML from PMC would
+appear to supersede an unchanged publisher PDF, and re-running a markdown converter would look like a new version of the
+paper itself. Instead, `Manifest.sources` models each primary file stream as an independent `Source` lineage identified
+by a short `handle` (such as `xml` or `pdf`) with an append-only `revisions` list:
+
+```
+Source (handle = "xml", media_type = SOURCE_FORMAT_XML, licence = "CC-BY-4.0", access = FreeToRead{})
+  └── revisions: Revision (hash = "8f3a...", kind = SOURCE_KIND_PMC_OA_S3, captured_at = 2026-02-01)
+  └── revisions: Revision (hash = "c41e...", kind = SOURCE_KIND_EUROPE_PMC, captured_at = 2026-03-15)  ◄── current (latest captured_at)
+
+Source (handle = "pdf", media_type = SOURCE_FORMAT_PDF, licence = "", access = Licensed{publisher = "Elsevier"})
+  └── revisions: Revision (hash = "19b0...", kind = SOURCE_KIND_SEED, has_text_layer = true)           ◄── current (latest captured_at)
+```
+
+`revisions` within a lineage is an append-only list; a lineage's current revision is the one captured most recently,
+judged by its `captured_at` timestamp (`latest captured_at`) and never by its position in the list. Each `Revision`
+records the SHA-256 `hash` of its raw bytes (which determines its path `sources/{handle}/{hash}.{ext}`), its provenance
+`kind` (`SOURCE_KIND_PMC_OA_S3`, `SOURCE_KIND_EUROPE_PMC`, `SOURCE_KIND_ELSEVIER_OA`, `SOURCE_KIND_BIORXIV`,
+`SOURCE_KIND_UPLOAD`, `SOURCE_KIND_SEED`, `SOURCE_KIND_EUROPE_PMC_BOOKSHELF`, or `SOURCE_KIND_UNPAYWALL`), its
+`captured_at` timestamp, an optional `origin_url`, and, for PDFs, an optional `has_text_layer` boolean indicating
+whether positioned characters can be extracted directly without OCR.
+
+#### Recorded licence
+
+Licensing and access terms (`licence`, `licence_basis`, and the `Access.kind` oneof: `free_to_read` (`FreeToRead`, an
+empty message since the licence string and its basis sit on the enclosing `Source`), `licensed` (`Licensed` carrying
+`publisher`), `institution_captured` (`InstitutionCaptured`), or `unknown` (`UnknownAccess`)) live on `Source` rather
+than on `Manifest` or `Revision`. Placing them on `Manifest` would fail when a paper has both a restricted publisher PDF
+(`licensed`) and an open-access author manuscript in PMC (`free_to_read`); placing them on `Revision` would duplicate
+terms that remain constant across routine updates of the same stream. A new revision joins an existing `Source` lineage
+only when its `licence`, `licence_basis`, and `Access` match that lineage's terms (`writer.same_terms`). If a second PDF
+for the same paper arrives under different terms—for instance, a `CC-BY` author manuscript PDF alongside a restricted
+publisher PDF—`writer._lineage_handle` allocates a numbered lineage handle (`pdf-2`) so each file's redistribution
+boundary stays exact.
+
+### Derived artifacts are content-addressed records
+
+Markdown renderings are only the first kind of derived artifact in the extraction chain: next come **variant sets**
+(extracted from a rendering and a supplementary spreadsheet), **pedigrees** (built from variant sets), and **case
+reports** (written from a pedigree and a rendering—depending on two artifacts of different kinds). Putting a dedicated
+map on the manifest for each kind (`renderings`, `variant_sets`, `pedigrees`, and so on) breaks at the second level:
+artifacts depend on each other across kinds, and a reader following a case report back to its text would have to learn
+every kind's scheme. Ranking candidates at read time also breaks at the second level: which rendering a variant set was
+extracted from is part of the variant set, so the choice must be made *before* extraction runs and stored in `refs`
+(`markdown` for the primary rendering, `markdown/table-s2.docx` for a supplementary rendering, `variants` for the
+current variant set).
+
+Instead, all derived artifacts are stored in `Manifest.records`, a map from the SHA-256 hex digest of the artifact's
+output bytes to a `Record` message. Each `Record` states when it was produced (`created_at`), which inputs it was
+derived from (`deps`), and how it was constructed (`construction`, currently `RenderingConstruction` with `converter`,
+`converter_version`, and optional `model`). Every hash listed in `Record.deps` must exist either as a `Revision.hash` in
+`Manifest.sources` or as another key in `Manifest.records`, a constraint enforced on every write by the protovalidate
+CEL rule `manifest.deps_resolve`.
+
+Keying `Manifest.records` by the SHA-256 of the output bytes rather than by
+`(revision_hash, converter, converter_version)` solves two problems at once:
+
+1. **Idempotent re-conversion and stable quote caches.** Re-running a converter after a patch bump often produces
+   byte-identical markdown for most papers. Because the output hash is unchanged, `renderings/{hash}.md` is not
+   duplicated, [`records.put_record`](../../themis/litcache/records.py) updates the existing record's metadata in place,
+   and every cached quote span keyed to `(doc_id, rendering_hash)` remains valid.
+1. **Uniform provenance DAG.** Because both source revisions and derived records are addressed by SHA-256 hashes,
+   `Record.deps` can point to source revisions, other derived records, or both without changing schema shape:
+
+```
+sources["xml"].revisions[0] (hash: "8f3a...") ◄── deps ── records["d49b..."] (CONVERTER_LITDOWN, v0.3.1)
+sources["pdf"].revisions[0] (hash: "19b0...") ◄── deps ── records["71c2..."] (CONVERTER_LLM_OCR, model: "claude-...")
+```
+
+The trade-off of keying by output bytes is that two runs producing identical bytes share one `Record` entry, which
+retains only the `deps` and `construction` of the run that finished most recently—so a rendering re-made by a newer
+converter version that outputs the same markdown records the newer version and loses the older (which is harmless to
+readers because a quote cites bytes, and identical bytes are the same text).
+
+When a paper is converted by `CONVERTER_DOCLING`, the writer also stores `{hash}.docling.json` beside `{hash}.md` under
+`renderings/` so the structured layout tree is preserved alongside the markdown text.
+
+### A ref names the record a reader should use
+
+A paper directory can hold several markdown renderings at once—for example, a legacy `CONVERTER_DOCLING` rendering from
+the seed corpus, a `CONVERTER_LLM_OCR` transcription of its PDF, and a `CONVERTER_LITDOWN` rendering of its PMC XML. If
+every reader scanned `Manifest.records` and applied its own preference order, two services on different builds could
+disagree on which markdown text represents the paper.
+
+Instead, `Manifest.refs` maps a logical role name to the hash of the winning record in `Manifest.records` (validated by
+the CEL rule `manifest.refs_resolve`). Readers of a paper's full text always follow `refs["markdown"]` via
+[`records.markdown`](../../themis/litcache/records.py). Converter preference lives in code over `Record` and `Source`
+rather than as a stored priority field on the manifest, though `refs` move only when a writer or backfill recomputes
+them: a change to the ranking reaches existing manifests only when a writer or backfill runs, whereas a read-time
+ranking would have applied on deploy. Whenever a writer adds a rendering through `records.put_record`, `put_record`
+compares the new record against the record currently named by `refs["markdown"]` using a total order:
+
+1. **Converter fidelity:** `CONVERTER_LITDOWN` (structured XML input) outranks `CONVERTER_LLM_OCR` (vision-model PDF
+   transcription), which outranks `CONVERTER_DOCLING` (heuristic PDF extraction). Any unrecognized `Converter` enum
+   value ranks below all known converters rather than raising an error, so a worker running an older build during a
+   rolling deployment can still commit its own work when it reads a manifest written by a newer build.
+1. **Recency:** Between two records from the same converter tier, the one with the later `created_at` timestamp wins.
+1. **Deterministic tie-breaker:** If timestamps are identical, the lexicographically smaller SHA-256 hash key wins.
+
+`put_record` only ever moves `refs["markdown"]` to the record being added, never to a third record, and leaves the ref
+unchanged if it already points to the same output hash. When a higher-ranked rendering arrives, `refs["markdown"]`
+advances atomically in the manifest commit, while the superseded rendering stays in `Manifest.records` and `renderings/`
+so pinned references can still read it by hash.
+
+Across multi-level extraction chains, a stored ref can point at a record whose input has since been superseded—for
+example, `refs["variants"]` points at `v1` (extracted from rendering `m1`) after `refs["markdown"]` has moved on to
+`m2`. `v1` remains valid and its quotes still resolve because `m1` is kept in `Manifest.records`, and staleness is
+visible directly from the graph: **a record is current when each of its `deps` is the record its kind's ref names**.
+Non-current records form the extraction lane's work queue, read off the store rather than tracked in a separate table; a
+reader needing a consistent chain follows `deps` down from the record it starts at, rather than reading current refs at
+each level.
 
 ### A change to the manifest's shape pauses the writers instead of carrying both forms
 
-[`proto.md`](proto.md#schema-evolution) sets the rule for a change to a stored record that the compatibility gate would
-refuse. The new form lands as a new field beside the old one, every stored record is rewritten into it, and only then is
-the old field retired, with its number and name reserved. The usual way across the gap is for every reader to accept
-either form for a while, and for every writer to fill both.
+Because `manifest.pb` is stored as binary protobuf in GCS, evolving its schema by carrying both old and new fields
+across a multi-release transition (dual-writing and dual-reading) would leave permanent `reserved` scars in
+`litcache.proto` and transitional branching across every reader and writer ([`proto.md`](proto.md)). Three internal
+processes write `manifest.pb`: the batch ingestion pipeline, the full-text conversion worker draining a Cloud Tasks
+queue, and the evidence service's on-demand ingest (`MaybeIngestPapers`). The first two can be paused; on-demand ingest
+cannot be paused because it runs whenever a caller asks for a paper the store does not yet hold.
 
-For the manifest, that period would be code written only to be deleted. The manifests live in one bucket, and the only
-code that reads or writes them is code this repository deploys. So the gap is crossed by ordering the steps instead:
+Because on-demand ingest continues running during a deployment, a breaking change to `Manifest` uses two rewrite passes
+across four steps:
 
-1. Every manifest writer that can be paused pauses: the conversion queue is paused, and no bulk ingestion runs. A
-   metadata refresh writes only `metadata.pb`, so it can run throughout. The evidence service's on-demand ingest cannot
-   be paused, because it runs whenever a caller asks for a paper the store does not hold, so it keeps writing manifests
-   in the old form until the new code is deployed.
-1. A one-off tool rewrites each manifest into the new form, leaving the old field in place, so readers still running the
-   previous code keep working.
-1. Readers and writers that use only the new form deploy. Once the rollout has finished, the rewrite runs again, to
-   catch any manifest the on-demand ingest wrote in the meantime, and a check confirms that no manifest is left in the
-   old form.
-1. Writers resume. The old field is then retired, and the tool is deleted with it.
+1. **Pause the pausable writers** (the conversion queue and bulk ingestion); on-demand ingest continues writing
+   manifests in the old form until the new code deploys.
+1. **Run the first one-off rewrite** over every stored `papers/*/manifest.pb`, writing the new form while leaving the
+   old field in place so existing readers keep working.
+1. **Deploy the updated readers and writers** that use only the new form, then **run the rewrite a second time** to
+   catch any manifest that on-demand ingest wrote during the rollout, and verify that none remain in the old form.
+1. **Resume the paused writers**, retire the old field (`reserved`), and delete the migration tool.
 
-Renderings moved into records this way. Each manifest had held them in a map of their own, and the rewrite copied each
-entry into a record, set the `markdown` ref by the fidelity ranking, and filled each fetched supplementary file's hash
-from the path its bytes are stored at, which already names them. One manifest's renderings, before and after:
+### Associated files: figures and supplementary
 
-```json
-"renderings": {
-  "dd4306e5…": { "from_source": "xml", "from_revision": "647ab726…", "converter": "litdown", "converter_version": "0.3.0" }
-}
-```
+Papers carry two kinds of associated blobs alongside their main text: figures (`ASSOCIATED_FILE_ROLE_FIGURE`) and
+supplementary materials (`ASSOCIATED_FILE_ROLE_SUPPLEMENTARY`). Rather than maintaining separate protobuf messages with
+identical fields, `Manifest.files` stores both as
+[`AssociatedFile`](../../schema/proto/themis/litcache/models/litcache.proto) entries distinguished by `role`. Each entry
+records the original filename (`name`, such as `"Fig1.jpg"` or `"mmc1.xlsx"`), its `role`, an optional `caption` and
+`source_url`, and—once its bytes are stored in GCS—its relative `path` (`figures/{hash}.{ext}` or
+`supplementary/{hash}.{ext}`), `media_type`, `size_bytes`, `hash`, and `captured_at`.
 
-```json
-"records": {
-  "dd4306e5…": { "deps": ["647ab726…"], "rendering": { "converter": "litdown", "converter_version": "0.3.0" } }
-},
-"refs": { "markdown": "dd4306e5…" }
-```
+Figures and supplementary files differ in how they are fetched:
 
-Every quote survived the move, because a record's key is the same markdown hash the map used.
+- **Figures are stored eagerly during conversion.** Figure images are small, bounded in format, and rendered inline when
+  a curator opens the paper in the workbench.
+- **Supplementary files are cataloged in `Manifest.files` at conversion time and fetched lazily on demand.** A single
+  genomics paper can attach gigabytes of Excel tables, BAM alignments, or archive bundles that no analysis ever opens.
+  At conversion time, the JATS XML parser extracts each `<supplementary-material>` element's filename, download
+  `source_url`, and prose `caption` into an `AssociatedFile` entry with an empty `path`. In a survey of 1,680 PMC XML
+  papers in our corpus (see [Appendix](#appendix)), 98.5% of supplementary files were explicitly referenced in the body
+  text and carried descriptive captions averaging 320 characters (~80 tokens) per paper. Storing those captions on
+  `Manifest.files` lets the agent see every supplementary file's name and description before deciding whether to fetch
+  its bytes.
 
-The rewrite replaces each manifest with a read-modify-write conditional on the manifest's generation, so a manifest a
-writer touches during the run is read again rather than overwritten. The bucket keeps each object's earlier generations
-for 30 days, which is the way back until writers resume; after that, a manifest written by the new code is one the
-previous readers cannot read. The cost is the pause: conversions wait in the queue for as long as it lasts, rather than
-run.
+### Retraction and correction
 
-## The bibliographic record: `metadata.pb`
+When a publisher retracts or issues an expression of concern for a paper, the original PDF and XML files usually remain
+byte-identical upstream while a separate notice DOI is registered in PubMed (`RetractionIn` / `RetractedPublication`) or
+Crossref (`update-to`). Modeling retraction as a new `Source` revision would miss retractions where the full-text bytes
+never change. Instead, `Manifest.retraction` is a top-level
+[`Retraction`](../../schema/proto/themis/litcache/models/litcache.proto) field (`status`, `evidence_source`,
+`detected_at`, and `notice_doi`) that metadata refresh passes can update in place without touching `Manifest.sources` or
+`Manifest.records`.
 
-Beside `manifest.pb`, at the paper's root rather than under a content hash, sits `metadata.pb`: the paper's
-bibliography, meaning its title, authors, journal, abstract and the identifiers its indexes list. The manifest says what
-we hold of a paper and under what terms; `metadata.pb` says what the paper is. The indexes' records in it are
-regenerated wholesale from the indexes, never edited in place ([`proto.md`](proto.md), bucket 1), and Themis's own
-metadata fields beside them are recomputed from them. This section decides what the record holds, what makes ingest
-refuse one, and which fields a consumer reads from it.
+### The bibliographic record: metadata.pb
 
-**Each index's record is stored as that index states it.** A paper's metadata is stored as the record its index
-published, rather than as a subset of its fields chosen at write time. A subset carries only what its author foresaw
-needing, and what it dropped is gone until someone re-fetches; the whole record costs kilobytes and answers questions
-nobody has asked yet. The same test rules out storing one index's record mapped into another's schema. A Crossref work
-squeezed into `PubmedArticle` keeps only the fields PubMed happens to have a slot for, and a reader can no longer tell
-which index answered ([`literature-evidence-layer.md`](literature-evidence-layer.md), a discovery rpc is a query against
-one named source). How each record is held differs by index, for reasons the paragraphs below give: PubMed's as a typed
-proto generated from NLM's schema, Crossref's and OpenAlex's as JSON text, re-serialised from the value each served.
+#### SourcedMetadata: consumer Metadata beside MetadataSource
 
-**Metadata, and its source record.** `metadata.pb` holds a `SourcedMetadata`
-([`litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto)) in two parts: the paper's `Metadata`,
-which is what a consumer reads, and the metadata's source record, a `MetadataSource`, which holds the record of the
-index that resolved the paper, with OpenAlex's record of the same work beside it, and is what the metadata is filled
-from. It is unrelated to two messages of the manifest with similar names: a `Source` is a captured file and its
-revisions, and a `Record` is a derived artifact. The two parts are separate messages so that a consumer can be handed
-`Metadata` alone. A consumer handed the whole record could reach into the source record for whatever the metadata lacks,
-and each such reach is code that handles index records without knowing which index answered. Given `Metadata` alone, it
-cannot do that by accident; a reader that needs the source record is given it on purpose. Here is a preprint that PubMed
-does not index, resolved through OpenAlex (values shortened):
+Consumers of the literature cache—such as search indexing, citation formatting, and the workbench document pane—need
+seven bibliographic fields: `title`, `authors`, `year`, `container_title`, `abstract`, `mesh_headings`, and
+`publication_types`. If `metadata.pb` stored only those seven normalized fields, fixing a parser bug or adding a field
+later would require re-fetching every paper from PubMed, Crossref, and OpenAlex over rate-limited network APIs.
+Conversely, if consumers read the raw upstream records directly, every caller would have to implement three index
+parsers and handle upstream schema quirks.
+
+[`themis/litcache/sourced_metadata.py`](../../themis/litcache/sourced_metadata.py) resolves this tension by storing a
+[`SourcedMetadata`](../../schema/proto/themis/litcache/models/litcache.proto) message in `metadata.pb` with two required
+halves:
 
 ```
-SourcedMetadata                                metadata.pb, binary proto
-├── metadata         Metadata                  what a consumer reads
-│     ├── title             "Opportunistic partner choice among arctic plants…"
-│     ├── authors           [{name: "Bastien Parisy", orcid: ""}, …]
-│     ├── year              "2024"
-│     ├── container_title   "bioRxiv (Cold Spring Harbor Laboratory)"
-│     ├── abstract          "Interactions between plants and soil microbes…"
-│     ├── mesh_headings     []    (OpenAlex states MeSH only for a work with a PMID)
-│     └── publication_types ["Preprint"]
-└── source           MetadataSource            what the metadata is filled from
-      ├── pubmed          PubmedRecord         (not set: PubMed does not index it)
-      ├── crossref_json   string               (not set)
-      └── openalex_json   string               '{"id":"https://openalex.org/W4401…","title":"…",…}'
+metadata.pb (SourcedMetadata)
+├── metadata (Metadata)               ◄── read by all consumers via sourced_metadata.read_metadata()
+│     title, authors[], year, container_title,
+│     abstract, mesh_headings[], publication_types[]
+└── source (MetadataSource)           ◄── read only by metadata_fields.fill()
+      ├── pubmed (PubmedRecord: article | book_article)   ─┐ at most one resolving record
+      ├── crossref_json (compact JSON text)               ─┘ (or openalex_json alone)
+      └── openalex_json (compact JSON text, alone or beside pubmed / crossref_json)
 ```
 
-**The resolving index's record, and OpenAlex's beside it.** A paper is resolved by a ladder that stops at the first
-index that answers. Bulk ingest and the refresh ask PubMed, through efetch for a PMID that is given or that litfetch
-finds for a DOI, and then OpenAlex. When litfetch finds no PMID for a DOI, or gives up on it, the bulk ladder asks
-OpenAlex for the DOI with Themis's key, and a work that states a PMID sends the paper to PubMed as litfetch would have.
-Where PubMed's record for that PMID states another DOI, the two indexes disagree about which paper the DOI names, and
-OpenAlex's work resolves the paper instead, so no DOI is claimed for another paper's record. The evidence service's
-on-demand ingest asks PubMed and then Crossref. Whichever index resolves the paper, the writer then asks OpenAlex for
-the same work by its PMID and, when OpenAlex holds no work under the PMID, by its DOI, which catches a work OpenAlex has
-not yet linked to its PMID. A work found by the DOI that states another PMID is taken for a different paper's, and the
-paper keeps its resolving index's record alone. A paper's authors are taken from OpenAlex's record wherever it has one,
-as described below. So a source record holds the resolving index's record and, beside it, OpenAlex's record of the same
-work. The exceptions are a paper OpenAlex resolved itself and a paper OpenAlex holds no work for. A protovalidate rule
-on `MetadataSource` requires at least one record, and at most one of PubMed's and Crossref's.
+Consumers call `sourced_metadata.read_metadata(data)`, which validates the message and returns `Metadata` alone so no
+caller outside `themis/litcache/` can couple to `MetadataSource`. When the extraction rules in
+[`themis/litcache/metadata_fields.py`](../../themis/litcache/metadata_fields.py) change, a refill pass reads each stored
+`metadata.pb` via `sourced_metadata.parse_to_refill` (which validates `MetadataSource` alone so records that violate a
+newly tightened `Metadata` rule can still be loaded), recomputes `Metadata = metadata_fields.fill(source)`, and writes
+`metadata.pb` back without making any external HTTP calls.
 
-Each branch of the two ladders and of the lookup that follows them ends in one of the outcomes below.
+Every committed paper must have a valid `SourcedMetadata`. If no upstream index resolves a paper's identifiers
+(`MetadataUnresolvedError`), the ingestion pipeline records the paper as unresolved rather than inventing an empty or
+placeholder `metadata.pb`.
 
-```mermaid
-flowchart TD
-    P["paper: a PMID or a DOI"] --> W{"which writer?"}
-    W -- "bulk ingest, refresh" --> L{"PMID given, or<br/>found by litfetch?"}
-    W -- "on-demand ingest" --> D["PubMed, then Crossref"]
-    L -- "yes" --> E["PubMed via efetch"]
-    L -- "no: missed or gave up" --> X["OpenAlex by DOI,<br/>with the key"]
-    X -- "work names PMID P, and PubMed's<br/>P names no DOI or this one" --> E2["PubMed via efetch,<br/>the work found kept"]
-    E2 --> B
-    X -- "work names no PMID, or<br/>PubMed's P names another DOI" --> OA["stored: OpenAlex's record alone"]
-    E --> C{"OpenAlex lookup: by PMID,<br/>then by DOI on a miss"}
-    D --> C
-    C -- "one work, or of several<br/>the only one naming a PMID" --> B["stored: resolving record,<br/>OpenAlex's beside it"]
-    C -- "no work, or the DOI's<br/>work names another PMID" --> R["stored: resolving record alone"]
-    C -- "several works, not one<br/>alone naming a PMID" --> DL["dead-lettered, naming them"]
-    C -- "OpenAlex down" --> F["write fails; the caller retries"]
+#### How each index record is stored in MetadataSource
+
+Each index's record in `MetadataSource` is stored whole in the representation that matches its upstream contract, never
+translated into another index's schema:
+
+- **PubMed (`MetadataSource.pubmed`):** Stored as a typed
+  [`PubmedRecord`](../../schema/proto/themis/litcache/models/litcache.proto) oneof holding either a
+  `pubmed_proto.pubmed.PubmedArticle` (`article`) or a `pubmed_proto.pubmed.PubmedBookArticle` (`book_article`). NCBI's
+  efetch XML follows a stable DTD, and [`themis/litcache/efetch.py`](../../themis/litcache/efetch.py) converts each XML
+  element directly into its `pubmed_proto` message while harvesting cross-identifiers (`doi`, `pmcid`, and for Bookshelf
+  records the single canonical `NBK…` accession `bookid`). If a PubMed record fails a structural precondition—such as a
+  book record lacking a canonical `NBK` accession or listing conflicting DOIs—`efetch` raises `RecordPreconditionError`
+  for that paper alone rather than falling back to Crossref and disguising the broken PubMed record.
+- **Crossref (`MetadataSource.crossref_json`) and OpenAlex (`MetadataSource.openalex_json`):** Stored as compact ASCII
+  JSON strings (`ensure_ascii=True`, no NaN/Infinity tokens) via
+  [`themis/litcache/upstream_record.py`](../../themis/litcache/upstream_record.py). Unlike NLM's versioned DTD, Crossref
+  and OpenAlex are unversioned REST APIs that add keys and change types on unannounced schedules (for example, OpenAlex
+  added top-level `has_content` booleans to every work without a version bump). Decoding those responses into
+  hand-written protobuf mirror schemas caused protobuf's JSON parser to reject whole batches whenever an unread field
+  appeared or changed type ([`proto.md`](proto.md)). Holding the upstream JSON object verbatim as text preserves every
+  field the index returned, while `upstream_record.JsonObject` validates only the specific keys Themis reads and raises
+  `SchemaDriftError` naming the exact dotted path (such as
+  `publication_year is "2024", where an integer or null is read`) if a read field changes shape.
+
+The CEL rule `metadata_source.indexes` on `MetadataSource` enforces that at least one index record is present and that
+`pubmed` and `crossref_json` are never both set on the same paper.
+
+#### The resolving index's record, and OpenAlex's beside it
+
+[`themis/litcache/resolve.py`](../../themis/litcache/resolve.py) resolves a paper's identifiers down a priority ladder
+so the most curated bibliographic record becomes the resolving record:
+
+```
+Single-paper (resolve_metadata):
+  PMID present? ──yes──► PubMed efetch ─────────────────────────┐
+       │ no / miss                                              ├──► Look up companion OpenAlex work
+  DOI present?  ──yes──► Crossref (/works/{doi}) ───────────────┘    (by PMID, then DOI) and pair in
+                                                                     MetadataSource.openalex_json
+Batch (resolve_batch):
+  PMIDs ───────────────► Batched PubMed efetch ─────────────────┐
+  DOIs  ───────────────► litfetch batch resolver + OpenAlex ────┼──► Batched companion OpenAlex lookup
+                         (routes discovered PMIDs to efetch;    │    for all PubMed-resolved papers
+                          keeps OpenAlex work alone if no PMID) ┘
 ```
 
-The lookup does not always find one work. When OpenAlex cannot be reached or answers with a server error, the write
-fails, as it does when the resolving index cannot be reached, and the writer's caller retries it; no paper is stored
-without the OpenAlex record it should carry. When OpenAlex holds no work for the paper's PMID or DOI, the paper is
-stored with its resolving index's record alone. A DOI lookup also matches a work by the DOI of one of its locations,
-which is how a preprint OpenAlex merged into its published version comes back; such a work gives the paper its record
-and authors, nothing else, since its PMID, PMCID and publisher are the published version's, and a work stating the DOI
-as its own is taken ahead of it. OpenAlex also holds copies of one article as works of their own: a university
-repository's copy of a journal paper comes back with the journal's DOI and title but no PMID, beside the journal's work,
-which states one. So when more than one work answers the identifier, the one stating a PMID is taken if it is the only
-one; otherwise the paper is dead-lettered, naming the works, because taking either could give the paper another work's
-authors. A response that cannot be an answer to the lookup, such as a work stating none of the identifiers asked for,
-fails the whole lookup, and with it a bulk run, as a malformed efetch response does. A list of works names at most a
-work's first 100 authors, where a consortium paper can have over a thousand, so a work listed with 100 is fetched again
-on its own and stored whole.
+In both paths, PubMed wins whenever a PMID is known or discovered (provided PubMed's record does not state a different
+DOI from the one being resolved). For papers outside PubMed, `resolve_metadata` resolves the DOI through Crossref
+([`themis/litcache/crossref.py`](../../themis/litcache/crossref.py)), whereas `resolve_batch` uses OpenAlex
+([`themis/litcache/openalex.py`](../../themis/litcache/openalex.py)) because Crossref has no batch lookup endpoint that
+avoids per-DOI rate limits.
 
-Every writer sends Themis's OpenAlex API key, which gives Themis a daily budget of its own. Without a key, OpenAlex
-shares one small daily budget among every caller behind an IP address, about a thousand requests in October 2026. The
-services of an environment reach OpenAlex through one address, so another caller could spend that budget, and every
-write would then fail until it resets. A request carries up to a hundred identifiers, so refreshing a store of 41,000
-papers costs about 450 requests. litfetch's DOI resolution, which the bulk ladder runs before OpenAlex, sends the key
-too.
+Once the resolving index (PubMed or Crossref) is settled, `resolve` performs a second lookup to fetch OpenAlex's work
+for the same paper—querying OpenAlex first by PMID and, on a miss, by DOI—and stores that JSON work in
+`MetadataSource.openalex_json` alongside the resolving record. Pairing OpenAlex beside PubMed or Crossref is driven by a
+sharp difference in how upstream indexes curate author lists versus other metadata fields (see [Appendix](#appendix) for
+the full corpus comparisons):
 
-The obvious way to say in a proto which records may be set is a `oneof`, which also gives readers a generated accessor
-for the arm that is set. A `oneof` holds one arm at a time, so it cannot hold PubMed's record and OpenAlex's together; a
-constraint states the combination instead. The fields stay one per index, so a further index is a new field and changes
-no reader of the others.
+- **OpenAlex disambiguates authors and attaches ORCIDs across works.** PubMed and Crossref only record an ORCID when the
+  publisher deposited it on that specific article. OpenAlex groups publications into disambiguated author profiles
+  (`A5…`) and propagates an ORCID linked on a recent paper onto the author's whole career
+  (`authorships[].author.orcid`), yielding 50–63% ORCID coverage in our seed sample compared with 21% in PubMed.
+  Validated across 100 dual-covered works, 99 had identical author counts, 96 had identical family names in order (the
+  remaining 3 differed only by script or spelling), and all 45 PubMed ORCIDs agreed with OpenAlex. Two trade-offs are
+  accepted:
+  1. OpenAlex profile-merge errors occasionally attach an ORCID to a 1983 or 1996 paper written before ORCID launched in
+     2012; this is acceptable because patient deduplication uses author overlap only as a hint for a human reviewer.
+  1. Taking `authors` from `openalex_json` even on PubMed-resolved records couples PubMed ingest to OpenAlex's
+     `authorships` schema whenever an OpenAlex companion record is fetched.
+- **PubMed and Crossref are more faithful on every other field.** In PubMed, `major_topic` (`MajorTopicYN="Y"`) often
+  attaches to a specific MeSH qualifier (`Q…`) rather than the heading's descriptor (`D…`); verified across 80
+  dual-covered works, 169 of 269 major headings in PubMed were major only via a qualifier, and OpenAlex marked none of
+  them because OpenAlex's `is_major_topic` mirrors only the descriptor's `MajorTopicYN`. Similarly, OpenAlex
+  reconstructs abstracts from an inverted word-position index (`abstract_inverted_index`), which strips section labels
+  and can scramble punctuation when words share positions.
 
-**Crossref's and OpenAlex's records are held as JSON text.** The obvious way to store a JSON record in a store of protos
-is a proto per index whose fields are the index's keys, which gives every reader typed fields, generated stubs and
-protovalidate. Neither index publishes a schema that a generator can turn into such a proto. Each publishes an OpenAPI
-description of its API, and each description lags and mis-states the records the API serves; OpenAlex's misses about a
-dozen top-level keys. So the proto has to be written by hand against live records, and a hand-written schema of someone
-else's records has to follow every change they make. If the loader refuses a key the proto lacks, nothing lossy is
-written, but each key the index adds stops ingestion through that index until the proto gains the field. If the loader
-drops such a key instead, every record written in the meantime loses it for good.
+Accordingly, `metadata_fields.read` takes `title`, `year`, `container_title`, `abstract`, `mesh_headings`, and
+`publication_types` from the resolving index's record (`pubmed` or `crossref_json`, or `openalex_json` when OpenAlex is
+the sole record), and takes the entire `authors` list from `openalex_json` whenever `openalex_json` is present and lists
+at least one author. The author list is taken as a whole from one index rather than merged position-by-position across
+indexes, because consortium entries and group authors cause author counts and positions to diverge between PubMed and
+OpenAlex.
 
-OpenAlex adds keys often, so this choice comes up in practice. A strict proto of OpenAlex's work dead-letters every
-paper resolved through OpenAlex as schema drift from the day OpenAlex starts serving a key the proto lacks until the
-proto gains it, whether or not anything reads the key. In September 2026 four top-level keys arrived together
-(`study_designs`, `x_sdgs`, `observed_orcids` and `listed_in`, #672). Three weeks later three more did: a `doi` on every
-location of a work, `volume`, and `sustainable_development_goals_aurora`. Each time every OpenAlex ingest failed, and
-nothing in Themis reads any of these keys. Keeping a schema in lockstep with an index we don't control costs more than
-the typed fields buy, when most of those fields have no reader.
+When [`openalex.find`](../../themis/litcache/openalex.py) looks up a paper's work in OpenAlex, four outcomes are
+possible:
 
-So the source record holds each of these two records as JSON text: the index's work object, re-serialised from the
-parsed response with nothing dropped or renamed. The text parses back to a value equal to the one the index served; it
-need not match the bytes the index sent. A key the index adds is stored like any other, and a question nobody has asked
-yet can still be answered from the stored record. The field is a `string` holding the text, rather than a
-`google.protobuf.Struct`, because a `Struct` stores every number as a double ([`proto.md`](proto.md), Upstream JSON held
-as text). The cost is that a reader of these records gets no generated type. It reads the JSON through a reader written
-for the fields it uses, described next.
+1. **One matching work:** Stored in `openalex_json`. Because OpenAlex's list endpoint (`/works?filter=…`) truncates
+   `authorships` at 100 entries, any work returned with 100 authorships is re-fetched individually from `/works/{id}` so
+   the stored JSON record is complete. If a DOI matches an OpenAlex work only through `locations[].doi` rather than the
+   work's primary `doi` (which happens when OpenAlex merges a bioRxiv preprint into its published journal work),
+   `Answer.by_location` marks the match so OpenAlex supplies its record and authors without overwriting the preprint's
+   identifiers or publisher with the journal version's.
+1. **No matching work:** The resolving record (`pubmed` or `crossref_json`) is stored alone, and `authors` is filled
+   from it.
+1. **Multiple matching works (`AmbiguousWorkError`):** OpenAlex occasionally holds duplicate works for the same DOI or
+   PMID. If multiple works match a DOI and exactly one of them carries a PMID, `openalex.read_results` selects that work
+   (the others are unlinked repository copies). Otherwise, choosing arbitrarily could attach another work's author list
+   to the paper, so the resolver raises `AmbiguousWorkError` and holds the paper back for review.
+1. **Transport or HTTP error:** Propagates so the caller retries rather than silently dropping OpenAlex's record.
 
-**Ingest fails only on the fields Themis reads.** Each JSON index has a reader for the fields Themis takes from its
-record: the title, the authors and their ORCID iDs, the year, the container title, the abstract, the MeSH headings and
-the type that fill the metadata fields below, the DOI, the PubMed and PMC identifiers an OpenAlex work lists, and the
-publisher, which the manifest records for a licensed source. From an OpenAlex record held beside another index's, the
-reader reads only the authors: each authorship's profile name and iD. The readers are the one place these field names
-and shapes are spelled out. A record fails when a field every record of that index states is missing, such as the
-`title` key an OpenAlex work carries even when its value is null, or when a field the reader reads has a shape the
-reader cannot read. The paper is then dead-lettered as schema drift, and the dead letter names the field. A field an
-index may leave out, such as the PMID of a preprint, reads as not stated. Every other key stays in the text and never
-fails anything.
+#### Filling Metadata from MetadataSource
 
-Take two OpenAlex works. The first carries a key Themis has never seen; it is stored like any other work, with the key
-in its text. The second states its PMID as an object where the reader expects a URL string; it is dead-lettered, naming
-the PMID as the drifted field. Drift of the second kind needs a change to one of the handful of fields Themis reads,
-rather than to any key the index adds.
+[`themis/litcache/metadata_fields.py`](../../themis/litcache/metadata_fields.py) fills `Metadata` from `MetadataSource`
+under strict normalization rules enforced by `sourced_metadata.check_metadata`:
 
-The readers run only where the metadata fields below are filled: at ingest, at a refresh, and in a fill of the metadata
-fields, which brings the stored fields up to a new rule. Serving never runs them, because a consumer reads the stored
-metadata fields. The code check on the source record confirms only that each JSON record present is the text of a JSON
-object. So when an index reshapes a field a reader reads, the records stored in the old shape keep serving their
-metadata fields. They fail when a fill reads them again, and the fill reports each one by paper and field. There are two
-repairs. The reader can accept both shapes, which keeps the stored records readable at the price of a branch in the
-reader for as long as such records exist. Or the index's stored records are deleted and refreshed in the new shape.
-OpenAlex's record sits beside most papers, so a reshaped OpenAlex author field leaves nearly every stored record in this
-position, and the repair by deletion is a refresh of nearly the whole store. A reader that starts requiring a field the
-stored records lack faces the same choice.
+- **Plain text with scientific notation intact (`title`, `container_title`, `abstract`, `authors[].name`):** Every text
+  field is normalized to single-spaced plain UTF-8 text. Crossref and OpenAlex leak inline HTML, JATS, and MathML markup
+  (`<i>`, `<scp>`, `<mml:math>`, etc.) and entities in titles, abstracts, and journal names. Rather than stripping
+  `<[^<>]+>` (which corrupts scientific notation like `p < 0.05; n > 10` or `c.1A>G`), `_strip_inline_markup` matches
+  only known markup and MathML element names (`_MARKUP_ELEMENTS`, `_MATHML_ELEMENTS`, plus `jats:`/`mml:`/`ns\d+:`
+  prefixes) via `_escape_text`, converts `<br>` to space, drops `<mml:annotation>` and `<mml:annotation-xml>` subtrees,
+  decodes HTML entities closed by `;` once (`html.unescape`), and runs `_strip_inline_markup` a second time for
+  double-escaped tags (`&lt;i&gt;`). PubMed (`PubmedArticle` and `PubmedBookArticle`) already converted inline markup to
+  Markdown at ingest; `metadata_fields.py` calls `xml_converter.markdown_to_plain_text` to strip formatting while
+  unescaping `\*` and `\_` back to literal characters (such as `p.R391*`). Structured abstract section labels become
+  `Label: text`, and a leading `"Abstract:"` heading is stripped.
+- **Authors and ORCIDs (`authors`):** Empty names, invalid PubMed author entries (`ValidYN="N"`), and editor lists
+  (`TYPE_EDITORS`) are omitted. ORCID normalization strips the `https://orcid.org/` prefix, uppercases a trailing `x`,
+  and verifies both the 19-character pattern `\d{4}-\d{4}-\d{4}-\d{3}[\dX]` and the ISO 7064 mod 11-2 check digit; a
+  syntactically malformed or bad-checksum string becomes `""` (treating it as upstream user-entry noise), whereas a
+  non-string JSON value raises `SchemaDriftError`.
+- **Publication year (`year`):** Validated by the protovalidate pattern `^([0-9]{4})?$` (either four ASCII digits
+  `1000`–`9999` or `""` when not stated). Holding `year` as a string follows `EuropePmcRecord.year` and avoids a proto
+  presence bit (`""` means "not stated"). PubMed's sentinel year `1` (`_UNPARSED_YEAR = 1`, emitted when `MedlineDate`
+  failed to parse) is normalized to `""`. For PubMed book chapters (such as *GeneReviews* entries updated independently
+  of their parent book), the chapter's `ContributionDate` takes precedence over the book's `PubDate`.
+- **MeSH headings (`mesh_headings`):** Each `MeshTerm.ui` is validated by the protovalidate pattern
+  `^[DQ]([0-9]{6}|[0-9]{9})$` (a `D` or `Q` prefix followed by either 6 or 9 digits, such as `D012345` or `D000123456`),
+  while the `D` vs. `Q` prefix distinction on `MeshHeading` is enforced by two CEL rules: `mesh_heading.descriptor_kind`
+  (`this.ui == '' || this.ui.startsWith('D')` on `descriptor`) and `mesh_heading.qualifier_kind`
+  (`this.qualifiers.all(q, q.ui.startsWith('Q'))` on `qualifiers`). PubMed journal articles copy `MeshHeadingList`
+  directly. OpenAlex flattens each `MeshHeading` into one row per qualifier (`descriptor_ui`, `descriptor_name`,
+  `qualifier_ui`, `qualifier_name`, `is_major_topic`), but its `is_major_topic` boolean mirrors only the descriptor's
+  `MajorTopicYN` in PubMed; therefore `_openalex_mesh_headings` groups rows by `descriptor_ui` in first-seen order,
+  marks the descriptor `major_topic = True` if any of its rows has `is_major_topic`, and always sets qualifier
+  `major_topic = False` rather than fabricating which qualifier carried the mark. Note that empty `mesh_headings` or
+  `publication_types` is **not** a negative signal for downstream triage: 78 of 295 PubMed seed records had no MeSH
+  headings because they were not yet indexed for MEDLINE, yet 23 of those 72 non-MEDLINE records were tagged
+  `Case Reports`, and Crossref and OpenAlex have no equivalent to `Case Reports`.
+- **Publication types (`publication_types`):** Held as deduplicated NLM English strings (`"Journal Article"`,
+  `"Case Reports"`, `"Review"`, etc.) rather than NLM UIs, trading sensitivity to rare NLM string renames (such as
+  `Retraction of Publication` to `Retraction Notice`) for human-readable self-description. OpenAlex and Crossref have
+  separate closed mapping tables in `metadata_fields.py`: `_OPENALEX_PUBLICATION_TYPES` maps `'article'` →
+  `"Journal Article"`, `'review'` → `"Review"`, `'preprint'` → `"Preprint"`, `'letter'` → `"Letter"`, `'erratum'` →
+  `"Published Erratum"`, and `'retraction'` → `"Retraction Notice"`; `_CROSSREF_PUBLICATION_TYPES` (keyed by
+  `(type, subtype)` where `None` matches any subtype) maps `('journal-article', None)` → `"Journal Article"` and
+  `('posted-content', 'preprint')` → `"Preprint"` (so a Crossref letter or editorial arrives as `journal-article` and
+  maps to `"Journal Article"`). Any other string (such as `"book-chapter"` or `"dataset"`) is unmapped and produces
+  `[]`, whereas a `type` or `subtype` value of the wrong JSON type raises `SchemaDriftError`.
 
-**Drift is reported where it is met.** A drifted paper stays a dead letter. In a bulk ingest or a refresh, the run lists
-it in its report, which the operator who started the run reads. When the evidence service ingests a paper on demand, the
-drifted record is charged to its id alone: the caller is told the store has no such paper, and only the service's log
-names the field
-([`evidence-fulltext.md`](evidence-fulltext.md#an-id-the-corpus-does-not-hold-is-brought-into-the-store)). Nothing
-watches that log, so on-demand drift goes unseen until someone looks. Drift needs an index to reshape one of the few
-fields Themis reads, so it should be rare. But OpenAlex's author fields are read for most papers, so one such reshaping
-would stop on-demand ingest for nearly every paper, unseen until someone looks. Whether that warrants an alert is an
-open question below.
+#### Bookshelf chapter identity (`NBK…`)
 
-**PubMed keeps its generated, typed record.** The lockstep argument does not apply to PubMed. NLM publishes a DTD for
-its records, versions it, and changes it about once a year with notice. `pubmed-proto` generates the proto and its XML
-converter from that DTD ([`proto.md`](proto.md), Generated upstream schemas), so a new DTD is a pin bump rather than a
-hand edit, and holding PubMed's record typed costs nothing to maintain. It is also the record kind the literature
-interface returns for a PMID, through the same converter, so a run's triage read and the store's copy have one shape.
-They are not the same bytes, because the store's copy is taken at ingest and the run's at query time, and indexes revise
-records.
+NCBI Bookshelf chapters—most notably *GeneReviews*—carry a PMID and an `NBK…` book accession (`bookid`), and are served
+by Europe PMC as BITS XML at `bookXML` keyed by that `NBK…` accession. Three rules keep Bookshelf chapters first-class
+in the store:
 
-The typed record is not quite the whole of what NLM sends. The converter steps over a few elements of an article without
-keeping them, such as its languages and its pagination, so those are absent from the stored record. Themis reads only
-the metadata fields and the identifiers from PubMed's record, so the typed form is kept because it is free, not because
-a reader needs its types.
+1. **Bibliographic parsing:** `efetch.py` parses `<PubmedBookArticle>` into `PubmedRecord.book_article`
+   (`pubmed_proto.pubmed.PubmedBookArticle`) and extracts the chapter's canonical `NBK…` accession into
+   `ExternalIds.bookid`.
+1. **Distinct upstream `SourceKind`:** Full-text BITS XML fetched from Europe PMC's Bookshelf endpoint is recorded with
+   `SOURCE_KIND_EUROPE_PMC_BOOKSHELF` (distinct from `SOURCE_KIND_EUROPE_PMC` for journal JATS XML). Because
+   `SourceKind` identifies which upstream service the bytes came from, the conversion producer can select the right XML
+   parser and refuse unrecognized upstreams as permanent anomalies.
+1. **Crosswalk registration:** `ExternalIds.bookid` is claimed in `litcache.crosswalk` (`bookid:{NBK…}`) alongside
+   `pmid`, `pmcid`, and `doi` so that `rebuild.py` can reconstruct the entire crosswalk from the GCS manifests alone.
 
-**PubMed's record has two kinds, and its field says which.** Most PMIDs name a journal article, but a PMID can also name
-a book NCBI hosts on its Bookshelf, or a chapter of one. A GeneReviews chapter, the expert-written summary of a gene or
-condition that a variant analysis cites routinely, is the common case. PubMed's schema gives the two kinds different
-records, `PubmedArticle` and `PubmedBookArticle`, that share no top-level shape: a journal record hangs off a citation
-with a journal, a book record off a document with a book. Protobuf's wire format carries field numbers, not a type, so
-bytes read as the wrong message may decode without error into a record that means nothing, and a store that can hold
-either has to write down which one it holds. The source record's `pubmed` field is therefore a message of its own,
-`PubmedRecord`, whose `oneof` has an arm per kind and requires exactly one set, the structural move the access
-disposition on a lineage makes too. The exclusivity is PubMed's own rule, a PMID names one record, stated in the type;
-it is why the two kinds are arms of one field where other indexes are fields of their own.
+### Operator maintenance paths and the move off the mirrors
 
-**The metadata fields are stored, and filled from the record.** Consumers want a bibliography in one shape, such as a
-title, a year and an author list, without switching on which index answered. The obvious design computes that shape on
-read, in one function beside the proto. It stores nothing extra, and a change to the rule, such as a chapter with no
-title of its own falling back to its book's, ships as a deploy. The cost is that every read parses the index records and
-runs their readers. Say OpenAlex starts serving a work's PMID as an object rather than a URL string, and the reader is
-changed to read the object. Every OpenAlex record stored before the change still holds the string, so describing any of
-those papers fails with `INTERNAL`. The failure lands at serving time, in front of a curator, for a field that has
-nothing to do with the title they asked for.
+Because `metadata.pb` is a self-contained sidecar derived from `Manifest.external_ids`, operators have three distinct
+maintenance paths (`reingest-literature-seed-corpus.md`) ordered from cheapest to most expensive:
 
-So `metadata.pb` stores the `Metadata` beside its source record, and the readers fill it where a record is written: at
-ingest and at a refresh. A consumer reads the `Metadata` alone, and is handed nothing else. A change to the rule that
-fills them then needs, after its deploy, a fill of the metadata fields: a run that recomputes the fields of every stored
-record. The fill reads the records already stored, so it needs no network and touches nothing but `metadata.pb`, and the
-store already rewrites its manifests the same way
-([A change to the manifest's shape](#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)).
+1. **Fill of the metadata fields:** Recomputes `SourcedMetadata.metadata` in place from the stored `MetadataSource`
+   bytes (`pubmed`, `openalex_json`, `crossref_json`) via `metadata_fields.fill_sourced_metadata` (`refresh.py`) in
+   minutes without touching external APIs.
+1. **Metadata refresh (`--refresh-metadata`):** [`themis/litcache/refresh.py`](../../themis/litcache/refresh.py) does
+   not delete `metadata.pb` itself—it resolves and writes `metadata.pb` only for committed papers whose `metadata.pb` is
+   absent—so bringing stored records up to a change starts with the operator deleting `metadata.pb` (and any legacy
+   `pubmed.pb` / `europe_pmc.pb` files) before running the refresh to re-resolve each paper via the bulk ladder (batched
+   PubMed `efetch` for records with a PMID; `litfetch` DOI + OpenAlex for the rest). Note the trade-off: an on-demand
+   paper originally resolved through Crossref loses Crossref's record (`MetadataSource.crossref_json`) when its
+   `metadata.pb` is deleted and refreshed in bulk, receiving OpenAlex's (`MetadataSource.openalex_json`) instead.
+1. **Full rebuild:** Wipes the store and re-runs conversions when `manifest.pb` or conversion outputs themselves must
+   change. Unlike `metadata.pb`, `manifest.pb` and conversion sidecars (`{hash}.docling.json`, `QuoteIndex`) hold
+   expensive LLM and Docling outputs, so schema changes to them use additive proto changes and expand/contract backfills
+   rather than wiping and re-computing.
 
-A reader coming from [`literature-evidence-layer.md`](literature-evidence-layer.md) will recognise the risk it names: a
-shape invented to be common across indexes carries only what it has a field for, bends an index's values to mean what
-that index never stated, and invites code that handles records without knowing which index answered. These fields are
-exactly such a shape, and some of their readers decide things from them, as described below.
+#### The move off the mirrors
 
-The shape keeps that risk small. Nothing is lost, because the indexes' records stay beside the fields, whole and
-unmapped, and the fields are filled from them again whenever the rule that fills them changes. Text is plain text
-whichever index answered: take a title PubMed states as `*BRCA1* variants` and Crossref as `<i>BRCA1</i> variants`;
-either way the title field holds `BRCA1 variants`, and the italics survive in the record it came from. And every
-identifier or term comes from one named scheme, ORCID's for an author and NLM's for a MeSH heading or a publication
-type, so code matching the heading `D006801` (Humans) or the type Case Reports needs no knowledge of the index. What an
-index cannot state in that scheme is left empty. Two things approximate, both described below: OpenAlex's major-topic
-marks, and the table that maps Crossref's or OpenAlex's publication type onto NLM's.
+When replacing `PaperMetadata` and the hand-written `CrossrefWork` and `OpenAlexWork` mirror protos with
+`SourcedMetadata` (`crossref_json` and `openalex_json`), we retired the old messages and mirror `.proto` files outright.
+Normally, [`proto.md`](proto.md) (§Retiring an RPC or a message) **forbids** deleting a retired message under the
+`models` trees because bytes already written at rest could still need it, and the `backward-compatible` CI check
+enforces that rule with no in-tool override. Deleting `PaperMetadata` and the two mirror files in one step failed the
+required `backward-compatible` check and required an admin merge bypass (`review-policy.md`), paired with deleting every
+`metadata.pb` before the deploy, deploying, deleting every `metadata.pb` a **second time** (because unpausable on-demand
+ingest `MaybeIngestPapers` may have written old-shape records during the rollout), and running the metadata refresh.
 
-There are seven metadata fields: the title, the authors, the year, the container title, the abstract, the MeSH headings
-and the publication types. The first five describe a paper to a person. `DescribePaper` reads the title today, and the
-other four are for the workspace's UI surfaces that show a paper, such as the one that helps a curator decide which
-papers to upload by hand because the corpus cannot fetch them itself: its `DescribePaper` returns a paper's authors,
-journal, year, DOI and abstract ([`supplied-papers.md`](supplied-papers.md)). The MeSH headings and the publication
-types are for the case-record pipeline's triage, which decides which papers are worth its expensive extraction passes; a
-paper typed Case Reports, or headed Humans rather than Animals, answers much of what the triage would otherwise ask a
-model to judge from the pages. An author's ORCID iD serves both kinds of reader. The UI links the author to their
-profile. A check for two papers that may report the same patients compares the iDs of their authors, so that a proband
-is not counted twice. The DOI is not a metadata field, because the manifest's external ids hold it already. One function
-fills all seven from the source record: the authors from OpenAlex's record wherever the source holds one, and every
-other field from the record of the index that resolved the paper.
+Those deletions were permissible only because no production environment held this store yet; the sole environment that
+did (`dev`) met the condition `migrations.md` puts on a destructive change (it held no data worth keeping and had no
+users to fail). Once a production environment holds the store, that condition no longer holds: from then on,
+`proto.md`'s rule binds `metadata.pb` just as it binds every other at-rest contract—a retired message stays declared,
+and a destructive change no longer goes in one step. Changing what a field means in place is never open: protobuf bytes
+carry field numbers and wire types rather than names or meanings, so a record written before the change would decode
+silently into the new meaning.
 
-Every text field is a plain string, empty when the record states nothing; the authors and the MeSH headings are repeated
-messages and the publication types repeated strings, each empty when the record states none. The year could have been an
-integer, which would check its own form; it is a display string instead, as `EuropePmcRecord.year` is
-([`literature.proto`](../../schema/proto/themis/rpc/literature.proto)), because nothing sorts or computes on it and the
-empty string says "not stated" without a presence bit, as for the other text fields. No field needs a presence of its
-own to mark the fill: a filled record is a `SourcedMetadata` carrying its `Metadata`, which protovalidate requires.
+### Quote-reference model
 
-Every text field holds plain text, whichever index answered. Crossref and OpenAlex mark up titles and abstracts with
-JATS or HTML tags (`<i>BRCA1</i>`, `<jats:p>`), and PubMed's converter turns the same markup into a markdown of its own
-(`*BRCA1*`, `GeneReviews^(®)`). The fill strips both and collapses whitespace, so a consumer shows a field as it is,
-without knowing which index it came from. An abstract keeps its section labels as text ("Background: …"), the form
-PubMed's structured abstracts take.
+Analyses and conversation turns cite papers using markdown directives `:paper[doc_id]` and
+`:quote[doc_id, "verbatim quote"]` ([`document-pane.md`](document-pane.md)). If a citation stored character offsets
+(`start`, `end`) as its primary anchor, any re-conversion of the paper—or even toggling the document pane between
+markdown and PDF—would shift offsets and silently highlight the wrong text.
 
-An author is a display name and, where one is known, an ORCID iD. The name is "Given Family" or a collective name,
-rather than a family name and given names held apart. OpenAlex states only a display name for each author, so a display
-name is the one shape all three indexes can produce. A citation style that abbreviates given names to initials, such as
-Vancouver's "Doe JA", would need structured names, which would be new fields of the author. The container field is
-`container_title`, Crossref's term, rather than `journal`, because a GeneReviews chapter's container is the book.
+Instead, the verbatim quote string is the durable anchor, and character offsets or PDF bounding boxes are resolved on
+demand by [`anchorite`](../../themis/services/evidence/literature/litcache.py) against a specific rendering:
 
-The authors come from OpenAlex's record wherever the source holds one. The obvious source is the resolving index's
-record, which fills every other field and needs no second lookup. It falls short for the check for papers reporting the
-same patients, which compares authors across papers and so has to know which authors are the same person. PubMed states
-an iD only where the author deposited one with the paper: 21% of the authors in a sample of the store's PubMed records
-carry one. OpenAlex groups every authorship into an author profile and gives the profile's iD, which covered 50 to 63%
-of the authorships in samples of OpenAlex works.
+```
+Authoring / storage (durable):
+  :quote[doc_id="a1b2...", quote="the variant was observed in 14 of 18 probands"]
 
-Taking the whole author list from OpenAlex keeps each iD on the name it belongs to, with nothing to match between the
-two records. They agree closely on who the authors are. In 100 works both indexes hold, 99 list the same number of
-authors and 96 the same family names in the same order. The other 3 differ only in script, such as PubMed's "Manisali"
-and OpenAlex's "Mehmet Manisalı".
+Resolution via evidence service Locate / Validate (per representation):
+  ├── REPRESENTATION_MARKDOWN ──► reads Manifest.refs["markdown"] ("d49b...")
+  │                               runs anchorite.locate_quote_span(markdown, quote)
+  │                               ──► TextOffsets { start: 14208, end: 14253 }
+  └── REPRESENTATION_PDF      ──► reads current PDF revision ("19b0...")
+                                  ──► PdfHighlight { page: 4, rects: [...] }
+```
 
-The cost is OpenAlex's errors of attribution. All 45 iDs PubMed states in those 100 works agree with OpenAlex's, but
-OpenAlex also gives iDs where a paper states none, among them iDs on papers from 1983 and 1996, years before ORCID began
-issuing them in 2012. A wrongly merged profile puts one person's iD on another person's paper. The check accepts that,
-because it raises a hint that someone then examines: a false overlap costs a closer look, and a missed one counts a
-proband twice. The name is the profile's too, and can differ from the paper's byline, in script as well as spelling. And
-since most papers carry an OpenAlex record, OpenAlex reshaping a key the author reader reads fails the ingest of most
-papers, rather than only of the papers OpenAlex resolved.
+The manifest side is settled: whenever a rendering is addressed directly (as in the offsets cache and licence-safe
+shared anchors below), it is named by its record's key in `Manifest.records` (`rendering_hash`, the SHA-256 of the
+markdown bytes), while the primary citation anchor (`SourceAnchor`) names only the paper (`doc_id`) and the verbatim
+`quote` so it survives converter upgrades across renderings. The anchor and the offsets cache shapes below are
+provisional:
 
-Where the source holds no OpenAlex record, or OpenAlex's record names no author, the names and iDs are the ones the
-resolving record states. So the iD field holds OpenAlex's attribution for most papers, and the paper's own statement for
-the rest. Either way the iD is held in its bare form (`0000-0002-1825-0097`): PubMed states it bare, Crossref and
-OpenAlex as an `https://orcid.org/` URL. An iD whose check digit fails is left empty, as not stated; the record keeps
-what the index sent.
+- **Primary anchor (`SourceAnchor`):** Carries `doc_id`, the verbatim `quote`, and an optional `section_hint`. Because
+  the quote is plain text from the paper, it survives converter upgrades (`CONVERTER_DOCLING` to `CONVERTER_LITDOWN`)
+  and works across both markdown and PDF representations.
+- **Derived offset cache (`OffsetsCacheEntry`):** Resolved spans (`start`, `end`) for a markdown rendering are keyed by
+  `(doc_id, rendering_hash, sha256(normalised_quote))`. When `Manifest.refs["markdown"]` advances to a new
+  `rendering_hash`, cached offsets for the old hash simply miss without serving stale coordinates.
+- **Licence-safe export (`SharedAnchor`):** Quoting verbatim text from a restricted (`licensed` or
+  `institution_captured`) source is safe inside an internal workspace, but exporting an analysis outside the licence
+  boundary cannot redistribute non-`CC-BY` prose. Stripping the verbatim `quote` and exporting
+  `(doc_id, rendering_hash, converter_version, spans)` lets a recipient with legitimate access to the same paper
+  reconstruct the highlight using the deterministic converter without the exported file carrying copyrighted text.
 
-A MeSH heading is NLM's controlled subject index for a paper: a descriptor, such as Breast Neoplasms (`D001943`),
-narrowed by qualifiers, such as genetics (`Q000235`), each marked as a major topic of the paper or not. PubMed's record
-is their source; OpenAlex copies PubMed's into a work that has a PMID, and Crossref has none. A term is held as NLM's
-identifier alone, which is what code matches on and all that PubMed's converter keeps. A reader that shows a heading
-names it from NLM's MeSH vocabulary, a reference resource of its own, so the fill depends on nothing but the source
-record. OpenAlex flattens a heading into one row per descriptor and qualifier, often repeated and in an order of its
-own, with one major-topic mark per row. The fill groups the rows back into headings. OpenAlex's mark follows only the
-descriptor's own mark in PubMed's record, so the fill marks a descriptor major when any of its rows is marked, and marks
-no qualifier. A heading PubMed marks major only through a qualifier, such as Breast Neoplasms with the mark on genetics,
-is unmarked when filled from OpenAlex. In 80 works PubMed also holds, 169 of the 269 headings PubMed marks major were
-marked only through a qualifier, and OpenAlex marked none of their rows.
-
-A publication type is one of NLM's Publication Types, the part of MeSH that says what kind of publication a paper is:
-Journal Article, Case Reports, Review, Preprint. PubMed states one or more for an article, and the field keeps them all,
-as the names PubMed states. They include funding facets such as "Research Support, Non-U.S. Gov't". The field holds
-names rather than NLM's identifiers, unlike the MeSH headings, because its readers asked for the names PubMed shows. The
-cost is that NLM renames a type now and then, as Retraction of Publication became Retraction Notice, so code that
-matches on a type has to match every name it has carried. OpenAlex and Crossref each state one type, in a coarser
-vocabulary of their own, and a short table maps it onto NLM's: OpenAlex's `review` becomes Review, its `article` and
-Crossref's `journal-article` become Journal Article, and a type with no NLM counterpart, such as a book chapter, maps to
-none. This mapping approximates. Crossref has no type for a letter or an editorial, so either arrives as
-`journal-article` and is typed Journal Article, where PubMed would have typed it Letter or Editorial. The index's own
-type stays in its record.
-
-For a reader that decides, an empty MeSH list or a missing publication type is not a negative. NLM assigns headings only
-to a paper it indexes for MEDLINE, which leaves out the journals MEDLINE does not cover and the weeks before indexing.
-In a sample of 295 PubMed records from the store, the 78 without headings were all ones NLM had not indexed for MEDLINE:
-72 that PubMed marks as outside MEDLINE, 5 supplied by their publisher, and 1 in process. Yet 23 of the 72 were typed
-Case Reports. Neither OpenAlex nor Crossref has a type for a case report, so a case report they resolved is typed
-Journal Article at most. A triage that skipped every paper without Humans, or without Case Reports, would skip those
-papers for what their index has not stated.
-
-The rule that fills the fields is not recorded beside them. A changed rule means another fill of every record, which
-reads only the records already stored and takes minutes, so nothing has to find the records an older rule filled.
-
-**A source record with no index's record is corruption.** The constraint on which records are set is enforced where the
-record crosses a boundary: the writer validates `metadata.pb` before it writes, and a reader that parses one fails
-rather than reading it as a paper without metadata. A paper no index has a record for is not ingested at all, because
-the resolve ladder dead-letters it. So an empty source record never means "metadata not yet resolved"; it means the
-bytes are wrong.
-
-**A book record carries an identifier of its own.** Beside the PMID, Bookshelf names a chapter by an accession (`NBK…`),
-and the accession is how the chapter's text is addressed: Europe PMC serves a chapter's BITS XML under its accession at
-the `bookXML` endpoint — a different endpoint and corpus from the JATS article XML behind the plain Europe PMC source
-kind. The lineage it produces records a distinct source kind for two reasons: the producer maps the upstream that served
-a body onto a `SourceKind` and refuses a body from an upstream it has no kind for as a permanent anomaly, so a new
-upstream needs a member; and the member records which corpus the bytes came from. The accession joins the manifest's
-external ids (`ExternalIds.bookid`) on the footing every external id there has: an id in the manifest is one the
-crosswalk claimed — that is what keeps the crosswalk rebuildable from the manifests alone — so the accession is minted
-like the others rather than merely recorded.
-
-**A change to `metadata.pb` reaches the stored records through a refresh, a fill or a rebuild.** The compat gate holds
-`litcache.proto` to additive evolution ([`proto.md`](proto.md#schema-evolution)), so every reader already parses the
-records written before an additive change. What such a change can still need is the stored records brought up to it,
-because a field `metadata.pb` gains is empty in every record written before it. Every `metadata.pb` in the store is
-re-derivable from its indexes (PubMed's XML, Crossref's or OpenAlex's JSON) through a resolve ladder. A refresh takes
-the bulk ladder, which does not ask Crossref, so a paper the on-demand ingest resolved through Crossref loses Crossref's
-record: it comes back with OpenAlex's record alone, or with none if OpenAlex has no record of it. So an index's record
-is brought up to a change by re-deriving it, not by rewriting stored bytes or teaching readers a second decoding, and
-Themis's own fields by recomputing them from those records. Three operator runs do that
-([`reingest-literature-seed-corpus.md`](../runbooks/reingest-literature-seed-corpus.md)), and which one a change needs
-turns on what else has to change:
-
-- A *metadata refresh* resolves a bibliographic record, through that ladder, for every committed paper that has no
-  `metadata.pb`: efetch for a PMID, and litfetch's DOI resolution and then OpenAlex for the rest. It never touches a
-  record that exists, so bringing the stored records up to a change starts with the operator deleting them
-  ([Refreshing the bibliographic records](../runbooks/reingest-literature-seed-corpus.md#refreshing-the-bibliographic-records)).
-  Manifests, conversions and `doc_id`s stay untouched. The record derives from nothing in the paper's directory, and
-  nothing there derives from it ([Path layout](#path-layout)), so it is the one artifact a committed paper can have
-  re-derived. The refresh is the path for a change to the index's record, such as a field the source record gains.
-- A *fill of the metadata fields* recomputes Themis's own fields of every stored record from the indexes' records it
-  holds, with a runbook procedure of its own. It never edits those records and asks no index, so it is the path for a
-  change to the rule that fills the fields, or for a field the `Metadata` gains.
-- A *full rebuild* — the crosswalk table truncated, the `papers/` prefix cleared, the seed re-ingested on Dataflow — is
-  the path when the conversions themselves must change: ingestion skips a paper whose manifest exists, and nothing
-  regenerates a committed paper's sources or renderings in place.
-
-After an additive change, none of these runs leaves the readers a fallback to carry. Every record the store holds parses
-under the current schema, because the gate holds every schema change to additive, and a change merged past it first
-deletes every record it would strand. A destructive change to a stored record needs more, and how much turns on whether
-the record can be re-derived. A manifest or a conversion holds what the store keeps and only a full rebuild could
-produce again, so a destructive change to one is an expand/contract change, as [`proto.md`](proto.md#schema-evolution)
-sets out for every at-rest contract: the new form lands beside the old one, a rewrite brings every record to it, and
-only then is the old field retired, with its number and name reserved. A `metadata.pb` is re-derived by a refresh, so a
-destructive change confined to it may go in one step, under the condition [`migrations.md`](migrations.md#how-it-runs)
-puts on a destructive change: its failing window costs nothing real.
-[The move off the mirrors](#the-move-off-the-mirrors) is such a change, and sets out when the condition holds and how
-the steps keep that window empty. A refresh fetches each record again, as its index states it at the time of the refresh
-rather than at ingest. A paper the index no longer resolves comes out of a refresh with no `metadata.pb`, and so does a
-paper OpenAlex holds several works for, not one of them alone stating a PMID, or one whose OpenAlex record has drifted
-in a field the reader reads. `DescribePaper` then titles each by its DOI or PMID.
-
-Changing what a field means in place is never open. Protobuf bytes carry field numbers and wire types, not names or
-meanings, so a record written before the change would decode without error into the new meaning.
-
-### The move off the mirrors
-
-Crossref's and OpenAlex's records were first held in hand-written protos of each index's keys, called *mirrors*, inside
-a `PaperMetadata` envelope that held the index's record alone. The move off them writes every `metadata.pb` as a
-`SourcedMetadata`, deletes the `PaperMetadata` message, the mirror protos and their loader, has ingest take a paper's
-identifiers from readers of the JSON text, stores OpenAlex's record beside the resolving index's, and moves consumers to
-the `Metadata`. It is a destructive change confined to `metadata.pb`, so it goes in one step, as the previous section
-allows, in this order:
-
-1. Start no bulk ingest and no metadata refresh, and delete every `metadata.pb`. Bulk ingest resumes only after step 4's
-   refresh has finished, and only from a job built with the move, since a job built before it writes records in the old
-   shape.
-1. Deploy the change, and wait for the rollout to finish.
-1. Delete every `metadata.pb` again. The evidence service's on-demand ingest (`MaybeIngestPapers`) cannot be paused
-   ([A change to the manifest's shape](#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)),
-   so during the rollout the old revision may write records in the old shape. The second deletion removes any such
-   record. A record the new revision wrote is re-derived by the refresh like the rest.
-1. Run the metadata refresh until it exits 0, then check with the fill of the metadata fields' verify mode that every
-   record is in its final shape.
-
-The failing window runs in both directions while the rollout lasts, because both revisions serve and neither reads the
-other's records. A record the old revision writes fails to read on the new revision until the second deletion removes
-it. A record the new revision writes fails to read on the old revision, so a request that reaches the old revision for
-that paper fails until the rollout finishes. Between a paper's deletion and the refresh reaching it, `DescribePaper`
-titles it by its DOI or PMID. A paper the refresh dead-letters stays so titled after the move, and the refresh's report
-lists each one. The refresh rewrites PubMed's records as well: pubmed-proto 0.4.0's converter escapes the markdown
-markers a title or an abstract states literally, so a record its 0.3.0 converter wrote cannot be read back to its text
-exactly.
-
-Rolling back means redeploying the previous revision and waiting for its rollout, then deleting every `metadata.pb`, so
-that no record in the new shape is left for the previous revision to fail on, and then restoring each record's
-generation from before step 1. The bucket keeps those generations for 30 days as noncurrent versions. A paper first
-ingested during the move has no such generation, so it stays without a record until a refresh on the previous revision
-resolves one.
-
-The move deletes the `PaperMetadata` message and the two mirror files.
-[`proto.md`](proto.md#retiring-an-rpc-or-a-message) keeps a retired message under the models trees declared, because
-bytes already written could still need it, and the compat gate enforces that with no in-tool override. So the change
-that makes the three deletions fails the required `backward-compatible` check on them alone, and an admin merges it past
-the check ([`review-policy.md`](review-policy.md)). The deletions are open only because no production environment holds
-this store yet. The one environment that does, dev, meets the condition [`migrations.md`](migrations.md#how-it-runs)
-puts on a destructive change: it holds no data worth keeping and has no users to fail. Every stored record is deleted
-before the deploy and again after it, so none holds a `PaperMetadata` or a mirror once the new revision reads the store.
-Once a production environment holds the store, that condition no longer holds. From then on, proto.md's rule binds
-`metadata.pb` as it binds every other at-rest contract: a retired message stays declared, and a destructive change no
-longer goes in one step.
-
-## Quote-reference model
-
-The cite model the knowledge-unit layer anchors against. The manifest side is settled: a quote names a rendering by its
-record's key, the hash of the markdown it was taken from. The anchor and the offsets cache below are provisional.
-
-- **Durable anchor** (write-once, in the knowledge-unit record): `{paper_id, document_id, quote, exact}`, where
-  `document_id` is a rendering's key. It holds no offsets, because offsets go stale on a re-render. The verbatim `quote`
-  is the durable anchor instead. A quote is not immortal, since the source text itself can change, but it degrades
-  detectably (`exact -> fuzzy -> unlocatable`) where offsets would silently point at the wrong words.
-- **Exported without the quote** as `{paper_id, document_id, ref_id}`. The quote stays in the knowledge-unit record, so
-  a share carries no copyrightable text.
-- **Resolved-offsets cache** (derived, recomputable, mutable): `(ref, rendering) -> spans`, with a status of `exact`,
-  `fuzzy` or `unlocatable`. Any offset hint lives only here, never in the durable anchor. Re-aligning can move the
-  status either way: a `fuzzy` hit can recover to `exact` against a better rendering.
-- **Resolution walk:** the rendering's key → its record → the record's dep, a source revision → that revision's bytes →
-  re-align the quote. A PDF with a text layer gives a bounding box from its characters; otherwise the quote maps into
-  the XML or text.
-- **Upgrade across revisions:** from the rendering's record, find the lineage its dep belongs to and that lineage's
-  latest revision. If it is newer, re-render by the same route over the latest revision and re-align the verbatim quote.
-  `unlocatable` is the explicit signal that the source changed under the quote.
-- **Two ways a quote is minted, one model:** the knowledge-unit extractor aligns its quotes offline. When the agent
-  cites, the read tool serves markdown together with its rendering's key, verifies the agent's quote verbatim against
-  the served bytes (rejecting a quote the text does not contain), and mints `{paper, document, quote}`. That also seeds
-  the offsets cache, since the rendering is known and current.
-
-### Reference and anchor types
+#### Reference and anchor types
 
 Concrete shapes for the cite model. These live in knowledge-unit records and a derived cache, not in the manifest, and
-are provisional: `ref_id`, the status values and the span type are not yet frozen.
+are provisional: `ref_id`, the status values, and the span type are not yet frozen.
 
-```proto
+```protobuf
 message SourceAnchor {
-  string paper_id = 1;     // doc_id
-  string document_id = 2;  // a rendering's record key
-  string quote = 3;        // verbatim, against the rendering's bytes
-  bool exact = 4;          // false once only fuzzy realignment held
+  string doc_id = 1;
+  string quote = 2;
+  string section_hint = 3;
 }
-message SharedAnchor {     // exported form — quote stripped
-  string paper_id = 1;
-  string document_id = 2;
-  string ref_id = 3;
+
+message SharedAnchor {
+  string doc_id = 1;
+  string rendering_hash = 2;
+  string converter_version = 3;
+  repeated ResolvedSpan spans = 4;
 }
-message ResolvedSpan { int32 start = 1; int32 end = 2; }
+
+message ResolvedSpan {
+  uint32 start = 1;
+  uint32 end = 2;
+}
+
 message OffsetsCacheEntry {
-  string ref_id = 1;
-  string rendering = 2;    // rendering key the spans were computed against
-  repeated ResolvedSpan spans = 3;
-  string status = 4;       // "exact" | "fuzzy" | "unlocatable" — a proto-canonical enum once frozen
+  string doc_id = 1;
+  string rendering_hash = 2;
+  string quote_hash = 3;
+  repeated ResolvedSpan spans = 4;
 }
 ```
 
 ## Alternatives considered
 
-- **A derived artifact stored beside the paper under a name computed from its input, outside the manifest.** A variant
-  set extracted from rendering `m1` with prompt version 3 would live at a name made from `m1` and `3`, and its existence
-  would mean it is done. That needs no write to the manifest, no schema change per kind, and no contention between an
-  extraction and anything else writing the paper. It lost at the first level holding two candidates. The next step's
-  input is then a choice rather than a computation, and a name computed from one particular input cannot record which
-  candidate was chosen. Nothing would list what exists either, short of listing the bucket.
-- **Refs in an object of their own beside the manifest.** Refs would then never contend with writes to the records. It
-  lost because recording an artifact and moving the ref that names it could no longer happen in one write, so a ref
-  could briefly name a record the manifest does not hold. Nor could one check confirm that every ref resolves.
-- **A record keyed by its bytes, its deps and its construction together.** Every distinct way of producing the same
-  bytes would then keep its own record, and no construction would ever be overwritten. It lost because no reader would
-  answer differently: a quote cites bytes, and two routes to identical text yield the same text.
+- **A derived artifact stored beside the paper under a name computed from its input, outside the manifest** (for
+  example, naming a variant set extracted from rendering `m1` under prompt v3 from `m1` and `3`). Lost at the first
+  level holding two candidates: the next step's input is a choice rather than a computation, a name computed from one
+  input cannot record which candidate was chosen, and nothing lists what exists short of listing the bucket.
+- **Refs in an object of their own beside the manifest.** Lost because recording an artifact and moving the ref that
+  names it could no longer happen in one write (so a ref could briefly name a record the manifest does not hold), nor
+  could a single `buf validate` check confirm that every ref resolves.
+- **A record keyed by its bytes, its deps, and its construction together.** Lost because no reader would answer
+  differently: a quote cites bytes, and two routes to identical text yield the same text.
+- **Using an external identifier (DOI or PMID) as the GCS directory name.** Rejected because no single identifier scheme
+  covers every paper (preprints lack PMIDs; older clinical reports and Bookshelf chapters often lack DOIs), and
+  discovering a higher-precedence identifier later would require moving every object under `papers/{id}/` and updating
+  all references.
+- **Including the converter in `Source` identity.** Rejected because a `Source` represents a captured upstream file (an
+  XML or PDF lineage), whereas a converter produces a derived `Record` in `Manifest.records`. Keeping converters out of
+  `Source` lets multiple converters run against the same captured revision without duplicating source blobs.
+- **Overwriting a single `paper.md` rendering in place.** Rejected because overwriting the markdown file on converter
+  upgrades would invalidate cached quote offsets and make it impossible to reproduce the exact text an earlier analysis
+  cited. Content-addressing renderings in `Manifest.records` and advancing `Manifest.refs["markdown"]` gives readers a
+  single current rendering while keeping prior renderings addressable by hash.
+- **Separate protobuf messages for figures and supplementary files.** Rejected because both share the exact same
+  attributes (`name`, `path`, `media_type`, `size_bytes`, `hash`, `source_url`, `captured_at`, `caption`) and differ
+  only in `AssociatedFileRole` and whether their bytes are fetched eagerly or lazily.
+- **Eagerly downloading all supplementary files during ingestion.** Rejected because supplementary archives can be
+  hundreds of megabytes per paper while most are never opened; recording their filenames, captions, and `source_url`s in
+  `Manifest.files` and fetching bytes on demand captures their discovery value at near-zero storage cost.
+- **Hand-maintained protobuf mirror schemas for Crossref and OpenAlex.** Rejected after production experience showed
+  that unannounced upstream additions (such as OpenAlex's `has_content`) or type variations on unread fields broke
+  protobuf JSON parsing across batches. Storing `crossref_json` and `openalex_json` as validated JSON text keeps the
+  full upstream record while checking only the fields Themis reads.
 
 ## Open questions
 
-- **Licence on supplementary files.** A supplementary file carries no licence of its own, so it is read under the
-  paper's. A data file published under different terms, CC0 beside a CC-BY article say, would need its own, which is a
-  new optional field when something needs it.
-- **Materialising references from primary to secondary artifacts.** They are matched by name at render time. An index of
-  them is an additive change if the read path ever needs one.
-- **Where the fidelity ranking lives, and how a model counts in it.** Writers now apply the ranking when they move the
-  `markdown` ref. Whether a newer model outranks an older one on the same converter is not yet settled.
-- **Converter-specific fields on a rendering.** A rendering's construction requires a model exactly when the converter
-  is a vision model, enforced by a constraint on the message. If more converter-specific fields appear, they could
-  arrive as a per-converter choice beside the common fields. Moving the common fields into that choice would be an
-  expand/contract change.
-- **A Bookshelf accession at the door.** Whether `MaybeIngestPapers` accepts `bookid:` beside `doi:`, `pmid:` and
-  `pmcid:` is held in [`literature-evidence-layer.md`](literature-evidence-layer.md#open-questions).
-- **Falling back to an equivalent work for entitlement.** A knowledge unit anchored to a work a reader is not entitled
-  to see, such as a licensed paper, could be shown against an equivalent work they can see, such as a preprint linked to
-  it by an equivalence edge, by re-aligning the same quote into that work's rendering. The pieces exist. Whether to
-  expose it, and how entitlement composes across a set of equivalent works, is open.
-- **An alert for drift met on demand.** A paper `MaybeIngestPapers` cannot ingest because its record drifted is named
-  only in the evidence service's log. A log-based metric with an alert on it would surface it; it would post to the
-  operational alerts channel each environment is still to get ([`prod-bring-up.md`](../plans/prod-bring-up.md)).
+- **Multi-writer equivalence merges.** When `crosswalk.mint` detects that a newly ingested paper bridges two existing
+  `doc_id`s, writing symmetric `Equivalence` edges requires updating multiple manifests (`papers/{id_1}/manifest.pb` and
+  `papers/{id_2}/manifest.pb`). The exact retry and reconciliation flow when one manifest update succeeds and the second
+  fails midway is not yet wired into `writer.py`.
+- **Cross-source text equivalence.** When a paper has both an XML-derived rendering and a PDF-derived rendering, we do
+  not yet check whether the two represent the same underlying version of the manuscript (for example, an accepted author
+  manuscript in PMC versus the copy-edited publisher proof PDF).
+- **Licence string normalization.** `Source.licence` currently stores the raw licence string returned by `litfetch`
+  (such as a Creative Commons URL or `"cc-by"`). Mapping these strings to canonical SPDX identifiers is deferred until
+  automated export filtering consumes `Source.licence`.
+- **Garbage collection of unreferenced blobs and superseded records.** A worker crash before the initial `manifest.pb`
+  commit, or a superseded record no longer referenced by any `refs` entry or pinned citation, can leave unreferenced
+  blobs under `papers/{doc_id}/`. Because blob sizes are modest, periodic mark-and-sweep against `manifest.pb` and
+  active citations is deferred.
+- **On-demand supplementary file fetch and transcription.** While `Manifest.files` supports unpopulated `AssociatedFile`
+  entries (`path` unset) and `writer.fill_file` can populate them later, `ResolveContent` currently raises
+  `MissingContentError` rather than fetching and transcribing deferred supplementary files on demand.
+- **Automated retraction polling cadence.** `Manifest.retraction` defines how retraction notices are recorded on a
+  paper, but the scheduled refresh cadence for polling PubMed and Crossref retraction updates across the committed
+  corpus is not yet fixed.
+- **Model ordering within the same converter.** `records.put_record` ranks converters by tier (`CONVERTER_LITDOWN` >
+  `CONVERTER_LLM_OCR` > `CONVERTER_DOCLING`) and then by `created_at`, leaving open whether a newer `model` on the same
+  converter should outrank an older one regardless of when each rendering was produced, and where that model ranking
+  should live.
+- **Converter-specific fields on a rendering.** `RenderingConstruction` currently carries `model` as a single optional
+  field used only by `CONVERTER_LLM_OCR`. If further converter-specific fields appear, they can either arrive as a
+  per-converter oneof beside the common fields or absorb the common fields via an expand/contract migration.
+- **Falling back to an equivalent work for entitlement.** When a knowledge unit or citation is anchored to a restricted
+  work (such as a publisher PDF) that a reader is not entitled to view, `Manifest.equivalences` could allow falling back
+  to an open-access equivalent (such as a preprint or author manuscript) by re-aligning the verbatim quote against the
+  equivalent work's rendering.
+- **Per-file licence on supplementary materials.** `AssociatedFile` currently carries no licence field of its own and is
+  governed by the enclosing paper's `Source` terms; recording a distinct licence on a supplementary file (for example, a
+  CC0 dataset attached to a CC-BY or restricted article) would require an optional licence field on `AssociatedFile`.
+- **Alerting on on-demand metadata schema drift.** Whereas batch ingestion writes `SchemaDriftError` failures to
+  `runs/{run_id}/anomalies/`, on-demand ingest (`MaybeIngestPapers`) logs schema drift only to the evidence service's
+  log; wiring a log-based metric and alert to the environment's operational alerts channel remains open.
+
+## Appendix
+
+### Corpus survey: supplementary file references and captions
+
+To decide whether supplementary file captions belong in `Manifest.files` and whether supplementary blobs should be
+fetched eagerly or lazily, we surveyed 1,680 PMC JATS XML papers in the seed corpus:
+
+| Metric                                                                                                     | Value                                                                                 |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Papers with at least one `<supplementary-material>` element                                                | 75% of the 1,680 papers                                                               |
+| Mean supplementary files per paper (across all papers / across papers with any)                            | 3.5 / 4.6                                                                             |
+| Supplementary files explicitly cross-referenced in body prose (`<xref ref-type="supplementary-material">`) | 98.5%                                                                                 |
+| Mean prose mentions per supplementary file                                                                 | 2.6                                                                                   |
+| Supplementary elements carrying a `<caption>` or `<label>` in the XML                                      | 86% (mean ~90 chars per file, ~320 chars / ~80 tokens per paper)                      |
+| Remaining 14% without an XML `<caption>`                                                                   | 94% of these are still described by surrounding body sentences at their `<xref>` site |
+
+### Corpus survey: PubMed, Crossref, and OpenAlex metadata coverage
+
+To decide how `metadata_fields.fill` should combine records when PubMed or Crossref resolves a paper and OpenAlex's work
+sits beside it in `MetadataSource`, we compared upstream records across three samples from the seed corpus:
+
+1. **Author names and ORCID coverage (100 dual-covered works in PubMed and OpenAlex):**
+   - **ORCIDs:** OpenAlex attached a valid ORCID (`authorships[].author.orcid`) to **50–63%** of authors in our seed
+     samples, compared with **21%** in PubMed (`Identifier[@Source="ORCID"]`). All **45** PubMed ORCIDs in the 100-work
+     sample agreed with OpenAlex; the coverage gain comes from OpenAlex grouping publications into disambiguated author
+     profiles (`A5…`) and propagating an ORCID linked on a recent paper across the author's career.
+   - **Author counts and ordering:** Across the 100 dual-covered works, **99** had identical author counts and **96**
+     had identical family names in order (the remaining **3** differed only by script or spelling). Where consortium or
+     group authors (`CollectiveName` in PubMed) appear, taking the author list as a whole from one index avoids
+     positional mismatches.
+1. **MeSH major-topic fidelity (80 dual-covered works with MeSH headings in both PubMed and OpenAlex):**
+   - Across the 80 dual-covered works, **169 of 269** major headings in PubMed were major only via a qualifier
+     (`QualifierName[@MajorTopicYN="Y"]` while the parent descriptor had `MajorTopicYN="N"`), and OpenAlex marked
+     **none** of them because OpenAlex's `is_major_topic` mirrors only the descriptor's `MajorTopicYN`. Reading
+     `mesh_headings` from PubMed whenever a PubMed record is present preserves NLM's exact descriptor and qualifier
+     flags, while `_openalex_mesh_headings` sets `major_topic = False` on qualifiers when reconstructing headings from
+     OpenAlex alone.
+1. **PubMed records without MeSH headings (295 PubMed-resolved works in the seed corpus):**
+   - **78 of 295** PubMed seed records had no `MeshHeadingList` because they were not yet indexed for MEDLINE, yet
+     **23** of those 72 non-MEDLINE records were tagged `Case Reports` in `PublicationTypeList` (which Crossref and
+     OpenAlex do not have an equivalent for). Consequently, empty `mesh_headings` or `publication_types` must not be
+     treated as a negative signal during triage. When OpenAlex resolves a paper on its own, grouping OpenAlex's `mesh`
+     rows into `Metadata.mesh_headings` recovers descriptor and qualifier UIs (`D…` and `Q…`) with descriptor-level
+     `major_topic` flags.

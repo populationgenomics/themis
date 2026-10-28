@@ -1,440 +1,454 @@
-# Design: data-plane rpc authorization
+# Design: data-plane RPC authorization
 
-**Related:** [`security.md`](security.md) (the default-on chokepoint rule this is an instance of),
-[`sandbox-worker.md`](sandbox-worker.md) (the hatch every call from the agent crosses),
-[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (the `agent_exposed` proto option this reads admission from),
-[`evidence-fulltext.md`](evidence-fulltext.md) (the paper-ingestion spend this re-gates),
-[`literature-evidence-layer.md`](literature-evidence-layer.md) (the interface this converts, and the corpus it serves)
+**Related:** [`security.md`](security.md) (the default-deny chokepoint rule this implements for gRPC),
+[`sandbox-worker.md`](sandbox-worker.md) (the hatch every call from the sandbox agent crosses),
+[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (the `agent_exposed` proto option that drives guest stub
+generation), [`evidence-fulltext.md`](evidence-fulltext.md) (the paper-conversion spend that `MaybeIngestPapers` gates),
+[`literature-evidence-layer.md`](literature-evidence-layer.md) (the literature interface and shared corpus),
+[`sheaf-service.md`](sheaf-service.md) (the workspace repository service that gates streaming RPCs with this
+interceptor)
 
 ## Overview
 
-The **data plane** is the set of backend gRPC services under `themis/services/` that hold the evidence an Analysis draws
-on. Most of its rpcs authorize the same way: read the caller's session token, resolve it through the **auth service**
-(the service that issues and resolves session tokens), and proceed if it resolved. The binding that resolution produced
-is then thrown away, so the check answers exactly one question — does this caller hold a session? — and on the
-literature interface it is not asked at all, because those reads carry no gate.
+The **data plane** is the set of backend gRPC services under `themis/services/` that serve the evidence an Analysis
+draws on. Historically, data-plane RPCs authorized callers in one way: the handler read a session token from call
+metadata, resolved it through the **auth service** (the service that issues and resolves session tokens), and discarded
+the resulting Project and Analysis binding. That check answered only whether the caller held a valid session. On the
+literature interface, read RPCs did not even run that check because the **web tier** (the BFF server behind the browser)
+reads the shared paper **corpus** using its own Cloud Run service-account identity without a session token, leaving
+agent-facing literature reads completely ungated.
 
-Neither shape fits the callers literature has. The **web tier** — the server behind the browser, which renders the
-workbench and calls backend services on the browser's behalf — reads the **corpus**, the store of published papers
-shared across every Project, presenting its own verified identity and no session token. The agent-facing reads, the ones
-that should be gated, are open. And a third fact is coming that a boolean cannot describe at all: fetching a paper an
-institution subscribes to draws on a *person's* entitlement, so the call has to know whom it is made for.
+A boolean session check cannot express who may call an RPC when services have callers without sessions, callers that
+share a service account across trust boundaries, and calls that exercise a human user's institutional subscription.
+Authorization in [`themis/clients/auth/`](../../themis/clients/auth/) instead assembles the facts each call carries into
+an immutable `AuthContext` and checks that context against an admission rule declared on the RPC in protobuf:
 
-Authorization therefore stops asking one question and assembles the facts a call arrives with. There are three, and
-every internal call carries at least the first:
+1. **Caller** (`caller` and `calling_as`): the first-party GCP service account verified from the Cloud Run
+   `Authorization` ID token, paired with a metadata **claim** stating whether the account is calling as itself
+   (`CALLING_AS_SELF`), forwarding a call from the sandbox agent (`CALLING_AS_AGENT_SESSION`), or calling from the
+   sandbox worker (`CALLING_AS_WORKER_SESSION`). Every internal call carries a verified caller.
+1. **Binding** (`session`): the Project and Analysis resolved from a session token via the auth service. Present
+   whenever the claim names a session.
+1. **Person**: the human user and approved paper scope resolved from an approval token granted in the browser. Present
+   only when an acquisition call draws on a user's institutional entitlement.
 
-- the **caller** — the **first-party** service account (one of ours: the web tier, a worker, a maintainer's automation
-  account) verified from the ID token Cloud Run forwards. Always present.
-- the **binding** — the Project and Analysis the call is scoped to, resolved from a session token. Present when the call
-  is made within an Analysis.
-- the **person** — whom the call is made for, resolved from an approval token that person granted in the browser.
-  Present only when the call exercises something only they may.
+A server-wide gRPC interceptor builds `AuthContext` before any handler runs and checks it against the principals
+declared on the method's contract in
+[`schema/proto/themis/rpc/sandbox_options.proto`](../../schema/proto/themis/rpc/sandbox_options.proto) via
+`agent_exposed` and `admits_caller`. Each principal in the `Caller` enum binds a service account ID to a required
+`CallingAs` mode (`CALLER_WEB`, `CALLER_CLU`, `CALLER_AGENT`, `CALLER_SANDBOX_WORKER`). The sandbox-job service account
+(`themis-sandbox-job`) has no principal that calls as `CALLING_AS_SELF`; both of its principals (`CALLER_AGENT` and
+`CALLER_SANDBOX_WORKER`) require a session token that resolves through the auth service, so a sandbox process that drops
+its session token cannot satisfy any RPC's admission rule. Any RPC that declares no admitted principals is denied by
+default.
 
-An interceptor assembles those three into one `AuthContext` for every call and checks it against what the **contract**
-admits. The proto already marks an rpc the agent may reach (`agent_exposed`); it gains one sibling option,
-`admits_caller`, naming the **principals** the rpc admits — drawn from a closed enum of our service accounts, each
-member also saying what a call from that account must **claim** to be calling as: itself (`CALLER_WEB`), or the agent or
-the worker within a session (`CALLER_AGENT`, `CALLER_SANDBOX_WORKER`, one account, two principals). The interceptor
-derives the admission rule from that option, so who may call an rpc is stated once, in the contract, and read from there
-by the hatch allowlist and the interceptor alike. A call the contract does not admit is denied, as is a call to an rpc
-whose contract admits nobody; denial is the default rather than a fallback.
-
-The line that keeps this from growing into an access-control system of its own: **what a call sees is never selected by
-the person driving it.** It may be selected by the Analysis the call is scoped to; a person's entitlement can widen what
-is *acquired* into the corpus, and nothing else. That leaves a question this doc raises and does not answer — a paper
-acquired on one institution's subscription lands in a corpus every Project reads — so the person axis is designed here
-and held off by a check that fails loudly if anything presents one.
-
-The one identity the agent can present — the sandbox-job service account, one of ours like the rest — has no member in
-that enum that calls as itself: both of its members claim a session, and are satisfied only by one that resolves, so an
-agent that dropped its session token satisfies no principal, and the exclusion is a property of the type rather than of
-any configuration.
+To prevent authorization from growing into a per-user access-control system across the data plane, **what a call may see
+is selected only by the Analysis it is scoped to, never by the person driving it.** A person's institutional entitlement
+can widen only what is *acquired* into the corpus through `MaybeIngestPapers`. Because acquiring a subscription paper
+places it into a corpus that every Project currently reads, the person axis is designed here but held off by a
+construction check that rejects approval tokens until both the browser approval flow and licence-scoped corpus masking
+are implemented.
 
 ## Background
 
-A **Project** is the access boundary: the datasets and users associated with a body of work. An **Analysis** is a body
-of collaborative work bound to one Project, and it is the unit this design scopes on — coarse deliberately, since the
-workspace behind it is shared among everyone in the Project, and anything finer leaks through that sharing.
+A **Project** is the access boundary containing the datasets and users associated with a body of work. An **Analysis**
+is a collaborative investigation bound to one Project. Authorization scopes data-plane calls at the Analysis level
+because the workspace behind an Analysis is shared among every member of the Project, so any finer-grained boundary
+would leak through the shared workspace.
 
-A **session** is what the auth service issues so a call can name an Analysis: a short-lived token that resolves to a
-Project and Analysis id ([`security.md`](security.md), and the session client at
-[`themis/clients/auth/session.py`](../../themis/clients/auth/session.py)). A session is the *presentation* of a scope,
-not a property of the caller presenting it — nothing about a resolved binding says the caller was the agent, and the
-design does not read one from the other. Tokens are minted by **deriving** them: a first-party account granted the
-signing permission on the session-token key can compute the bearer for any session id, and so present itself as any live
-session. The web tier derives one at session create and the dispatcher derives one per sandbox launch; a maintainer's
-automation account may be configured to as well. An account that can derive a session can therefore reach any Analysis's
-scope — a property of session minting that no rule in this design changes.
+A **session** is a short-lived bearer token issued by the auth service that resolves to a Project ID and an Analysis ID
+([`security.md`](security.md); session client at
+[`themis/clients/auth/session.py`](../../themis/clients/auth/session.py)). A resolved session identifies an Analysis
+scope rather than a specific caller: any first-party service account granted KMS signing permission on the session-token
+key can **derive** a bearer token for any session ID. The web tier derives session tokens when creating sessions, the
+dispatcher derives one when launching a sandbox, and the maintainer automation account (`themis-clu`) can be configured
+to derive them in development stacks.
 
-The **sandbox agent** — untrusted model-driven code running in a network-isolated guest — reaches an internal service
-only through the worker's **hatch**, which dials the service presenting the sandbox-job service account's identity and
-injects the agent's session token as the call's metadata ([`sandbox-worker.md`](sandbox-worker.md)). Two facts about the
-hatch are load-bearing here: the guest holds no credential of its own and cannot mint one, and the guest's own metadata
-does not cross the hatch. So to any internal service the agent appears as exactly one identity, carrying whatever the
-worker injected and nothing it chose itself. One worker serves one session and holds one token, which bounds what a
-compromised worker can reach in the *workspace*; the corpus is shared, and one token reads it as any other does.
+The **sandbox agent** (untrusted model-driven code running inside a network-isolated gVisor guest) reaches internal gRPC
+services only through the sandbox worker's **hatch** ([`sandbox-worker.md`](sandbox-worker.md)). The hatch dials backend
+services using the sandbox-job service account (`themis-sandbox-job`) and injects the session token from the worker's
+environment into outgoing gRPC metadata. The guest holds no credentials of its own, cannot mint tokens, and cannot pass
+its own gRPC metadata across the hatch. One worker serves one session and holds one session token, which bounds what a
+compromised worker can reach in the workspace; the corpus is shared, and one token reads it as any other does.
+Consequently, **the agent can neither see nor choose whom a call speaks for**: every credential on an agent call is
+injected outside the guest.
 
-The construction buys one invariant: **the agent can neither see nor choose whom a call speaks for.** It is not that
-nothing on the agent's path may speak for a person — the acquisition path below does exactly that — but that the agent
-never holds the credential, never learns the identity, and cannot manufacture one, because everything it presents was
-injected on the other side of the hatch.
+Internal service-to-service calls authenticate through Cloud Run IAM. The caller sends a Google-signed OIDC ID token in
+the `Authorization` header, and Cloud Run rejects the request unless the caller holds `roles/run.invoker`. After
+checking that permission, **Cloud Run forwards the `Authorization` header to the container unchanged** with its
+signature intact (see the [Appendix](#appendix-cloud-run-authorization-header-forwarding)). The receiving container can
+therefore re-verify the ID token and read the calling service account's email.
 
-Internal calls authenticate with Cloud Run's own IAM: the caller presents a Google-signed ID token in the standard
-`Authorization` header, and Cloud Run rejects the call unless the caller holds `run.invoker`. After validating that
-permission, **Cloud Run forwards the `Authorization` header to the container unchanged**, signature intact, so the
-container can re-verify the token and read the calling service account's email from it. (This is the documented
-service-to-service behaviour, and not the same as IAP, which consumes the caller's credential and injects its own
-identity header. The confirmation and its source are in the Appendix.) Without it there would be no verified caller to
-authorize on at all.
+An internal call can thus carry three distinct credentials:
 
-An internal call can therefore carry credentials that do different jobs. The ID token is **reachability**: on an
-internal call it clears Cloud Run's invoker gate, but any identity granted `run.invoker` can mint one, so on its own it
-says nothing about which data the call is for. The session token is **scope**: the callee resolves it to one Analysis,
-and what the call may touch follows from that. An approval token, described below, is **entitlement**: it says a named
-person agreed to this call drawing on what is theirs.
+| Credential           | Header / carrier                         | What it proves                                                                                                                                      |
+| -------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Google OIDC ID token | `Authorization: Bearer <id-token>`       | **Reachability and caller identity**: the call came from a specific first-party service account (`themis-web`, `themis-sandbox-job`, `themis-clu`). |
+| Session token        | `x-themis-claim-bin` (protobuf metadata) | **Scope**: the call is bound to a specific Project and Analysis (`SessionContext`).                                                                 |
+| Approval token       | Acquisition request payload (planned)    | **Entitlement**: a named user approved fetching specific papers under their institutional subscription.                                             |
 
-The web tier is already in the first position: the browser's paper-content pane reaches the literature service directly,
-over a gRPC client presenting the web tier's own ID token and no session token (the live adapter at
-[`apps/web/src/server/adapters/live/literature.ts`](../../apps/web/src/server/adapters/live/literature.ts)). That is why
-those reads went ungated rather than gated the way the other interfaces are — a session gate had nothing to check.
+The web tier's paper-content pane already calls the literature service directly using the web tier's ID token and no
+session token
+([`apps/web/src/server/adapters/live/literature.ts`](../../apps/web/src/server/adapters/live/literature.ts)), which is
+why browser-facing literature reads cannot use a session-only gate.
 
 ## Non-goals
 
-- **Masking.** No ablation of the corpus — a restricted view, a licence-bound representation, a data cutoff — is
-  designed here. The one step a masking layer would fill is named under "What a call may see"; nothing sits behind it.
-  Masking is its own design, and the licensing question under Open questions is what will force it.
-- **The approval flow.** How a person is asked to approve a fetch, what the request shows them, how the answer reaches
-  the service, and the message the person resolves to are a design of their own. This doc names what the resulting token
-  must be — resolvable server-side, unforgeable by the service that relays it, and bound to what was approved — and
-  takes that flow as one of the two prerequisites before anything is configured to resolve one.
-- **Deploy wiring.** The GCP project that completes a caller's service-account email, and a service's own URL for token
-  verification, are deployment configuration. This doc names the seam; the values are set where the image is deployed.
+- **Corpus masking.** Filtering the corpus by institutional licence or publication-date cutoff is out of scope. This doc
+  defines the `LiteratureBackend.view_for` seam that receives `AuthContext` on every read; the masking logic behind that
+  seam is a separate design (see [Open questions](#open-questions)).
+- **The browser approval flow.** How the workbench prompts a user to approve a paper fetch, how that token reaches the
+  backend, and the exact protobuf schema for a resolved user identity belong to the acquisition flow design. This doc
+  specifies only the security properties the resulting token must satisfy: it must resolve server-side, be unforgeable
+  by the sandbox worker that relays it, and bind the user to the specific papers they approved.
+- **Deployment wiring.** The environment variables supplying the GCP project ID and the service's audience URL are
+  configured in the deployment manifests, not here.
 
 ## Design
 
-The primitive is a context assembled per call, an admission rule derived from the rpc's contract, and the interceptor
-that assembles the one and enforces the other. It lives alongside the session client it resolves through, in
-[`themis/clients/auth/`](../../themis/clients/auth/).
+The authorization library lives alongside the session client in [`themis/clients/auth/`](../../themis/clients/auth/). It
+consists of three parts: a per-call `AuthContext` built from incoming credentials, an admission rule derived from each
+RPC's protobuf options, and a server-wide gRPC interceptor (`AuthInterceptor`) that constructs the context and enforces
+the rule.
 
-### One context, built for every call
-
-A server interceptor builds one `AuthContext` for every call, then derives the admission rule of the method being called
-and evaluates it. The caller is verified from the ID token. The binding is resolved from a session token — but which
-session, and on whose behalf the account is calling, the account itself states, in one **claim** it sends as metadata:
-what it is *calling as*, and the session token when that names a session. The claim is trusted rather than verified,
-because the account is trusted to make it; what is checked is only that the account has a member for what it claims. A
-call carrying no claim calls as itself. The sandbox job's account is why the claim exists: one account forwards the
-guest's calls, claiming the agent's session, and makes the worker's own calls — its mirror's reads and publishes —
-claiming the worker's; the same verified caller, two principals, told apart by what it says it is doing. The binding is
-a proto because it is what a resolution rpc returns; the person will join as a fourth fact, for the same reason, once
-the approval flow defines it. The context is a frozen dataclass, so an absent binding can be absent — the reason is
-under Alternatives.
-
-```python
-@dataclasses.dataclass(frozen=True)
-class AuthContext:
-    caller: str                                # the verified service-account email
-    calling_as: sandbox_options_pb2.CallingAs  # the claim: SELF, AGENT_SESSION or WORKER_SESSION
-    session: auth_pb2.SessionContext | None    # resolved from the claim's token, when it named one
 ```
+Caller (Web / Worker / Hatch / CLU)
+  │
+  │  Authorization: Bearer <Google ID token>
+  │  x-themis-claim-bin: CallerClaim(calling_as, session_token)
+  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│ AuthInterceptor (themis/clients/auth/interceptor.py)                    │
+│                                                                         │
+│  1. Verify ID token against service URL audience ──► caller email       │
+│  2. Decode CallerClaim & check account consistency ──► calling_as       │
+│  3. If session_token present, ResolveSession ────────► SessionContext   │
+│  4. Build frozen AuthContext(caller, calling_as, session)               │
+│  5. Evaluate RPC Rule derived from proto options (admits_caller)        │
+└─────────────────────────────────────────────────────────────────────────┘
+  │
+  │  AuthContext bound to contextvars for handler lifetime
+  ▼
+Servicer handler / backend port (LiteratureBackend.view_for, Sheaf store)
+```
+
+### One context built for every call
+
+For every inbound RPC (except the health check), `AuthInterceptor` builds one frozen `AuthContext` instance
+([`themis/clients/auth/context.py`](../../themis/clients/auth/context.py)) containing:
+
+- `caller: str` — the verified service-account email extracted from the Google ID token.
+- `calling_as: CallingAs` — the caller's claimed mode (`CALLING_AS_SELF`, `CALLING_AS_AGENT_SESSION`, or
+  `CALLING_AS_WORKER_SESSION`), sent in the `x-themis-claim-bin` metadata header (`CallerClaim` in
+  [`schema/proto/themis/rpc/auth.proto`](../../schema/proto/themis/rpc/auth.proto)).
+- `session: SessionContext | None` — the resolved Project and Analysis binding returned by `ResolveSession` when
+  `CallerClaim` includes a session token, or `None` when the call is unscoped.
+
+Why does the caller send a `calling_as` claim in addition to its verified service-account identity? If every service
+account acted in only one role, the verified email from the ID token would suffice. That breaks for
+`themis-sandbox-job`: a single sandbox container runs both the worker's own workspace synchronization (which reads and
+publishes to the Sheaf repository mirror) and the hatch (which forwards the untrusted guest agent's RPCs). Both paths
+authenticate to Cloud Run as `themis-sandbox-job`, yet the guest must not be allowed to call worker-only RPCs such as
+`Publish`. Having the worker attach a `CallerClaim` (`CALLING_AS_AGENT_SESSION` on the hatch,
+`CALLING_AS_WORKER_SESSION` on its own client) lets the interceptor distinguish the two principals sharing that service
+account.
+
+The claim is trusted rather than verified, because the account is trusted to make it; what is checked is only that the
+verified account has a member in the `Caller` enum for what it claims (`account_id` + `calling_as`). A call that omits
+the `x-themis-claim-bin` header defaults to `CALLING_AS_SELF` with no session. The person identity will join
+`AuthContext` as a fourth field once the approval flow defines its resolved message.
 
 ### What the context guarantees at construction
 
-Some combinations of the three facts are bugs rather than policy questions, and the context refuses to exist rather than
-being handed to a rule that would quietly deny. Each surfaces as an internal error, not as `PERMISSION_DENIED`, and each
-is relaxable later by an explicit edit rather than by omission:
+Certain combinations of credentials indicate a bug or a compromised caller rather than a normal authorization denial.
+`AuthContext` rejects these combinations during construction with an internal error (`INTERNAL` or `INVALID_ARGUMENT`)
+instead of passing them to the rule evaluator to fail with `PERMISSION_DENIED`:
 
-- **A claim the callee cannot honour.** None at all from an account with no self-acting member — the sandbox job's,
-  whose hatch and worker always claim, so a bare call from it is a worker defect or a compromise; one naming a session
-  and carrying no token; one that does not decode. This is the one check that reads the caller's identity for a reason
-  other than admission: it compares two facts the call arrived with for consistency, and decides nothing about who may
-  call.
-- **An approval token with nothing configured to resolve it.** The person axis is held off until its two prerequisites
-  land, and a deployment convention is not a property: a call carrying an approval token while no resolver is configured
-  is an error, not an ignored header. Switching the axis on is the edit that configures the resolver.
+- **A claim the caller cannot honour.** If `x-themis-claim-bin` fails protobuf decoding, if the claim specifies
+  `CALLING_AS_AGENT_SESSION` or `CALLING_AS_WORKER_SESSION` without a non-empty `session_token`, or if an account with
+  no `CALLING_AS_SELF` principal (such as `themis-sandbox-job`) makes a call with no claim header at all, construction
+  fails immediately. Because the sandbox worker and hatch always attach a claim, an unclaimed call from
+  `themis-sandbox-job` indicates a worker defect or compromise.
+- **An approval token when no resolver is configured.** Until the approval flow and licence-scoped corpus masking are
+  ready, any call carrying an approval token while no approval resolver is configured raises an error rather than
+  silently ignoring the header. Enabling the person axis requires explicitly wiring the resolver.
 
-The exclusion the caller arm rests on — that the sandbox-job account is never admitted by identity alone — is not a
-check but a fact about the contract: both of its members name a session, and a member naming a session is satisfied only
-by one that resolves, so no rpc can admit that account for being itself. A test binds the enum's account ids to the
-accounts the infrastructure declares, so a member cannot name an account that does not exist or go stale when one is
-renamed.
+That `themis-sandbox-job` is never admitted by identity alone follows directly from the `Caller` enum definition: both
+principals bound to `themis-sandbox-job` (`CALLER_AGENT` and `CALLER_SANDBOX_WORKER`) require a session claim, and a
+session-claiming principal is satisfied only when its session token resolves. A test verifies that every `account_id` in
+the `Caller` enum matches a service account declared in the Terraform infrastructure, preventing typos or stale account
+names.
 
-The interceptor is the only reader of authorization metadata. A **servicer** — the class implementing one gRPC service —
-never reads the call's metadata itself, which a test asserts over the servicer modules, so a header naming a person, or
-anything else, has exactly one place it could be honoured and that place does not honour it.
+`AuthInterceptor` is the sole reader of authorization metadata. A test over the servicer modules asserts that no
+servicer reads gRPC invocation metadata directly, ensuring that headers carrying identity or entitlement cannot bypass
+the interceptor.
 
-### The contract declares admission; the interceptor derives the rule
+### The contract declares admission and the interceptor derives the rule
 
-Which rpcs the sandbox agent may reach is already declared in the proto, by the `agent_exposed` method option the
-hatch's allowlist and the guest's stubs are generated from ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). This
-design adds one sibling option, defined with it in
-[`schema/proto/themis/rpc/sandbox_options.proto`](../../schema/proto/themis/rpc/sandbox_options.proto): a repeated
-`admits_caller`, each naming a principal the rpc admits. `agent_exposed` stays what it is — the codegen marker for the
-guest's surface — and an exposed rpc names the agent, since the agent only ever presents a session and an exposed rpc
-cannot fail to admit one. The rule the interceptor derives is the disjunction over the named principals: the call's
-verified account and its claim match one, and where that principal names a session, the session resolved. A reader of
-the proto learns who may call an rpc, and the servicer carries no admission code at all.
+Which RPCs the sandbox agent may call is declared in protobuf by the `agent_exposed` method option, which drives code
+generation for the guest stubs and the hatch allowlist ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). Alongside
+it in [`schema/proto/themis/rpc/sandbox_options.proto`](../../schema/proto/themis/rpc/sandbox_options.proto), the
+`admits_caller` repeated method option names the principals from the closed `Caller` enum that the RPC admits:
 
-A principal is a member of a closed `Caller` enum: a first-party service account, and what a call from it claims to be
-calling as, both carried as options on the value:
+| `Caller` enum member    | `(account_id)` option | `(calling_as)` option       | Requires resolved session?    |
+| ----------------------- | --------------------- | --------------------------- | ----------------------------- |
+| `CALLER_WEB`            | `themis-web`          | `CALLING_AS_SELF`           | No (optional for attribution) |
+| `CALLER_CLU`            | `themis-clu`          | `CALLING_AS_SELF`           | No (optional for attribution) |
+| `CALLER_AGENT`          | `themis-sandbox-job`  | `CALLING_AS_AGENT_SESSION`  | Yes                           |
+| `CALLER_SANDBOX_WORKER` | `themis-sandbox-job`  | `CALLING_AS_WORKER_SESSION` | Yes                           |
 
-```proto
-enum Caller {
-  CALLER_UNSPECIFIED = 0;
-  CALLER_WEB = 1 [(account_id) = "themis-web", (calling_as) = CALLING_AS_SELF];
-  CALLER_CLU = 2 [(account_id) = "themis-clu", (calling_as) = CALLING_AS_SELF];
-  CALLER_AGENT = 3 [(account_id) = "themis-sandbox-job", (calling_as) = CALLING_AS_AGENT_SESSION];
-  CALLER_SANDBOX_WORKER = 4 [(account_id) = "themis-sandbox-job", (calling_as) = CALLING_AS_WORKER_SESSION];
-}
-```
+`agent_exposed` remains the codegen marker for the guest's RPC surface, and marking an RPC `agent_exposed = true`
+implies `CALLER_AGENT` admission. The rule the interceptor derives
+([`themis/clients/auth/rules.py`](../../themis/clients/auth/rules.py)) is the disjunction over the RPC's admitted
+principals: a call is admitted if its verified service account and `calling_as` claim match one of the RPC's principals,
+and—when that principal claims a session—its `SessionContext` resolved. One principal, `CALLER_CLU` (the developer
+identity used to invoke deployed backends by hand), is implicitly added to every RPC that admits at least one caller;
+whether a human can impersonate `themis-clu` in a given environment is governed by IAM and IAP.
 
-The contract cannot carry a service account's email, which differs per environment, but the account *id* is the same
-everywhere — the infrastructure names every first-party account literally, and only the GCP project varies — so the
-verifier completes it with the project the service runs in. An enum rather than a string is what makes a misspelled
-caller a compile error instead of an rpc that silently admits nobody. Adding a principal is adding a member, which is
-additive and, like every change to an option's value, not a breaking change under `buf`. Naming principals in the
-contract is a deliberate widening of what `agent_exposed` began: the proto already stated one class of admitted caller,
-and it is the one place a reader looks for the rest. One principal is named on no rpc and admitted on every rpc there
-is: `CALLER_CLU`, the developer's identity for exercising a deployed system by hand — whether anyone may become it, and
-where, is IAM's.
+Because service-account email addresses include the per-environment GCP project ID (for example,
+`themis-web@<project>.iam.gserviceaccount.com`), the protobuf option stores only the environment-independent
+`account_id` prefix (`themis-web`), and the verifier completes the email using the project ID of the environment the
+service runs in. Using a protobuf enum rather than free-form strings turns a misspelled caller into a proto compile
+error and keeps principal additions backward-compatible under `buf`.
 
-Admission is an allowlist and only an allowlist: the contract names what an rpc admits, a call matching none of it is
-denied, and there is no way to name a caller that is *refused*. A denylist beside the allowlist would not change the
-default, but it would be a second statement of who may call, able to disagree with the first — and the only occasion for
-one is an admission drawn too wide, which is fixed by narrowing it.
+Admission is strictly an allowlist: the contract states which principals may call an RPC, and there is no option to name
+a denied caller. Adding a denylist alongside the allowlist would create two places stating who may call an RPC that
+could disagree with each other; if an admission rule is too broad, the fix is to narrow the allowlist.
 
-Fail-closed governs a single call the same way, in two stages. Verifying the caller comes first, before any context
-exists, and a call whose ID token the service cannot verify is denied outright, on no arm. A token can fail here after
-Cloud Run let the call in: behind the load balancer's IAP, Cloud Run admits IAP's service agent and passes the caller's
-token through unexamined, so the service checks the token's audience against its own URL itself
-([`security.md`](security.md#ingress-from-the-public-internet)). Neither a forged token nor one minted for another
-service yields a caller. That is why `caller` is never absent from a context. Within a built context, an arm that cannot
-decide declines: a verified caller the rpc does not name is no admission, and a claim naming a session that does not
-resolve is denied whatever the caller — the call would be attributed wrongly or not at all, and a handler that finds no
-session on its context then knows the claim named none. Admission is reached only by an arm affirmatively matching. A
-failure that is not a decline — the auth service being unreachable, say — propagates as the failure it is, because
-reading an outage as "no session" would turn an incident into a silent policy decision.
+For each call, fail-closed evaluation proceeds in two stages:
 
-### Default-deny is enforced at the interceptor, over the whole server
+1. **Caller verification.** Before building `AuthContext`, the interceptor verifies the bearer token in `Authorization`
+   against Google's public certificates with the expected audience set to the receiving service's own URL. Checking the
+   audience inside the container is essential even on Cloud Run: when a service sits behind a load balancer with
+   Identity-Aware Proxy (IAP), Cloud Run checks only that IAP's service agent holds `roles/run.invoker` and passes the
+   caller's `Authorization` header through unexamined ([`security.md`](security.md#ingress-from-the-public-internet)).
+   Verifying signature and audience ensures that neither a forged token nor a token minted for another service produces
+   a `caller` email. If verification fails, the call is rejected with `UNAUTHENTICATED`.
+1. **Context construction and rule evaluation.** Once the caller is verified, the interceptor decodes
+   `x-themis-claim-bin` and resolves the session token if one was provided. If a call includes a session token that
+   fails to resolve (even on a `CALLING_AS_SELF` call where the RPC does not require a session), the interceptor rejects
+   the call with `PERMISSION_DENIED` so a handler never runs with an unattributed or misattributed session. If no
+   admitted principal matches `AuthContext`, the interceptor rejects the call with `PERMISSION_DENIED`. By contrast, if
+   the auth service itself is unreachable during `ResolveSession`, that RPC error propagates as an availability failure
+   rather than being turned into a policy denial.
 
-An rpc whose contract admits nobody is denied by the interceptor rather than reaching its body. A check written inside
-each method could not promise that: a method nobody remembered to gate runs no gate at all and is reachable by anything
-that cleared Cloud Run's invoker gate, and only a test could notice. The interceptor makes denial a property of the
-running server, the posture the web tier takes with the check it runs on every browser request before any handler
-([`security.md`](security.md)).
+### Default-deny is enforced at the interceptor across the whole server
 
-A gRPC interceptor is server-wide by construction: it sees every inbound call by its full method path before any handler
-runs, and it has no notion of which service the path belongs to. So its reach is not a list of services it governs — a
-list would be a second registry, and an interface added to the server but not to the list would run ungated, the
-omission this design exists to make impossible. It derives a rule for every path on the server, denies a path it cannot
-resolve to a contract, and exempts exactly one name: the health check, which Cloud Run probes without credentials, as
-the web tier exempts its own. Every evidence interface hosted with literature already marks its rpcs `agent_exposed`, so
-the derivation covers the whole server from the first deploy; what the in-body session checks those interfaces carry
-become is redundancy, and deleting them is an open question below rather than a precondition.
+If authorization checks lived inside individual servicer methods, a newly added method whose author forgot the check
+would run ungated for any caller with `roles/run.invoker`. Wrapping the gRPC server in `gated_server`
+([`themis/clients/auth/interceptor.py`](../../themis/clients/auth/interceptor.py)) makes default-deny a property of the
+server, matching the default-on session gate in the web tier ([`security.md`](security.md)).
 
-The gate covers every shape an rpc takes, and is the one place a call's status is sent. A stream-out rpc's context is
-bound across the iteration, not only across the call that starts it, since the handler's body runs as the response is
-drawn. A handler behind the gate raises a `StatusError` — a gRPC status carried as an exception — and the gate aborts
-the context with it, so a servicer never touches its context's status. That holds for a stream-in rpc too: a status sent
-while the client is still writing reaches it as the status, because the server completes its response and resets the
-stream and the client keeps the trailers it received
-([RFC 9113 §8.1](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.1)). One client gets this wrong: grpc's Python
-asyncio client records a write that fails after the call has completed as `INTERNAL`, overwriting the status it already
-holds ([grpc/grpc#36066](https://github.com/grpc/grpc/issues/36066) describes the mechanism; it is filed against
-bidirectional streams, and measurements here reproduce it on stream-in; the fix is
-[grpc/grpc#43486](https://github.com/grpc/grpc/pull/43486)). So a stream-in rpc's client is the synchronous one until a
-grpcio release carries that fix, a constraint on any caller.
+Because a gRPC server interceptor intercepts every inbound call by its full `/package.Service/Method` path before
+dispatching to any servicer, it does not maintain a hand-written list of governed services. Instead, it resolves each
+method path in the generated protobuf `DescriptorPool`, derives the admission rule from the method's options, and denies
+any method whose contract admits no principals or whose path is not in the descriptor pool. Exactly one path is exempt:
+`/grpc.health.v1.Health/Check`, which Cloud Run probes without credentials. All other evidence interfaces hosted
+alongside literature in the `evidence` server already mark their RPCs `agent_exposed`, so the interceptor gates the
+entire server without requiring changes to their servicers.
 
-### The binding names an Analysis, not a session
+The interceptor wraps all four gRPC method shapes (unary-unary, unary-stream, stream-unary, and stream-stream) and is
+the single place that sets non-OK gRPC status codes. For server-streaming RPCs, `AuthContext` remains bound in
+`contextvars` across every iteration of the response generator, because the handler body executes lazily as responses
+are yielded. Handlers behind the interceptor raise `StatusError` rather than calling `context.abort()` directly, and the
+interceptor translates `StatusError` into `context.abort()`.
 
-What a session token resolves to is a Project and an Analysis. The design reads the Analysis from it and nothing else:
-scope is a fact about the work, and the session is one way for a call to present it. So a rule that wants to know
-whether a call is scoped to an Analysis asks that, rather than whether the caller looks like the agent — the conflation
-this design exists to remove.
+On client-streaming (`stream-unary`) RPCs, aborting the call while the client is still uploading chunks causes the
+server to send trailers and reset the HTTP/2 stream
+([RFC 9113 §8.1](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.1)). While standard HTTP/2 clients preserve the
+trailers' gRPC status, the `grpcio` Python `grpc.aio` client has a bug
+([grpc/grpc#36066](https://github.com/grpc/grpc/issues/36066), fixed in
+[grpc/grpc#43486](https://github.com/grpc/grpc/pull/43486)) where a write failing after stream reset overwrites the
+server's status with `INTERNAL`. Callers of client-streaming RPCs (such as `Publish` on the Sheaf service) therefore use
+the synchronous `grpcio` client until a `grpcio` release containing that fix is adopted.
 
-The corollary: the session arm of an admission is a scope gate, not a caller gate. Any holder of a session bearer
-satisfies it — the agent, and every account that can derive one. Admitting a session says the call is scoped to an
-Analysis; it says nothing about who scoped it, and an rpc that needs to know who must name the caller.
+### The binding names an Analysis, not a caller identity
 
-### The person is resolved, never asserted
+A session token resolves to a Project ID and an Analysis ID (`SessionContext`). Any service account that can derive
+session tokens—the web tier, the dispatcher, or `themis-clu`—can present a valid token for any live session.
+Consequently, requiring a resolved session scopes a call to an Analysis; it does not prove that the caller is the
+sandbox agent. An RPC's `admits_caller` list states which caller principals may invoke the method, and the resolved
+`SessionContext` provides the Analysis scope.
 
-The obvious way to carry a person is for a trusted caller to assert one in a header. That fails on the one path that
-most needs it. The agent's calls are relayed by the sandbox worker, the process sitting closest to model-driven code,
-and a plaintext claim is something that process can fabricate. A token it merely relays is not: the web tier mints it
-when the person answers, so the worker can pass it on and cannot invent one. So a person reaches the data plane in the
-same shape as a scope does:
+### The person is resolved from an approval token, never asserted
 
-| fact        | presented on the call                                        | resolves to                        |
-| ----------- | ------------------------------------------------------------ | ---------------------------------- |
-| scope       | session token, minted when the Analysis's work is dispatched | the Project and Analysis           |
-| entitlement | approval token, minted when the person approves the request  | the person, and what they approved |
+When an acquisition call needs to draw on a human user's institutional subscription, the obvious implementation is for a
+trusted caller to pass the user's email and institution in a plaintext metadata header. That breaks on the sandbox path:
+agent calls are relayed by the sandbox worker, which runs alongside untrusted model-driven code and could fabricate a
+plaintext header if compromised. Instead, when the user approves a fetch in the browser, the web tier mints an opaque
+**approval token** that the sandbox worker relays without being able to forge. The data plane resolves that token
+through the auth service just as it resolves session tokens:
 
-The person's attributes never transit the sandbox host, and expiry and revocation come from the same table shape the
-session token already uses.
+| Fact        | Presented on the call                                      | Resolves to                                                  |
+| ----------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| Scope       | Session token (minted when work is dispatched)             | Project ID and Analysis ID (`SessionContext`)                |
+| Entitlement | Approval token (minted when the user approves the request) | User identity, institution, and the specific papers approved |
 
-Because the approval is what the token resolves to, binding a person to what they agreed to is not a second mechanism
-beside the identity: it is the identity's provenance. That binding has to be enforced, and a rule cannot do it — a rule
-sees the context, not the request. The agent chooses which paper to ask for even though it cannot choose whose
-entitlement to draw on, so the acquisition rpc's body compares the papers requested against what the approval names and
-refuses the rest. Two consequences for the approval flow follow. The hatch fixes a call's metadata once per worker
-execution, so an approval cannot ride as metadata the way a session does: it travels in the acquisition request itself,
-which changes that request's shape. And a token good for one approval is good for exactly the papers it names, so a
-second acquisition needs a second approval.
+Resolving the approval token server-side keeps user attributes out of the sandbox host and reuses the auth service's
+token expiry and revocation model.
 
-### What a call may see
+Because the sandbox agent chooses which papers to pass to `MaybeIngestPapers`, an approval token must be bound to the
+specific papers the user approved, and that check cannot happen in the interceptor (which sees only metadata, not the
+request body). The `MaybeIngestPapers` handler must compare the requested paper IDs against the approved paper IDs in
+the resolved token and reject any paper outside the approval. Two constraints on the approval flow follow from this:
 
-What a call may see is never selected by the person driving it. On the agent's path the literature backend **port** —
-the interface the servicer reaches its storage through — receives the context and resolves the corpus view from its
-Analysis; today that is the identity, every Analysis resolving to the whole corpus, and it is the one step masking would
-fill. The alternative, a view that varies with whoever is driving, breaks two things: two curators opening the same
-Analysis would see different evidence, so the agent's conclusions could no longer be audited against what a reviewer
-sees; and the workspace behind an Analysis is shared, so anything one person's view pulled in is visible to everyone
-else in the Project anyway.
+1. **The approval token travels in the request body, not in gRPC metadata.** The sandbox hatch fixes outgoing gRPC
+   metadata once for the lifetime of a worker execution, whereas approvals are granted per acquisition request during a
+   session.
+1. **Each approval token is scoped to one approved batch of papers.** Acquiring additional subscription papers later in
+   the same Analysis requires a new approval token.
 
-The browser's paper-content reads are the exception the seam does not cover: they admit the web tier and carry no
-Analysis, so there is nothing to resolve a view from. When masking needs a scope on that path, the web tier can present
-the Analysis the pane is open in, since it derives those sessions; until then the browser reads the whole corpus as the
-agent does.
+### What a call may see vs what a call may acquire
 
-What a call may **acquire** is the different question, and the only one a person answers. Pulling a paper that is not
-openly available into the corpus draws on a subscription belonging to a person and an institution, and no Analysis-level
-fact can stand in for that. So the person is carried on the acquisition path — `MaybeIngestPapers` — and nowhere else.
-But the corpus is shared across every Project, and [`PRODUCT.md`](../PRODUCT.md) §7 holds that licensed literature is
-never shared across institutional lines. That exposure is not hypothetical: the literature contract already marks a
-rendering `SUPPLIED` when its text reached the corpus through a human's institutional access, and such a rendering is
-served to any Analysis and to the browser today. This design leaves that as it finds it and declines to widen it: a
-person's entitlement drawn on at scale would turn an occasional supplied rendering into the corpus's normal way of
-growing. The person axis is therefore designed here and held off — the construction check above refuses an approval
-token until a resolver is configured, and configuring one waits on the approval flow and on masking able to hold a
-licensed representation to the licences that reach it.
+What a call may **see** in the corpus is determined solely by the Analysis it is scoped to, never by the person driving
+the call. On every corpus read, the literature servicer passes `AuthContext` to the backend port
+(`LiteratureBackend.view_for` in
+[`themis/services/evidence/literature/backend.py`](../../themis/services/evidence/literature/backend.py)), which returns
+a `LiteratureView` scoped to the call's Analysis. Today `view_for` returns an unrestricted view of the whole corpus,
+serving as the single seam where corpus masking will plug in. Selecting the corpus view by Analysis rather than by
+person preserves two properties:
 
-### Adoption: the literature interface, then the sheaf service
+- **Reproducible auditing:** Two curators opening the same Analysis see the exact same evidence, so a reviewer can audit
+  the agent's citations against the same corpus the agent searched.
+- **No cross-user leakage within a Project:** Because the workspace behind an Analysis is shared across all Project
+  members, any text pulled into the workspace by one user's view is visible to everyone else in the Project anyway.
 
-Literature adopts the primitive first because it is the interface with a caller that holds no session and the interface
-with a **spend** to authorize: `MaybeIngestPapers` may start a **conversion**, the rendering of a paper's PDF to
-markdown by a model, which costs model budget. The other evidence interfaces are covered by the interceptor from the
-same deploy, as described above, and keep their in-body session checks until those are deleted.
+Browser paper-content reads from the web tier (`CALLER_WEB`) currently carry no session token and therefore read the
+unrestricted corpus. Once corpus masking requires an Analysis scope on browser reads, the web tier can attach a
+`CALLING_AS_SELF` claim carrying the session token of the Analysis open in the workbench.
 
-The sheaf service ([`sheaf-service.md`](sheaf-service.md)) is gated the same way, and is the server with streaming rpcs,
-`FetchPack` out and `Publish` in. Its contract names two principals. One is the sandbox job's account calling as the
-worker within a session, so the guest's forwarded calls — the agent's claim — never reach the repository directly; the
-worker's mirror does. The other is the web tier relaying a curator's browser, which names the session whose repository
-it acts on in a self claim, as the developer identity does ([`workbench-workspace.md`](workbench-workspace.md)). Its
-servicer reads the Analysis from the bound context and holds no session code of its own. The developer identity reaches
-it by naming, in a self claim, the session whose repository it wants: a claim on a self-acting call admits nothing and
-is resolved for attribution, which is what scoping the repository needs.
+What a call may **acquire** into the corpus is the only question answered by a person's entitlement. Fetching a
+closed-access paper requires a person's institutional subscription, so the person axis is used exclusively on the
+acquisition path (`MaybeIngestPapers`). However, the literature corpus is shared across every Project, and
+[`PRODUCT.md`](../PRODUCT.md) §7 states that licensed literature is never shared across institutional boundaries. Today,
+papers uploaded through a user's institutional access are marked `SUPPLIED` and served to any Analysis and to the
+browser. While occasional user-supplied uploads already cross that boundary, automating institutional acquisition via
+approval tokens would make licensed papers a primary way the shared corpus grows. The person axis is therefore held off
+at `AuthContext` construction until the approval flow and licence-scoped corpus masking land.
 
-Literature's rpcs split three ways:
+### Applying the model to the literature and Sheaf services
 
-- The **agent-facing reads** — searching the indexes, reading a paper's markdown, validating a quote — are
-  `agent_exposed`, so they admit a call scoped to an Analysis. These are the reads that carried no gate, so this is
-  where the new boundary falls.
-- The **paper-content reads** the browser renders admit `CALLER_WEB` and, for a maintainer acting on the corpus by hand,
-  `CALLER_CLU`. These are the rpcs the proto leaves unexposed.
-- The **producer**, `MaybeIngestPapers`, is `agent_exposed` and admits `CALLER_CLU`. It is the one rpc whose
-  implementation does more with the context than hand it to the port: admitting the call is what lets its tasks name a
-  target that spends, and it is the acquisition path a person's entitlement will travel on.
+#### Literature interface
 
-```proto
-rpc MaybeIngestPapers(MaybeIngestPapersRequest) returns (MaybeIngestPapersResponse) {
-  option (themis.rpc.agent_exposed) = true;
-  option (themis.rpc.admits_caller) = CALLER_CLU;
-}
-```
+The literature service ([`schema/proto/themis/rpc/literature.proto`](../../schema/proto/themis/rpc/literature.proto))
+applies the admission model across three groups of RPCs:
 
-A read carries no admission code at all — its admission is in the proto and its gate is the interceptor. What every
-corpus read does do is hand the context to the port, which resolves the view from it; that is the masking seam, present
-on every read from the start, and not an admission decision. It selects the whole corpus today.
+| RPC group                   | Methods                                                                                                                        | Declared admission                                                  | Session & context usage                                                                                     |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Agent-facing reads          | `SearchPapers`, `ReadPaperFulltext`, `ValidateQuote`, `GetEvidenceStatus`, `GetCandidateSummaries`, `GetPaperMetadata`         | `agent_exposed = true` (`CALLER_AGENT`, plus implicit `CALLER_CLU`) | Requires resolved session for `CALLER_AGENT`; passes `AuthContext` to `LiteratureBackend.view_for`.         |
+| Browser paper-content reads | `GetPaperContent`, `GetPaperParagraphs`, `GetSupplements`, `GetSupplementContent`, `GetFigures`, `GetFigureImage`, `GetTables` | `admits_caller = CALLER_WEB` (plus implicit `CALLER_CLU`)           | Admits the web tier with its ID token and no session; passes `AuthContext` to `LiteratureBackend.view_for`. |
+| Producer / acquisition      | `MaybeIngestPapers`                                                                                                            | `agent_exposed = true`, `admits_caller = CALLER_CLU`                | Authorizes up front at the interceptor before inspecting the batch or enqueuing conversion work.            |
 
-`CALLER_CLU` is `themis-clu`, the account a maintainer impersonates to call a backend by hand: it passes IAP in front of
-the evidence service already, and unnamed it would be refused every literature rpc the moment they gain admissions.
-Where a stack also lets it derive session bearers, it can satisfy the session arm as any live session, as the web tier
-and the dispatcher can everywhere — the property of session minting stated under Background, not one its admission adds.
-Whether it may reach a given environment's service at all stays IAM's question, decided by its IAP access on the
-service's load-balancer backend, not the contract's.
+Previously, `MaybeIngestPapers` resolved a session token inside the handler only when it reached the step of enqueuing a
+PDF-to-markdown conversion task, and then discarded the binding; batches whose papers were already ingested succeeded
+without any token. Gating `MaybeIngestPapers` at the interceptor rejects unauthorized callers before any work runs, and
+the handler passes `AuthContext` to `LiteratureBackend.view_for(auth_context.current())` before running either of its
+two producer actions that spend money — `view.ingest_papers` (which mints a permanent crosswalk claim in Cloud SQL and
+copies bytes into the corpus) and `view.request_conversions` (which enqueues PDF-to-markdown conversion that spends VLM
+tokens). Passing `AuthContext` into `view_for` establishes the seam for attributing both producer actions to the call's
+scope, although recording or charging that attribution is not yet wired (`view_for` currently discards `auth`). The
+conversion task that `MaybeIngestPapers` enqueues carries no credentials of its own: naming the paper and the main-text
+target in the queue is what authorizes the conversion worker to spend model budget
+([`evidence-fulltext.md`](evidence-fulltext.md#naming-a-target-is-the-decision-to-spend)), and that spend is capped at
+the Anthropic workspace level rather than attributed to an Analysis or Project
+([`evidence-fulltext.md`](evidence-fulltext.md#the-workspace-spend-limit-caps-spend)).
 
-The producer's admission replaces a narrower gate. That gate resolved a session only at the enqueue step and then
-discarded the binding, so a batch with nothing to enqueue was answered without any token, and no spend could be
-attributed ([`evidence-fulltext.md`](evidence-fulltext.md)). Now the whole rpc authorizes up front. A caller that
-nothing admits is refused before any work, and only an admitted call enqueues anything.
+#### Sheaf service
 
-The task it enqueues carries no authority of its own. It names the paper and the main-text target, and naming a target
-is what lets the worker spend on it
-([`evidence-fulltext.md`](evidence-fulltext.md#naming-a-target-is-the-decision-to-spend)). The spend itself is recorded
-only as the usage of the Anthropic workspace the worker calls the model from, and is not attributed to an Analysis or a
-Project ([`evidence-fulltext.md`](evidence-fulltext.md#the-workspace-spend-limit-caps-spend)).
+The Sheaf service ([`sheaf-service.md`](sheaf-service.md),
+[`schema/proto/themis/rpc/sheaf.proto`](../../schema/proto/themis/rpc/sheaf.proto)) uses the same interceptor to gate
+its unary (`ReadRefDoc`, `SignPackUrls`) and streaming (`FetchPack` server-streaming, `Publish` client-streaming) RPCs:
+
+- **Sandbox worker (`CALLER_SANDBOX_WORKER`)**: admitted on `ReadRefDoc`, `FetchPack`, `Publish`, and `SignPackUrls`.
+  Because `CALLER_AGENT` is not admitted on any Sheaf RPC, calls forwarded from the sandbox guest across the hatch
+  cannot reach the repository directly; only the worker's own synchronization mirror (`CALLING_AS_WORKER_SESSION`) can
+  read or publish packs.
+- **Web tier (`CALLER_WEB`) and developer CLI (`CALLER_CLU`)**: `CALLER_WEB` is admitted on `ReadRefDoc`, `FetchPack`,
+  and `Publish` to relay browser reads and curator edits ([`workbench-workspace.md`](workbench-workspace.md)). Both
+  `CALLER_WEB` and `CALLER_CLU` attach a `CALLING_AS_SELF` claim carrying the target session token; although
+  `CALLING_AS_SELF` does not require a session for admission, the interceptor resolves the attached session token so the
+  Sheaf servicer ([`themis/services/sheaf/servicer.py`](../../themis/services/sheaf/servicer.py)) can read the target
+  Analysis from `AuthContext.session` without containing any session-resolution code of its own.
 
 ## Alternatives considered
 
-- **Keep the boolean session gate and special-case the web tier.** Rejected: it re-answers "who may call this" per rpc
-  with ad-hoc exceptions, the opt-in shape [`security.md`](security.md) rejects, and it still discards the binding that
-  attribution needs.
-- **A union of mutually exclusive principals** — a call resolving to *either* a session *or* a verified service
-  identity. Rejected on two counts. It discards: a verified caller is present on every internal call by construction, so
-  returning one fact and dropping the other loses attribution for no gain. And the exclusivity is false — an approved
-  acquisition is scoped to an Analysis *and* made for a person, which a union cannot express.
-- **`AuthContext` as a proto message.** Rejected: a generated message field cannot be absent, so an unscoped call would
-  read as scoped to an empty Analysis instead of failing to type-check; messages are mutable, and a handler must not be
-  able to edit the authorization it was handed; and the construction checks would have nowhere to live. The context
-  crosses no boundary, so it gains nothing from being a contract.
-- **Roles — named sets of accounts filled by deployment configuration — instead of callers.** Rejected: the indirection
-  bought environment-independence that the account id already has, at the price of a role-to-accounts map in every
-  deployment, a startup check for a configured role the contract never names, a silent outcome for a named role the
-  deployment never fills, and a sandbox-job exclusion that lived in configuration rather than in the type. With a dozen
-  first-party accounts and two or three per rpc, a reader is better served by seeing exactly who. What a role could do
-  that a caller cannot — admit in one environment and not another — is IAM's job, done with `run.invoker`.
-- **A per-method decorator declaring admission** (`@admits(Session(), Operator(roles=...))`). Rejected: it is a second
-  statement of a fact the contract already half-states, so it needs a test to reconcile the two, and default-deny then
-  depends on every method being decorated — a decorator left off runs no gate. What it bought and this loses is a
-  statically narrowed session handed to the body; the body narrows once instead.
-- **No declaration; each method checks what it needs.** Rejected: it holds only for methods that consume the context —
-  an acquisition without an affiliation fails on its own. A read has no natural reason to touch the context, so a
-  forgotten check is silent, and every such method is open to any holder of `run.invoker`. That is the state this design
-  replaces.
-- **A separate `admits_session` option, admitting any call scoped to an Analysis.** Folded into the principals: a
-  session-scoped call is one from an account claiming a session, and naming the principal says which account as well as
-  that it holds a session. `agent_exposed` alone was rejected for the same reason: the option drives codegen for the
-  guest's surface, so admitting a session-scoped call from anything other than the agent would mean generating guest
-  stubs for an rpc the agent has no business calling. One bit cannot carry two independent decisions.
-- **A user-scoped credential inside the sandbox** — the agent holding something that speaks for the curator whose
-  Analysis it is running. Rejected: the agent executes model-written commands over web-derived context, so a credential
-  there lets prompt-injected code act as that person across every Project they belong to. What the agent relays instead
-  is a token it cannot mint, scoped to one approved request.
-- **The sandbox worker asserting the Analysis alongside the session.** Rejected for now, and not because the worker is
-  untrusted: it already chooses which session token to inject, so it is already an authority on scope. It is that the
-  worker deliberately never learns the Analysis id — the Sheaf service, which serves the workspace, scopes its access by
-  the session token ([`sandbox-worker.md`](sandbox-worker.md)) — so asserting it would add a fact to that process in
-  order to save a resolution that is not a cost, and would leave two statements of one scope with no way to adjudicate a
-  mismatch.
+- **Keep the boolean session gate and special-case the web tier.** Adding per-RPC exceptions for the web tier violates
+  the single default-deny chokepoint rule in [`security.md`](security.md) and still discards the resolved Analysis
+  binding needed for corpus view selection and repository scoping.
+- **Represent the caller as a mutually exclusive union (`Session | ServiceAccount`).** Every internal call arrives with
+  a verified service-account identity, and an approved acquisition call carries a service account, an Analysis session,
+  and a human user's approval simultaneously. A tagged union would discard the service-account identity on
+  session-scoped calls and could not represent calls that carry both a session and a person.
+- **Define `AuthContext` as a protobuf message.** In generated Python protobuf code, message fields cannot be truly
+  absent (`HasField` is easy to forget, and accessing an unset submessage returns a default empty instance), so an
+  unscoped call could accidentally be treated as scoped to an empty `Analysis` ID. Protobuf messages are also mutable
+  and provide no constructor hook for enforcing invariants. Because `AuthContext` never crosses a process boundary, a
+  frozen Python dataclass is safer and simpler.
+- **Declare abstract roles in protobuf and map roles to service accounts in deployment config.** Indirecting through
+  role names adds a per-environment configuration map, requires startup checks to catch unconfigured roles, and moves
+  the guarantee that `themis-sandbox-job` never acts without a session out of the type definition and into deployment
+  config. Because the `account_id` prefix of our first-party service accounts is identical across environments and there
+  are only a handful of callers per RPC, naming principals directly in the `Caller` enum is clearer.
+  Environment-specific access restrictions belong in Cloud Run IAM (`roles/run.invoker`) and IAP.
+- **Declare admission with Python decorators on servicer methods (`@admits(...)`).** Putting admission rules on Python
+  methods duplicates information that `agent_exposed` already places in `.proto` files, requires tests to keep the
+  decorators and proto options in sync, and makes default-deny depend on authors remembering to decorate every method.
+- **Omit explicit admission declarations and let each handler check the context fields it uses.** Read handlers have no
+  natural reason to inspect `AuthContext` once they pass it to the backend port, so any read handler without an explicit
+  check would remain open to every holder of `roles/run.invoker`.
+- **Add a boolean `admits_session` proto option instead of session-bound `Caller` principals.** A session-scoped call is
+  always made by a specific service account claiming a session (`CALLER_AGENT` or `CALLER_SANDBOX_WORKER`). Folding
+  session requirements into the `Caller` principals states both *which* service account may call the RPC and *that* it
+  must present a valid session. Reusing `agent_exposed` alone was rejected for the complementary reason: `agent_exposed`
+  generates guest stubs, and RPCs called only by the sandbox worker (`CALLER_SANDBOX_WORKER`, such as Sheaf's `Publish`)
+  must not be exposed to the guest.
+- **Give the sandbox guest a user-scoped credential.** The sandbox agent executes model-generated code over untrusted
+  text retrieved from the web. Placing a curator's personal credential inside the sandbox would allow prompt-injected
+  code to act as that curator across every Project they belong to. Relaying a per-request approval token minted by the
+  web tier limits the agent to the specific papers the user approved.
+- **Have the sandbox worker assert the Analysis ID alongside the session token.** Rejected for now, and not because the
+  worker is untrusted: it already chooses which session token to inject, so it is already an authority on scope. Rather,
+  the sandbox worker intentionally never learns the Analysis ID; it holds only the opaque session token, and services
+  such as Sheaf resolve the token to scope workspace access ([`sandbox-worker.md`](sandbox-worker.md)). Having the
+  worker pass an explicit Analysis ID would expose extra metadata to the sandbox host only to save a fast auth-service
+  lookup, while introducing two sources of truth for the call's scope.
 
 ## Open questions
 
-- **Whose licence a shared corpus follows.** [`PRODUCT.md`](../PRODUCT.md) §7 is written per user: opening a paper
-  "follows the user's institutional licensing". The candidate that reconciles that with an Analysis-scoped view is per
-  *representation*, not per paper — facts and **knowledge units** (the structured claims extracted from a paper) pooled,
-  full text held to a licence — with the open choice being whose licence: the reading user's own, which is §7 as
-  written, or the union of the Analysis's Project members', on the argument that members could and routinely would share
-  a paper among themselves. The union hands one institution's text to another's member in a Project that spans two, so
-  it needs an explicit case made against §7, not an assumption. Either way the corpus has to record which person and
-  affiliation obtained each licensed representation, and the view has to be a predicate the index query incorporates
-  rather than a filter over results, since filtering afterwards breaks pagination and leaks in the counts what it
-  removed.
-- **Deleting the in-body session checks on the other evidence interfaces.** Their rpcs are all `agent_exposed`, so the
-  interceptor gates them from the first deploy and the check each method opens with is redundant. Removing it is
-  mechanical and changes no behaviour.
-- **A deployed probe for the Cloud Run header behaviour.** The forwarding fact is documented and code-backed (see
-  Appendix), and the offline fixtures do not depend on it, but the path is not exercised against a real Cloud Run until
-  a probe on dev confirms the forwarded token verifies. Worth doing before it is relied on in production.
+- **Whose institutional licence governs a shared corpus view?** [`PRODUCT.md`](../PRODUCT.md) §7 states that opening a
+  paper "follows the user's institutional licensing". Reconciling that rule with an Analysis-scoped corpus view requires
+  scoping access per *representation* rather than per paper: extracted facts and **knowledge units** (structured claims
+  extracted from a paper) can be pooled across the corpus, while licensed full text is restricted by licence. The open
+  policy question is whether an Analysis's full-text view is governed by the reading user's own institution (matching §7
+  literally, but breaking the invariant that two curators in a multi-institution Project see identical full text) or by
+  the union of the Project members' institutions (which shares one institution's text with collaborators from another
+  institution and requires an explicit exception to §7). In either case, the corpus must record which user and
+  institution acquired each licensed representation, and `LiteratureBackend.view_for` must push the licence predicate
+  into the search index query rather than filtering results post-hoc (which would break pagination and leak filtered hit
+  counts).
+- **Removing redundant in-body session checks on the other evidence interfaces.** Every RPC on the other evidence
+  interfaces hosted alongside literature is marked `agent_exposed`, so `AuthInterceptor` already gates them before their
+  handlers run. Deleting the legacy `require_session` calls inside those servicer methods is a mechanical cleanup.
+- **Running a deployed dev probe to verify Cloud Run header forwarding.** Although Cloud Run's `Authorization` header
+  forwarding is documented (see [Appendix](#appendix-cloud-run-authorization-header-forwarding)) and covered by
+  unit-test fixtures, a probe against a deployed dev service should confirm end-to-end token verification before
+  production traffic relies on it.
 
-## Appendix: the Cloud Run header fact
+## Appendix: Cloud Run `Authorization` header forwarding
 
-The verified caller depends on Cloud Run forwarding the caller's `Authorization: Bearer <ID token>` to the container
-after it validates `run.invoker`. Google's service-to-service authentication documentation confirms it two ways: the
-receiving-service section ships sample code that reads the token straight off the `Authorization` header and re-verifies
-it, which is only possible if the full signed token reaches the container; and the note on the alternate
-`X-Serverless-Authorization` header states that *that* header — offered for apps that want to repurpose `Authorization`
-for their own scheme — is the one whose signature is stripped, which is informative only because the default header's is
-not. The canonical server-side read of the caller identity is therefore: re-verify the forwarded token against Google's
-public certs with the audience set to the receiving service's own URL, then read the `email` claim, failing closed when
-the token is absent, unverifiable, or carries no verified email. Source:
-`https://cloud.google.com/run/docs/authenticating/service-to-service`.
+Caller verification in `AuthInterceptor` relies on Cloud Run forwarding the caller's `Authorization: Bearer <ID token>`
+header to the container unchanged after validating `roles/run.invoker`. Google's
+[service-to-service authentication documentation](https://cloud.google.com/run/docs/authenticating/service-to-service)
+confirms this behaviour in two places:
+
+1. The receiving-service code samples read the bearer token directly from the incoming `Authorization` header and verify
+   its cryptographic signature against Google's public certificates, which requires the original signed token to reach
+   the container unmodified.
+1. The documentation for the alternative `X-Serverless-Authorization` header (used when an application passes its own
+   credential in `Authorization`) notes that Cloud Run strips the signature from `X-Serverless-Authorization` before
+   forwarding—a distinction that exists because the standard `Authorization` header is forwarded intact.
+
+The canonical server-side check (`cloud_run_caller_verifier` in
+[`themis/clients/auth/caller.py`](../../themis/clients/auth/caller.py)) therefore re-verifies the token in
+`Authorization` against Google's public certs with the audience set to the receiving service's URL, extracts the `email`
+claim, and fails closed if the token is missing, invalid, or lacks a verified email.

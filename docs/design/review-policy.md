@@ -1,68 +1,104 @@
 # Design: review and merge policy
 
-**Status:** current **Related:** [`../plans/screen-and-mirror-workflow.md`](../plans/screen-and-mirror-workflow.md) (the
-PR-time screen and public mirror this policy gates), [`../plans/doc-garden.md`](../plans/doc-garden.md) (a bot
-contributor under this policy)
+**Related:** [`../plans/screen-and-mirror-workflow.md`](../plans/screen-and-mirror-workflow.md) (the PR-time screen and
+public mirror this policy gates), [`../plans/doc-garden.md`](../plans/doc-garden.md) (a bot contributor under this
+policy), [`proto.md`](proto.md) (schema evolution rules for interface PRs), [`migrations.md`](migrations.md) (SQL
+migration runner and deploy substitutions)
 
 ## Overview
 
-Who must review what before a PR lands on `main`, and how GitHub encodes it: maintainers (the direct admin
-collaborators) review each other on request; every other contributor needs a maintainer's approving review.
+Requiring a human approval on every pull request turns the review queue into a bottleneck for a small maintainer group
+and spends review attention on routine implementation changes instead of design docs, interface contracts, and database
+migrations. This doc splits contributors into two review tiers and encodes them in a custom `review gate` status check
+([`.github/workflows/review-gate.yml`](../../.github/workflows/review-gate.yml)) rather than a flat GitHub approval
+count. Maintainers (direct admin collaborators) normally merge their own implementation PRs after reading the diff
+themselves; a review from another maintainer is expected when changing design docs, interface contracts, or database
+migrations, and allowed on any PR. Every other contributor (other organization members and bots) requires an approving
+review from a maintainer. Encoding the two tiers in `review gate` lets maintainers merge routine implementation PRs
+without ticking the admin bypass checkbox on every landing, reserving the ruleset bypass for genuine check-level
+exceptions while keeping direct pushes to `main` closed.
 
 ## Background
 
-With a small maintainer group, a required human approval on every PR makes the review queue the bottleneck and spends
-review time where it earns least: implementation PRs are already adversarially self-reviewed before opening
-([`../../CLAUDE.md`](../../CLAUDE.md) § CI and review) and screened by the PR-time LLM review, while the reviews that
-matter — design docs, interface contracts, and database schema changes — compete with them for attention. The threat
-model is honest oversight ([`../plans/screen-and-mirror-workflow.md`](../plans/screen-and-mirror-workflow.md)):
-contributors and org admins are trusted; the machinery reminds a careful person, it does not need to defend against a
-malicious one.
+In a small maintainer group, a blanket requirement for a second human review on every PR creates a queue where routine
+implementation changes compete for attention with high-leverage changes to design docs, interface contracts, and
+database schemas. Meanwhile, implementation PRs are already adversarially self-reviewed before opening
+([`../../CLAUDE.md`](../../CLAUDE.md)) and checked by the PR-time LLM review.
+
+The threat model is honest oversight
+([`../plans/screen-and-mirror-workflow.md`](../plans/screen-and-mirror-workflow.md)). Contributors and organization
+admins are trusted, so the review machinery exists to remind a careful author of the workflow rather than to defend
+against a malicious insider.
 
 ## Design
 
-Two tiers, keyed on direct admin collaboratorship:
+### Two review tiers: maintainers and other contributors
 
-- **Maintainers (direct admin collaborators).** No review from another maintainer required. Whether a PR gets one is a
-  per-PR judgement call, not machine-enforced: design docs, interface changes (proto contracts, data-contract docs), and
-  database schema changes (migrations) ship as their own PR and get a review requested explicitly from another
-  maintainer after the author's own read, while the PR is still a draft — the reviewer is asked for a diff the author
-  has vetted and stopped churning, and a request survives the draft phase (only CODEOWNERS auto-requests waited for
-  ready), so it is on record before checks and the reviewbot first fire. Implementation PRs are normally merged by their
-  author, though requesting a review for any PR is fine (e.g. limited subject-matter expertise in the area touched).
-  Author-merged does not mean unreviewed: code is largely agent-written, and the author's own read of the diff is the
-  human review of an implementation PR — a PR opens as a draft and goes ready only after that read. A requested review
-  is waited for — machine-enforced: the `review gate` check fails until the requested reviewer approves or the request
-  is withdrawn; a comment-only review does not fulfil it.
-- **Everyone else** (org members with write access, bots such as doc-garden). One approving review required — in
-  practice a maintainer's. Maintainers learn of these PRs by watching the repo; nothing auto-requests a review.
+A flat GitHub approval requirement treats every author and every diff identically. To focus human review where it
+matters without blocking routine work, the policy defines two tiers keyed on whether the PR author is a direct admin
+collaborator on the repository:
 
-The judgement call has a machine reminder: the PR-time review carries a second-review concern
-(`.github/review/second-review.md`) that flags second-review content with no reviewer engaged, and implementation mixed
-beyond the bounds below. A flag is a T2 review thread, so required thread resolution holds the merge until the author
-requests the review, splits the PR, or resolves the thread with a reason. The polarity is deliberate: a machine verdict
-that grants permission must be tamper-proofed, one that raises a requirement needs only a legible override — resolving
-one thread, recorded on the PR.
+- **Maintainers (direct admin collaborators).** Maintainer PRs do not require approval from another maintainer by
+  default. Because code in this repository is largely agent-written, the author's own read of the diff serves as the
+  human review for an implementation PR: the author opens the PR as a draft and marks it ready for review only after
+  completing that read. Design docs, interface changes to proto contracts or data-contract docs, and database migrations
+  ship in their own PR and get an explicit review request from another maintainer while the PR is still a draft, after
+  the author has vetted the diff and stopped churning. Manual review requests survive the draft phase (unlike
+  `CODEOWNERS` auto-requests, which wait until a PR is marked ready), so the request is on record before CI checks and
+  the review bot first run. A maintainer can also request a review on any implementation PR (e.g. when touching an
+  unfamiliar area). Once a review is requested, waiting for it is enforced by `review gate`: the check stays red until
+  the requested reviewer submits an approving review or the request is withdrawn, and a comment-only review does not
+  satisfy it.
+- **Every other contributor (organization members with write access and bots such as
+  [`doc-garden`](../plans/doc-garden.md)).** PRs from non-maintainers require one approving review, which in practice
+  comes from a maintainer. Nothing automatically requests a review when a PR opens; maintainers pick up these PRs by
+  watching the repository.
 
-What the interface PR can hold is bounded, and each bound is enforced by a check — a split that ignores one lands red:
+Deciding whether a maintainer PR needs a second review is a human judgment call backed by a machine reminder. The
+PR-time LLM review includes a second-review concern
+([`.github/review/second-review.md`](../../.github/review/second-review.md)) that flags design, interface, or migration
+changes when no reviewer has been requested, and flags implementation code mixed into a contract PR beyond the bounds
+below. Each flag is posted as a review thread, so the ruleset's required thread resolution blocks merging until the
+author requests a review, splits the PR, or resolves the thread with a written reason. This polarity is deliberate: a
+machine verdict that grants merge permission would have to be hardened against tampering, whereas a machine flag that
+opens a review thread only needs a visible override recorded on the PR.
 
-- **A retirement splits in two.** The interface PR is additive: the replacement, with the retiring field still in place.
-  The implementation PR stops setting it; the deletion — number and name reserved — rides along only where
-  [`proto.md`](proto.md) §Schema evolution allows the skew (a browser-sent field is deleted only after the stop-setting
-  change has deployed), else it follows as its own change. An rpc declared ahead of its handler additionally needs the
-  service impl widened to `Partial<ServiceImpl<T>>`, narrowed back in the implementation PR; that narrowing is what
-  catches a handler nobody wrote. Python has no `Partial<>`: mypy-protobuf marks every rpc on the generated servicer
-  base abstract, so pyright rejects a servicer implementing a subset — a stronger claim than grpc makes, where an rpc
-  the servicer leaves alone answers `UNIMPLEMENTED`. The interface PR says so where it builds the servicer
-  (`# pyright: ignore[reportAbstractUsage]`) rather than writing stub methods that duplicate the generated base; the
-  implementation PR rewrites those lines as it fills the servicer in, and the suppression goes with them.
-- **An addition need not be separable either.** A new `AnalysisInputs` member fails the tests holding every scenario
-  named, labelled and rendered, so it ships with the surfaces that render it.
-- **A migration carries its `deploy.yml` substitution** — a `${VAR}` in its SQL is rendered from the
-  `THEMIS_MIGRATE_SUBSTITUTIONS` map the deploy passes to the migrate step, so the entry ships with the migration — and
-  generated stubs their lint exclusions. A test pairs the first, ruff the second.
+### What an interface or migration PR can carry alongside the contract
 
-Encoding — a `main` branch ruleset plus the `review gate` workflow. The path from draft to merge:
+Shipping an interface or migration change in its own PR ahead of its implementation means the repository must still pass
+every required check at the split point. A diff containing only the `.proto` or `.sql` file often fails type checking,
+exhaustiveness tests, or lint gates unless the contract PR carries the minimal glue needed to keep checks green:
+
+- **Retiring a field or declaring an RPC ahead of its handler.** Retiring a proto field takes at least two PRs. The
+  interface PR is purely additive, introducing the replacement field while leaving the retiring field in place. The
+  implementation PR stops setting the old field; deleting the field and reserving its number and name rides in that same
+  implementation PR only when [`proto.md`](proto.md#schema-evolution) permits the version skew (for example, a
+  browser-sent field can be deleted only after the change that stops sending it has deployed), and otherwise follows in
+  a separate cleanup PR. Declaring a new RPC in an interface PR before its handler exists similarly requires temporary
+  type-checker glue. In TypeScript, the interface PR widens the service implementation type to
+  `Partial<ServiceImpl<T>>`, and the implementation PR narrows it back so the compiler catches any unimplemented
+  handler. Python has no `Partial<>` equivalent: `mypy-protobuf` marks every RPC method on the generated servicer base
+  class as abstract, so Pyright rejects a servicer class that implements only a subset of methods even though gRPC
+  itself returns `UNIMPLEMENTED` at runtime for unoverridden methods. Rather than writing stub methods that duplicate
+  the generated base class, the interface PR suppresses Pyright's abstract-usage check where it instantiates the
+  servicer, and the implementation PR removes that suppression as it fills in the handler.
+- **Adding a union member covered by exhaustiveness tests.** Some schema additions cannot be separated from the surfaces
+  that render them because tests enforce exhaustive handling across every member. For example, adding a new scenario
+  member to `AnalysisInputs` ([`analysis-scenarios.md`](analysis-scenarios.md)) fails the tests verifying that every
+  scenario is named, labeled, and rendered, so those rendering surfaces ship in the same PR as the schema addition.
+- **Adding a migration with deploy substitutions or a new generated stub directory.** A SQL migration that references a
+  `${VAR}` placeholder is rendered from the substitution map in
+  [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) ([`migrations.md`](migrations.md)), and a test
+  verifies that every placeholder in committed SQL has a matching deploy entry, so the `deploy.yml` entry ships with the
+  migration. Similarly, when a new proto package introduces a new directory of committed generated stubs, its Ruff
+  exclusion in [`pyproject.toml`](../../pyproject.toml) ships in the interface PR so the lint gate passes.
+
+### Encoding the tiers in the `main` ruleset and `review gate`
+
+GitHub's built-in ruleset approval count is a single flat integer across all PR authors, so it cannot require zero
+additional approvals from maintainers while requiring one approval from everyone else. Instead, the `main` branch
+ruleset configures no ruleset-level approval count and delegates the review requirement to the `review gate` required
+status check ([`.github/workflows/review-gate.yml`](../../.github/workflows/review-gate.yml)):
 
 ```mermaid
 flowchart TD
@@ -87,83 +123,90 @@ flowchart TD
     rest -.->|"a required check that cannot pass<br>(anti-tamper self-block)"| bypass["admin bypass-merge"]
 ```
 
-- PR required; no ruleset-level approval count — a flat count cannot express the two tiers, so the review requirement
-  lives in the `review gate` required check; review-thread resolution; squash the only merge method.
-- `review gate` (`.github/workflows/review-gate.yml`): a commit status posted to the PR head; the chart above is its
-  verdict chain. An unfulfilled request outranks an existing approval — re-requesting means "look again". GitHub
-  consumes the live request when the reviewer submits any review — a comment-only one included — so the gate
-  reconstructs the requirement from the request/removal timeline: only an approval after the newest request, or an
-  explicit withdrawal of the request, fulfils it. A consumed request leaves nothing live to withdraw, so withdrawing
-  after the reviewer has already reviewed means re-requesting and then removing the request — also the exit when a
-  requested reviewer cannot approve (a bot, a team). It runs on `pull_request_target` + `pull_request_review`, so the
-  default branch's workflow judges every PR — a PR cannot edit its own gate — and it checks out nothing. The required
-  context is the posted status, not the job's own check run: the job succeeds even when the verdict it posts is a
-  failure, so the two must not share a name. Its required-check entry carries no `integration_id`, so a hand-posted
-  status satisfies it too.
-- Required status checks, non-strict: `review gate`, `regex screen`, `review + LLM screen`, `pre-commit`, `pytest`,
-  `pytest-sandbox`, `web`, `backward-compatible`, `regen-is-fresh`. Non-strict: an up-to-date-branch requirement would
-  have every merge to `main` invalidate every other open PR — a rebase plus a full check re-run (LLM review included)
-  per landing — while binding only contributors without the bypass. A cross-PR semantic conflict instead surfaces
-  minutes after landing, via the same checks running on the push to `main`.
-- Linear history; no force-pushes; no deletion.
-- Bypass: the *Repository admin* role, mode **pull requests only**.
+`review gate` posts a commit status to the PR head SHA following the verdict chain in the diagram above. An unfulfilled
+review request takes precedence over an existing approval from that reviewer, because re-requesting a review means "look
+again". When a reviewer submits any review (including a comment-only review), GitHub removes them from the PR's live
+requested-reviewers list. To prevent a comment-only review from satisfying the gate, `review gate` reconstructs pending
+requests from the PR's request and request-removal timeline events: only an approving review submitted after the newest
+request, or an explicit withdrawal of the request after that request, satisfies it. Because a submitted review consumes
+the live request on GitHub, withdrawing a request after a reviewer has left a comment-only review requires re-requesting
+that reviewer and then removing the request; the same two-step removal clears a request accidentally sent to a bot or a
+team that cannot approve.
 
-Consequences:
+The workflow triggers on `pull_request_target` and `pull_request_review` without checking out PR code, so the workflow
+on `main` evaluates every PR and a PR cannot edit its own gate. The ruleset requires the posted commit status context
+`review gate` rather than the GitHub Actions job's own check run, because the job exits zero even when the status it
+posts is `failure`. The required-check entry in the ruleset specifies no `integration_id`, which allows a maintainer to
+post a status manually via the GitHub API when a PR predates the check and has no new push or review event to trigger
+the workflow.
 
-- PR-only bypass means admins cannot push directly to `main` either: every commit passes through a PR where the leak
-  screen ran before it mirrors to public. A bypass merge is an explicit checkbox at merge time and is recorded.
-- Admins can merge over a failing required check when needed. This covers the anti-tamper self-block: a PR editing
-  `internal-review.yml` fails its own `review + LLM screen` (claude-code-action refuses a workflow file that differs
-  from the default branch); the admin bypass-merges instead of temporarily un-requiring the check. With the review
-  requirement in the gate rather than an approval count, this is one of the bypass's two uses. The other, admitted only
-  until a production environment exists, is a merge past `backward-compatible` for a deletion from an at-rest contract
-  whose every stored artifact is deleted first ([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors)
-  has the instance and the condition). A routine maintainer merge never ticks it, so a bypass in the log marks an
-  exceptional merge, not noise.
-- The gate reads the maintainer set live: direct admin collaborators. Org owners inherit the admin role — and with it
-  the ruleset bypass — but are not direct, so they do not self-merge through the gate; adding a direct admin
-  collaborator grants self-merge. A role change fires no PR event, so an open PR's verdict reflects it only from its
-  next push or review event.
-- The gate's status appears on a head SHA only when one of its events fires, so a PR open before the check became
-  required shows "waiting for status" until its next push or review event; a maintainer can post the status by hand
-  (`gh api repos/…/statuses/<head-sha>`) for a PR that will see neither.
-- There is no CODEOWNERS file. GitHub auto-requests a review from every listed owner when a PR goes ready-for-review,
-  with no off switch, so any entry would notify every maintainer on every PR. That would defeat the point of the
-  request-only flow: a review request only signals "this PR actually needs your review" when it is never sent by
-  default.
-- Stale approvals survive new pushes: dismissal would re-notify the reviewer on every fixup or restack of an
-  already-judged diff. Symmetrically, a stale changes-requested keeps the gate red until its reviewer re-reviews or
-  dismisses it; for a requested reviewer, dismissal returns the PR to waiting on their approval — red either way.
-- Required checks skip a draft, so a chain of them is unverified until each goes ready. The author's read is a draft's
-  only gate; a long-lived draft stack is not green, it is untested. The `review gate` is the exception — it posts
-  `pending` on a draft and evaluates at ready.
+On each run, `review gate` queries the repository's direct admin collaborators live to determine the maintainer set.
+Organization owners inherit the admin role (along with the ruleset bypass) but are not direct collaborators unless
+explicitly added, so only direct admin collaborators self-merge through the gate. Because changing a collaborator's role
+does not fire a pull request event, an open PR reflects a role change only on its next push or review event.
+
+The rest of the `main` ruleset and repository configuration pairs with `review gate` as follows:
+
+- **No `CODEOWNERS` file.** GitHub automatically requests a review from every matching code owner when a PR is marked
+  ready for review, with no setting to turn auto-requests off. Any `CODEOWNERS` entry would notify every maintainer on
+  every PR, defeating the request-only workflow where a review notification signals that the author specifically asked
+  for a second pair of eyes.
+- **Approvals and changes-requested persist across pushes.** Pushing new commits does not dismiss existing approvals,
+  which avoids re-notifying a reviewer whenever an author fixes a typo or rebases an already-reviewed diff.
+  Symmetrically, a `CHANGES_REQUESTED` review keeps `review gate` red across pushes until that reviewer approves or
+  dismisses their review; if that reviewer was also explicitly requested, dismissing the review returns the PR to
+  waiting on their approval.
+- **Non-strict required checks and draft behavior.** Every commit to `main` must land through a pull request with
+  resolved review threads, linear history (squash-merge only, with force-pushes and branch deletion disabled), and nine
+  non-strict required status checks: `review gate`, `regex screen`, `review + LLM screen`, `pre-commit`, `pytest`,
+  `pytest-sandbox`, `web`, `backward-compatible`, and `regen-is-fresh`. The checks are non-strict because requiring PR
+  branches to be up to date with `main` before merging would invalidate every open PR whenever another PR lands, forcing
+  a rebase and a full CI and LLM-review re-run per merge while binding only non-admin contributors. Instead, semantic
+  conflicts between concurrent PRs surface within minutes of landing when the same checks run on the push to `main`.
+  Required checks other than `review gate` skip draft PRs (`review gate` posts `pending` on drafts and evaluates when
+  the PR goes ready), so a chain of draft PRs remains untested by CI until each PR is marked ready for review.
+- **Pull-request-only admin bypass.** The ruleset grants bypass access to the *Repository admin* role in **pull requests
+  only** mode. Because the bypass applies only to pull requests, admins cannot push commits directly to `main`; every
+  commit passes through a PR where the leak screen runs before the commit mirrors to the public repository. And because
+  routine maintainer merges pass `review gate` without using the bypass, ticking the admin bypass checkbox at merge time
+  marks one of two genuine check-level exceptions:
+  1. Merging a PR that edits [`.github/workflows/internal-review.yml`](../../.github/workflows/internal-review.yml),
+     which fails its own `review + LLM screen` check because `claude-code-action` refuses to run a workflow file that
+     differs from the default branch — the admin bypass-merges instead of temporarily un-requiring the check.
+  1. Merging a deletion from an at-rest proto contract past `backward-compatible` after every stored artifact using that
+     schema has been deleted first, an exception permitted only while no production environment exists
+     ([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors)).
+
+Applied on `themis-internal`: ruleset `main` with `review gate` among the required checks and no ruleset-level approval
+count; classic branch protection and `.github/CODEOWNERS` removed.
 
 ## Alternatives considered
 
-- **CODEOWNERS + required code-owner review** (the original encoding). Encodes "a maintainer must approve" precisely,
-  but the auto-request is inseparable from the file — a team owner merely reroutes it, still landing in members'
-  review-requested queues. Rejected for the notification noise on every maintainer PR.
-- **CODEOWNERS narrowed to design/interface/migration paths** (machine-enforcing the two-PR split). Rejected: which
-  changes need another maintainer's review is a judgement call the maintainers trust each other on, and the interface
-  surface doesn't glob — a port `abc.ABC` or a data-contract doc lives among implementation files.
-- **Classic branch protection with `enforce_admins` off.** A smaller settings change with the same merge-button
-  experience, but it also unlocks direct pushes to `main` for admins — an accidental `git push origin main` would skip
-  the screen and mirror publicly within minutes. The ruleset's PR-only bypass keeps that path closed.
-- **Restricting approval to maintainers.** Without CODEOWNERS, any write-access org member's approval satisfies the
-  review requirement, so two non-maintainers could in principle approve each other's PRs. Accepted: they are inside the
-  trusted circle (org admins can change any setting anyway), and a failing check still blocks them — the bypass is
-  admin-only.
-- **Ruleset-level approval count (1) with routine admin bypass** (the prior encoding). The flat count cannot express the
-  two tiers, so every maintainer merge ticked the bypass checkbox — and a bypass used on every merge stops marking the
-  exceptional one. The gate encodes the tiers directly and returns the bypass to its exception.
-- **A bot-applied `self-mergeable` label feeding the gate** (the reviewbot labels a maintainer PR whose scope needs no
-  second review; the gate passes on the label). Rejected on polarity: a label anyone with write can apply would grant
-  permission, so trusting it means verifying the labelling actor — machinery against insiders the threat model trusts —
-  and a bot false negative resurrects the routine bypass tick it was meant to remove. Ruleset conditions cannot express
-  it natively either (ref-name only). The second-review concern keeps the bot's judgement but flips the polarity: it can
-  only raise a requirement, and its override is resolving one thread with a reason.
-
-## Implementation state
-
-Applied: ruleset `main` on `themis-internal` — `review gate` among the required checks, no ruleset-level approval count;
-classic branch protection and `.github/CODEOWNERS` removed.
+- **`CODEOWNERS` with required code-owner review** (the original encoding). This encodes "a maintainer must approve"
+  directly in GitHub, but GitHub's automatic review request on ready-for-review cannot be disabled—even routing
+  ownership through a team still places every PR into every team member's review-requested queue. Rejected because
+  auto-requesting on every maintainer PR creates notification noise that drowns out intentional review requests.
+- **`CODEOWNERS` narrowed to design, interface, and migration paths** (machine-enforcing the two-PR split). Rejected
+  because deciding which changes warrant another maintainer's review is a judgment call the maintainers trust each other
+  to make, and the repository's interface surface does not match a clean file glob (for example, a Python port `abc.ABC`
+  or a data-contract section lives alongside implementation files).
+- **Classic branch protection with `enforce_admins` disabled.** This gives admins the same merge-button experience with
+  a smaller settings surface, but disabling `enforce_admins` also permits direct `git push origin main` by admins, which
+  would skip the PR-time leak screen and mirror unscreened commits publicly within minutes. The ruleset's
+  pull-request-only bypass keeps direct pushes closed.
+- **Restricting valid approvals to maintainers.** Without `CODEOWNERS`, an approval from any organization member with
+  write access satisfies `review gate`, so two non-maintainers could in principle approve each other's PRs. Accepted
+  because organization members with write access are inside the trusted circle under our threat model, and a failing
+  required check still blocks them since only repository admins hold the ruleset bypass.
+- **A ruleset-level approval count of 1 with routine admin bypass** (the prior encoding). Because a flat approval count
+  cannot distinguish maintainers from other contributors, every self-merged maintainer PR had to tick the admin bypass
+  checkbox, turning the bypass log into routine noise instead of a record of exceptional merges. Moving the tier logic
+  into `review gate` returns the admin bypass to genuine check-level exceptions.
+- **A bot-applied `self-mergeable` label feeding `review gate`** (having the review bot label maintainer PRs whose scope
+  needs no second review, and passing `review gate` when the label is present). Rejected because of its security and
+  usability polarity: any contributor with write access can apply a label, so trusting a label to grant merge permission
+  would require verifying the labeling actor (building anti-insider machinery our threat model does not otherwise need),
+  and any bot false negative would force maintainers back to ticking the admin bypass checkbox. GitHub ruleset
+  conditions cannot express label-based rules natively either, as they only match ref names. Using the second-review
+  concern in the LLM review preserves the bot's judgment while flipping the polarity: the bot can only raise a review
+  thread, and overriding a false positive only requires resolving one thread with a reason.

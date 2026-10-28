@@ -1,103 +1,49 @@
 # Design: proto as the schema IDL and serialization posture
 
 **Related:** [`../plans/literature-cache.md`](../plans/literature-cache.md) (the motivating at-rest models),
-[`services.md`](services.md) (the service pattern built on the RPC protos),
-[`litcache-manifest.md`](litcache-manifest.md) (the litcache manifest structural model).
+[`services.md`](services.md) (the internal gRPC service pattern built on the RPC protos),
+[`litcache-manifest.md`](litcache-manifest.md) (the literature cache manifest and bibliographic record),
+[`evidence-fulltext.md`](evidence-fulltext.md) (the literature cache worker and job log),
+[`migrations.md`](migrations.md) (how schema and database transitions run),
+[`analysis-scenarios.md`](analysis-scenarios.md) and [`curation-surface.md`](curation-surface.md) (inline binary protos
+in Cloud SQL).
 
-## Purpose
+## Overview
 
-One source of truth for data shapes, authored as **hand-written `.proto`** under `schema/proto/`. The `.proto` is the
-single schema on every side: the protobuf runtime + generated stubs (Python) and protobuf-es (the web tier) serialize it
-as **binary proto** for at-rest artifacts and inter-service / BFF↔service gRPC, and as **JSON via the protobuf-es
-codec** at the browser↔BFF seam. `buf` drives the toolchain — `buf lint` enforces the discipline, `buf breaking` gates
-compatibility, `buf export` feeds the generators — and codegen itself is local (`grpcio-tools` protoc for Python,
-`protoc-gen-es` for TypeScript).
+Data in Themis crosses three boundaries: internal Python services and durable storage, the browser-to-BFF seam in the
+web tier, and cached responses from external upstreams. Maintaining separate schema languages across Python and
+TypeScript forces hand-written translation layers and cross-language JSON conventions that drift over time.
 
-## Serialization posture
+Every authored data shape and RPC contract in Themis is written once as a hand-authored `.proto` file under
+[`schema/proto/`](../../schema/proto). That `.proto` file serves as the single schema on every side of the system.
+Internal services and at-rest artifacts serialize messages as binary protobuf so that an older reader round-trips fields
+added by a newer writer without dropping them. The browser and the Next.js backend-for-frontend (BFF) exchange those
+same messages as JSON over the Connect protocol, using the `protobuf-es` codec on both ends so neither side writes REST
+route boilerplate or separate validation schemas. Raw JSON payloads cached from external upstreams are stored as text
+and read through a narrow subset view rather than round-tripped through a lossy typed write.
 
-Serialized data falls into three buckets by *who owns the schema* and *who consumes it*:
+`buf` drives the schema toolchain: `buf lint` checks structure and naming, `buf breaking` blocks incompatible changes in
+CI, and `buf export` feeds local code generators (`grpcio-tools` for Python and `protoc-gen-es` for TypeScript). The
+generated stubs are committed to the repository so that no consumer depends on `buf` or remote plugins at build or run
+time.
 
-| Bucket                                                                        | Format                                       | Compat gate    | Owner    |
-| ----------------------------------------------------------------------------- | -------------------------------------------- | -------------- | -------- |
-| Authored, internal machine-to-machine (at-rest artifacts + inter-service RPC) | **binary proto**                             | `buf breaking` | us       |
-| Authored, browser-facing (browser↔BFF)                                        | **JSON**, over the Connect protocol          | `buf breaking` | us       |
-| Externally-defined, ingested (raw upstream payloads we cache)                 | JSON, our model a documented **subset/view** | read-side only | upstream |
+## Background
 
-- **Bucket 1 — binary proto.** At-rest artifacts and inter-service RPC. Binary, not a name-keyed text projection
-  (proto-JSON, pbtxt), for the read-modify-write property below. `buf breaking` gates it.
+Themis splits its runtime across two languages and two storage tiers. The internal data-plane services and sandbox
+workers run in Python and communicate over gRPC ([`services.md`](services.md)). The web tier runs in Next.js, where a
+TypeScript BFF serves the React browser client and calls the internal Python services over gRPC
+([`frontend-framework.md`](frontend-framework.md)). Durable state lives in Cloud Storage objects (such as paper
+manifests, bibliographic records, and workspace repositories) and in Cloud SQL tables.
 
-- **Bucket 2 — browser↔BFF is JSON, over the Connect protocol.** The seam is an authored service
-  (`themis/workbench/rpc/workbench.proto`), served by the BFF's Connect handler and called by a generated client. The
-  wire stays `application/json`: a Connect unary call is `POST /api/rpc/{package}.{Service}/{Method}` whose body is the
-  bare proto3-JSON message, so it is readable in the Network tab and reachable with `curl` — the property that keeps the
-  surface consumable by code we don't control (e.g. WebMCP). The surface is **POST-only**, which the route mount states
-  outright: it exports `POST` alone, so a `GET` is Next's own 405 whatever a method declares, and every method is out of
-  reach of a cross-site `GET` riding the curator's IAP cookie. A cross-site *`POST`* needs no preflight either, for the
-  three content types a form can send; what refuses those is the handler's `application/json` requirement, a second
-  gate. The handler also rejects a field the schema does not declare (connect-es tolerates one by default): a misspelled
-  `version` must not quietly read the current document.
+Protocol Buffers (`proto3`) separates a message's schema from its wire encoding. In binary protobuf, each field on the
+wire is keyed by its numeric tag and wire type rather than its field name. When a binary parser encounters a field tag
+it does not recognize from its compiled schema, it retains the raw bytes in the message's unknown-field set and writes
+them back out when the message is serialized again. In proto3-JSON, by contrast, fields are keyed by their declared
+names, and a parser that decodes JSON into a typed message and re-serializes it cannot retain fields it does not know.
 
-  Underneath the route, no method declares `idempotency_level = NO_SIDE_EFFECTS` — the option's `GET` form, carrying the
-  message in the query, has no caller here (the browser transport never asks for it, and no reply is cacheable in any
-  case: `private, no-store`), and the level binds every future implementation of the method. A read that one day wants
-  that form changes the declaration, the route's exports and the handler test together; nothing prohibits it, which is
-  why the compat gate does not speak to the option here: `RPC_SAME_IDEMPOTENCY_LEVEL` flags a level change in either
-  direction, so keeping it would freeze whatever each method shipped with — a decision recorded as a rule the next
-  reader cannot revisit, for a service whose only consumer ships in the same deploy. It is ignored for this proto alone
-  (Schema evolution, below). A handler test reads the level off the descriptor and asserts the refusal for every method,
-  so an added one is covered as written (`apps/web/src/server/rpc/handler.test.ts`).
-
-  Connect is not a second serialization: it is the *envelope* around the same protobuf-es types the browser and the BFF
-  already shared. What it removes is the hand-written part of that seam — per-endpoint fetch wrappers, a bespoke error
-  shape, and path/query parsing that arrived as unvalidated strings. Errors are Connect codes; request validation is a
-  protovalidate interceptor on the router rather than a call each handler remembers to make. The message shapes were
-  already under `buf breaking`; what the service adds is the *method set* — names, request/reply pairing — which was
-  previously spelled only in route directories and gated by nothing.
-
-  The BFF's handler mounts at one App Router catch-all. Connect-ES's packaged adapters target Node `req`/`res` hosts
-  (`connect-next` is Pages-Router-only), but an App Router handler is already passed a fetch `Request`, which is what
-  Connect's universal layer speaks; the adapter is `createFetchHandler` from `@connectrpc/connect/protocol` plus a path
-  lookup. Those are public, semver-covered exports, and the fetch server path carries the project's own conformance
-  coverage.
-
-- **Bucket 3 — external JSON, tolerant subset.** Raw upstream payloads we cache (Unpaywall): stored as the upstream's
-  JSON, modelled only for the fields we read, tolerant of extras. Never round-tripped through a lossy typed write. See
-  External data.
-
-Content-addressed blobs (`sources/`, `renderings/`, `supplementary/`) are opaque bytes, outside all three.
-
-## Usage
-
-### Authoring a schema
-
-- Edit the `.proto` under `schema/proto/<package-path>/`. The file's path under `schema/proto/` is its Python package
-  path (e.g. `schema/proto/themis/rpc/auth.proto` → `themis.rpc.auth_pb2`).
-- Follow the authoring rules below; `buf lint` (a pre-commit hook) enforces the enum discipline and structural sanity.
-- Regenerate the committed stubs with `uv run --group codegen python -m tools.schema.regen` (needs `buf` on PATH and
-  `apps/web` deps installed). Generated code is **committed and never hand-edited**; a `.proto` change committed without
-  regenerating fails CI (`schema-freshness`).
-
-### Using a schema from Python
-
-- Import the generated stubs (`themis/rpc/<domain>_pb2`, `themis/litcache/models/litcache_pb2`); parse/serialize the
-  binary directly.
-- Declared-field constraints are **protovalidate** options on the proto; enforce them at the read/write boundary with
-  `protovalidate.validate(msg)` (raises `protovalidate.ValidationError`).
-
-### Using a schema from TypeScript
-
-- Import the committed protobuf-es stubs under `apps/web/src/gen/` (`@bufbuild/protobuf`) — the generated message types
-  (a tagged union for each `oneof`) and, for a service, its descriptor. Connect-ES v2 needs no second code generator:
-  `protoc-gen-es` emits the `GenService` descriptor that `createClient` and `router.service` both take, so
-  `buf.gen.yaml` is unchanged by adding a service.
-- The browser↔BFF seam is that descriptor on both ends: the BFF registers the implementation on its router, the browser
-  calls the generated client, and neither restates the wire contract. The BFF additionally speaks binary proto/gRPC to
-  the internal services.
-
-Consumers import committed generated code from their own tree; nothing depends on `buf` at build or run time — the
-generated-code-is-committed policy buys that.
-
-## Layout
+The repository organizes all hand-authored schemas and copies of upstream schemas under
+[`schema/proto/`](../../schema/proto), configured by [`buf.yaml`](../../buf.yaml) and
+[`apps/web/buf.gen.yaml`](../../apps/web/buf.gen.yaml):
 
 ```
 schema/proto/                     # hand-authored .proto — the source of truth
@@ -106,365 +52,485 @@ schema/proto/                     # hand-authored .proto — the source of truth
   themis/svcv4/models/            # the framework's own output vocabulary (the class ladder)
   themis/workbench/models/        # the browser↔BFF view model + its request/reply envelopes
   themis/workbench/rpc/           # the browser-facing Connect service (Workbench)
-  themis/litcache/models/         # at-rest domain contracts (the manifest, the bibliographic record, the job log; and the worker's request)
+  themis/litcache/models/         # at-rest domain contracts (manifest, bibliographic record, job log, worker request)
   themis/curation/models/         # what a curator records on one worksheet
   themis/sheaf/models/            # at-rest: the sheaf ref document
-  clinvar_proto/                  # copy of an upstream's published schema (below)
-  pubmed_proto/                   # copy of an upstream's published schema (below)
+  clinvar_proto/                  # copy of ClinVar's published schema
+  pubmed_proto/                   # copy of PubMed's published schema
 buf.yaml                          # module, lint rules, buf breaking config, deps
 buf.lock                          # pinned buf deps (protovalidate)
 apps/web/buf.gen.yaml             # protobuf-es (local protoc-gen-es plugin)
 ```
 
-Generated (committed, never hand-edited): `themis/<pkg>/*_pb2.py` + `.pyi` (+ `*_pb2_grpc.py` for services),
-`buf/validate/validate_pb2.py` (the protovalidate dep stub), `apps/web/src/gen/**/*_pb.ts`.
+A `.proto` file's path under `schema/proto/` matches its Python import path, so `schema/proto/themis/rpc/auth.proto`
+generates `themis.rpc.auth_pb2`. Python consumers import those generated modules directly and enforce field constraints
+at read and write boundaries with `protovalidate.validate(msg)`. TypeScript consumers import committed `protobuf-es`
+stubs from `apps/web/src/gen/`, which provide message types (with tagged unions for each `oneof`) and `GenService`
+descriptors for Connect services.
 
-## Code generation
+## Design
 
-`tools/schema/regen.py` generates locally — no remote plugins:
+### Three serialization buckets by schema owner and consumer
 
-| Stage           | Tool                                                 | Output                                                                               |
-| --------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Upstream copy   | the pinned `clinvar-proto` and `pubmed-proto` wheels | `schema/proto/clinvar_proto/clinvar.proto`, `schema/proto/pubmed_proto/pubmed.proto` |
-| Python messages | `grpcio-tools` protoc (`--python/--pyi`)             | `themis/**/*_pb2.py` + `.pyi`; `buf/validate/validate_pb2.py`                        |
-| gRPC stubs      | `grpcio-tools` protoc (`--grpc_python`)              | `themis/rpc/*_pb2_grpc.py` (service protos only)                                     |
-| gRPC stub types | `mypy-protobuf`'s `protoc-gen-mypy_grpc`             | `themis/rpc/*_pb2_grpc.pyi` (service protos only)                                    |
-| protobuf-es     | local `protoc-gen-es` via `buf generate`             | `apps/web/src/gen/**/*_pb.ts`                                                        |
+Serialized data in Themis falls into three buckets according to who owns the schema and who consumes the bytes.
+Content-addressed blobs (`sources/`, `renderings/`, and `supplementary/`) are opaque bytes and sit outside all three
+buckets.
 
-`buf export` first materializes the protos + the `buf.lock`-pinned `buf/validate` dep into a temp tree (a cached module
-fetch, not a remote-plugin call); `grpcio-tools`' protoc runs over it, its bundled protoc pinning the generated-code
-version to the protobuf 6.x runtime. gRPC is scoped to `themis/rpc/` (a data proto declares no service). The
-`buf/validate` stub is emitted because the `protovalidate` wheels ship no Python stub; well-known types
-(`google.protobuf.*`) resolve from `grpcio-tools`' bundled includes and stay runtime-provided. protobuf-es uses the
-app's own `@bufbuild/protoc-gen-es` — no BSR.
+| Bucket                                                                        | Format                              | Compatibility gate | Schema owner |
+| ----------------------------------------------------------------------------- | ----------------------------------- | ------------------ | ------------ |
+| 1. Authored, internal machine-to-machine (at-rest artifacts and internal RPC) | Binary protobuf                     | `buf breaking`     | Themis       |
+| 2. Authored, browser-facing (browser↔BFF)                                     | Proto3-JSON over Connect            | `buf breaking`     | Themis       |
+| 3. Externally defined, ingested (cached raw upstream payloads)                | Raw JSON read through a subset view | Read-side only     | Upstream     |
 
-Remote-plugin codegen is deliberately avoided: `buf generate`'s remote plugins hit the BSR anonymous rate limit, and
-`protoc_builtin` embeds a protoc whose generated-code version (7.x) outruns the protobuf runtime the dependency tree
-pins (6.x, capped by `apache-beam` and `grpcio-health-checking`). `grpcio-tools`' protoc tracks that runtime.
+```
+  Upstream APIs ──(Bucket 3: raw JSON)──► Ingest / Cache
+                                                │
+                                   (Bucket 1: binary proto)
+                                                ▼
+  Cloud Storage / SQL ◄──(Bucket 1)──► Internal Python Services
+                                                ▲
+                                   (Bucket 1: gRPC / binary)
+                                                │
+                                           Next.js BFF
+                                                ▲
+                                 (Bucket 2: Connect / proto3-JSON)
+                                                │
+                                          Browser Client
+```
 
-Policy:
+Bucket 1 covers all internal gRPC calls and durable artifacts whose schema we author. It uses binary protobuf rather
+than a name-keyed text projection like proto-JSON or `pbtxt` so that read-modify-write operations preserve unknown
+fields.
 
-- **Generated code is committed**; CI gates on freshness (`regenerate && git diff --exit-code`). The toolchain isn't
-  needed at install/runtime, generated code is reviewable in PRs, and the public mirror stays self-contained.
-- **Generated code is never hand-edited.** Cross-boundary behaviour (protovalidate calls) lives in the hand-written
-  layer that imports the generated stubs.
+Bucket 2 covers the browser-to-BFF seam, which sends proto3-JSON over the Connect protocol so requests remain
+inspectable in the browser Network tab and callable with standard HTTP tools.
 
-## Authoring rules
+Bucket 3 covers raw upstream payloads that we cache as received, such as per-request Unpaywall responses. What separates
+Bucket 1 from Bucket 3 is whether the artifact can be re-derived from a retained or re-fetchable source, not whether we
+wrote a schema over it. A write-once derivation over an authoritative source that can be queried again belongs to Bucket
+1 and is regenerated wholesale rather than modified in place; the index record in `metadata.pb`, re-fetched from PubMed
+XML or from Crossref or OpenAlex JSON, works this way. A cached per-request response that we cannot re-derive belongs to
+Bucket 3: we keep the raw bytes as received and read only the subset of fields we need.
 
-Enforced by `buf lint` (`BASIC` + `ENUM_VALUE_PREFIX` + `ENUM_ZERO_VALUE_SUFFIX` + `PROTOVALIDATE`; the
-package/directory rules are excepted — see `buf.yaml`):
+### Binary protobuf at rest preserves unknown fields across read-modify-write
 
-- **Proto-canonical enums.** `UPPER_SNAKE` values, each prefixed with the enum name, and a `*_UNSPECIFIED = 0` sentinel
-  (proto3 requires a zero member; it is never a valid domain value — fail loud if it reaches persisted data). Only a
-  genuinely-external arbitrary string (e.g. a raw licence URL) is a `string` field. The declared name is not a wire
-  concern — enums are integer on the wire, and the single codec maps int↔name on each side.
-- **A field's name reads as what it holds.** A repeated field of countable items is plural (`authors`, `articles`); a
-  mass noun (`evidence`, `provenance`) or a relation name (`located_in`) stays as it reads. A singular name on a
-  repeated field needs a reason of its own. For example, `rcv` copies ClinVar's key, `class_determinative` copies the
-  label the curation worksheet shows a curator, `sensitivity` names the analysis its entries make up together, and
-  `admits_caller` reads as a statement in each `option` line that sets it.
-- **Sum types are a `oneof`** over variant messages, so a cross-field "X iff Y" invariant is structural. Mark the field
-  `[(buf.validate.field).required = true]` and the oneof `option (buf.validate.oneof).required = true` so an absent or
-  empty variant is rejected. Where nothing runs `protovalidate` over the message — an at-rest document whose only reader
-  validates in code, as the sheaf ref document does — the options are left off, since an annotation nothing enforces
-  claims a check that is not made.
-- **Declared-field constraints are protovalidate options** — `repeated.min_items`, `string.min_len`, message-level `cel`
-  for cross-field rules — enforced by `protovalidate.validate` at the boundary.
-- **Document with leading `//` comments** on messages, fields, enums, and rpcs. The `.proto` is the source of truth and
-  carries the domain documentation; what the generators do and do not carry across is Documentation flow, below.
-- **Explicit field numbers**; evolution adds fields and retires them against a reservation (see Schema evolution).
+The obvious way to store structured artifacts in Cloud Storage is as JSON, which is human-readable and easy to inspect
+with command-line tools. JSON breaks as soon as an artifact is updated in place during a rolling deploy or across
+versions. When a newer writer adds a field to an artifact and an older service instance reads that JSON into its older
+schema, modifies another field, and writes the JSON back out, the older reader silently drops the new field because its
+schema does not name it.
 
-## Read-modify-write and integrity
+Binary protobuf prevents this data loss: **an older reader round-trips a newer writer's fields untouched.** When the
+older reader parses the binary message, any field tag it does not recognize is kept in the message's unknown-field set
+and re-emitted when the modified message is serialized:
 
-Binary proto at rest exists for one property: **an older reader round-trips a newer writer's fields untouched.** Unknown
-fields (keyed by number + wire-type) are retained in the message's unknown-field set and re-serialized — a name-keyed
-text projection (proto-JSON, pbtxt) cannot do this. So a read-modify-write can't silently drop a field a newer component
-added. Three artifacts are modified in place, each path-addressed by a paper's uuid (blobs are immutable): the litcache
-manifest, the paper's job log, and the metadata fields of a litcache `metadata.pb`. The log is only appended to, by
-writing its old bytes followed by the new entries' encoding, so its rewrite decodes nothing
-([`evidence-fulltext.md`](evidence-fulltext.md#the-job-log-records-what-the-worker-has-tried)). The fill of the metadata
-fields recomputes them from the index's record beside them
-([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), and is bound by the same rules as
-the manifest. It rewrites the `SourcedMetadata` through the binary message, so a field it does not know is kept. It
-writes the record back with `ifGenerationMatch`, so when a concurrent ingest or refresh replaces the record, the fill
-loses the race and reads the record again rather than overwriting it. Safe RMW of the manifest requires, in order:
+```
+  Writer (v2 schema)              Reader/Writer (v1 schema)            Storage (after RMW)
+┌────────────────────┐          ┌───────────────────────────┐        ┌────────────────────┐
+│ 1: doc_id = "7c1e" │ ──read─► │ Known:   1: doc_id="7c1e" │ ─save► │ 1: doc_id = "7c1e" │
+│ 2: status = READY  │          │          2: status=DONE   │        │ 2: status = DONE   │
+│ 9: new_field = 42  │          │ Unknown: [tag 9, varint]  │        │ 9: new_field = 42  │
+└────────────────────┘          └───────────────────────────┘        └────────────────────┘
+```
 
-1. **Preserve unknowns.** RMW goes through the binary proto message, whose unknown-field set survives
-   parse→modify→serialize. Never RMW through a lossy typed projection (proto→JSON→proto drops unknowns).
-1. **Fail loud on the write path as a backstop** ("open on read, closed on write"): if write-back cannot account for
-   content it didn't model, raise rather than drop — the fail-loud stance belongs on the modify-and-persist path, not
-   every read.
-1. **Atomic write-back.** GCS `ifGenerationMatch` precondition so a concurrent RMW can't clobber (lost-update is the
-   other corruption vector).
+In the literature cache, content-addressed blobs are immutable, and only three path-addressed artifacts under a paper's
+UUID are modified in place:
 
-Residual, unfixable generically: **semantic coupling** — preservation keeps an unknown field's bytes, not the artifact's
-consistency if a field the writer *did* change is derived-from or invariant-with the preserved one. Mitigated by keeping
-additive fields independent, and by (2).
+- **The paper's job log**, which the worker only appends to by writing the existing object bytes followed by the binary
+  encoding of the new entries, without decoding the existing bytes
+  ([`evidence-fulltext.md`](evidence-fulltext.md#the-job-log-records-what-the-worker-has-tried)).
+- **The metadata fields of `metadata.pb`**, which are recomputed from the index record stored beside them inside
+  `SourcedMetadata` ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)). The fill
+  rewrites `SourcedMetadata` through the binary protobuf message so any unknown field is preserved, and writes the
+  object back with a Cloud Storage `ifGenerationMatch` precondition so a concurrent ingest or refresh wins and forces
+  the fill to re-read.
+- **The `litcache` manifest**, which tracks a paper's sources and renderings.
 
-## External data (bucket 3)
+Safe read-modify-write of the manifest relies on three rules applied in order:
 
-For a cached upstream payload (a raw Unpaywall response): store the upstream's JSON as-is; model only the fields we
-read, as a **subset view, not a closed contract**. Reads ignore extra upstream fields. A read fails when a field every
-record states is missing, or when a field it reads has a shape the reader cannot read; a field the upstream may leave
-out reads as not stated. Upstream JSON held as text (below) holds its readers to the same rule. We do not RMW external
-JSON; if we must annotate it, we write a *separate* authored artifact rather than mutating the upstream blob.
+1. **Preserve unknowns through the binary message.** Every read-modify-write parses, mutates, and serializes the binary
+   protobuf message directly. Converting to JSON or another lossy projection in the middle drops the unknown-field set.
+1. **Fail loud on the write path.** Readers remain open to unknown fields, while the modify-and-persist path fails loud
+   if write-back cannot account for content it did not model, raising an error rather than dropping data.
+1. **Write back atomically.** Every write-back passes a Cloud Storage `ifGenerationMatch` precondition so concurrent
+   writers cannot overwrite each other's updates.
 
-The bucket-1-vs-3 axis is **re-derivability**, not "did we author a schema over it": a write-once derivation over a
-retained/re-fetchable authoritative source is bucket 1 (regenerate wholesale, never RMW — e.g. the index record in
-`metadata.pb`, re-fetched from PubMed's XML or Crossref's or OpenAlex's JSON); a cached per-request response we keep as
-received and cannot re-derive is bucket 3 (preserve the raw bytes, tolerant subset read). One part of `metadata.pb` is
-rewritten in place: Themis's metadata fields, recomputed from the index record beside them under Read-modify-write and
-integrity above ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
+Binary unknown-field preservation has one limitation that no wire format can solve automatically: semantic coupling.
+Preserving an unknown field's bytes does not keep the artifact consistent if a field the older writer *did* change is
+linked by an invariant to the unknown field. We mitigate this by keeping additive fields independent of existing fields
+and by failing loud on the write path when a writer cannot account for the state it is modifying.
 
-## Generated upstream schemas
+### Protos in Cloud SQL columns
 
-Some upstreams publish a schema for their own payload. Where one does, and we return that payload typed rather than as a
-`Struct`, the message is **generated from the upstream's schema** rather than hand-modelled. Hand-modelling a
-thousand-element XSD is a transcription nobody can review, and it leaves every consumer re-deriving a schema the source
-already publishes.
+Most durable protobuf artifacts live as binary `.pb` objects in Cloud Storage, while two authored messages live directly
+in Cloud SQL columns: `AnalysisInputs`, which records the scenario and inputs an Analysis was created from
+([`analysis-scenarios.md`](analysis-scenarios.md) §Storage), and the curation worksheet's `Assessment`, which stores one
+row per workflow in both the draft and submitted tiers ([`curation-surface.md`](curation-surface.md) §Storage).
 
-The generating happens in its own repo, not this one. [xsd-former](https://github.com/populationgenomics/xsd-former)
-takes an upstream's schema document plus the transforms that shape the result — which wrappers are flattened away, what
-annotation each message and field carries — and emits a proto and everything generated from it. That repo publishes the
-lot as a wheel: `clinvar-proto` for ClinVar's VCV record, `pubmed-proto` for a PubMed citation.
+When storing protobuf data alongside relational rows, we choose among three storage shapes in order of preference:
 
-We consume the wheel — its stubs, its XML converter, its pydantic models — so **the pin is the single version knob**. A
-new revision of the upstream's schema, or a correction to the transforms, is a release there and a pin bump here;
-schema, stubs and converter move together because they were generated together.
+1. **Cloud Storage pointer with metadata in SQL (default for large artifacts).** The SQL row stores the object path and
+   generation of a binary `.pb` blob in Cloud Storage along with the scalar columns needed for queries and joins. This
+   keeps database rows small and reuses the Cloud Storage `ifGenerationMatch` read-modify-write discipline.
+1. **Inline binary protobuf (`bytea`) for small records.** The message is serialized into a `bytea` column, and any
+   field that SQL queries must filter or index is extracted into a standalone column alongside it. Because the stored
+   value is binary protobuf, it preserves unknown fields across read-modify-write. The cost is that every write must
+   keep the extracted SQL columns synchronized with the embedded binary payload, because PostgreSQL cannot inspect the
+   protobuf bytes directly. A write-once record such as `analyses.inputs` uses `bytea` to get a schema-checked contract
+   even though it never performs a read-modify-write.
+1. **Proto3-JSON (`jsonb`) for read-mostly data.** Serializing the message to `jsonb` allows native PostgreSQL JSON
+   queries and indexes without maintaining duplicate scalar columns. However, because proto3-JSON is keyed by field
+   name, any read-modify-write through the `jsonb` column drops unknown fields written by a newer release. This shape is
+   acceptable only for query-heavy data that is written whole and never modified in place, or where dropping unknown
+   fields on write is acceptable.
 
-That leaves one thing the wheel cannot supply: our own protos have to *import* the record type in order to embed it, and
-an import needs a `.proto` inside the buf module. So a regeneration copies the wheel's `.proto` in verbatim, at the path
-the wheel's own stubs register their descriptor under — the one placement that works. protoc derives the generated
-import from that path, so our stub imports the wheel's module instead of a second registration of the same descriptor.
-The Python pass generates nothing for the copy, for the same reason; the web tier, which has no wheel to import,
-generates from it like any other proto. The freshness gate catches both ways the copy can go stale: a hand edit, and a
-pin bumped without a regeneration.
+### The browser-to-BFF seam is Connect JSON over a POST-only route
 
-Only a type our own protos embed needs a copy: `clinvar_proto/clinvar.proto` (the record `themis/rpc/clinvar.proto`
-embeds) and `pubmed_proto/pubmed.proto` (the records `themis/rpc/literature.proto` and
-`themis/litcache/models/litcache.proto` embed).
+The internal transport between the BFF and Python services is gRPC over HTTP/2 using binary protobuf. The browser cannot
+speak gRPC directly because browser networking APIs do not expose the HTTP/2 trailers that gRPC uses to carry final
+status codes. Meanwhile, hand-writing Next.js REST route handlers for the browser-to-BFF seam requires per-endpoint
+`fetch` wrappers, custom error envelopes, and manual parsing of path and query strings without compatibility checks.
 
-Two properties hold for every copy, because it does not behave like the hand-authored protos beside it:
+Instead, the browser-to-BFF seam is declared as a protobuf service in
+[`schema/proto/themis/workbench/rpc/workbench.proto`](../../schema/proto/themis/workbench/rpc/workbench.proto) and
+served over the Connect protocol. Connect is not a second serialization format; it is a thin HTTP envelope around the
+same `protobuf-es` message types that the browser and BFF already share. A unary call is a standard HTTP request whose
+body is the bare proto3-JSON message:
 
-- **Never hand-edited**, like every other generated artifact here — it is the wheel's file byte for byte, rewritten by
-  every regeneration.
-- **Field numbers are positional.** xsd-former numbers each message's fields in document order, and it keeps no record
-  of the numbers an earlier release assigned. A new revision of the upstream's schema that inserts an element
-  mid-sequence therefore shifts the number of every field after it. No `reserved` statement in the copy can prevent
-  that, because every regeneration rewrites the copy whole.
+```
+POST /api/rpc/themis.workbench.rpc.Workbench/Poll HTTP/1.1
+Content-Type: application/json
+Cookie: GCP_IAAP_AUTH_TOKEN=...
 
-The compat gate compares both copies, as it does every committed proto, so it refuses a pin bump that renumbers either
-of them. Any revision of ClinVar's or PubMed's schema that inserts an element mid-sequence is refused, and the wheel
-stays on its current pin until xsd-former carries a numbering ledger: a record of every released field number, carried
-forward into each regeneration, with the numbers and names of removed fields written out as `reserved`. The wheel is
-first-party, so building that ledger is ours to do. The refusal is right for each copy, for a different reason:
+{"analysisId": "anl_01J..."}
+```
 
-- **ClinVar's message is never persisted, but its reader does not ship with its writer.** It carries an upstream payload
-  in flight, inside one rpc response, and nothing reads a stored copy of it. The code that decodes that response in a
-  sandbox guest, though, runs with the wheel its image pins (the `guest` dependency group in
-  [`pyproject.toml`](../../pyproject.toml)), and a sandbox Job keeps its image for up to four hours while the evidence
-  service redeploys beneath it. A renumbered record sent to that guest decodes without error into the wrong fields, so a
-  renumbering bump breaks a reader already in flight, as it would for any other rpc.
-- **PubMed's messages are at rest**: litcache's `metadata.pb` is a `SourcedMetadata` whose source record's `pubmed`
-  field carries PubMed's own record, `PubmedArticle` or `PubmedBookArticle`
-  ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), so a renumbering would corrupt
-  every stored record: the schema's stability was load-bearing before any rpc embedded it, and the gate refusing an
-  incompatible pin bump is the store's own constraint made visible.
+Keeping the wire payload as `application/json` makes every request and response readable in the browser's Network tab
+and reachable from `curl` or external tooling such as WebMCP. Errors travel as standard Connect error codes, and request
+validation runs once as a `protovalidate` interceptor on the router in
+[`apps/web/src/server/rpc/handler.ts`](../../apps/web/src/server/rpc/handler.ts) rather than inside each handler method.
+Declaring the service in `.proto` puts the method names and request/reply pairings under `buf breaking` alongside the
+message shapes.
 
-## Upstream JSON held as text
+The BFF mounts the Connect router at a single Next.js App Router catch-all route under
+[`apps/web/src/app/api/rpc/`](../../apps/web/src/app/api/rpc). Because Connect-ES's packaged Next.js adapter
+(`connect-next`) targets the legacy Pages Router and Node `req`/`res` objects, our route handler adapts the Web
+`Request` that the App Router passes directly to `createFetchHandler` from `@connectrpc/connect/protocol`, which is a
+public semver-covered export backed by Connect's conformance test suite.
 
-Some upstreams publish their records as JSON and publish no schema a generator can turn into an accurate proto. Crossref
-and OpenAlex are two such upstreams whose records Themis stores: litcache keeps each one's record of a paper in the
-source record of its `SourcedMetadata`
-([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)). Such a record is held as JSON text
-in a `string` field of the authored message: the value the upstream served, re-serialised from the parsed response with
-nothing dropped or renamed. The text parses back to a value equal to the one served, though not necessarily to the same
-bytes. Beside the text sits a reader for each upstream, which reads the fields Themis uses from that upstream's record
-and nothing else.
+The route and handler enforce four boundary rules:
 
-The reader fails loud on what it reads and ignores the rest. When a field every record of that upstream states is
-missing, or a field it reads has a shape the reader cannot read, the read raises, and at ingest the paper is
-dead-lettered as schema drift naming the field. A field the upstream may leave out reads as not stated. Any other key
-stays in the text, unread, and fails nothing. The metadata fields a consumer reads are filled through the same readers,
-so the field names and shapes Themis depends on are spelled out in one place per upstream. An upstream vocabulary, such
-as a work's `type`, stays the string the upstream served; a value in a vocabulary Themis matches on, such as NLM's
-Publication Type for a work's `type`, is derived where those fields are filled. litcache holds its two such records this
-way ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
+- **POST-only mount.** The route file exports only `POST`, so any `GET` request receives Next.js's 405 response
+  regardless of what a method declares. Because cross-site `GET` navigation can ride the curator's Identity-Aware Proxy
+  (IAP) cookie, refusing `GET` keeps every RPC out of reach of cross-site `GET` requests.
+- **Content-Type check against cross-site forms.** A cross-site HTML form can send a `POST` without a CORS preflight
+  using one of three form content types. The Connect handler requires `application/json`, rejecting form-encoded
+  requests before any method runs.
+- **Strict unknown-field rejection.** `connect-es` ignores unknown JSON fields by default. Our router sets
+  `ignoreUnknownFields: false` so that a caller sending an undeclared or misspelled field (such as a misspelled
+  `version` parameter that would otherwise silently read the current document) receives an immediate validation error.
+- **No shared caching.** Every response sets `Cache-Control: private, no-store` so no shared proxy or CDN caches a
+  curator-scoped reply.
 
-The text is a `string` rather than `bytes` because JSON is UTF-8 text, and protobuf checks UTF-8 on a `string` field, so
-the declared type says what the field holds and the runtime enforces it. The other ways of holding such a record each
-lost on one fact:
+Underneath the route mount, no method in `workbench.proto` declares `idempotency_level = NO_SIDE_EFFECTS`. In Connect,
+that option enables `GET` requests carrying the message in the query string, which our browser transport never uses and
+our `private, no-store` responses could not cache anyway. Because `buf breaking`'s `RPC_SAME_IDEMPOTENCY_LEVEL` rule
+rejects changing `idempotency_level` in either direction, enforcing that rule on `workbench.proto` would permanently
+freeze each method's initial setting even though the service's only consumer ships in the same deployment. We therefore
+ignore `RPC_SAME_IDEMPOTENCY_LEVEL` for `themis/workbench/rpc/` alone (the gRPC contracts keep
+`RPC_SAME_IDEMPOTENCY_LEVEL`, where the level carries retry semantics a deployed client reads), and a handler test in
+[`apps/web/src/server/rpc/handler.test.ts`](../../apps/web/src/server/rpc/handler.test.ts) inspects the service
+descriptor to assert that every method refuses `GET`. If a future read method needs `GET`, that change updates the proto
+option, the route exports, and the handler test together.
 
-- A hand-authored proto whose fields mirror the upstream's keys, loaded strictly so that no key is dropped. It gives
-  every field a type and the generated stubs, but each key the upstream adds stops ingestion through that upstream until
-  the proto gains the field, and OpenAlex adds keys often; `litcache-manifest.md` has the instance.
-- A proto generated from the upstream's OpenAPI description. It needs no hand authoring, but each description lags and
-  mis-states the live records, OpenAlex's by about a dozen top-level keys, so a strict parse fails on live data until
-  the output is corrected by hand.
-- A `google.protobuf.Struct`. It keeps every key with no schema to maintain, but it stores every number as a double, so
-  an integer above 2^53 changes value, and what a reader gets back is no longer the value served.
+The browser-facing service lives under `schema/proto/themis/workbench/rpc/` rather than `schema/proto/themis/rpc/` so
+that the surface reachable from a curator's browser never shares a package namespace with internal services reserved for
+the sandbox and backend. `workbench.proto` is the only service proto with no Python implementation. The Python gRPC
+codegen pass still emits a `_pb2_grpc.py` file for it because the generator selects every proto that declares a
+`service` rather than carrying a special-case exclusion list, matching the TypeScript pass that emits `protobuf-es`
+stubs for internal protos the browser never calls.
 
-`metadata.pb` stays in bucket 1. It is an authored binary proto whose index record is written once and re-derived
-wholesale from indexes that can be queried again, which is bucket 1's test (External data, above). Themis's own metadata
-fields beside that record are recomputed from it and never edited by hand. The JSON text inside it is held the way
-bucket 3 holds a payload, as served and modelled only for the fields read, and its readers follow the same rule as
-bucket 3's. So the two buckets read upstream JSON alike. What separates them is still whether the artifact can be
-re-derived, which decides whether a change rewrites it or has to preserve it.
+### External JSON and upstream schemas
 
-## Schema evolution
+External data from third-party APIs enters Themis in three ways depending on whether the upstream payload is cached
+per-request, stored as a schema-less JSON record inside a binary artifact, or published with a formal upstream schema.
 
-**Breaking changes are ruled out.** A proto evolves in place: add a field with a fresh number, add enum members.
-Renaming, renumbering, or repurposing a field is not allowed. **Retiring one is** — delete it and reserve **both its
-number and its name**, which is what keeps every reader correct: the number for binary readers, the name for the browser
-seam, which is proto3-JSON and keys on it (Serialization posture, bucket 2). A retired field is gone from the contract
-rather than lingering as one that must never be set; nothing new may claim what it held. Reserving governs *reuse*; the
-*transition window* is a separate precondition — a field may only be retired once nothing in flight still sets it. The
-binary legs tolerate the skew, but the browser seam rejects a JSON key the schema no longer declares
-(`ignoreUnknownFields: false`), so a browser-facing field is retired in two changes: stop sending it and deploy, then
-delete it. One change suffices only where that skew costs nothing real — the condition [`migrations.md`](migrations.md)
-puts on a destructive migration: no users to fail, and the consuming doc naming what breaks and until when.
-`analysis-scenarios.md` §Storage is the worked instance, retiring `CreateAnalysisRequest.prompt` in one change: a tab
-still running the previous bundle fails its create until it reloads, which no migration clears. So there is no schema
-version and no version dispatch: a reader parses every artifact ever written, and binary proto's unknown-field retention
-means an older reader round-trips a newer writer's fields untouched.
+#### Cached upstream JSON (Bucket 3)
 
-- **CI compat gate** (`buf breaking`, `schema-compat.yml`). Each committed `.proto` is diffed against its base-branch
-  baseline under the `FILE` category — minus `FIELD_NO_DELETE`, plus the two rules that admit a deletion only when the
-  number and the name are reserved — and **fails on any incompatible delta, with no in-tool override**.
-  `RPC_SAME_IDEMPOTENCY_LEVEL` is ignored for the browser service alone, whose only consumer is the BFF's own generated
-  client, shipped in the same deploy: a level change there reaches no caller that predates it (bucket 2 above). The gRPC
-  contracts keep the rule, where the level carries retry semantics a deployed client reads. The gate compares every
-  committed contract from the change that first commits it, so once merged, a contract evolves additively like any other
-  (`tools/schema/buf_compat.py`).
-- **Statically-typed stubs.** protoc's Python output cannot be type-checked on its own, so a call to a method the
-  contract no longer declares would fail at run time rather than at check time. The `protoc-gen-mypy_grpc` plug-in emits
-  a `.pyi` beside each stub, which is what lets pyright catch it at the call site.
-- **Golden fixtures.** A corpus of historical artifacts the current schema must still parse — the regression proof that
-  evolution stayed compatible.
+For a cached per-request payload such as a raw Unpaywall response, we store the upstream JSON bytes as-is and model only
+the fields we read as a subset view rather than a closed contract. Readers ignore extra fields that the upstream adds. A
+read fails loud when a field that every record must state is missing, or when a field we read has an unexpected type or
+shape; a field that the upstream legitimately omits is read as not stated. We never perform read-modify-write on
+external JSON; if we need to attach Themis annotations to an upstream payload, we write a separate authored artifact
+alongside it.
 
-A change the gate refuses to an at-rest contract, such as a field whose type or meaning has to change, is made as an
-expand/contract change. The new form lands as a new field beside the old one, and readers accept either. Every stored
-artifact is then rewritten into the new field, and only after that is the old field retired, with its number and name
-reserved. A store whose records are immutable, as a sheaf repository's pushed revisions are, never reaches that last
-step, so its readers accept the old field for good. The litcache manifests take this route, with their writers paused
-rather than their readers accepting either form
-([`litcache-manifest.md`](litcache-manifest.md#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)).
-litcache's bibliographic record is re-derived by a metadata refresh, so a destructive change confined to it may go in
-one step instead, under the condition above that its failing window costs nothing real
-([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors) has the instance).
+#### Upstream JSON held as text inside an authored proto
 
-### Retiring an RPC or a message
+Some upstreams serve JSON records without publishing an accurate schema that a code generator can turn into a `.proto`.
+Crossref and OpenAlex are two such upstreams whose bibliographic records `litcache` stores inside the `SourcedMetadata`
+message in `metadata.pb` ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
 
-The gate above has nothing to check an rpc retirement against. A field retirement turns on a fact written in the schema
-— the reserved number and name — and proto reserves neither an rpc name nor a message name, so the rules forbidding
-those deletions refuse every one of them rather than the unsafe ones. They are ignored under the service trees in
-`buf.yaml`, where a message is an rpc's request or reply and dies with it. Deleting a service's whole contract file is
-the same retirement made for every rpc and message in it at once, so the rule against deleting a file is ignored there
-too. The models trees keep both the message rule and the file rule.
+We store each such record in a `string` field of the authored protobuf message, holding the upstream's JSON response
+re-serialized from the parsed value with no keys dropped or renamed. Using `string` rather than `bytes` states that the
+payload is UTF-8 text and lets the protobuf runtime verify UTF-8 encoding on parse and serialize. The three obvious
+typed alternatives each fail on live upstream data:
 
-What covers the service side instead is the type-checkers, which see the condition that makes a deletion unsafe rather
-than the deletion itself: an implementation or a caller that outlived the declaration.
+- **Hand-authored strict proto.** Defining a protobuf message whose fields mirror the upstream's keys and parsing with
+  strict unknown-field checks gives static types, but halts ingestion whenever the upstream adds a new key until we edit
+  and deploy the schema. OpenAlex adds keys frequently enough that strict parsing breaks regular ingestion
+  ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
+- **Proto generated from the upstream's OpenAPI spec.** Generating the message from OpenAPI avoids hand-authoring, but
+  upstream OpenAPI descriptions lag behind live payloads; OpenAlex's spec omits roughly a dozen top-level keys present
+  in live responses, causing strict parses to fail until hand-patched.
+- **`google.protobuf.Struct`.** Storing the JSON in a `Struct` requires no schema maintenance, but `Struct` represents
+  every JSON number as an IEEE 754 double, silently losing precision on any integer above $2^{53}$ so a reader no longer
+  receives the exact value the upstream served.
 
-- **Servicers.** Every servicer method carries `typing.override`, and `reportImplicitOverride` makes writing it
-  non-optional rather than a habit, so an implementation whose rpc is gone fails pyright.
-- **Python callers.** Statically-typed stubs, above — an unknown attribute on `HelloAsyncStub` and its siblings.
-- **Browser callers and the browser server.** Both ends are generated from the descriptor, so a call to a retired method
-  fails `tsc`, and so does the BFF's `ServiceImpl<T>` handler map — the only leg covering `themis/workbench/rpc`, the
-  one service with no Python implementation at all.
+Beside the JSON `string` field sits one reader per upstream that extracts only the fields Themis uses. Like Bucket 3
+readers, it fails loud when a required field is missing or malformed (dead-lettering the paper at ingest as schema drift
+naming the offending field), reads optional absent fields as not stated, and leaves all other keys untouched in the JSON
+text. Themis's own metadata fields on `SourcedMetadata` are populated through these same readers, keeping the upstream
+field names and shapes in one place per upstream. Upstream vocabulary values (such as a work's raw `type` string) stay
+verbatim in the JSON text, while normalized vocabularies that Themis matches on (such as NLM's Publication Type) are
+derived when populating Themis's metadata fields.
 
-Deleting a **message** stays gated outside the service trees, because nothing above would notice. The risk there is
-bytes already written rather than code still calling, and the type-checkers fall silent exactly when the last reader is
-deleted. `litcache.proto` is the obvious at-rest contract: the manifest and the bibliographic record of every stored
-paper. `themis/sheaf/models` is a second: the ref document a sheaf repository's whole state lives in, whose noncurrent
-generations are read long after they stop being current. The less obvious one is `themis/workbench/models`, which is
-bucket 2 on the wire but holds `AnalysisInputs` — the message `analyses.inputs` stores as bytes. It also declares the
-Workbench service's request and reply types, which by their nature belong under `themis/workbench/rpc`; while they sit
-alongside a persisted message, retiring a browser rpc leaves them behind rather than deleting them. An unused message
-costs a generated type; a deleted one costs the rows.
+Although `metadata.pb` embeds this upstream JSON text, `metadata.pb` itself remains a Bucket 1 binary artifact because
+its index record is written once and can be re-derived wholesale by re-querying the upstream index, while Themis's
+metadata fields beside it are recomputed from that index record.
 
-Until a production environment holds litcache's store, a message or a file that only its bibliographic record uses may
-be deleted past the gate, once every stored record the deletion would strand has been deleted
-([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors) states the condition).
+#### Generated upstream schemas
 
-None of this settles the *transition window*, which stays a reviewer's judgement: rolling deploys keep several
-generations live, so an rpc with no surviving caller in this repo may still have one in flight.
+When an upstream publishes a formal XSD schema and we return its payload as a typed protobuf message rather than a
+`Struct`, we generate the `.proto` from the upstream schema instead of transcribing a thousand-element XSD by hand.
 
-## Wire and RPC
+That generation runs in a separate first-party repository,
+[xsd-former](https://github.com/populationgenomics/xsd-former), which takes the upstream XSD plus flattening and
+annotation transforms and publishes a Python wheel containing the `.proto` file, generated Python stubs, an XML
+converter, and Pydantic models: `clinvar-proto` for ClinVar VCV records and `pubmed-proto` for PubMed citations. Pinning
+the wheel in our dependencies keeps the schema, stubs, and XML converter at a single synchronized version.
 
-The internal wire transport is gRPC (HTTP/2, binary protobuf). RPC shapes are authored in the same
-`schema/proto/themis/rpc/` protos and gated by the same `buf breaking`; [`services.md`](services.md) is the service
-pattern (the servicer base, the `themis.rpc.<domain>` stubs, the deploy). Rolling deploys keep several message
-generations in flight; adding a field plus proto's tolerant readers keeps that skew safe on this leg, and a retirement
-is sequenced to stay safe on the browser one (Schema evolution). The BFF↔services leg is this same gRPC/proto; the
-browser↔BFF leg is the Connect protocol as JSON (Serialization posture, bucket 2).
+Because our own `.proto` files embed those upstream messages (`themis/rpc/clinvar.proto` embeds ClinVar's record, and
+`themis/rpc/literature.proto` and `themis/litcache/models/litcache.proto` embed PubMed's records), `buf` needs the
+upstream `.proto` files inside our module tree to resolve `import` statements. During code generation,
+[`tools/schema/regen.py`](../../tools/schema/regen.py) copies
+[`clinvar.proto`](../../schema/proto/clinvar_proto/clinvar.proto) and
+[`pubmed.proto`](../../schema/proto/pubmed_proto/pubmed.proto) verbatim from the installed wheels into `schema/proto/`
+at the exact relative paths the wheels' own Python stubs register their descriptors under. When `protoc` compiles our
+schemas, it derives Python `import` statements from those paths so our generated stubs import the wheel's modules
+directly rather than registering a duplicate descriptor. The Python codegen pass emits nothing for the copied files,
+while the TypeScript `protobuf-es` pass compiles them like any other `.proto` so the web tier gets TypeScript types. The
+CI freshness check catches both hand edits to the copies and wheel version bumps made without running code generation.
 
-The two legs differ because a browser cannot speak gRPC: it has no access to HTTP/2 trailers, which gRPC uses to carry
-final status. That is why the browser-facing service lives outside `themis/rpc/` — under
-`schema/proto/themis/workbench/rpc/`, its own package, so the surface a curator's browser reaches never shares a
-namespace with the ones only the sandbox and the internal services may. It is the one service proto with no Python
-implementation; the gRPC-stub pass selects on *declares a service*, so it emits a `_pb2_grpc.py` nothing imports. That
-is the same generate-uniformly, consume-selectively posture the TypeScript side already has (`apps/web/src/gen/` carries
-stubs for the internal protos the browser never calls), and it is preferred to teaching the generator an exception.
+Because `xsd-former` assigns field numbers positionally in XSD document order without keeping a ledger of previously
+released field numbers, any upstream schema revision that inserts an element in the middle of a sequence shifts every
+subsequent field number. No `reserved` statement in the committed copy can prevent that, because every regeneration
+rewrites the copy whole from the wheel. `buf breaking` compares the committed upstream copies just like hand-authored
+protos and rejects any wheel bump that renumbers fields, so the wheel stays frozen on its current pin until `xsd-former`
+carries a persistent numbering ledger that emits `reserved` statements for removed fields (the wheel is first-party, so
+building that ledger is ours to do). That refusal protects two live boundaries:
 
-## Protos in Cloud SQL columns
+- **ClinVar records in flight across version skew.** ClinVar messages are never persisted at rest, and only travel
+  inside RPC responses from the evidence service. However, the sandbox guest that decodes those responses runs with the
+  `clinvar-proto` wheel pinned in its container image (the `guest` dependency group in
+  [`pyproject.toml`](../../pyproject.toml)), and a running sandbox Job can keep its image for up to four hours while the
+  evidence service redeploys beneath it. A renumbered ClinVar message sent to an in-flight guest would decode silently
+  into the wrong fields.
+- **PubMed records stored at rest.** Every `metadata.pb` in `litcache` stores a `PubmedArticle` or `PubmedBookArticle`
+  message on disk ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)), so renumbering
+  `pubmed.proto` would corrupt existing stored records.
 
-Two protos are stored in Cloud SQL columns: `AnalysisInputs`, the scenario and fields an Analysis is created from
-([`analysis-scenarios.md`](analysis-scenarios.md) §Storage), and the curation worksheet's `Assessment`, one row per
-workflow in both its draft and its submitted tier ([`curation-surface.md`](curation-surface.md) §Storage). Other durable
-artifacts are GCS blobs. Three shapes, in order of preference:
+### Local code generation and committed stubs
 
-1. **GCS pointer, metadata in SQL (default for anything large).** The row stores a pointer (path/generation) to a binary
-   `.pb` in GCS plus the few columns needed to query/join; the proto itself stays out of the database. Keeps rows small,
-   reuses the RMW discipline above, and avoids putting large opaque blobs in Postgres.
-1. **Inline binary proto (`bytea`) for small records.** The message serialized into a `bytea` column, with any field
-   that must be **indexed or queried** pulled out into its own standalone column. Preserves the unknown-field round-trip
-   property (it is still binary), so RMW-safe. Cost: the pulled-out columns must be kept in sync with the embedded proto
-   on every write — a real burden, since Postgres has no native proto awareness. Use when a record is genuinely small:
-   RMW-safety is what it buys over (3), so a record written once and never modified — `analyses.inputs` — takes it for
-   the schema, not for the round-trip.
-1. **Proto→JSON (`jsonb`) — read-mostly only.** Enables native Postgres JSON lookups and indexing without pulling fields
-   out. But proto3-JSON is name-keyed and **cannot round-trip an unknown field** (same limitation as any text
-   projection), so a read-modify-write through the `jsonb` silently drops fields a newer writer added — the exact
-   corruption binary proto exists to prevent. Acceptable **only** for data that is written whole and never RMW'd through
-   the JSON, or where losing unknown fields on write is genuinely fine.
+The obvious way to run `buf` code generation is through `buf generate` using remote plugins on the Buf Schema Registry
+(BSR) or `protoc_builtin`. Both break in our environment: remote plugins hit BSR anonymous rate limits in CI and local
+builds, and `protoc_builtin` embeds a `protoc` version (7.x) whose generated Python code requires a newer protobuf
+runtime than our dependency tree allows (capped at 6.x by `apache-beam` and `grpcio-health-checking`).
 
-Default to (1) for large blobs and (2) for small authored records; reach for (3) only for query-heavy, read-mostly data
-where the unknown-field caveat is understood and accepted.
+Instead, [`tools/schema/regen.py`](../../tools/schema/regen.py) runs all code generation locally using the tools
+installed in the workspace (`uv run --group codegen python -m tools.schema.regen`):
 
-## Documentation flow
+| Stage           | Tool                                             | Output                                                                               |
+| --------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| Upstream copy   | Pinned `clinvar-proto` and `pubmed-proto` wheels | `schema/proto/clinvar_proto/clinvar.proto`, `schema/proto/pubmed_proto/pubmed.proto` |
+| Python messages | `grpcio-tools` `protoc` (`--python` / `--pyi`)   | `themis/**/*_pb2.py` + `.pyi`, `buf/validate/validate_pb2.py`                        |
+| gRPC stubs      | `grpcio-tools` `protoc` (`--grpc_python`)        | `*_pb2_grpc.py` (service protos only)                                                |
+| gRPC stub types | `mypy-protobuf`'s `protoc-gen-mypy_grpc`         | `*_pb2_grpc.pyi` (service protos only)                                               |
+| TypeScript      | Local `protoc-gen-es` via `buf generate`         | `apps/web/src/gen/**/*_pb.ts`                                                        |
 
-A `//` comment on the `.proto` is the documentation the generators carry:
+`regen.py` first runs `buf export` to materialize our `.proto` files alongside the `buf.lock`-pinned `buf/validate`
+dependency into a temporary directory (using a cached module fetch rather than a remote plugin call). It then runs the
+`protoc` binary bundled inside `grpcio-tools` over that directory, which keeps the generated Python code matched to the
+protobuf 6.x runtime. Because the `protovalidate` Python wheel ships no generated `validate_pb2.py` stub, `regen.py`
+emits `buf/validate/validate_pb2.py` into the repository, while standard `google.protobuf.*` well-known types resolve
+from `grpcio-tools`'s bundled includes at runtime. On the TypeScript side, `buf generate` runs the local
+`@bufbuild/protoc-gen-es` plugin configured in [`apps/web/buf.gen.yaml`](../../apps/web/buf.gen.yaml); Connect-ES v2
+uses the `GenService` descriptors that `protoc-gen-es` emits directly, requiring no separate Connect codegen plugin.
 
-| Comment on…       | Reaches                                     | Via                                     |
-| ----------------- | ------------------------------------------- | --------------------------------------- |
-| an rpc / service  | the gRPC Stub/Servicer **method** docstring | `grpc/python` plugin                    |
-| a message / field | **nothing** on the generated Python         | `protoc` carries no comment into `_pb2` |
+All generated files are committed to git and never edited by hand. When proto inputs change, CI
+([`.github/workflows/schema-freshness.yml`](../../.github/workflows/schema-freshness.yml)) verifies freshness by running
+`python -m tools.schema.regen` and then `git diff --cached --exit-code`. Committing the generated code means application
+builds, tests, and the public repository mirror never need `buf` installed at install or run time, and schema changes
+show their exact generated diff in pull requests.
 
-The path documents *operations* but not *message shapes* — an agent introspecting a message type at runtime sees no
-descriptions. Generate any agent/skill doc from the contract (the `.proto`, or a `FileDescriptorProto` compiled with
-`--include_source_info`), which retains every comment, not from runtime `__doc__`.
+When `protoc` compiles `.proto` files into Python, leading `//` comments do not reach every output file equally:
 
-## Tooling
+| Comment location   | Reaches in generated Python                | Mechanism                                |
+| ------------------ | ------------------------------------------ | ---------------------------------------- |
+| `service` or `rpc` | Stub and Servicer method `__doc__` strings | `grpc_python` plugin                     |
+| `message` or field | Nothing in `*_pb2.py`                      | `protoc` strips message/field docstrings |
 
-- `buf` on PATH for `buf export` / `buf lint` / `buf breaking` (CI installs it via `bufbuild/buf-setup-action`);
-  `grpcio-tools` (the `codegen` uv group) for the Python protoc; `apps/web` deps installed for `protoc-gen-es`.
-- **Regen is a `tools/` Python orchestrator** (`uv run --group codegen python -m tools.schema.regen`). CI runs it and
-  checks for no diff (`schema-freshness.yml`).
-- **The compat gate** (`schema-compat.yml`) runs `buf breaking` over each committed `.proto` against its base-branch
-  baseline via a pinned `buf` image; the pure logic is unit-tested.
-- **`buf lint`** is a pre-commit hook (gated in `lint.yml`).
+Because Python `_pb2.py` classes carry no field or message descriptions at runtime, any agent or skill documentation
+must be generated from the `.proto` source or from a `FileDescriptorProto` compiled with `--include_source_info`, which
+retains all leading comments, rather than by introspecting Python `__doc__` attributes.
 
-## Why this shape
+### Authoring and validation rules
 
-- **One codec, so no cross-language JSON disciplines.** An earlier direction kept TypeSpec as the IDL authoring both
-  proto and a browser Zod view model, with disciplines (snake_case name-as-JSON-string enums, flat sum types) whose sole
-  job was to keep proto and Zod agreeing on one canonical JSON projection. Collapsing to one `.proto` source — with the
-  browser↔BFF seam typed by the same protobuf-es JSON codec on both ends, no separate Zod schema — makes that agreement
-  automatic, so the disciplines are unnecessary. Hand-authored `.proto` is then simpler and unlocks two things the
-  TypeSpec emitter could not express: **protovalidate** options and real **`oneof`**.
-- **The seam is a declared service, not a set of routes.** Naming the browser↔BFF methods in the `.proto` is what lets
-  the envelope be generated rather than written: adding a method is a proto edit and an implementation, not a new route
-  directory plus a fetch wrapper plus an error mapping.
-- **Structural over validated.** A `oneof` makes an illegal sum-type state unrepresentable; the residual constraints are
-  declarative protovalidate options, buf-lint-checked — not hand-written validators.
-- **Binary at rest for RMW safety** (above) — the one property a text projection cannot provide.
+`buf lint` runs as a pre-commit hook (and in CI under `lint.yml`) using the `BASIC`, `ENUM_VALUE_PREFIX`,
+`ENUM_ZERO_VALUE_SUFFIX`, and `PROTOVALIDATE` rules configured in [`buf.yaml`](../../buf.yaml) (with
+`PACKAGE_DIRECTORY_MATCH` and `DIRECTORY_SAME_PACKAGE` excepted for the co-located `themis.rpc.*` packages and the
+copied upstream schemas, and so file paths map cleanly to Python packages). Hand-authored schemas follow six
+conventions:
+
+- **Proto-canonical enums.** Enum values use `UPPER_SNAKE` prefixed with the enum's type name, and every enum declares a
+  `*_UNSPECIFIED = 0` sentinel at tag zero. Zero is never a valid domain value, and readers fail loud if `0` appears in
+  persisted data. Enums travel as integers on the binary wire and map between integer and name in the single
+  `protobuf-es` codec on the browser seam. Only genuinely open external strings, such as raw license URLs, use `string`
+  fields instead of an enum.
+- **Field names that read as what they hold.** A `repeated` field of countable items uses a plural noun (`authors`,
+  `articles`), while a mass noun (`evidence`, `provenance`) or a relation name (`located_in`) stays in its natural form.
+  Giving a `repeated` field a singular name requires a specific domain reason: `rcv` matches ClinVar's key,
+  `class_determinative` matches the label on the curator's worksheet, `sensitivity` names the analysis that its entries
+  form together, and `admits_caller` reads as a clause in each `option` line that sets it.
+- **Sum types as `oneof` over variant messages.** Modeling a sum type as a `oneof` makes cross-field "X if and only if
+  Y" invariants structural rather than runtime-checked. Each variant message field is marked
+  `[(buf.validate.field).required = true]` and the `oneof` itself carries `option (buf.validate.oneof).required = true`
+  so an unset or empty variant is rejected at validation time. Where nothing runs `protovalidate` over an at-rest
+  message because its sole reader validates in Python code (as with the sheaf ref document in
+  [`refdoc.proto`](../../schema/proto/themis/sheaf/models/refdoc.proto)), we omit the `protovalidate` options so the
+  schema never claims a check that does not run.
+- **Declarative field constraints via `protovalidate`.** Field-level and cross-field invariants (`repeated.min_items`,
+  `string.min_len`, and message-level `cel` expressions) are declared directly on the `.proto` and enforced at service
+  and storage boundaries via `protovalidate.validate(msg)`.
+- **Leading `//` comments.** Every service, RPC, message, field, and enum carries leading `//` documentation in the
+  `.proto` file.
+- **Explicit field numbers and reservations.** Every field has an explicit tag number, and retired fields reserve both
+  their number and their name.
+
+### Schema evolution
+
+Schemas evolve in place without version numbers in package names or version-dispatch branches in readers. Every reader
+parses every historical artifact ever written, verified against a committed corpus of golden fixtures.
+
+#### Adding and retiring fields
+
+Compatible evolution adds new fields with fresh tag numbers or adds new enum members. Renaming, renumbering, or changing
+the type or meaning of an existing field is forbidden.
+
+Retiring a field is permitted provided the change deletes the field and marks **both its field number and its field
+name** as `reserved`:
+
+```proto
+message CreateAnalysisRequest {
+  reserved 2;
+  reserved "prompt";
+  string project_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+```
+
+Reserving the tag number protects binary protobuf readers and writers from reusing the slot, while reserving the field
+name protects the proto3-JSON browser seam, which keys fields by name. In CI
+([`.github/workflows/schema-compat.yml`](../../.github/workflows/schema-compat.yml)),
+[`tools/schema/buf_compat.py`](../../tools/schema/buf_compat.py) compares every committed contract from the change that
+first commits it (so once merged, a contract evolves additively like any other), running `buf breaking` under the `FILE`
+category with `FIELD_NO_DELETE` excepted and `FIELD_NO_DELETE_UNLESS_NAME_RESERVED` and
+`FIELD_NO_DELETE_UNLESS_NUMBER_RESERVED` added, and allows no in-tool override comments. Because `protoc` synthesizes a
+nested `<FieldName>Entry` message (`option map_entry = true`) for every `map<K, V>` field and `MESSAGE_NO_DELETE` fires
+on that synthetic message even when the map field's number and name are reserved, `buf_compat.py` filters
+`MESSAGE_NO_DELETE` findings on `map_entry = true` messages so `map<K, V>` fields on model messages can be retired under
+the same reservation rule.
+
+Reserving a field's number and name prevents future reuse, while retiring a field safely across a deployment requires
+waiting out the transition window until nothing in flight still sets the field. On binary legs, unknown-field retention
+absorbs version skew during rolling deploys. On the browser seam, however, the BFF sets `ignoreUnknownFields: false` and
+rejects any JSON key that the schema no longer declares. Retiring a browser-facing field therefore takes two changes:
+first stop sending the field from the client and deploy, and then delete and reserve the field in the `.proto`.
+Collapsing that retirement into a single change is allowed only when the transition skew costs nothing real under the
+destructive migration criterion in [`migrations.md`](migrations.md) (no live users affected, and the design doc states
+what breaks and until when). Retiring `CreateAnalysisRequest.prompt` in [`analysis-scenarios.md`](analysis-scenarios.md)
+§Storage followed that single-step path: any browser tab still running the previous bundle failed to create an Analysis
+until reloaded.
+
+#### Changing at-rest contracts
+
+When an at-rest contract needs an incompatible change (such as changing a field's type or meaning), we make an
+expand-and-contract transition:
+
+1. Add the new field alongside the old field so readers accept either form.
+1. Rewrite every stored artifact to populate the new field.
+1. Delete the old field and reserve its number and name.
+
+Different stores handle the rewrite step according to their mutability:
+
+- **Immutable stores**, such as pushed revisions in a sheaf repository, are never rewritten, so their readers keep
+  accepting the old field indefinitely.
+- **Mutable manifests** in `litcache` pause their writers while stored manifests are rewritten rather than teaching
+  readers to accept both forms simultaneously
+  ([`litcache-manifest.md`](litcache-manifest.md#a-change-to-the-manifests-shape-pauses-the-writers-instead-of-carrying-both-forms)).
+- **Re-derivable records**, such as `litcache`'s `metadata.pb`, can be regenerated by a metadata refresh and may take a
+  destructive change in a single step when the failing window costs nothing real
+  ([`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors)).
+
+#### Retiring an RPC or a message
+
+While protobuf provides `reserved` for field numbers and names, it has no syntax to reserve a deleted `rpc` name or a
+deleted `message` name. Enabling `buf breaking`'s RPC, message, and file deletion rules on service protos would
+therefore block every RPC retirement unconditionally. Instead, [`buf.yaml`](../../buf.yaml) ignores those deletion rules
+under the service directories (`schema/proto/themis/rpc/` and `schema/proto/themis/workbench/rpc/`), where request and
+reply messages belong to a single RPC and are deleted with it (or when an entire service file is removed).
+
+Under the service trees, static type checkers enforce safety by catching any implementation or caller that outlives a
+deleted RPC declaration:
+
+- **Python servicers.** Every servicer method carries `@typing.override`, enforced by pyright's `reportImplicitOverride`
+  rule, so an implementation whose RPC was removed from the `.proto` fails type checking.
+- **Python callers.** `protoc-gen-mypy_grpc` generates `.pyi` stub files beside every `_pb2_grpc.py` file, so calling a
+  removed method on `HelloAsyncStub` or another client stub fails pyright at check time rather than `AttributeError` at
+  run time.
+- **Browser callers and the BFF.** Both the browser client and the BFF's `ServiceImpl<T>` handler map are typed from the
+  generated `GenService` descriptor, so `tsc` catches any surviving caller or handler on `themis/workbench/rpc/`.
+
+Outside the service directories, deleting a message or a `.proto` file remains blocked by `buf breaking` in the models
+trees (`themis/litcache/models/`, `themis/sheaf/models/`, `themis/curation/models/`, `themis/workbench/models/`, etc.).
+The risk for a model message is bytes already persisted in storage rather than code still calling a method, and static
+type checkers go silent as soon as the last code reader is deleted. Keeping the deletion gate on models protects:
+
+- `litcache.proto`, which backs every stored paper's manifest and bibliographic record (until a production environment
+  holds `litcache`'s store, a message or file used only by its bibliographic record may be deleted past the gate once
+  all stored records using it have been removed; see
+  [`litcache-manifest.md`](litcache-manifest.md#the-move-off-the-mirrors)).
+- `themis/sheaf/models/`, which backs the ref document whose noncurrent object generations remain readable long after
+  they are superseded.
+- `themis/workbench/models/`, which is Bucket 2 on the wire but defines `AnalysisInputs` (stored as binary bytes in
+  `analyses.inputs`) alongside the Workbench service's request and reply envelopes (such as `CreateAnalysisRequest`,
+  `ListProjectsResponse`, and `PollResponse`, which `themis/workbench/rpc/workbench.proto` imports and uses as its
+  active RPC input and output types). Because those request and reply messages sit in a models file alongside a
+  persisted message, retiring a browser RPC leaves its old request and reply messages in
+  `themis/workbench/models/workbench.proto` rather than deleting them; keeping an unused generated type costs almost
+  nothing, whereas deleting a persisted message breaks stored rows. **Decision (new policy):** new request and reply
+  messages that belong exclusively to an RPC must be declared in `themis/workbench/rpc/workbench.proto` rather than
+  `themis/workbench/models/` so they sit under the `rpc/` compat-gate exception and can be deleted when their RPC is
+  retired.
+
+Static type checks verify that no code in the current checkout calls a retired RPC, while reviewers still verify the
+rolling-deploy transition window to ensure no in-flight container from the previous release is still calling it.
+
+## Alternatives considered
+
+**TypeSpec as the primary IDL with a separate Zod view model.** An earlier iteration authored schemas in TypeSpec and
+emitted both `.proto` files for the backend and Zod schemas for the browser view model. Making two different runtimes
+and validators agree on a single JSON projection required restrictive authoring rules across every schema: enums had to
+serialize as lowercase `snake_case` strings rather than proto enums, and sum types had to be flattened because the
+emitter could not express protobuf `oneof` or `protovalidate` annotations cleanly. Using hand-authored `.proto` as the
+single source of truth and running the `protobuf-es` JSON codec on both sides of the browser-to-BFF seam makes wire
+agreement automatic, eliminates the duplicate Zod schema layer, and lets schemas use native protobuf `oneof` and
+declarative `protovalidate` rules directly.

@@ -1,556 +1,637 @@
 # Design: sheaf — git over object storage
 
-**Status:** draft
-
-**Related:** [`sheaf-service.md`](sheaf-service.md) (the rpc surface this protocol is served through, who calls it, and
-where the credential lives); [`workspace-model.md`](workspace-model.md) (the collaboration model whose workspace this
-would carry, and the branch-and-append semantics an Analysis has); [`services.md`](services.md) (how the sandbox reaches
-a service at all); [`agent-runtime.md`](agent-runtime.md) (the session the sandbox runs inside).
+**Related:** [`sheaf-service.md`](sheaf-service.md) (the gRPC surface that serves this protocol, its callers, and where
+the bucket credential lives); [`workspace-model.md`](workspace-model.md) (the collaboration model whose workspace this
+carries, and the branch-and-append semantics of an Analysis); [`workbench-workspace.md`](workbench-workspace.md) (how
+the browser hydrates and publishes commits from the workbench); [`document-widgets.md`](document-widgets.md)
+(interactive widgets and their human-judgement guards); [`sandbox-worker.md`](sandbox-worker.md) (how the sandbox worker
+exposes git to the guest); [`proto.md`](proto.md) (protobuf evolution rules); [`services.md`](services.md) (how internal
+services are structured); [`agent-runtime.md`](agent-runtime.md) (the session the sandbox runs inside).
 
 ## Overview
 
-A Themis workspace has two writers. The agent writes into a sandbox that lives and dies with one session. A curator
-writes from the workbench, where the browser keeps a copy of the repository of its own and commits to it when the
-curator changes a widget's state. The simplest way to store a workspace is an opaque tar archive, replaced whole by
-whoever writes it, which records nothing about what a write changed. That is enough while only the sandbox writes. With
-a second writer, each would silently overwrite the other's work.
+A Themis workspace has two concurrent writers. The agent writes inside an ephemeral sandbox that lives and dies with one
+session. A curator writes from the workbench, where the browser keeps its own copy of the repository and commits to it
+when the curator updates a widget's state. While only the sandbox wrote to the workspace, storing the workspace as an
+opaque tar archive and replacing it whole on every save was enough. With a second writer, whole-archive replacement
+causes each writer to overwrite the other's work without warning, and records nothing about what changed.
 
-Git already solves this problem, and its object model fits an object store well. Git is an append-only,
-content-addressed object store plus a small set of mutable pointers. GCS provides both halves: immutable keys, and
-compare-and-swap on a single object via `ifGenerationMatch`. The design follows from that:
+Git solves concurrent editing, and its object model maps cleanly onto object storage. A git repository consists of an
+append-only, content-addressed object store plus a small set of mutable ref pointers. Google Cloud Storage (GCS)
+provides matching primitives: immutable objects under content-derived keys, and single-object compare-and-swap via
+`ifGenerationMatch`.
 
-- **One document per repository holds all the mutable state** — every ref, plus the manifest of packfiles that make up
-  the object database. It is only ever replaced by compare-and-swap. That one conditional write is all the concurrency
-  control the data needs; there is no lease object, no advisory lock in Postgres, and no `--max-instances=1` on a git
-  server.
-- **Two kinds of rejection are kept distinct**, because they need different responses. A writer whose document moved but
-  whose refs are untouched can replay. A writer whose ref no longer holds the value it expected has a non-fast-forward
-  and needs a merge.
-- **A shared, accumulating record is an append-only log**, not a mutable field. Appends commute, so a writer that loses
-  the race re-appends to whatever the winner left, and no user sees a conflict.
-- **History is append-only, and nothing is ever deleted.** A ref may be created or fast-forwarded, never rewritten or
-  removed, and a pack once uploaded stays. Every commit ever pushed is therefore reachable from a ref for good, and a
-  reflog ref, written by the same compare-and-swap as each push, records which commit was each ref's tip and when. The
-  price is storage that grows with writes; the payoff is that the one operation able to destroy data does not exist.
-- **Stock git owns the wire protocol.** The agent clones and pushes with a real `git` binary against a real
-  `git upload-pack` and `git receive-pack`, reached from the sandbox over postern's stream hatch. Sheaf's code in that
-  path is a sync of the bare mirror before each connection and a pre-receive hook. The hook refuses a push that rewrites
-  history, writes a protected path, carries a commit or tag under anyone's name but the pusher's, has a header shape git
-  and the browser's git library read differently, or adds a path the browser cannot read. It writes the reflog entry for
-  the rest and turns the push into one compare-and-swap.
-- **The resident set needs a ceiling checked before hydration** — decided, not yet built. Serving a request means
-  building a local object database, and on Cloud Run that is memory. Running out of it is the one failure this layer
-  cannot replay away, so a repository too large to serve has to be refused by the request that asked for it, before it
-  can take out the instance.
+Sheaf ([`themis/sheaf/`](../../themis/sheaf)) puts a git repository on object storage by packing all mutable state for a
+repository — every ref, the manifest of packfiles that form the object database, and `HEAD` — into a single binary
+protobuf document. Every write uploads its new packfiles under content-addressed keys and replaces the ref document in
+one compare-and-swap against the generation the writer last read. That single conditional write provides all the
+concurrency control the repository needs, without lease objects, advisory locks in Postgres, or single-instance git
+servers.
 
-The mechanism lives in [`themis/sheaf/`](../../themis/sheaf). It has no Themis domain type in it, so it can be extracted
-into a package of its own if a second consumer appears.
+When a compare-and-swap is rejected because the ref document moved, sheaf distinguishes a lost race on the document from
+a conflict on a ref. A writer whose ref document moved while the refs it touches kept their expected values can rebuild
+its update against the new snapshot and replay automatically. A writer whose target ref moved faces a git
+non-fast-forward and must merge or rebase. If a workspace ever shares an append-only log that both writers accumulate
+over time, appending lines to a log file makes concurrent edits commute under `.gitattributes` `merge=union` rules so
+that retries and merges succeed without human intervention.
+
+History in a sheaf repository is append-only, and nothing is ever deleted from the store. A ref may be created or
+fast-forwarded, never rewritten or removed, and uploaded packfiles stay in the bucket permanently. Every push also
+advances a reflog ref (`refs/sheaf/reflog`) in the same compare-and-swap, recording which commit was each ref's tip and
+when. On the agent's side, stock `git` owns the wire protocol: the agent clones and pushes against real
+`git upload-pack` and `git receive-pack` processes reached from the sandbox over postern's stream hatch. Sheaf syncs a
+bare mirror before each connection and runs a `pre-receive` hook that refuses pushes that rewrite history, modify
+protected paths, author commits or tags under another user's identity, carry object headers that git and the browser's
+git library parse differently, or add file paths the browser cannot read. To prevent a large repository from exhausting
+container memory on Cloud Run when hydrating a mirror, hydration will check the resident set against a size ceiling
+before fetching pack bytes (decided here, not yet built in `bare.py`). The [`themis/sheaf/`](../../themis/sheaf) package
+contains no Themis domain types and can be extracted into a standalone package if a second consumer appears.
 
 ## Background
 
-**The two writers.** The agent runs untrusted model code inside a sandbox whose filesystem is discarded when the session
-ends, so its work has to be checkpointed somewhere durable. It reaches the repository through a mirror the sandbox
-worker keeps on the trusted side of the sandbox boundary. A curator's click, "mark this criterion as reviewed", becomes
-a commit in a copy of the repository the browser keeps, hydrated and published through the same rpcs the worker's mirror
-uses, with the BFF relaying them ([`workbench-workspace.md`](workbench-workspace.md)). Both writers reach the store only
-through the sheaf service ([`sheaf-service.md`](sheaf-service.md)), which holds the one credential on the bucket.
+The agent runs untrusted model code inside a sandbox whose filesystem is discarded when the session ends, so its work
+must be checkpointed to durable storage. Inside the sandbox worker ([`sandbox-worker.md`](sandbox-worker.md)), the agent
+reaches the workspace repository through a bare git mirror that the worker maintains on the trusted host side of the
+sandbox boundary. Meanwhile, when a curator clicks "mark this criterion as reviewed" in the workbench, the browser
+commits that change to its own copy of the repository and hydrates and publishes through the same RPCs the worker's
+mirror uses, with the web backend (BFF) relaying them ([`workbench-workspace.md`](workbench-workspace.md)). Both writers
+reach the bucket exclusively through the `Sheaf` gRPC service ([`sheaf-service.md`](sheaf-service.md)), which holds the
+single credential on the bucket.
 
-**What object storage gives.** GCS has no locks, no atomic rename, and no multi-object transaction. It has one
-concurrency primitive: a write to a single object can be made conditional on that object's current generation, and the
-service rejects the write if the generation has moved. Separately, writing an object under a key derived from its own
-content is always safe, because a racing writer of the same key is writing the same bytes.
+```
+  Sandbox guest                         Browser (workbench)
+    │ git push / fetch                    │ isomorphic-git commit
+    ▼ (postern Unix socket)               ▼
+  Sandbox worker (bare mirror + hook)   Web BFF
+    │                                     │
+    └──────────────┐       ┌──────────────┘
+                   ▼       ▼  ReadRefDoc / FetchPack / SignPackUrls / Publish
+                 Sheaf service
+                       │
+                       ▼  GCS bucket
+         ┌────────────────────────────────────────┐
+         │ <repo>/refs.pb             (CAS)       │
+         │ <repo>/packs/<sha256>.pack (immutable) │
+         └────────────────────────────────────────┘
+```
 
-**What git's object model is.** A git repository is a content-addressed store of blobs, trees and commits, none of which
-is ever mutated, plus a set of refs — short mutable pointers from a name to a commit id. Everything git needs a
-filesystem for concerns the refs: lock files, atomic renames, directory semantics. The object half wants nothing an
-object store does not already provide.
-
-**Why a bare `git init` on a bucket is not enough.** Git's own ref update is a lock file plus a rename, and an object
-store has neither. Two writers advancing the same ref through separate GCS writes would lose one update with no error.
+A git repository is a content-addressed store of immutable blobs, trees, and commits, paired with refs that map names
+such as `refs/heads/main` to commit object IDs. Everything git requires from a POSIX filesystem — lock files, atomic
+renames, and directory semantics — concerns updating refs. Running `git init --bare` directly on an object-store bucket
+fails because GCS has no lock files, no atomic rename, and no multi-object transactions: two writers advancing the same
+ref through separate object writes would overwrite one another with no error. What GCS does provide is a conditional
+write on a single object's generation (`ifGenerationMatch`), along with safe concurrent writes to content-addressed keys
+where racing writers upload identical bytes.
 
 ## Non-goals
 
-- **Not a general-purpose git host.** One repository per workspace, served over a socket to a known client, with no
-  authentication of its own. Anything reaching it goes through something in front that authenticates. The set of
-  repositories a server will serve is an explicit input, never inferred from the request path: with no authentication,
-  that set is the only boundary between a client that can reach the server and every workspace in the store.
-- **Not an authorization control.** The store authenticates nobody, and protected paths stop a specific forgery, not a
-  determined holder of the credential. What it does refuse, for everyone, is rewriting or deleting history: a force-push
-  is rejected by the hook with git's own wording, so the client's ordinary recovery — pull, then push — applies.
-- **SHA-1 repositories only.** The bare mirror uses git's default object format, which bounds the hash a client can
-  push. Git's own default has not moved, and adopting SHA-256 would be a migration in its own right.
-- **The working document's versions are not refs of their own.** Its versions are the tips the workspace's collaborative
-  branch has had, as the reflog records them, each read at its commit from the browser's copy of the repository
-  ([`workbench-workspace.md`](workbench-workspace.md)); the promote-to-report step stays the workspace model's
-  ([`workspace-model.md`](workspace-model.md)). Nothing here adds a ref per version.
-- **No implementation of git's object format.** Sheaf stores packfiles whole and never looks inside one; every pack it
-  holds came out of a git implementation's pack writer, `git pack-objects` behind the worker's mirror and
-  isomorphic-git's in the browser. Reimplementing the format is how a store ends up subtly incompatible with the client
-  it exists to serve.
-- **No cross-repository operation.** No shared object store between workspaces, no alternates, no dedup across
-  repositories. Each repository is self-contained under its own key prefix, so one workspace's storage is reachable
-  without any authority over another's.
+- **General-purpose git hosting.** Sheaf serves one repository per workspace over a socket to a known client, with no
+  authentication of its own. Callers must pass through an authenticating proxy or service in front of it. The set of
+  repositories a server will serve is an explicit input rather than inferred from the request path; without
+  authentication, that allowlist is the boundary preventing a connected client from reaching other workspaces in the
+  store.
+- **Authorization.** The store authenticates nobody, and protected paths stop a specific forgery by the sandboxed agent
+  rather than a holder of the service credential. What the hook refuses for every caller is rewriting or deleting
+  history: a force-push is rejected with git's standard wording so the client's ordinary recovery — pull, then push —
+  applies.
+- **SHA-256 git repositories.** The bare mirror uses git's default SHA-1 object format, which bounds the hash format a
+  client can push. Git's own default has not moved, and adopting SHA-256 would be a migration in its own right.
+- **One git ref per working-document version.** The working document's versions are the historical commit tips of the
+  workspace's collaborative branch as recorded by the reflog and read from the browser's copy of the repository
+  ([`workbench-workspace.md`](workbench-workspace.md)), while promoting a version to a report stays in the workspace
+  model ([`workspace-model.md`](workspace-model.md)).
+- **Reimplementing git's object format.** Sheaf stores packfiles whole without inspecting their internal object streams;
+  every pack comes from a standard git pack writer (`git pack-objects` behind the worker's mirror and `isomorphic-git`
+  in the browser). Reimplementing pack serialization risks subtle incompatibilities with the git clients sheaf serves.
+- **Cross-repository object sharing.** Each workspace repository is self-contained under its own key prefix, with no
+  shared object store, alternates, or cross-repository deduplication. Keeping each repository under a self-contained
+  prefix ensures that access to one workspace's storage grants no authority over another's.
 
 ## Design
 
-### The two namespaces
+### Repository layout and the ref document
 
-A repository occupies one key prefix, holding two kinds of object:
+Each repository occupies one key prefix ([`themis/sheaf/store.py`](../../themis/sheaf/store.py)) containing two kinds of
+objects:
 
-- **Packfiles**, under content-addressed keys. Written once, never mutated, never renamed. A pack's key is a digest of
-  its bytes, so a replayed attempt that produces identical objects re-uploads to the same key instead of littering the
-  namespace.
-- **One ref document**, at a fixed key. It holds every ref of the repository, the list of packfiles that make up its
-  object database, and which ref or object a clone should check out. It is only ever replaced by compare-and-swap
-  against the generation the writer last read.
+```
+<repo>/
+├── refs.pb                      # RefDoc protobuf, replaced via compare-and-swap
+└── packs/
+    ├── 3a7f...91c2.pack         # Immutable packfile, named by SHA-256 of its bytes
+    └── 8b10...44e0.pack
+```
 
-Reconstructing a repository needs this document and the packs it names, and nothing else. The intent is that these three
-things are all the document ever holds: anything a later need turns up goes in a separate object that no build is
-required to read, so the document stays small and its meaning stays fixed. The encoding machinery described next exists
-so that a departure from that intent is safe rather than silent.
+- **Packfiles**, under content-addressed keys (`<repo>/packs/<sha256>.pack`). Each packfile is written once, never
+  mutated, and never renamed. Because a pack's key is the digest of its bytes, a replayed attempt that produces
+  identical objects uploads to the same key instead of littering the namespace.
+- **One ref document**, at a fixed key (`<repo>/refs.pb`;
+  [`schema/proto/themis/sheaf/models/refdoc.proto`](../../schema/proto/themis/sheaf/models/refdoc.proto),
+  [`themis/sheaf/refdoc.py`](../../themis/sheaf/refdoc.py)). It holds every ref in the repository, the manifest of
+  packfiles that make up its object database, and which ref or object a clone should check out (`HEAD`). It is replaced
+  exclusively by compare-and-swap against the generation the writer last read.
 
-The refs and the manifest share one object because compare-and-swap is per object. Splitting refs across keys would turn
-a multi-ref update into a multi-key update with no atomicity, which is the problem this design exists to avoid. The
-manifest has to be in the same object for a different reason: a listing of the pack prefix cannot distinguish a live
-pack from one orphaned by a lost race, so a reader needs the manifest to know what to download.
+Reconstructing a repository requires only this document and the packs it names. Any additional metadata a future feature
+might need belongs in a separate object that existing builds do not have to read, keeping the ref document small and its
+meaning fixed.
 
-The manifest is a **set**. Packs are named by the hash of their bytes and are self-contained — no `--thin`, so no pack's
-objects are deltas against a base in another pack. Together those properties make each pack a partial map from object id
-to content, and any collection of packs composes into a larger one: there is no shadowing and no dependency between
-packs, so order carries no information and duplicates are harmless. The one thing the manifest must do is *cover* — name
-every pack needed to reach the refs and HEAD. Since packs cannot conflict with each other, coverage is the only property
-that can be violated, and a manifest that fails to cover is a destroyed repository.
+The refs and the pack manifest share one object because compare-and-swap on GCS is per object. Splitting refs across
+separate keys would turn a multi-ref push into a multi-key update with no atomicity across refs. The pack manifest must
+live in the same object for a complementary reason: listing the pack prefix cannot distinguish a live pack from an
+orphan left behind by a lost race or a compaction, so a reader needs the manifest to know which packs to fetch.
 
-The ref document is a binary protobuf, chosen for one property ([`proto.md`](proto.md)): a build reading a document a
-later build wrote gets the fields it does not model back out untouched. Every ref update rewrites the whole document, so
-a write is a read-modify-write, and it goes through the parsed message and not a projection of it. A projection drops
-what it cannot name, and an older writer would then silently delete a newer one's state. This is also why the document
-has no schema-version field: a newer document is readable by construction, and an older one never stops being readable,
-so there is nothing a version would let a reader refuse. Hand-rolled JSON could carry an unknown key too; what proto
-buys is that one schema generates every reader, and `buf breaking` fails the build instead of trusting a hand-written
-check.
+The manifest is a mathematical set. Packs are named by the hash of their bytes and are self-contained — built without
+`--thin`, so no pack contains delta objects against a base object in another pack. Each pack is therefore a partial map
+from git object ID to content, and any collection of packs composes into a larger map without shadowing or ordering
+dependencies. The sole invariant the manifest must satisfy is *coverage*: naming every pack needed to reach all refs and
+`HEAD`. Because self-contained, content-addressed packs cannot conflict with one another, coverage is the only invariant
+a manifest update can violate, and violating it corrupts the repository.
 
-Every stored document names a HEAD. That is what distinguishes a document this code wrote from an empty or truncated
-encoding, both of which are otherwise valid documents naming no packs — the shape of a repository with nothing in it,
-which a reader would serve as such. HEAD has the highest field number for this reason: proto emits fields in number
-order, so a truncation loses HEAD before it loses the manifest, and a message field carries presence, so its absence is
-detected and not inferred. The proto reserves every number above HEAD's, so the document cannot gain a field and the
-argument cannot quietly stop holding.
+The ref document is encoded as a binary protobuf so that unknown fields survive round-trip updates
+([`proto.md`](proto.md)). Because every ref update rewrites the whole document, publishing is a read-modify-write that
+mutates the parsed protobuf message in place rather than projecting it into an intermediate structure that would drop
+unrecognized fields. An older build reading and updating a document written by a newer build preserves any new fields
+untouched. For the same reason, the document carries no schema-version field: additive changes remain readable by older
+and newer builds alike, and `buf breaking` enforces wire compatibility at build time.
 
-The storage seam is narrow on purpose: read and conditionally write one mutable key; put, get and list content-addressed
-objects, and sign a URL that reads one — there is no delete, because nothing deletes. That is small enough to implement
-over a local directory, which is how the concurrency protocol is tested with no network and no credentials. A bug in the
-protocol then shows up as a protocol bug, not as a cloud-client bug.
+Every stored ref document must set `HEAD`. An empty byte string or a truncated protobuf payload is otherwise a valid
+protobuf encoding with no refs and no packs, which looks identical to an empty repository. `HEAD` is assigned the
+highest field number in the message, and all field numbers above it are reserved. Because protobuf serializes fields in
+field-number order, a truncated write loses `HEAD` before it loses the pack manifest, and because `HEAD` is a message
+field with explicit presence, a reader immediately detects its absence and rejects the damaged document.
 
-### HEAD is in the document, not in the refs
+Ref names and object IDs are validated on write before the compare-and-swap
+([`themis/sheaf/refdoc.py`](../../themis/sheaf/refdoc.py)). When a mirror syncs from the store, it feeds refs to git as
+whitespace-delimited, newline-terminated input; if a ref name containing a space or a pair of file/directory-colliding
+ref names (such as `refs/heads/a` and `refs/heads/a/b`) were written into the ref document, every subsequent sync of
+that repository would fail until the bad entry was manually compare-and-swapped out.
 
-A ref maps a name to an object id. HEAD maps a name to a *ref name* (a symbolic ref) or, when detached, to an object id.
-It is a different type in a different namespace, and it is advertised differently on the wire. Storing it in the refs
-map would also fail quietly: git's ordinary ref update dereferences a symref, so writing HEAD that way overwrites
-whichever branch HEAD points at.
+The storage seam ([`themis/sheaf/backend.py`](../../themis/sheaf/backend.py)) is narrow: read, conditionally write, and
+list retained generations of one mutable key, plus put, get, list, and sign URLs for immutable content-addressed
+objects. There is no delete operation. That interface is small enough to implement over a local filesystem directory
+([`themis/sheaf/backends/`](../../themis/sheaf/backends)), allowing the concurrency protocol to be tested without
+network calls or cloud credentials.
 
-A symbolic HEAD names a valid ref name, which need not currently resolve. HEAD on a branch with no commits is git's own
-state after `init`; `switch --orphan` re-enters it; and protocol v2 carries it explicitly so that a clone of an *empty*
-repository still checks out the intended branch name. Requiring HEAD to resolve would forbid the state every repository
-starts in, and that is exactly the case where there is no branch for a mirror to infer a default from.
+### Storing HEAD as a distinct field
 
-Recording HEAD removes a guess that would otherwise be re-made on every hydrate. `git init --bare` takes HEAD from the
-host's `init.defaultBranch`, so a mirror built on a machine defaulting to `master` advertises a HEAD pointing at
-nothing, and a client clones the refs, checks out an empty tree, and reports no error. What the document cannot remove
-is the *first* choice: nothing on a push says which ref the client considers primary, so a repository's first write
-picks from the refs it creates. The pick is made once and recorded, instead of being re-derived by whatever build
-happens to be running, with two builds free to disagree about one repository.
+An ordinary ref maps a name under `refs/` to an object ID. `HEAD` maps to a *ref name* (a symbolic ref) or, when
+detached, to an object ID. It has a different type, sits outside the `refs/` namespace, and is advertised differently on
+the git wire protocol. Storing `HEAD` as an entry in the `refs` map would also fail silently when updating a mirror:
+git's normal ref update dereferences a symbolic ref, so writing `HEAD` through the ref map would overwrite whichever
+branch `HEAD` points at.
+
+A symbolic `HEAD` names a valid ref path, which need not resolve to an existing commit yet. Pointing `HEAD` at a branch
+with no commits is git's initial state after `git init` and `git switch --orphan`, and git protocol v2 advertises the
+symbolic target so that cloning an empty repository still checks out the intended branch name. Requiring `HEAD` to
+resolve would forbid the state every repository starts in, which is also the state where a mirror has no branches from
+which to infer a default.
+
+Recording `HEAD` in the ref document eliminates a guess that every mirror hydration would otherwise have to make.
+`git init --bare` initializes `HEAD` from the host machine's `init.defaultBranch` setting; a mirror created on a host
+defaulting to `master` for a repository using `main` advertises a `HEAD` pointing at nothing, causing a client clone to
+check out an empty working tree without reporting an error. On a repository's first write, nothing in a git push states
+which ref the client considers primary, so the store picks the initial `HEAD` from the refs created by that first write
+(preferring `refs/heads/main`, then the first branch in `refs/heads/`, and otherwise an unborn `refs/heads/main`) and
+records it in the ref document so all subsequent builds agree.
 
 ### Every write is one compare-and-swap
 
-Every write, from either writer, has the same shape.
+Every write from any caller follows the same three-step sequence:
 
 ```mermaid
 sequenceDiagram
-    participant W as writer
-    participant P as pack namespace
-    participant R as ref document
-    W->>R: read (remember the generation)
-    W->>P: upload new packs (content-addressed)
-    W->>R: replace, conditional on that generation
-    R-->>W: accepted, or rejected because it moved
+    participant W as Writer
+    participant P as Pack namespace
+    participant R as Ref document
+    W->>R: 1. Read ref document (observe generation G)
+    W->>P: 2. Upload new packs (content-addressed)
+    W->>R: 3. Replace ref document if generation == G
+    R-->>W: Accepted, or rejected because generation moved
 ```
 
-A rejection of the replace is replayed by a writer that derives its intent from the snapshot, and reported to one that
-cannot — the next two sections cover which is which. The conditional replace is the only point where writers are ordered
-against each other, and it is one object-store call. Anything else that serialises — a server holding a lock while it
-refreshes its own cache — is protecting a cache, not the data.
+The conditional replacement of the ref document is the sole point where concurrent writers are ordered against one
+another, and it takes a single object-store call. Any lock held by a server while refreshing a local mirror protects
+only that local cache, while the compare-and-swap protects the repository state. Generation numbers are treated as
+opaque tokens compared only for equality: a GCS generation is a microsecond timestamp that is neither dense nor ordered
+in a way callers may rely on, and counting how many transitions occurred is answered by counting retained entries rather
+than subtracting generations.
 
-Objects always go up before the ref document names them. A ref pointing at an object nobody can fetch is corruption; a
-pack nobody names is litter, and litter is inert. That asymmetry is why the ordering is fixed, and why litter is a
-design consequence and not a bug: unlike git's push quarantine, an upload to object storage cannot be cheaply rolled
-back, so nothing tries.
+Packfiles are always uploaded before the ref document names them. A ref pointing at an object that no pack in the store
+contains is repository corruption, whereas an uploaded pack that no ref document names is inert litter that no reader
+requests. Because object storage cannot roll back an uploaded pack when a subsequent compare-and-swap fails, leaving
+unreferenced packs behind is an accepted consequence of the protocol.
 
-### A lost race is not a conflict
+### Distinguishing a lost race from a ref conflict
 
-Two rejections are possible. Conflating them is how a system either loses data or asks a user to resolve something it
-could have handled itself:
+When a compare-and-swap fails because the ref document's generation moved, two distinct situations are possible
+([`themis/sheaf/store.py`](../../themis/sheaf/store.py)):
 
-- **The ref document moved, but the refs this writer is touching still hold what it expected.** Somebody else committed
-  something unrelated. Re-read, rebuild the intent against the new state, write again. Nobody is told anything.
-- **A ref no longer holds the value the writer expected.** This is git's non-fast-forward. Retrying would clobber
-  whatever landed, so it surfaces to whoever is pushing, who merges or rebases.
+```
+Snapshot at G1:  refs/heads/main = aaa111,  refs/stranded/w1 = (absent)
 
-The distinction is what makes the coarse, one-document compare-and-swap acceptable. Two writers touching disjoint refs
-contend on the document, but the loser's replay always succeeds, so contention costs a round trip and not a failure. The
-retry budget bounds the replay. Exhausting it means the writer was starved by sustained contention, which is a real
-condition and is reported as one.
+Case 1 — Lost race (disjoint refs):
+  Winner updates refs/stranded/w1 -> bbb222 (generation becomes G2)
+  Loser wanted to update refs/heads/main: aaa111 -> ccc333
+  -> At G2, refs/heads/main is still aaa111. Loser rebuilds against G2 and replays.
 
-A writer that derives its whole intent from the snapshot it was handed can never see the second case. That is why a
-write takes a builder — re-invoked on every attempt against whichever state won — and not an expected old value.
+Case 2 — Ref conflict (same ref moved):
+  Winner updates refs/heads/main: aaa111 -> ddd444 (generation becomes G2)
+  Loser wanted to update refs/heads/main: aaa111 -> ccc333
+  -> At G2, refs/heads/main is ddd444 != aaa111. Loser surfaces non-fast-forward conflict.
+```
 
-### Appends commute
+Conflating these two cases either loses concurrent writes or forces a user to resolve a conflict that the store could
+have replayed automatically:
 
-A curator edits the workspace from the browser. A curator's judgement on the agent's content, such as a tick on a
-checklist item, is not a record of this kind: it lives as a guard inside the widget asset it judges
-([`document-widgets.md`](document-widgets.md)). Some other record both writers share might accumulate instead, a log of
-events, say. Modelled as a mutable field in a document, two writers racing means one write is lost or a user is shown a
-merge. Modelled as a line appended to a log, the loser re-reads the winner's log and appends again. The result is the
-same set of lines either way, with no conflict and no dependence on an agent being alive for the write to land. Whether
-any such file exists is an open question below; what this section fixes is the shape it has to take.
+- **The ref document moved, but the refs this writer touches still hold their expected values.** Another writer
+  committed to a disjoint ref or compacted packs. The losing writer re-reads the ref document, rebuilds its intent
+  against the new snapshot, and repeats the compare-and-swap without surfacing an error.
+- **A target ref no longer holds the value the writer expected.** Another writer advanced the same ref, producing a git
+  non-fast-forward. Retrying would overwrite the winner's commit, so the failure surfaces to the caller, which must
+  merge or rebase.
 
-Commuting has to hold for the *agent's* merges as well, not only for the store's compare-and-swap. Where the agent's
-clone and a curator's copy have both appended to one log, git's default textual merge produces a conflict in the middle
-of the agent's turn. Git's built-in `union` merge driver keeps both sides instead. Because it is built in, marking the
-log files for it in the repository's own attributes configures both ends at once. The browser's side would need the same
-rule: its rebase refuses an edit to a file the agent changed ([`workbench-workspace.md`](workbench-workspace.md) §"A
-curator's edit is rebased onto the tip, file by file"), so it would have to append to such a log rather than refuse it.
+This separation is what makes a single repository-wide ref document practical under concurrency. Two writers updating
+disjoint refs contend on the ref document's generation, but the loser's automatic replay succeeds on the next round
+trip. A retry budget bounds how many times a writer replays before reporting starvation from sustained contention. A
+caller that derives its entire update from the snapshot passed to its transaction builder never encounters the second
+case, because re-invoking the builder against the winning snapshot computes a fresh fast-forward transition on each
+attempt.
 
-A curator's commit is authored and committed as that curator. What makes the name trustworthy is the hook's identity
-rule [below](#protecting-what-the-agent-must-not-write): the agent cannot put it on a commit of its own.
+### A shared append log would commute under `merge=union`
 
-### The wire: stock git, sheaf's precondition
+A curator's review judgement on agent-authored content, such as ticking a checklist item, lives as a guard inside the
+widget asset it judges ([`document-widgets.md`](document-widgets.md)). Whether any workspace file needs a shared append
+log that both writers accumulate is an [open question](#open-questions) below — no live workspace uses one today, and
+`merge=union` currently exists only in test fixtures — but this section fixes the shape such a file must take if one is
+introduced, because the test suite already pins the mechanism
+(`themis/sheaf/tests/test_wire.py::test_two_divergent_appends_merge_without_a_conflict`). Where two writers genuinely
+append independent lines to a shared record (such as an event log), modelling that record as a mutable field in a
+document would cause concurrent writes to conflict or overwrite each other. Modelling it as lines appended to an
+append-only log makes concurrent writes commute: a writer that loses a compare-and-swap race re-reads the winner's log
+and appends its line to the new end, producing the same set of lines without surfacing a conflict or requiring an agent
+session to be running.
 
-Getting `git-upload-pack` and `git-receive-pack` subtly wrong is the kind of mistake that surfaces as an obscure failure
-in somebody's git version months later. So the agent's side is a real `git` binary talking to the real `git upload-pack`
-and `git receive-pack`, and sheaf's code in that path does two things:
+Commutativity must hold for git merges in the agent's clone as well as for compare-and-swaps in the store. When the
+agent's clone and the curator's browser copy have both appended lines to the same log file, git's default three-way text
+merge reports a conflict in the middle of the agent's turn. Configuring the log file to use git's built-in `union` merge
+driver in `.gitattributes` (for example, `*.jsonl merge=union`) instructs git to keep both appended lines automatically
+across all clones. On the browser side, the workbench's file-by-file rebase
+([`workbench-workspace.md`](workbench-workspace.md) §"A curator's edit is rebased onto the tip, file by file") would
+need the same rule, appending to a shared log rather than refusing an edit to a file the agent touched.
 
-1. **Sync a bare mirror from the store before handing the request to git.** Once local refs match the store, a client
-   pushing from an out-of-date clone fails git's own fast-forward check and gets git's own message, which is what a
-   model has been trained to respond to. The fetch path syncs too. A rejected pusher's next move is a pull, and a mirror
-   refreshed only on push would hand back the pusher's own stale state, so the retry loop would never converge. The
-   mirror is a cache in the strict sense and never the source of truth, so syncing force-updates local refs and deletes
-   refs the store no longer has.
-1. **Turn the push into one compare-and-swap, in a pre-receive hook.** By the time a pre-receive hook runs, git has
-   validated the incoming objects and no ref has moved. The hook refuses any update that is not a create or a
-   fast-forward, and writes the reflog entry for the rest. It then packs the new objects reachable from that entry and
-   from the pushed tips, uploads the pack, and conditionally replaces the ref document against the generation the
-   *client's view* was built from. The pushed tips are named as well as the entry because an annotated tag is not
-   reachable from the entry, which is parented on the commit the tag points to
-   ([below](#the-reflog-ref-says-what-was-current)). Exiting non-zero makes git discard the quarantine and leave every
-   ref untouched, so a refusal cannot leave the mirror disagreeing with the store. The hook is `pre-receive` and not
-   `update` because `pre-receive` sees the whole push at once, so a multi-ref push maps onto a single compare-and-swap
-   and is atomic in the same way the store is.
+A curator's commit carries that curator's author and committer identity. The hook's identity rule
+([below](#protecting-paths-identities-and-object-headers-in-the-hook)) prevents the agent from placing a curator's
+identity on its own commits.
 
-The transport is postern's stream hatch: one Unix socket per service bound into the guest, each spliced host-side to
-`git upload-pack` or `git receive-pack` against the mirror — git's native protocol over an `ext::` remote, no HTTP in
-the path. The socket is the capability. The guest's connector sends no repository and no service name, so nothing
-host-side parses one; a socket bound to `upload-pack` cannot be talked into `receive-pack`; and read-only access is a
-socket pair with the receive half unbound. `git http-backend` over loopback remains for a writer that is not sandboxed,
-and the hook runs the same under either, since `receive-pack` runs it whatever the transport.
+### Serving the wire protocol with stock git
 
-The client's fast-forward check does the rejecting in the common case, and `--force` is the instruction to skip it. The
-hook's own check is what holds then, and it has to be the hook's: receive-pack's `denyNonFastForwards` and `denyDeletes`
-run *after* the pre-receive hook and cover branches only, so a server relying on them would store the rewrite before git
-refused it, and would let a tag be moved or deleted. The hook also meets the narrow race where something landed between
-the sync and the swap.
+Implementing `git-upload-pack` and `git-receive-pack` from scratch risks subtle wire-protocol bugs that surface only
+with specific git client versions or flags. Instead, the agent talks with a stock `git` binary to stock
+`git upload-pack` and `git receive-pack` processes running against a per-session bare mirror
+([`themis/sheaf/wire/bare.py`](../../themis/sheaf/wire/bare.py)). Sheaf's code in that path performs two steps:
 
-A replace ref, `refs/replace/<id>`, tells git to read another object whenever it is asked for `<id>`, and that lets a
-push make the hook check one commit while the store keeps another. The agent first pushes `refs/replace/<forged>`
-pointing at a harmless commit, then pushes the forged commit, which writes a protected path. Every git command the hook
-runs reads the harmless stand-in and passes it, but `pack-objects` ignores replace refs and stores the forged commit.
-Two defences close the two steps. A push may write only branches, tags, and the refs under `refs/stranded/` where the
-sandbox worker keeps work the store refused on its branch, so the first push is refused. And the mirror's own config
-turns replace refs off, so every git that opens it reads the objects it stores. The second defence is needed because a
-writer that publishes through the storage protocol without passing a hook can still store any ref, and every sync copies
-the store's refs into the mirror.
+1. **Sync the bare mirror from the store before handing the request to git.** Before running `upload-pack` or
+   `receive-pack`, the mirror reads the ref document, fetches any missing packs concurrently (one worker task per pack,
+   since hydration is latency-bound across object-store requests), force-updates local refs to match the store, deletes
+   any local refs the store no longer holds, and points `HEAD` at the document's target. Once local refs match the
+   store, a client pushing from a stale clone fails git's own fast-forward check and receives git's standard rejection
+   message, which models are already trained to recover from. Fetching syncs the mirror first as well: a rejected
+   pusher's next step is `git pull`, and a mirror refreshed only on push would hand back the stale state the push just
+   failed against.
+1. **Turn the push into one compare-and-swap inside a `pre-receive` hook.** By the time `pre-receive` runs
+   ([`themis/sheaf/wire/hook.py`](../../themis/sheaf/wire/hook.py)), git has placed the incoming objects into a
+   quarantine directory and validated them, and no local ref has moved. The hook receives the entire push at once on
+   stdin, so a multi-ref push maps onto a single compare-and-swap. It refuses any ref update that is neither a ref
+   creation nor a fast-forward, checks path and identity rules, writes a reflog commit for the transition, packs all new
+   objects reachable from the reflog commit and from the pushed tips, uploads the pack, and conditionally replaces the
+   ref document against the generation recorded when the mirror was synced. The pushed tips are passed to the packer
+   alongside the reflog commit because an annotated tag object is not reachable from the reflog commit, which parents on
+   the commit the tag peels to ([below](#the-reflog-ref-says-what-was-current)). Exiting non-zero causes git to discard
+   the quarantine directory and leave all local refs untouched, so a rejected push never leaves the mirror out of step
+   with the store.
 
-Incoming objects are validated by git, not by the hook. That validation is off by default in receive-pack, and the
-default is wrong here: the hook is host-side code holding the store credential, and it walks a pack the sandbox
-composed. With validation on, receive-pack refuses a malformed object before the hook is invoked at all.
+In the sandbox worker ([`sandbox-worker.md`](sandbox-worker.md)), the transport is postern's stream hatch: one Unix
+socket per git service bound into the sandbox guest and spliced host-side to `git upload-pack` or `git receive-pack`
+against the mirror, speaking git's native protocol over an `ext::` remote with no HTTP in the path. The socket acts as
+the capability: the guest's connector sends no repository name or service argument, a socket bound to `upload-pack`
+cannot invoke `receive-pack`, and a read-only mount simply leaves the `receive-pack` socket unbound. For unsandboxed
+writers, `git http-backend` over loopback ([`themis/sheaf/wire/server.py`](../../themis/sheaf/wire/server.py)) runs the
+exact same mirror sync and `pre-receive` hook.
+
+While git's client-side fast-forward check catches stale pushes in the ordinary case, `git push --force` bypasses the
+client check. The hook must therefore verify fast-forward ancestry itself rather than relying on git's server-side
+`receive.denyNonFastForwards` and `receive.denyDeletes` settings: `receive-pack` evaluates those settings *after* the
+`pre-receive` hook finishes and applies them only to branches, which would let a force-push land in the store before git
+refused it and would allow tags to be moved or deleted.
+
+Git replace refs (`refs/replace/<id>`) instruct git to substitute another object whenever `<id>` is read, which would
+otherwise allow an agent push to make the hook inspect one commit while storing another. An agent could first push
+`refs/replace/<forged>` pointing at a benign commit and then push `<forged>` modifying a protected path: git commands
+run by the hook would read the benign replacement and pass the push, while `git pack-objects` ignores replace refs and
+packs the forged commit. Sheaf closes both steps of that attack: the hook restricts pushes to branches (`refs/heads/*`),
+tags (`refs/tags/*`), and `refs/stranded/*` (where the sandbox worker parks work that could not land on its branch),
+refusing `refs/replace/*`; and the mirror configures `core.useReplaceRefs=false` so that even if another writer
+published a replace ref through the storage protocol without passing through the hook, git commands opening the mirror
+ignore it.
+
+Incoming objects are validated by git itself by enabling `receive.fsckObjects=true` on the mirror (off by default in
+git). Because the hook is host-side code holding the store credential and walking a pack composed inside the untrusted
+sandbox, enabling `fsckObjects` ensures `receive-pack` rejects malformed objects before invoking the hook.
 
 ### The reflog ref says what was current
 
-Fast-forward-only history keeps every commit reachable, but it does not say which commits were ever a ref's tip: a push
-of three commits moves the tip once, and afterwards the three look alike. The reflog ref records that. Each write that
-moves a ref adds one commit under `refs/sheaf/reflog`, parented on the previous reflog commit and on every tip the write
-set, with the transitions in its message. A commit's parent has to be a commit, so when a tip is an annotated tag, the
-entry is parented on the commit the tag points to, and its message records the tag itself. The tag object stays
-reachable through its own ref, which is never deleted. The reflog entry rides in the same compare-and-swap as the refs
-it describes, so the two cannot disagree, and it is an ordinary ref over ordinary commits, so `repack -a -d` keeps
-everything it reaches and a clone can fetch it by name. A default clone does not: git's clone refspec covers
-`refs/heads/*`, so the agent sees the reflog only if it asks for `refs/sheaf/*`, and its ordinary `push` never touches
-it. A `push --mirror` would try to delete it and is refused whole.
+Fast-forward-only history keeps every pushed commit reachable, but the commit graph alone cannot tell which commits were
+ever a ref's tip: pushing three commits at once advances the branch tip once, leaving the intermediate commits
+indistinguishable from tips that were individually published.
 
-Two things follow. Any question of the form "what did this ref point at when" is answered from the repository itself,
-with no dependence on what the bucket retains. And because nothing is deleted, the answer is always hydratable: the
-commit the reflog names is in a pack the store still holds.
+To record tip history inside the repository, every publish that updates a ref writes one commit to `refs/sheaf/reflog`
+([`themis/sheaf/wire/reflog.py`](../../themis/sheaf/wire/reflog.py)), parented on the previous reflog commit and on the
+commit each updated ref tip peels to, with the `<ref> <old-oid> <new-oid>` transitions in its commit message:
 
-The chain is sheaf's own from tip to root, and that is enforced at both ends. On a repository's first write the writer
-lays down a parentless root entry and parents the first real entry on it, so a reader walking first parents ends on a
-commit sheaf wrote and never runs on into the pushed history — which the pushing side controls, and could shape to look
-like an entry. A push may not write under the namespace, since a fast-forward of the reflog ref would be a forgery. And
-the store refuses any write that moves a ref without advancing the reflog ref alongside it: presence is checkable
-without objects, and it is the mistake a second writer would otherwise make silently. What the store cannot check — that
-the entry's parents are the new tips — stays the writer's contract, like fast-forwardness.
+```
+refs/sheaf/reflog
+  │
+  ▼
+[entry 2] "sheaf: refs/heads/main, refs/tags/v1"
+  │ ├─► commit c3 (new tip of refs/heads/main)
+  │ └─► commit c3 (peeled target of annotated tag v1)
+  ▼
+[entry 1] "sheaf: refs/heads/main"
+  │ └─► commit c1 (initial tip of refs/heads/main)
+  ▼
+[root]    "sheaf: init" (parentless sentinel written by sheaf)
+```
 
-### The mirror knows what it holds without being told
+Because git requires every parent of a commit to be a commit object, when an updated tip is an annotated tag, the reflog
+entry parents on the commit the tag points to while recording the tag's own object ID in the message line; the tag
+object itself remains reachable through its own ref under `refs/tags/`, which is never deleted. The reflog update rides
+in the same compare-and-swap as the ref updates it describes, so the log and the refs cannot disagree. Because
+`refs/sheaf/reflog` is an ordinary ref over ordinary commits, `git repack -a -d` retains every commit it reaches, and a
+client can fetch it explicitly by name. A default `git clone` fetches only `refs/heads/*` and `refs/tags/*`, so the
+agent never sees `refs/sheaf/reflog` unless it asks for `refs/sheaf/*`, and `git push --mirror` (which would attempt to
+overwrite or delete `refs/sheaf/reflog`) is refused in full.
 
-The mirror is refreshed before every request, so it has to answer one question cheaply: which of the packs the store
-names does it already have? Re-downloading the repository each time is out, and the packs' local filenames are no help,
-because git indexes a pack under a name derived from its own checksum and not under the store's.
+Recording tip transitions in `refs/sheaf/reflog` means any query for what a ref pointed at and when can be answered from
+the repository alone without relying on bucket object versioning, and because no pack is ever deleted, every commit
+named in the reflog remains hydratable.
 
-The obvious answer is to write down what was fetched. That creates a second account of what the object database
-contains, and the two can disagree without anything noticing: a repack consolidates the mirror's packs into one and
-deletes the files it consolidated, so a note reading "I have that pack" outlives the file it describes, and nothing
-rechecks a note.
+The reflog chain is owned by sheaf from tip to root. On a repository's first publish, the writer creates a parentless
+root sentinel commit (`sheaf: init`) and parents the first real entry on it, so walking `--first-parent` from
+`refs/sheaf/reflog` always stops at a commit sheaf wrote and never runs into pushed history that an untrusted client
+could shape to look like a reflog entry. The hook refuses any push under `refs/sheaf/*`, and the store refuses any
+publish that updates a ref outside `refs/sheaf/*` without also advancing `refs/sheaf/reflog`. Checking that
+`refs/sheaf/reflog` moved requires no pack inspection; ensuring that the reflog commit's parents match the new tips
+remains the writer's responsibility, alongside fast-forward checking.
 
-So the record is not a note about the pack; it *is* the pack. Each marker is a second hard link to the file git indexed,
-under the store's name for it. Git copies a pack in byte for byte and only renames it, so one set of bytes carries both
-names, and the link count answers the question: two names means git still has its own copy, one means a repack dropped
-it. The mirror answers by looking at the object database, not at a record of it, so there is nothing to keep in step and
-nothing that can drift. The general principle: where a fact about local state can be derived, derive it.
+### Tracking installed packs in the mirror with hard links
 
-Holding the pack open is also what makes a lost compaction race cheap. The manifest still names the packs the repack
-consolidated, and their bytes are still on disk under the marker links, so the next sync re-indexes them from disk
-instead of fetching them again. The markers are dropped only once the compaction has won. Mechanism:
-[`themis/sheaf/wire/bare.py`](../../themis/sheaf/wire/bare.py).
+Because the mirror refreshes before every git request, it needs a fast, drift-free way to know which packs from the
+store's manifest are already indexed in its local object database. Re-downloading every pack on every request is too
+slow, and checking filenames in `objects/pack/` does not work because git names indexed packfiles after the internal
+SHA-1 checksum of the pack stream rather than the store's SHA-256 key.
 
-### Protecting what the agent must not write
+Recording fetched pack IDs in a separate text or JSON file would create a second account of the object database that can
+silently drift: when `git repack -a -d` consolidates packs into a new packfile and unlinks the old files from
+`objects/pack/`, a separate note would still claim the old packs are indexed.
 
-Some of the workspace is not the agent's to write: a context document a user supplied for the agent to consult, or a
-record of human judgement, should review state ever land in the workspace as a file of its own. The agent can write
-anything inside its sandbox, including the author and committer lines of its commits, so a commit claiming a curator
-wrote it costs the agent nothing to make, and a check made inside the sandbox proves nothing. The one place the
-difference between writers can be enforced is the pre-receive hook: it runs outside the sandbox, sees the whole push,
-and runs before any ref moves.
+Instead, the mirror tracks each installed pack with a hard link
+([`themis/sheaf/wire/bare.py`](../../themis/sheaf/wire/bare.py)). When `git index-pack --stdin` writes a pack into
+`objects/pack/pack-<sha1>.pack`, the mirror creates a hard link to that file at `sheaf-installed/<sha256>`:
 
-The hook checks every new commit and tag in a push, meaning every object the store does not already hold. Each rule
-below applies to that set.
+```
+mirror.git/
+├── objects/pack/
+│   └── pack-4f9a...11e2.pack   (inode 9012, st_nlink == 2)
+└── sheaf-installed/
+    └── 3a7f...91c2             (inode 9012, st_nlink == 2)
+```
 
-- **Protected paths.** The server names paths the pusher may not write, and the hook refuses a new commit that writes
-  one. What counts is what the commit introduces compared with *all* its parents. A merge that takes the other writer's
-  version of a protected file unchanged introduces nothing and passes, which the agent needs in order to merge at all. A
-  merge that alters the file while resolving a conflict introduces it and is refused. The widget rule is stricter on
-  merges: an asset that differs from any parent is held to the rule against every parent, because an asset mixes the
-  agent's content with a user's judgement on it ([`document-widgets.md`](document-widgets.md) §"Each writer's change is
-  checked where it passes"). The patterns come from the process environment, never from a file in the repository,
-  because a tracked configuration file could be edited in the same push it is meant to constrain. They match regardless
-  of case, because a curator's clone on a case-insensitive filesystem opens `.MailMap` as `.mailmap`. The sandbox
-  worker's configuration protects `.mailmap`, since a mailmap would let the agent rename its commits for everyone
-  reading `git log`.
-- **Identity.** Suppose the agent commits as `Jane Curator <jane@example.org>`. The hook refuses the push, because a new
-  commit's author and committer must both be the agent's own name and email, the identity the worker also sets in the
-  guest's git configuration. An annotated tag's tagger is held to the same rule, since a tag saying a curator approved
-  something is a record of judgement too. A merge that brings in a curator's existing commit passes, because that commit
-  is not new. A cherry-pick of one is refused, because it would put the curator's name on a commit the agent made.
-- **One header grammar.** The identity check only works if every git command and the browser's git library read the same
-  line as the author. Git's own object checks accept shapes that git's readers and the browser's git library read
-  differently: a commit carrying a second `author` line after its `committer`, for instance, shows one author in
-  `git log` and another in other git commands. Other such shapes are an `encoding` header that re-decodes the headers, a
-  tagger line git never validates, and continuation lines. So the hook reads each new object's raw headers and admits
-  only the shapes both kinds of reader parse the same way: headers in git's own order and no others, object ids in
-  lowercase, each identity line exactly once, in git's shape, and after the committer line only the signature, encoding
-  and mergetag headers git itself writes, each as often as git writes it. That rules out the `encoding` and
-  continuation-line shapes above: an `encoding` header is admitted only when it names UTF-8, so it re-decodes nothing,
-  and continuation lines are admitted only inside the signature and mergetag headers. The exact sequences live in
-  [`protect.py`](../../themis/sheaf/wire/protect.py).
-- **Readable names.** The hook refuses a new path the browser's git library cannot read. A name with a backslash in it
-  is one: git accepts it, but the library refuses the directory listing that holds it, and a browser that meets one can
-  read nothing else in that directory ([`workbench-workspace.md`](workbench-workspace.md)). Refusing the push, so the
-  agent renames the file, keeps every commit readable by both kinds of client.
-- **A deployment's own check.** The server can hand the hook one more rule by the same route as the protected paths: a
-  content check, named in the environment, which the hook calls for each new commit with the commit and its parents and
-  whose refusals it reports as its own. The hook knows nothing about what the check reads. Themis uses it to hold the
-  agent to the widget guard rule, under which a user's judgement in a widget stands only while what it judges is
-  unchanged ([`document-widgets.md`](document-widgets.md) §"A user's judgement stands only while what it judges is
-  unchanged").
+Because both directory entries reference the same inode, the inode's link count (`st_nlink`) directly reflects whether
+git still holds the pack in `objects/pack/`:
 
-The hook also refuses a pushed ref that does not point at a commit or at an annotated tag of one.
+- A link count of `2` means both the marker link and git's `objects/pack/` entry exist, so the pack is live in the
+  mirror's object database.
+- A link count of `1` means a repack consolidated and unlinked git's copy in `objects/pack/`, leaving only the marker
+  link.
 
-The history rules, the header grammar and the readable-name rule hold on every server. The protected paths, the identity
-and the content check are configured per server, and the server has no default: whoever starts one passes its
-protection, and a developer's or test server that should accept any identity passes one that explicitly protects
-nothing. In the sandbox worker all of them apply. The only other way into a repository is a curator's publish through
-the BFF, where the browser authors each commit as the curator the BFF verified, under the trust model in
-[`workbench-workspace.md`](workbench-workspace.md) §Background. So a curator's name on a commit means that curator made
-it, and a record of human judgement can be told from the agent's by who wrote it.
+Deriving state from the filesystem link count also makes losing a compaction race cheap. If a compaction repacks the
+mirror and then loses its compare-and-swap on the ref document, the store's manifest still names the pre-repack packs.
+Because the marker links in `sheaf-installed/` kept those pack bytes on local disk with link count `1`, the next mirror
+sync re-indexes them from local disk rather than downloading them from the store again. The old marker links are
+unlinked only after a compaction's compare-and-swap succeeds.
 
-The protected-path check alone would not be enough: the protected file need never be written at all if the commit that
-wrote it could be rebased away and force-pushed. The append-only rule closes that route for every ref, not per protected
-path.
+### Protecting paths, identities, and object headers in the hook
 
-The threat these rules defend against is fabrication, the agent authoring or altering content it has no standing over,
-not loss. They defend nothing against anyone holding the web tier's credentials: protected content can be trusted only
-as far as the writers the store trusts can be. Protection lives in the wire layer, and the storage layer has no opinion
-about paths.
+Some files in a workspace must not be modified by the agent, such as user-supplied context documents or records of human
+judgement. Because the agent controls its own sandbox environment — including git configuration, environment variables,
+and commit headers — forging a commit under a curator's name inside the sandbox is trivial, and any check inside the
+sandbox can be bypassed. Enforcement therefore lives in the host-side `pre-receive` hook
+([`themis/sheaf/wire/protect.py`](../../themis/sheaf/wire/protect.py)), which inspects every new commit and annotated
+tag in a push (every object reachable from the pushed tips that the mirror did not already hold before the push):
 
-### Living with append-only
+- **Ref targets.** Every pushed ref must point at a commit or an annotated tag that peels to a commit.
+- **Protected paths.** The server passes case-folded path globs to the hook through the process environment (never from
+  a tracked file in the repository that the push itself could alter). The hook refuses any new commit that introduces a
+  change at a protected path relative to *all* of its parents (`git diff-tree -r -c --root`). Comparing against all
+  parents via git's combined diff allows a merge commit that takes the other branch's version of a protected file
+  verbatim to pass, which the agent needs in order to merge curator commits; a merge commit that modifies the protected
+  file while resolving a conflict differs from every parent and is refused. (The widget content check below is stricter
+  on merges, comparing a modified widget asset against *every* parent individually because widget assets mix agent
+  content with user judgement; see [`document-widgets.md`](document-widgets.md) §"Each writer's change is checked where
+  it passes".) Path matching is case-insensitive because a curator's local clone on a case-insensitive filesystem opens
+  `.MailMap` as `.mailmap`. The sandbox worker protects `.mailmap` so the agent cannot remap commit authors in
+  `git log`.
+- **Commit and tag identity.** When a pusher identity (`Name <email>`) is configured, every new commit's `author` and
+  `committer` headers, and every new annotated tag's `tagger` header, must match the agent's configured name and email.
+  For example, if the agent commits as `Jane Curator <jane@example.org>`, the hook refuses the push. A merge commit that
+  brings in an existing commit authored by a curator passes because the curator's commit is already in the store; a
+  cherry-pick of that commit creates a new commit object and is refused if it retains the curator's author header.
+- **Canonical object header grammar.** The identity check works only if every git command and the browser's git library
+  (`isomorphic-git`) parse the same header line as the author. Stock `git fsck` accepts header shapes that git commands
+  and `isomorphic-git` interpret differently: a commit carrying a second `author` line after `committer` displays one
+  author in `git log` and another in `git for-each-ref`; a non-UTF-8 `encoding` header causes git to re-decode headers
+  while `isomorphic-git` always reads UTF-8; `git fsck` does not validate `tagger` headers beyond the fourth field; and
+  unexpected continuation lines can hide headers from naive parsers. The hook therefore reads the raw bytes of each new
+  commit and tag and admits only the canonical grammar that both implementations parse identically: headers in git's
+  exact order (`tree`, zero or more `parent` lines, `author`, `committer` for commits; `object`, `type`, `tag`, `tagger`
+  for tags), 40-digit lowercase hex object IDs, each identity line appearing once in standard
+  `Name <email> <epoch> <tz>` format, and after `committer` only the `encoding` (restricted to UTF-8), `gpgsig`,
+  `gpgsig-sha256`, and `mergetag` headers that git itself writes, with continuation lines permitted only under signature
+  and `mergetag` fields.
+- **Browser-readable filenames.** The hook refuses any newly added path that the browser's git library cannot read. A
+  filename containing a backslash (`\`) is accepted by stock git on Linux, but `isomorphic-git` rejects the entire tree
+  object containing it, making every file in that directory unreadable in the workbench
+  ([`workbench-workspace.md`](workbench-workspace.md)). Refusing the push forces the agent to rename the file before the
+  commit lands.
+- **Deployment content check.** A server can pass the hook a callable name (`module:attribute`) via the environment,
+  which the hook invokes for each new commit with the mirror path, the commit ID, and its parent IDs. The hook treats
+  any returned violation strings as push refusals without knowing the domain rules inside the check. Themis uses this
+  check to enforce the widget guard rule, ensuring a curator's judgement inside a widget stands only while the content
+  it judges is unchanged ([`document-widgets.md`](document-widgets.md) §"A user's judgement stands only while what it
+  judges is unchanged").
 
-Two things follow from a store that only grows: many small packs, and a bill.
+The append-only history rule, canonical header grammar, and backslash filename rule apply on every server. Protected
+paths, pusher identity, and the content check are configured per server with no implicit default: a caller starting a
+server must pass an explicit `Protection` configuration (or `Protection.unprotected()` for a local development or test
+server where all pushers are trusted). In the sandbox worker, all rules are active. Because the only other write path
+into a workspace is a curator publishing through the BFF — where the browser authors commits under the identity the BFF
+authenticated ([`workbench-workspace.md`](workbench-workspace.md) §Background) — a curator's name on a commit reliably
+indicates that the curator authored it.
 
-**Compaction** rolls many small packs into one. The cost of not doing it lands in three places: one request per pack on
-a cold hydrate, one index build per pack after that, and the manifest itself. The manifest lives in the ref document and
-is rewritten on *every* write, so past a certain point most of what a curator's click uploads is bookkeeping. The
-trigger is the ratio of loose packs to the largest one, not a plain count. Compaction costs O(repository), so a fixed
-count that is generous on a small workspace is ruinous on a large one, while a ratio bounds write amplification however
-long the history gets. A count cap exists only so that a long run of tiny appends cannot inflate the manifest while
-staying under the ratio.
+Protected-path checks depend on append-only history: if a branch could be force-pushed, an agent could erase a protected
+file without ever touching its path in a new diff by rebasing away the commit that created it. Enforcing fast-forward
+updates across all refs closes that bypass. These rules defend against fabrication by an untrusted sandboxed agent; they
+do not defend against a caller holding the web tier's service credentials.
 
-**Nothing is deleted.** Compaction leaves the packs it supersedes where they are; a lost race leaves the pack it
-uploaded. Both are inert — no manifest names them, so no reader asks for them — and they are the whole of what the store
-accumulates beyond its live set. A meter reports them, by count and by byte, so the bill is visible before it matters.
+### Compaction and append-only storage
 
-The alternative is a sweep, and the reason there is none is not that one would be hard to write but that one is hard to
-make safe. A pack has to be uploaded before the compare-and-swap that names it, so at any instant a pack no manifest
-names is either abandoned or about to be named, and the two are indistinguishable from the outside. Telling them apart
-without waiting needs a conditional spanning the pack and the document, which object storage does not offer; waiting
-means a grace window, whose value is a prediction about how slow a write can be; and either way every reader has to
-tolerate a pack vanishing under it. Three adversarial reviews of a grace-window sweep each found a way to lose a pack
-the manifest named. The machinery to close each hole existed, and the sum of it was most of the storage layer's
-complexity, bought to reclaim bytes nothing reads.
+Because the store only appends packs, an active workspace accumulates many small packfiles over time, along with storage
+costs for superseded packs.
 
-What the bytes cost: storage linear in the number of compactions, in units of repository size, since each one leaves a
-copy of the repository behind. For a hundred active workspaces after a year that is tens of dollars a month at Standard
-prices, and a tenth of that once Autoclass has moved the orphans to Archive — small append packs stay in Standard, being
-under Autoclass's threshold, and they are small. Should it ever matter, the safe sweep is of *archived* analyses only,
-where no writer exists to race, and that wants a lock rather than a grace window.
+Leaving many small packs uncompacted adds overhead in three places: one network fetch per pack on a cold hydrate, one
+`git index-pack` invocation per pack, and a growing pack manifest inside the ref document that must be rewritten on
+every publish. Compaction ([`themis/sheaf/compact.py`](../../themis/sheaf/compact.py)) consolidates a repository's live
+packs into a single pack via `git repack -a -d` and compare-and-swaps the ref document's manifest against the generation
+the mirror was synced at. Compaction is triggered by the ratio of loose pack bytes (all packs except the largest) to the
+largest base pack, supplemented by a maximum pack-count cap. Because repacking costs $O(\\text{repository size})$,
+triggering on a byte ratio rather than a small fixed pack count bounds write amplification regardless of repository
+size, while the count cap prevents a long run of tiny commits from inflating the ref document while staying below the
+byte ratio.
 
-### Hydration has no ceiling, and Cloud Run is where that bites
+Compaction never deletes the packs it supersedes, and lost compare-and-swap races never delete the packs they uploaded.
+Both remain in the bucket as unreferenced orphans that no manifest names and no reader fetches. An orphan meter
+([`themis/sheaf/orphans.py`](../../themis/sheaf/orphans.py)) measures live and orphaned packs by count and byte size so
+storage overhead stays visible.
 
-Everything above is about the store. What decides whether the design is deployable is the other end: how much of a
-repository has to be resident to serve one request, and who pays when it does not fit.
+Sheaf omits an online garbage-collection sweep because making online deletion safe without multi-object transactions is
+disproportionately complex. Because a writer must upload its packfile before the compare-and-swap that adds the pack to
+the manifest, an unreferenced pack in the bucket at any instant is either an abandoned orphan or an in-flight write
+about to be named by the ref document. Distinguishing the two without a cross-object transaction requires a time-based
+grace window, which is a prediction about maximum write latency rather than an invariant, and forces every reader to
+tolerate packs disappearing mid-hydration. Three adversarial reviews of a grace-window sweep each found an interleaving
+that deleted a live pack.
 
-Two clients hydrate a repository, and no service does. The curator's copy lives in the browser, which learns each pack's
-size before downloading any and refuses a repository over its own budget
-([`workbench-workspace.md`](workbench-workspace.md)). The agent's mirror lives in the sandbox worker, a Cloud Run job
-serving one session, and dies with it. Cloud Run's filesystem is in-memory unless a volume says otherwise, so that
-mirror is resident bytes, and packs are fetched whole before they are indexed.
+Keeping unreferenced packs costs storage linear in the number of compactions, measured in multiples of repository size.
+Across a hundred active workspaces over a year, that overhead is tens of dollars per month at GCS Standard pricing, and
+drops to a tenth of that once GCS Autoclass transitions unaccessed orphan packs to Archive storage (small append packs
+below Autoclass's minimum size threshold remain in Standard storage, where their byte footprint is small). If reclaiming
+orphan bytes ever becomes necessary, the safe approach is an offline sweep restricted to *archived* analyses that have
+no active writers, coordinated under a lock rather than a grace window.
 
-A service that buffers a whole workspace in memory caps it, so that a runaway workspace fails its own request instead of
-exhausting the instance. Hydration has no equivalent cap of its own. Resident bytes are the repository's whole history,
-and [compaction](#living-with-append-only) bounds how many packs that history is spread across, not how large it is. So
-the largest workspace can take out the job serving its own session: an out-of-memory kill in the middle of the agent's
-work, where a refusal would have been something the session could report.
+Retaining all packfiles has two operational consequences for the GCS bucket:
 
-**A ceiling checked before hydration turns that into an ordinary failure.** The manifest names every pack and the
-backend can size them, so a repository too large to serve can be refused whole, by the session that asked for it, before
-a byte is fetched. That holds whichever deployment knob is also chosen — a mounted volume with a size limit (the store
-stays the source of truth, so this is not the persistent-disk git server [rejected below](#alternatives-considered)), a
-larger job, or simply a stated and monitored ceiling. Which of those to reach for is [open](#open-questions); leaving
-the resident set unbounded is not.
+- **Every historical ref state remains hydratable.** If object versioning is enabled on the bucket, every accepted
+  transition is preserved as a noncurrent generation of the ref document, and because no pack is ever deleted, every
+  pack named by any past generation remains in the bucket. Because `refs/sheaf/reflog` already records historical tips
+  inside the repository, bucket object versioning is an optional operator convenience rather than a requirement.
+- **Age-based delete lifecycle rules must never be enabled on the bucket.** Because packfiles are written once and never
+  mutated, an age-based deletion rule would eventually delete a long-lived repository's base pack while the ref document
+  still names it, corrupting the repository. GCS Autoclass with Archive as the terminal storage class is the appropriate
+  lifecycle configuration, allowing unreferenced orphan packs to sink to cold storage while keeping them readable.
 
-The failure it prevents is one this layer otherwise cannot hide. [A lost race](#a-lost-race-is-not-a-conflict) is
-retryable because replaying it against the winning state succeeds. A job killed for exhausting memory is not, because
-replaying the same hydration fails the same way. So a client's part here is a bounded retry that eventually reports, not
-the unconditional replay the store's contract otherwise promises, and a caller that cannot tell the two apart will spend
-its whole budget on the one that cannot succeed.
+### Bounding resident memory before hydration
 
-### Git is the tests' oracle
+While the bucket stores the repository durably, serving a request requires hydrating the repository's packs into a
+client. Two clients hydrate a repository: the curator's browser and the sandbox worker. The browser learns each pack's
+byte size before downloading any pack and refuses a repository that exceeds its memory budget
+([`workbench-workspace.md`](workbench-workspace.md)). During mirror synchronization, `bare.py` bounds how many packs are
+fetched concurrently (`DEFAULT_SYNC_CONCURRENCY = 16`), which caps peak bytes in flight during download, but it does not
+yet cap the total bytes written to disk. Every pack listed in the manifest lands in `objects/pack/` and remains there
+for the duration of the command.
 
-The objects the tests assert on are built by a git binary, never by sheaf. Sheaf exists to interoperate with git, so its
-fixtures have to be an independent oracle. A suite whose data came from sheaf's own writer would show only that sheaf
-round-trips its own output, and a defect shared between the writing and reading halves would be invisible to it. So
-`git` is a hard requirement of the suite: if it is absent the suite fails, because a compare-and-swap proof that
-silently did not run reports as a pass.
+On a developer machine or VM, `objects/pack/` sits on a disk volume, and an unusually large repository only slows down
+hydration. In a Cloud Run Gen2 job (`themis/services/sandbox_worker/`), however, container writes land on an in-memory
+`tmpfs` backed by the job's 2 GiB memory limit (`infra/themis_infra/sandbox.py`), shared with the Python worker, `git`,
+and the command's own processes. Compaction bounds how many packfiles a repository's history is spread across, but it
+does not bound the total byte size of that history. Without a pre-hydration size ceiling on the worker, a workspace with
+a large history can exhaust the Cloud Run job's memory limit and trigger an out-of-memory kill in the middle of the
+agent's session. Unlike a lost compare-and-swap race — which is retryable because replaying against the winning manifest
+succeeds — a job killed for exhausting memory fails the same way on replay, because repeating the same hydration fetches
+the same bytes and crashes again.
 
-### Consequences
+The fix decided here (not yet built in `bare.py`) is to check the total byte size of the manifest's packs against a
+ceiling before fetching any pack bytes, turning an out-of-memory crash into a clean refusal that the session can report
+to the caller. Because the manifest names every pack and the storage backend can report their sizes before downloading
+them, a repository that exceeds the worker's budget can be refused upfront. That pre-hydration check is needed
+regardless of which deployment sizing option is paired with it — a size-limited mounted volume (with the bucket
+remaining the source of truth), a larger Cloud Run job, or a monitored ceiling on default instance memory
+([Open questions](#open-questions)). A client's part is the usual one for any job death that may repeat: a bounded retry
+that eventually reports, rather than the unconditional replay that is safe for a lost race.
 
-- **Every past state is hydratable.** With object versioning on the bucket, every accepted transition is a retained
-  noncurrent generation of the document, and because no pack is ever deleted, each of those generations names packs the
-  store still holds: any past ref state can be checked out. The reflog ref answers the same question from inside the
-  repository, so versioning is a convenience for an operator with bucket access and not something the design depends on.
-- **Bucket configuration is a cost question, with one exception.** Nothing here needs object versioning, retained
-  noncurrent generations or soft delete, and nothing here deletes, so no lifecycle rule is needed to reclaim anything.
-  The exception is an age-based delete rule, and it is fatal: packs are written once and never touched, so a rule that
-  reasons about age deletes a long-lived repository's base pack while the manifest still names it. Autoclass with
-  Archive as the terminal class is the right shape for what does accumulate — orphaned packs are never read, so they
-  should sink.
-- **A malformed ref name is unrecoverable through the normal path**, so names and object ids are validated on write and
-  not on read. Refs are fed to git as whitespace-delimited, newline-terminated input, so a name containing a space makes
-  every later sync of that repository fail. The only way out is to compare-and-swap the bad entry back out of the
-  document.
-- **Generations are opaque.** A GCS generation is a microsecond timestamp, neither dense nor ordered in any way a caller
-  may rely on. Nothing in this design compares two, and nothing needs a dense sequence: how many transitions happened is
-  answered by counting the retained ones.
-- **Hydration is the per-session cost.** The mirror dies with the session, so every session reads the ref document and
-  fetches the packs it names. That is latency-bound and not bandwidth-bound, so it is done concurrently, one task per
-  pack.
+### Testing with stock git as the oracle
+
+All git objects asserted on by sheaf's test suite are built by a real `git` binary rather than constructed by sheaf's
+own code. Because sheaf exists to interoperate with stock git, its test fixtures must come from an independent oracle: a
+test suite whose inputs were generated by sheaf would only prove that sheaf round-trips its own output, hiding any bug
+shared between its writing and reading paths. Accordingly, the `git` binary is a hard requirement of the test suite; if
+`git` is missing from `PATH`, the test suite fails immediately rather than skipping tests and reporting a vacuous pass.
 
 ## Alternatives considered
 
-**A tar archive with last-write-wins.** The simplest shape, made explicit. Rejected because the loss is silent: nothing
-raises, nothing logs, and a curator's mark simply is not there. It also gives no history, so there is no way to answer
-what changed or who changed it.
-
-**A conventional git server behind a lease.** Run `git http-backend` over HTTPS against a persistent disk, and serialise
-writers with an advisory lock in Cloud SQL, a lease object, or by pinning the service to a single instance. Rejected on
-operational cost for no gain: it adds a stateful component, a lock whose expiry is a new failure mode, and a scaling
-ceiling, all to reconstruct a guarantee that one conditional object write already provides. The lease is also weaker. A
-lease can be lost while its holder still believes it holds it; a generation precondition is checked at the moment of the
-write.
-
-**One object per ref.** The natural mapping on its face, and it makes a single-ref update atomic. Rejected because a
-push that moves two refs becomes two independent writes with no atomicity between them, and there is no way to recover a
-consistent view if the second fails. It also leaves the pack manifest homeless.
-
-**A typed RPC for each workspace operation, instead of git.** Themis already has a service pattern, so a
-`CommitFile`-shaped API is the obvious thing to reach for. Rejected because the agent is a model that knows git well: it
-clones, commits, pushes, reads git's rejection message, and pulls and retries without being taught any of it. A bespoke
-API means teaching every one of those behaviours and owning the merge semantics. Git also gives history, blame, diffs
-and merges that nobody has to implement.
-
-**A sweep with a grace window.** Reclaim a pack once it has gone unreferenced for longer than any write could take,
-deleting conditionally on the object's generation so a re-upload in flight is protected. Rejected after building it: the
-grace value is a prediction rather than a property, the design forced every reader to tolerate a pack vanishing
-mid-fetch and to re-read the document to tell timing from damage, the backend seam grew a conditional delete the GCS
-emulator does not enforce, and three adversarial passes each found an interleaving that deleted a live pack. What it
-would have reclaimed is bytes nothing reads. The analysis is kept above so it is not repeated.
-
-**A per-repository lock in Postgres.** Serialise writers and the sweep with a session-level advisory lock, keeping the
-conditional writes as fences. Removes the timing argument, and Postgres is already a dependency of the BFF. Rejected
-because it is a coordination service for the one operation that turned out not to need one: with nothing deleted, every
-writer that remains is already serialised by the document's compare-and-swap, and the lock would put a Cloud SQL
-dependency into the sandbox worker for no property the store lacks. The same holds for ZooKeeper, etcd or Consul in that
-role.
-
-**Refuse rewrites with `receive.denyNonFastForwards` and `receive.denyDeletes`.** The server-side settings for exactly
-this. Rejected as the mechanism because receive-pack applies them after the pre-receive hook has run, and only to
-branches: the hook would have stored the rewrite before git refused it, and a tag could still be moved or deleted. The
-hook checks ancestry itself, for every ref; setting the two options as well would change nothing.
-
-**Reach into git's push quarantine for the objects to upload.** Cheaper than re-deriving the pack. Rejected because the
-quarantine's contents depend on git's own configuration for when to explode a small push into loose objects, in which
-case there is no pack to upload at all. Asking git to build a self-contained pack from the pushed tips, excluding what
-the mirror already had, is independent of that.
+- **Tar archive with last-write-wins.** Storing a workspace as a single tar archive replaced on each write is the
+  simplest storage layout and needs no git machinery. We rejected it because concurrent writes from the agent and the
+  curator silently overwrite one another with no error or log, and the archive preserves no history of what changed or
+  who changed it.
+- **Conventional git server behind a lease or persistent disk.** Running `git http-backend` over HTTPS against a
+  persistent disk and serializing writers with a Cloud SQL advisory lock, a lease object, or `--max-instances=1` uses
+  off-the-shelf git hosting components. We rejected it because it adds a stateful disk, lock-expiry failure modes, and a
+  scaling bottleneck, all to reconstruct an atomicity guarantee that a single `ifGenerationMatch` conditional write on
+  the ref document provides directly at write time. A time-bounded lease can also expire while its holder is still
+  writing, whereas a generation precondition is checked atomically by GCS when the write lands.
+- **One object per git ref.** Mapping each git ref to its own object in the bucket makes single-ref updates atomic
+  without a combined ref document. We rejected it because a push that moves two refs becomes two independent writes with
+  no atomicity across them and no way to roll back if the second write fails, and it leaves no atomic home for the pack
+  manifest.
+- **Typed RPCs for workspace file operations instead of git.** Defining a `CommitFile`-style gRPC API matches the rest
+  of Themis's service surface. We rejected it because models already know how to use standard `git` commands (`clone`,
+  `commit`, `push`, `pull --rebase`) and how to interpret git's rejection messages without bespoke prompting. A custom
+  RPC surface would require teaching the model custom conflict-recovery workflows and reimplementing history, blame,
+  diffs, and merges.
+- **Online garbage-collection sweep with a grace window.** Deleting unreferenced packfiles once they have remained
+  unreferenced longer than any write could take (using conditional delete on generation to protect re-uploads) reclaims
+  orphan bytes automatically. We built and rejected this mechanism: the grace window is a latency prediction rather than
+  a safety invariant, every reader had to tolerate packs vanishing mid-fetch and re-read the ref document to distinguish
+  concurrent compaction from repository corruption, the backend seam required a conditional delete that the GCS emulator
+  does not enforce, and three adversarial reviews each found an interleaving that deleted a live pack.
+- **Per-repository advisory lock in Postgres.** Serializing writers and garbage collection with a session-level advisory
+  lock in Cloud SQL (which the BFF already uses) removes the timing assumptions of a grace window. We rejected it
+  because once online deletion is dropped, every writer is already serialized by the ref document's compare-and-swap,
+  and a Postgres lock (or ZooKeeper, etcd, or Consul) would add a Cloud SQL dependency to the sandbox worker for no
+  additional safety property.
+- **Refusing history rewrites with `receive.denyNonFastForwards` and `receive.denyDeletes`.** Using git's built-in
+  server config options avoids custom ancestry checks in the hook. We rejected relying on them because `receive-pack`
+  applies those checks *after* the `pre-receive` hook runs and only to branches, which would cause the hook to publish a
+  force-push to the store before git refused it locally, and would still allow tags to be moved or deleted.
+- **Uploading packfiles directly from git's push quarantine.** Reading the incoming pack directly out of git's
+  quarantine directory avoids running `git pack-objects` in the hook. We rejected it because git unpacks small pushes
+  below `receive.unpackLimit` into loose objects, leaving no packfile in the quarantine directory to upload. Running
+  `git pack-objects` from the pushed tips and reflog commit while excluding objects already reachable from the mirror's
+  existing refs produces a self-contained pack regardless of push size.
 
 ## Open questions
 
-- **Whether any other record of human judgement lives in the workspace.** A curator's tick lives as a guard in the
-  widget asset it judges ([`document-widgets.md`](document-widgets.md)). For anything else, comments say, nothing here
-  fixes it as a file in the workspace. What the layer supplies is the two properties such a file would need — commuting
-  appends for a log both writers touch, and a path the agent cannot write — and each stands on its own: a context
-  document the user supplies for the agent to consult needs only the second. Whether such a record becomes a file, or
-  lives outside the workspace entirely, is a collaboration-model decision ([`workspace-model.md`](workspace-model.md)),
-  not a storage one.
-- **What bounds the resident set, and where the mirror lives.** A ceiling checked before hydration is settled
-  [above](#hydration-has-no-ceiling-and-cloud-run-is-where-that-bites); its value is not, and neither is what else
-  carries the bound: a size-limited volume, a larger job, or the platform defaults with the ceiling alone. The sizes
-  measured on dev put a typical workspace at a few megabytes, with an outlier past a hundred
-  ([`workbench-workspace.md`](workbench-workspace.md) §"Appendix: measurements"), and the archive's own cap is the
-  closest thing to prior art.
-- **Who runs compaction, and when.** It is a library function with no scheduler behind it. On the write path, a periodic
-  job, or a maintenance rpc are all plausible; the repo has no scheduled-job pattern to inherit, and a service running
-  with idle CPU rules out a background thread.
-- **Whether storage growth ever warrants a sweep of archived analyses.** The bill is small and visible; if it stops
-  being small, the safe sweep is over repositories with no writer, under a lock, and is a separate design.
-- **Whether an Analysis's branch tree maps onto git refs.** [`workspace-model.md`](workspace-model.md) gives an Analysis
-  a tree of immutable turns with branching. Git refs could carry that, but nothing here has been designed against those
-  semantics. The working document's versions are the tips one branch has had
-  ([`workbench-workspace.md`](workbench-workspace.md)), and which branch that is when an Analysis has several is the
-  part this question leaves open.
+- **Whether any other record of human judgement lives in the workspace as a file.** A curator's review tick lives as a
+  guard inside the widget asset it judges ([`document-widgets.md`](document-widgets.md)). Whether any other human input,
+  such as general comments, is stored as a file in the workspace or outside the repository in a database belongs to the
+  collaboration model ([`workspace-model.md`](workspace-model.md)). Sheaf already supports, in test fixtures only,
+  commuting appends (`merge=union`) for a shared log that both writers update, and provides protected paths for
+  user-supplied context documents that the agent may only read.
+- **What bounds the resident set, and where the worker's mirror lives.** Checking a size ceiling before hydration is
+  decided but not yet built ([above](#bounding-resident-memory-before-hydration)), and the exact byte threshold and the
+  worker's storage medium — a size-limited volume, a larger Cloud Run job, or default `tmpfs` with the ceiling alone —
+  remain open. Dev measurements put a typical workspace at a few megabytes with an outlier above 100 MB
+  ([`workbench-workspace.md`](workbench-workspace.md) §"Appendix: measurements"), and the archive's size cap is the
+  closest prior art.
+- **Who runs compaction, and when.** Compaction is currently a library function
+  ([`themis/sheaf/compact.py`](../../themis/sheaf/compact.py)) with no scheduler invoking it. Triggering it on the write
+  path, from a periodic job, or through a maintenance RPC are all plausible; the repository has no scheduled-job pattern
+  yet, and Cloud Run services running with request-scoped CPU rule out a background thread.
+- **Whether storage growth ever warrants an offline sweep of archived analyses.** Orphan storage costs are small and
+  metered ([`themis/sheaf/orphans.py`](../../themis/sheaf/orphans.py)); if they ever grow large enough to matter, the
+  safe sweep is an offline job over archived repositories that have no active writers, coordinated under a lock in a
+  separate design.
+- **Whether an Analysis's branch tree maps onto git refs.** [`workspace-model.md`](workspace-model.md) models an
+  Analysis as a tree of immutable turns with branching, while [`workbench-workspace.md`](workbench-workspace.md) defines
+  the working document's versions as the historical tips of a single branch in `refs/sheaf/reflog`. How multiple
+  Analysis branches map onto git refs, and which git branch the working document follows when an Analysis has several,
+  remains open.

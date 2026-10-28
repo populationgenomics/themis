@@ -1,287 +1,314 @@
 # Design: Deployment — IaC, deploy auth, state, and secrets
 
-**Parent epic:** [`issues/epic-themis-spike.md`](../../issues/epic-themis-spike.md) (PR #1) **Related:**
-[`spike-infrastructure.md`](spike-infrastructure.md) — what infrastructure the Spike needs; this doc decides how it is
-managed. Resolves that exploration's IaC-tool and secrets-management questions and the auth part of its CI/CD question.
-Also [`migrations.md`](migrations.md) — the database schema step the deploy pipeline runs after `pulumi up`.
+**Related:** [`spike-infrastructure.md`](spike-infrastructure.md) (cloud topology and services the Spike runs on),
+[`migrations.md`](migrations.md) (forward-only database schema runner and ledger check),
+[`cost-monitoring.md`](cost-monitoring.md) (workspace spend monitoring and the CI telemetry writer identity),
+[`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md) (bootstrap and first bring-up sequence),
+[`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md) (Anthropic Workload Identity Federation for deploy and
+runtime accounts), [`../runbooks/hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md) (impersonating
+`themis-clu` for manual backend calls).
 
-Constraint: every tracked file is mirrored publicly. The only hard exclusion is plaintext secret material. Identifiers
-and KMS-gated ciphertext are fine ("What lives where"); the leak-screen and security review policies are refined in step
-with this doc.
+## Overview
 
-## Decisions
+Themis manages its cloud infrastructure as a Python Pulumi program in [`infra/`](../../infra/), with one isolated GCP
+project and Pulumi stack per environment (`dev` today, and `prod` when it exists). Because every tracked file on `main`
+is mirrored to a public repository, the repository can hold cloud resource identifiers and KMS-encrypted ciphertext, but
+it must never hold plaintext secret material or long-lived credentials.
 
-| Concern            | Decision                                                                                                                           |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| IaC tool           | Pulumi (Python SDK), program tracked in this repo                                                                                  |
-| Deploy trigger     | Push `deployed/<env>`, or dispatch on `main`; merging deploys nothing (temporary — see below)                                      |
-| Deploy auth, CI    | GitHub Actions OIDC → Workload Identity Federation; no service-account keys                                                        |
-| Deploy auth, local | Personal `gcloud` ADC, IAM-gated                                                                                                   |
-| IAM grants         | Every binding is a child of a named capability component (`grants.py`); a test fails the suite on a loose one                      |
-| State backend      | Versioned, private GCS bucket (Pulumi DIY backend)                                                                                 |
-| Secrets encryption | `gcpkms` secrets provider (Cloud KMS key, IAM-gated)                                                                               |
-| Secret values      | OIDC/IAM-first: Anthropic API via WIF, Cloud SQL via IAM auth; only no-WIF-path credentials in Secret Manager                      |
-| Model selection    | Concrete per-agent model id is confidential config — gcpkms-encrypted in the Pulumi stack config, never plaintext in tracked files |
-| Repo contents      | Standard Pulumi layout incl. `Pulumi.<stack>.yaml`; no plaintext secrets, ever                                                     |
+Deploys run from GitHub Actions ([`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)) only when an
+operator pushes to `deployed/<env>` or dispatches the workflow on `main`. Merging a pull request lints, tests, and
+builds container images without deploying, so routine merges do not overwrite a shared demo environment mid-session.
 
-## Deploy trigger
+Both CI workflows and runtime services authenticate with short-lived OIDC and IAM credentials rather than stored keys.
+GitHub Actions exchanges OIDC tokens through Workload Identity Federation (WIF), and runtime services reach Anthropic
+and Cloud SQL via WIF and IAM database authentication. The few third-party API keys without a federation path, along
+with confidential model selection, live as Cloud KMS ciphertext in
+[`infra/Pulumi.dev.yaml`](../../infra/Pulumi.dev.yaml) and state in a private per-environment GCS bucket. Every IAM
+binding in the Pulumi program is wrapped in a named capability component in
+[`infra/themis_infra/grants.py`](../../infra/themis_infra/grants.py) so code review evaluates what an identity can do in
+the system rather than raw GCP role names.
 
-`deploy.yml` has two entry points, and merging to `main` is neither — a merge lints, tests, and builds images, but does
-not deploy. A deploy is the images, the stack, the migrations, and the agent's declaration on the Anthropic side
-(`agents/svcv4-classifier.agent.yaml`, applied whole by `tools/agents`), in that order. A read-only check of the
-database's migration ledger runs before all four ([`migrations.md`](migrations.md)). The agent step runs as the same
-deploy SA, federated into the Anthropic workspace under a rule that pins that account
-([`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md), the deploy workflow), so the ref binding below gates
-both sides of a deploy.
+## Background
 
-- **Ad-hoc:** push the `deployed/<env>` branch — `git push --force origin <commit-ish>:deployed/dev`, taking a branch
-  name or a bare SHA. The push *is* the deploy, so the branch always names what is live, and because the deployed commit
-  is the one being built, a running revision's image tag is that commit. The deploy record is the workflow's run list,
-  which carries who deployed and whether it succeeded.
-- **Reviewed:** dispatch the workflow on `main` (Actions → deploy → Run workflow), which needs no branch juggling for
-  the routine case.
+Every tracked file on `main` is mirrored to a public repository. That mirror makes plaintext secrets, service-account
+keys, and identifiers of internal infrastructure outside the Spike's GCP project off-limits in tracked files and logs.
+The Spike is isolated and public-endpoints-only, so its config discloses nothing about the data estate, and Cloud
+resource identifiers and Cloud KMS ciphertext are safe on the public mirror because access is gated by GCP IAM, while CI
+workflows, pull request comments, and run logs stay inside the private repository.
 
-**Temporary.** Dev doubles as the demo environment and is regularly deployed from unreviewed branches. Deploy-on-merge
-overwrites whatever is running there, without warning and possibly mid-demo: merging an unrelated PR should not reset
-someone else's environment. Revisit once dev stops carrying ad-hoc demos of unreviewed code, and for `prod` when it
-exists — a stable environment wants deploy-on-merge (`on: push: branches: [main]`), and should not carry an ad-hoc
-deploy branch at all, which is why `bootstrap.sh` grants that member only when asked.
+Each environment runs in its own GCP project (`cpg-themis-dev` today, and `cpg-themis-prod` when `prod` exists) from the
+same Pulumi program in [`infra/__main__.py`](../../infra/__main__.py), parameterized by `Pulumi.<stack>.yaml`. Because
+Pulumi needs a state bucket, a Cloud KMS key, and a Workload Identity Federation pool before its first run, an operator
+with Owner permissions runs the idempotent script [`infra/bootstrap/bootstrap.sh`](../../infra/bootstrap/bootstrap.sh)
+once per environment to create that substrate and delete the default VPC. After bootstrap, a single `pulumi up` manages
+the rest of the project.
 
-### Order of a deploy
+## Non-goals
 
-The agent step runs last because the skill the agent carries is written against a particular build. It names rpcs by
-service and method, such as `Splice.PredictDeltas`, and the scoring modules the guest image ships, such as
-`themis.svcv4.frequency`. Between the stack step and the agent step, a new session runs the new image and services under
-the previous skill.
+- Cloud service topology, Identity-Aware Proxy setup, audit retention, and sandbox VM configuration
+  ([`spike-infrastructure.md`](spike-infrastructure.md)).
+- Artifact Registry layout, container image build mechanics, promotion paths, and preview environments beyond deploy
+  authentication ([`spike-infrastructure.md`](spike-infrastructure.md)).
+- Per-secret inventory and rotation cadence ([`spike-infrastructure.md`](spike-infrastructure.md)), and the step-by-step
+  commands for bringing up a fresh environment ([`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md)).
 
-Running the agent step first would reverse the skew: the new skill would call into the old build, so any rpc the change
-adds would fail until the stack step finished. With the agent step last, an added rpc is safe, because the previous
-skill never calls it. A renamed or removed rpc is the case to plan for: the previous skill still calls the old name, so
-the change takes two deploys. The first serves both names and moves the skill to the new one; the second removes the old
+## Design
+
+### Deploy trigger and pipeline order
+
+The obvious way to trigger deployments is to deploy automatically on every merge to `main`. That breaks while `dev`
+doubles as our shared demo environment and frequently runs unreviewed branches: merging an unrelated pull request would
+overwrite whatever a teammate is demonstrating without warning.
+
+Instead, [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml) has two explicit triggers, and merging to
+`main` is neither:
+
+- **Ad-hoc branch push:** an operator force-pushes a branch name or commit SHA to `deployed/<env>`, such as
+  `git push --force origin <commit-ish>:deployed/dev`. Because the push itself triggers the deploy, the `deployed/dev`
+  ref always names what is live in `dev`, and the running Cloud Run revision's image tag matches that commit SHA. The
+  workflow's run list records who deployed and whether the run succeeded.
+- **Reviewed workflow dispatch:** an operator triggers the workflow on `main` (`Actions → deploy → Run workflow`), which
+  deploys reviewed code without moving a branch.
+
+This trigger split is temporary while `dev` serves ad-hoc demos of unreviewed code. Once `dev` stops carrying unreviewed
+demos, and for `prod` from the start, a stable environment should deploy automatically on merge to `main`
+(`on: push: branches: [main]`) and omit the ad-hoc branch entirely. To keep `prod` from inheriting an ad-hoc deploy path
+by accident, [`infra/bootstrap/bootstrap.sh`](../../infra/bootstrap/bootstrap.sh) binds the `deployed/<env>` ref only
+when `ADHOC_DEPLOY_BRANCH` is explicitly set.
+
+```
+Trigger (private repo)              GitHub OIDC -> GCP WIF               Deploy pipeline (.github/workflows/deploy.yml)
+──────────────────────              ──────────────────────               ──────────────────────────────────────────────
+push deployed/dev ─────────┐
+                           ├─► attribute.ref in                     ┌─► 1. Preflight migration ledger (themis.migrate --check)
+workflow_dispatch on main ─┘   {refs/heads/main,                    ├─► 2. Build and push container images
+                                refs/heads/deployed/dev}            ├─► 3. Update cloud resources (pulumi up)
+                                      │                             ├─► 4. Apply forward-only schema (themis.migrate)
+                                      ▼                             └─► 5. Sync agent declaration (tools.agents apply)
+                               Impersonate themis-deploy SA
+                               (GCP IAM + Anthropic WIF)
+```
+
+Within a deploy run, the workflow checks the database migration ledger against the repository tree first
+([`migrations.md`](migrations.md)). It then builds and pushes the images, updates the Pulumi stack, runs database
+migrations, and applies the Anthropic agent declaration (`agents/svcv4-classifier.agent.yaml`) through
+[`tools/agents/`](../../tools/agents/) in that order.
+
+The agent declaration step runs last because the skill bundled with the agent is written against a specific build. For
+example, the skill calls backend RPCs by service and method name, such as `Splice.PredictDeltas`, and imports scoring
+modules shipped inside the sandbox guest image, such as `themis.svcv4.frequency`. If the pipeline updated the agent
+first, the new skill would call into the previous cloud stack and guest image, so any RPC or module added in that commit
+would fail until `pulumi up` completed. Running the agent step last means a session started during the few minutes
+between `pulumi up` and `tools.agents apply` runs the new services and guest image under the previous skill. Adding an
+RPC is therefore safe in a single deploy because the previous skill never calls it. Renaming or removing an RPC requires
+two deploys: the first serves both names and updates the skill to call the new name, and the second removes the old
 name.
 
-When the agent step succeeds, the window lasts a few minutes. When it fails, the window has no bound: the stack and
-migrations have already applied, so the new build runs under the previous skill until someone applies the declaration by
-hand or a later deploy gets through. On a fresh environment whose deploy identifiers are still placeholders, every
-deploy fails this way ([`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md)).
+Putting the agent step last has a failure cost: if `tools.agents apply` fails after `pulumi up` and `themis.migrate`
+have already succeeded, the new build continues running under the previous skill until an operator runs `tools/agents`
+by hand or a later deploy succeeds. On a fresh environment whose Anthropic federation identifiers for the deploy account
+are still placeholders, every deploy fails at this final step until federation is configured
+([`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md)).
 
-### Who can deploy
+### Deploy authentication and authorization
 
-The deploy SA's WIF binding accepts exactly two refs, `refs/heads/main` and `refs/heads/deployed/<env>`, scoped by
-`attribute.ref` rather than by event so it covers both entry points. Everything else follows from that.
+CI workflows authenticate to GCP by exchanging a short-lived GitHub Actions OIDC token through Workload Identity
+Federation to impersonate a service account; no service-account keys exist, and `deploy.yml` reads no GitHub repository
+`secrets.*`. The agent step in `deploy.yml` authenticates to the Anthropic API as the same `themis-deploy` service
+account, federated into the Anthropic workspace under a rule that pins that account
+([`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md)), so one WIF boundary gates both cloud and agent
+changes. Locally, operators authenticate with personal `gcloud auth application-default login` credentials gated by IAM.
 
-**The WIF binding is the whole boundary, and a GitHub ruleset is what makes it mean something.** Anyone with repo write
-can dispatch the workflow on any branch, and that run executes *that branch's* copy of `deploy.yml` — guard step
-deleted, `pulumi up` replaced with anything. What stops it is that the dispatched ref also determines the token's `ref`
-claim, so `refs/heads/<their-branch>` matches neither member and impersonation fails. Workflow-file provenance
-contributes nothing; do not treat it as a second layer. (`deploy.yml` reads no `secrets.*`, so such a run gains nothing
-beyond the `GITHUB_TOKEN` any PR job already has.)
+The WIF provider configured by [`infra/bootstrap/bootstrap.sh`](../../infra/bootstrap/bootstrap.sh) sets the attribute
+condition `assertion.repository == 'populationgenomics/themis-internal'`. Because GitHub OIDC tokens name their
+originating repository, the public mirror (where Actions is also disabled) cannot satisfy the condition. Within
+`themis-internal`, impersonation is divided across three service accounts by token claim:
 
-The two refs the binding does accept are therefore the entire attack surface, and both are write-controlled: `main` is
-PR-reviewed, and `deployed/*` is covered by a ruleset whose `Restrict creations` / `Restrict updates` /
-`Restrict deletions` rules bypass only for the **repository-admin role**.
+| Service account       | Managed by                                                         | Permitted OIDC claim                                                | Purpose and reach                                                                                                                                                    |
+| :-------------------- | :----------------------------------------------------------------- | :------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `themis-deploy`       | `bootstrap.sh` + [`grants.py`](../../infra/themis_infra/grants.py) | `attribute.ref` is `refs/heads/main` or `refs/heads/deployed/<env>` | Runs `deploy.yml`. Mutates the Pulumi stack, reads/writes state, encrypts/decrypts KMS secrets, and updates the Anthropic agent.                                     |
+| `themis-preview`      | `bootstrap.sh`                                                     | `attribute.event_name` is `pull_request`                            | Runs [`.github/workflows/preview.yml`](../../.github/workflows/preview.yml) on pull requests to post `pulumi preview` diffs on `dev`. Cannot mutate cloud resources. |
+| `themis-ci-telemetry` | [`ci_telemetry.py`](../../infra/themis_infra/ci_telemetry.py)      | Any token from `themis-internal`                                    | Used by Claude Code workflows to write run token usage and cost metrics to Cloud Monitoring ([`cost-monitoring.md`](cost-monitoring.md)).                            |
 
-Bypassing by role, not by named actor, is what keeps membership out of this repo entirely — `bootstrap.sh` lists refs,
-never logins, and the deployer set is whoever GitHub says is an admin.
+The CI telemetry account is managed by Pulumi rather than `bootstrap.sh` because nothing needs it before the first
+`pulumi up`. Its `TelemetryWriter` grant allows writing points to any metric in the project (which can create new metric
+descriptors) and, through the service usage consumer role required for Telemetry API quota, listing project time series
+and using service quota; it cannot read buckets, secrets, or databases.
 
-**The ruleset must exist before the WIF member does, and the branch must not.** The binding is the credential; the
-ruleset is the only thing standing in front of it, so between adding the member and configuring the ruleset any repo
-write can push `deployed/dev` and take the deploy SA. `Restrict creations` does not rescue a late ruleset either: it
-blocks a *future* creation, so a branch created beforehand is simply frozen with whatever it already points at. Hence
-the ad-hoc member is opt-in (`ADHOC_DEPLOY_BRANCH`) rather than something `bootstrap.sh` grants by default, and
-[`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md) orders the steps: confirm no `deployed/*` ref
-exists, create the ruleset, then add the member.
+For `themis-deploy`, scoping the WIF binding by `attribute.ref` rather than `attribute.event_name` covers both workflow
+dispatch on `main` and pushes to `deployed/<env>`, while rejecting pull request runs (`refs/pull/N/merge`). This ref
+binding matters because `themis-deploy` holds `roles/resourcemanager.projectIamAdmin` on its project: anyone who can run
+a workflow as `themis-deploy` can grant themselves any role in the project.
 
-This matters because the deploy SA holds `roles/resourcemanager.projectIamAdmin` on its project: whoever can make it run
-can grant themselves any role there. GitHub's OIDC token carries no permission or role claim, so "admins only" cannot be
-expressed in the WIF binding — a ref only admins can write is the mechanism that expresses it.
+An obvious way to restrict who can deploy would be to add a permission check inside `deploy.yml`. That check provides no
+security: any collaborator with repository write access can push a branch and trigger `workflow_dispatch` on that
+branch, causing GitHub Actions to execute *that branch's* modified copy of `deploy.yml` with the guard deleted and
+`pulumi up` replaced by arbitrary commands. What stops a branch run from taking `themis-deploy` is that the dispatched
+branch also sets the OIDC token's `ref` claim, so `refs/heads/<feature-branch>` fails the WIF binding check in GCP
+(`deploy.yml` reads no `secrets.*`, so such a run gains nothing beyond the `GITHUB_TOKEN` any PR job already has).
+Workflow-file provenance contributes nothing to the security boundary.
 
-The admin role is broader than the `roles/iam.serviceAccountTokenCreator` holders who can already deploy by hand, and
-broader still because organization owners inherit it. That is deliberate: an org owner can rewrite this repo regardless,
-so gating them buys nothing. The population the gate actually excludes is repo-write-without-admin, which is most of the
-collaborator list and has no other path to a GCP credential.
+Because the WIF ref binding is the entire boundary, the two refs it accepts must be write-restricted in GitHub:
 
-Accepted consequences:
+- `main` requires pull request review.
+- `deployed/*` is protected by a GitHub ruleset (`Restrict creations`, `Restrict updates`, `Restrict deletions`) whose
+  bypass list contains only the **repository-admin role**.
 
-- **`main` and the deployed stack drift by default.** Whoever needs a merged change live deploys it; nothing does it for
-  them. A migration merged but not deployed stays pending, which the runner handles — it is forward-only and safe to run
-  unconditionally ([`migrations.md`](migrations.md)).
-- **Dev is one shared stack, so deployers overwrite each other.** `concurrency: themis-deploy-dev` serialises runs but
-  does not arbitrate between them; the last deploy wins. Deliberate clobbering replaces automatic clobbering — it is not
-  eliminated. A `deployed/dev` deploy also applies that branch's `infra/` program, so an unreviewed infra change reaches
-  the stack and a broken one wedges it until someone deploys a good ref.
-- **An ad-hoc deploy applies that branch's migrations, and those do not come back.** The migrate step runs on every
-  deploy, so an unreviewed migration reaches the shared dev database. Migrations are forward-only
-  ([`migrations.md`](migrations.md)), so redeploying a good ref — the remedy for every other item here — reverts the
-  stack but not the schema. The ledger also keeps the branch's migration under its version number. A later deploy of a
-  tree that holds a different migration at that version, such as another branch that picked the same number, stops at
-  the ledger preflight until dev's ledger and that tree agree
-  ([`migrations.md`](migrations.md#checking-the-ledger-against-the-tree)).
+Bypassing the ruleset by GitHub role rather than by individual usernames keeps the deployer list out of tracked files
+(`bootstrap.sh` names only git refs) and expresses "admins only" even though GitHub's OIDC token carries no role claim.
+The repository-admin role is broader than the GCP `roles/iam.serviceAccountTokenCreator` holders who can deploy from a
+laptop, and organization owners inherit it automatically. Gating organization owners in CI would buy nothing because
+they can rewrite the repository and its rulesets anyway; the ruleset excludes collaborators who have repository write
+access without admin rights, who have no other path to a GCP credential.
 
-## Deploy authentication
+When enabling `deployed/<env>` on an environment, the GitHub ruleset must be active before `bootstrap.sh` adds
+`refs/heads/deployed/<env>` to the WIF binding, and no `deployed/*` branch may exist beforehand. Between adding the WIF
+binding and creating the ruleset, any collaborator with write access could push `deployed/dev` and impersonate
+`themis-deploy`. Nor does `Restrict creations` protect a branch created before the ruleset: it only blocks future
+creations, leaving a pre-existing branch frozen at whatever commit it already points to.
+[`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md) orders these steps: verify no `deployed/*` ref
+exists, create the ruleset, and only then run `bootstrap.sh` with `ADHOC_DEPLOY_BRANCH`.
 
-CI: the workflow exchanges a short-lived GitHub OIDC token via WIF to impersonate a deploy service account. No
-long-lived credential exists anywhere. The WIF provider name and deploy-SA email sit in the workflow file; GitHub holds
-no secrets.
+This deploy and preview model accepts four operational costs:
 
-- The WIF provider's attribute condition pins `attribute.repository == "populationgenomics/themis-internal"`; OIDC
-  tokens name the requesting repository, so the public mirror (a different repo, Actions disabled) cannot satisfy it.
-  Which SA a token may impersonate is then scoped per SA: deploy to deployable-ref tokens, preview to `pull_request`
-  tokens, and the CI telemetry account to any token from the repository. The Claude Code workflows report each run's
-  token usage and cost to Cloud Monitoring as it. Its reach is writing points to any metric in the project — a point
-  under a new name creates the metric — and, through the consumer role the Telemetry API requires for quota, listing the
-  project's time series and using its service quota; it reads nothing else. Since nothing needs it before Pulumi can
-  run, it is program-managed ([`infra/themis_infra/ci_telemetry.py`](../../infra/themis_infra/ci_telemetry.py)) rather
-  than bootstrap's.
-- **Write** access (deploy) runs only from a deployable ref, as the deploy SA — its WIF binding is scoped to
-  `refs/heads/main` and `refs/heads/deployed/<env>` tokens (above). A PR's ref is `refs/pull/N/merge`, which matches
-  neither. PRs get a **read-only** identity (the preview SA, WIF binding scoped to `pull_request` tokens) used only to
-  run `pulumi preview` and post it as a comment, informing PR review before merge. No PR job can mutate cloud state. The
-  read-only token is dev-scoped (synthetic data); the residual malicious-PR risk is bounded by the private repo and
-  trusted membership. Cloud-free validation (lint, type-check, unit tests) also runs on PRs.
-- "Read-only" ≠ "cannot read secrets": `pulumi preview` runs the PR's own copy of the program and the preview SA can
-  **decrypt** the stack's gcpkms secrets (the secrets manager loads on every op), so a malicious PR could run arbitrary
-  code as that SA and exfiltrate any secret in the previewed stack's state/config plus project-wide `viewer` reads.
-  Tolerable while the dev stack stores **no** secrets and membership is trusted. Before either trigger flips — the first
-  `require_secret(...)` in a previewed stack, or prod adopting the same preview-on-PR posture — reconsider granting
-  `cryptoKeyDecrypter` to a PR-triggered identity (e.g. drop decrypt and accept previews that can't diff secret values,
-  or gate preview behind manual approval).
+- **`main` and the deployed stack drift until someone deploys.** Merging a pull request does not update `dev`.
+  Migrations merged to `main` remain pending until the next deploy, which is safe because the migration runner is
+  forward-only and idempotent ([`migrations.md`](migrations.md)).
+- **Deployers share a single `dev` stack and overwrite each other.** The workflow concurrency group
+  (`themis-deploy-dev`) serializes runs (`cancel-in-progress: false`) so two deploys do not interleave, but the second
+  overwrites the first: deliberate clobbering replaces automatic clobbering rather than eliminating it. Pushing
+  `deployed/dev` also applies that branch's `infra/` program, so an unreviewed infrastructure change reaches the stack
+  and a broken one wedges it until someone deploys a working ref.
+- **Ad-hoc deploys apply irreversible schema migrations to the shared `dev` database.** Because `themis.migrate` runs on
+  every deploy and migrations are forward-only ([`migrations.md`](migrations.md)), redeploying a good commit reverts the
+  cloud stack and images but does not undo schema changes. The database ledger also retains the branch's migration
+  version number; if another branch reuses that version number for a different migration, the preflight check blocks
+  later deploys until the ledger and tree agree ([`migrations.md`](migrations.md#checking-the-ledger-against-the-tree)).
+- **Pull request previews can decrypt stack secrets.** Although `themis-preview` cannot mutate cloud state,
+  `pulumi preview` executes the pull request's own copy of the Pulumi program, and `themis-preview` holds
+  `roles/cloudkms.cryptoKeyDecrypter` on the stack's KMS key (because the `gcpkms` secrets manager loads on every Pulumi
+  operation) along with project-wide `roles/viewer`. A malicious pull request could modify the Pulumi program to
+  exfiltrate decrypted stack secrets and viewer-readable project metadata. This is tolerable while the preview token is
+  `dev`-scoped (synthetic data), the `dev` stack stores no secrets, and repository membership is trusted. Before either
+  trigger flips—adding the first `require_secret(...)` to a previewed stack, or adopting pull request previews when
+  `prod` exists—we must reconsider granting `cryptoKeyDecrypter` to a PR-triggered identity, either by dropping
+  decryption and accepting previews that cannot diff secret values or by gating preview runs behind manual approval.
 
-Local: `gcloud auth application-default login`; IAM grants to named individuals.
+### Capability-based IAM grants
 
-## Grants are capabilities
+The obvious way to write IAM in Pulumi is to instantiate `gcp.*IamMember` resources directly inside each service module.
+That makes security review error-prone: an IAM binding states which role a principal holds on a resource, such as
+`roles/cloudkms.signerVerifier` on a KMS key, rather than what that role enables in the system ("can act as any live
+session against every session-scoped service").
 
-An IAM binding says which role a member holds on a resource; it does not say what that lets the member do. The program's
-readers need the second thing — `roles/cloudkms.signerVerifier` on the session-token key is "can act as any live session
-against every session-scoped service", and that is what a reviewer has to weigh. So the program never creates a binding
-directly. Each ability is a component in [`infra/themis_infra/grants.py`](../../infra/themis_infra/grants.py) whose
-docstring states what the holder can do as a result and how far that reaches, and whose children are exactly the
-bindings that constitute it. A call site names the holder and the resource; the meaning is stated once, on the class,
-and the program reads as a list of who holds which capability.
+To keep the security meaning explicit, the Pulumi program never creates raw IAM bindings directly. Every grant is a
+`ComponentResource` subclass in [`infra/themis_infra/grants.py`](../../infra/themis_infra/grants.py) whose docstring
+states what the holder can do and how far that authority reaches, and whose children are the IAM bindings that implement
+it. Call sites name the holder and the target resource; the capability class states the meaning once, so
+[`infra/__main__.py`](../../infra/__main__.py) and the service modules read as a list of who holds which capability.
+Where a capability widens a human operator's reach, such as allowing
+[`themis-clu`](../runbooks/hand-driving-a-service.md) to derive session bearer tokens through `SessionBearerDeriver`, it
+is gated by stack config (`themis:cluDerivesSessionTokens`).
 
-The rule is enforced, not conventional: a test under [`infra/tests`](../../infra/tests) runs the program under Pulumi's
-mocks against the dev stack's config and fails on any IAM binding whose parent is not one of those components. A new
-grant therefore either fits an existing capability or adds one, and the review reads a new docstring, never an
-unexplained role. Where a capability widens a human's reach it is stack-gated: `themis-clu`, the account a person
-impersonates to drive a backend service by hand ([`hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md)),
-derives session bearers only where `themis:cluDerivesSessionTokens` says so.
+This rule is enforced by [`infra/tests/test_grants.py`](../../infra/tests/test_grants.py), which runs the Pulumi program
+under mocks against `Pulumi.dev.yaml` and fails if any IAM binding resource is not a child of a component in
+`grants.py`. A new grant must therefore reuse an existing capability class or define a new documented one.
 
-The graphs below are generated from the program by the same capture the test uses (`themis_infra.grants_diagram` writes
-the sources and SVGs under `grants/`); a test fails when a source lags the program or a picture lags its source, naming
-the command that regenerates them. They are drawn from the dev stack's config with every opt-in switched on, so a
-stack-gated grant appears as if held. One graph of everything is a hairball, so there are three, each answering one
-question. A rectangle is a principal — an account, a group, or anyone; a double-edged box is a Cloud Run service or job;
-a cylinder is a resource. A solid edge is a capability, labelled with its class. A dotted edge is what makes reach
-followable across hops: which account a workload runs as — anyone may call the dispatcher, the dispatcher may spawn the
-sandbox job, the job's account may call the sheaf service. One compression to keep in mind: the deploy account's single
-Platform edge stands for fourteen project roles — `run.admin` and `iam.serviceAccountUser` rewrite every service and run
-as every account, `secretmanager.admin` reads every secret, `cloudkms.admin` can grant it the session key, and
-bootstrap's `storage.admin` reaches every bucket — so every edge in all three graphs is within its reach, though none is
-drawn for it.
+Using the same mock capture, [`infra/themis_infra/grants_diagram.py`](../../infra/themis_infra/grants_diagram.py)
+renders the program's grants (with every stack-gated opt-in enabled, so a stack-gated grant appears as if held) into
+three diagrams under `docs/design/grants/`, and a test fails whenever a `.mmd` source lags the program or an `.svg` lags
+its source. Splitting the graph into three views prevents a single unreadable hairball:
 
-**Calls** — who may call what.
+- Rectangles represent principals (service accounts, Google groups, Workload Identity Pool principal sets, or
+  `allUsers`).
+- Double-edged boxes represent Cloud Run services or jobs.
+- Cylinders represent resources (buckets, secrets, queues, keys, or project-wide APIs).
+- Solid arrows represent capabilities, labeled with the `grants.py` class name.
+- Dotted `runs as` arrows connect each Cloud Run workload to its runtime service account so a reader can trace
+  transitive reach across hops (for example, `allUsers` can invoke the dispatcher, the dispatcher runs as its service
+  account to spawn a sandbox job, and the sandbox job's service account can invoke the sheaf service).
+
+One visual compression applies across all three views: `themis-deploy`'s single `DeployAccountBuilder` edge in the
+Platform view stands for fourteen project-level roles (`run.admin` and `iam.serviceAccountUser` can rewrite any service
+and run as any account, `secretmanager.admin` can read any secret, `cloudkms.admin` can grant access to the session key,
+and bootstrap's `storage.admin` reaches every bucket). Every edge in all three diagrams therefore lies within
+`themis-deploy`'s reach even though individual edges are not drawn for it.
+
+**Calls** — who may call or impersonate what:
 
 ![Calls: who may call what](grants/calls.svg)
 
-**Data** — who may read or write which store, secret, key or metric.
+**Data** — who may read or write which store, secret, key, or metric:
 
 ![Data: who may read or write which store, secret, key or metric](grants/data.svg)
 
-**Platform** — who may build or run on the project itself.
+**Platform** — who may build or run workloads on the project itself:
 
 ![Platform: who may build or run on the project itself](grants/platform.svg)
 
-## State
+### State, secrets, and confidential configuration
 
-**Per-environment** private GCS bucket (`gs://cpg-themis-<env>-pulumi-state`), each in its own project — a stack must
-never read another's state. Uniform bucket-level access, object versioning, public-access prevention; IAM limited to
-that environment's deploy SA (read/write), preview SA (read), and developers. State may contain secret ciphertext;
-bucket privacy and the secrets provider are independent layers. `Pulumi.yaml` carries **no** `backend:` (it is shared
-across stacks, which would force a single bucket); the backend is selected per environment instead — CI passes
-`--cloud-url`, locally `pulumi login gs://cpg-themis-<env>-pulumi-state`.
+Each environment stores its Pulumi state in a dedicated private, versioned GCS bucket
+(`gs://cpg-themis-<env>-pulumi-state`) inside that environment's own GCP project, so one stack can never read another's
+state. The bucket enforces uniform bucket-level access and public-access prevention, with IAM restricted to that
+environment's `themis-deploy` service account (read/write), `themis-preview` service account (read-only), and authorized
+developers. Because [`infra/Pulumi.yaml`](../../infra/Pulumi.yaml) is shared across stacks and setting `backend:` there
+would force a single bucket, the state backend is selected per environment: CI passes `--cloud-url` and local operators
+run `pulumi login gs://cpg-themis-<env>-pulumi-state`.
 
-## Secrets encryption
+Stacks encrypt secrets in configuration and state using Pulumi's `gcpkms` secrets provider
+(`gcpkms://projects/…/locations/…/keyRings/themis/cryptoKeys/pulumi`) rather than a passphrase. A passphrase secrets
+provider requires distributing and rotating a shared secret and produces ciphertext in `Pulumi.<stack>.yaml` that can be
+brute-forced offline if copied from the public mirror. With `gcpkms`, decryption authority is controlled by IAM
+(`roles/cloudkms.cryptoKeyEncrypterDecrypter` and `roles/cloudkms.cryptoKeyDecrypter`) on the same identity plane as
+deploys, every decryption is recorded in Cloud Audit Logs, and the wrapped data key in `Pulumi.<stack>.yaml` cannot be
+attacked offline without KMS access.
 
-`gcpkms`, not `passphrase`:
+Workloads follow an OIDC- and IAM-first rule, authenticating with short-lived credentials wherever a federation path
+exists rather than storing static secrets:
 
-```
-pulumi stack init prod \
-  --secrets-provider="gcpkms://projects/…/locations/…/keyRings/…/cryptoKeys/…"
-```
+- **Anthropic API:** workload service accounts exchange GCP OIDC tokens for short-lived Anthropic credentials via
+  Workload Identity Federation ([`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md)); no Anthropic API key
+  is stored.
+- **Cloud SQL:** workloads authenticate using IAM database logins tied to their runtime service accounts; no database
+  password exists.
+- **GCP services:** workloads use short-lived IAM credentials from the Cloud Run metadata server.
 
-- Decryption authority is IAM (`roles/cloudkms.cryptoKeyEncrypterDecrypter`) on the key — the same identity plane as
-  deploys. No shared passphrase to distribute, rotate, or revoke.
-- Every decrypt lands in Cloud Audit Logs.
-- The wrapped data key is inert without KMS access; no offline brute-force path. Passphrase ciphertext is
-  offline-bruteforceable.
+The only Secret Manager secrets are third-party credentials that have no WIF path, such as the Semantic Scholar and
+OpenAlex API keys ([`infra/themis_infra/secrets.py`](../../infra/themis_infra/secrets.py)). Each value is stored as
+`gcpkms`-encrypted config in `Pulumi.<stack>.yaml` and pushed by Pulumi into a Secret Manager `SecretVersion`, while the
+consuming workload's service account receives `SecretReader` (`roles/secretmanager.secretAccessor`). Because Pulumi
+provisions the secret container, the version, and the IAM grant together, a fresh `pulumi up` populates Secret Manager
+with no manual secret-entry step. Rotating a key updates the encrypted config value and runs `pulumi up`; any value
+rotated out of band uses `ignoreChanges`. Pulumi-generated provision-time secrets (such as `RandomPassword`) would use
+the same `gcpkms`-encrypted state path, though none are needed while Cloud SQL uses IAM authentication.
 
-## Secret values
+The concrete model selection—which model ID powers which agent—is not an authentication credential, but we treat it as
+confidential configuration. Public documentation and tracked files refer only to "frontier models" and never contain
+concrete model IDs or per-agent model assignments in plaintext. Instead, the model ID lives as `gcpkms`-encrypted Pulumi
+stack config in `Pulumi.<stack>.yaml` and is read at runtime from a Secret Manager secret or an equivalent config blob.
 
-OIDC/IAM-first — the workload authenticates with short-lived credentials, not stored secrets, wherever a federation path
-exists:
+| Artifact                                             | Storage location and public-mirror exposure                                                                                                 |
+| :--------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------ |
+| Pulumi program, `Pulumi.yaml`, `Pulumi.<stack>.yaml` | Tracked in this repo and mirrored publicly; secret values appear only as KMS-wrapped ciphertext.                                            |
+| State checkpoints                                    | Private per-environment GCS bucket (`gs://cpg-themis-<env>-pulumi-state`).                                                                  |
+| Credentials without a WIF path                       | Secret Manager at runtime; sourced from `gcpkms`-encrypted config in `Pulumi.<stack>.yaml`.                                                 |
+| Anthropic, Cloud SQL, and GCP access                 | Short-lived WIF and IAM credentials; nothing stored.                                                                                        |
+| Concrete per-agent model selection                   | `gcpkms`-encrypted config in `Pulumi.<stack>.yaml`, read at runtime from Secret Manager or a config blob; never plaintext in tracked files. |
+| Secrets encryption key                               | Cloud KMS (`keyRings/themis/cryptoKeys/pulumi`), IAM-gated and audit-logged.                                                                |
 
-- **Anthropic API:** Workload Identity Federation; the workload SA's GCP OIDC token is exchanged for short-lived
-  Anthropic credentials. No API key stored.
-- **Cloud SQL:** IAM database authentication via the workload SA. No database password.
-- **GCP services:** the workload SA's IAM credentials from the metadata server.
+## Alternatives considered
 
-The only Secret Manager secrets are credentials with no WIF path, such as the Semantic Scholar and OpenAlex API keys.
-Read at runtime via the workload SA (`roles/secretmanager.secretAccessor`); Pulumi provisions the `Secret` containers,
-IAM bindings, **and the versions** — each value a `gcpkms`-encrypted config secret in `Pulumi.<stack>.yaml` (inert
-without KMS access; safe on the mirror), pushed as a `SecretVersion`, so a fresh `pulumi up` self-provisions the secrets
-with no manual step. Rotation updates the config and re-applies; a value rotated out of band uses `ignoreChanges`.
+We evaluated Terraform/OpenTofu, imperative `gcloud` scripts, and manual runbooks against Pulumi:
 
-Nothing with a WIF path is stored. Pulumi-generated provision-time values (e.g. a `RandomPassword`) use the same
-gcpkms-encrypted path, currently unused while IAM auth covers Cloud SQL.
-
-## Confidential config
-
-The concrete **model selection** (which model id powers which agent) is not a credential but is secret-class
-confidential config. It lives as gcpkms-encrypted Pulumi stack config (ciphertext in the repo, safe on the mirror), read
-at runtime from a Secret Manager secret or an equivalent config blob — the choice is immaterial. Never plaintext in any
-tracked file (agent config, Pulumi program, docs); generic statements ("frontier models") stay public, the concrete id
-and per-agent assignment do not.
-
-## What lives where
-
-| Artifact                                             | Lives                                                                                                                   |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Pulumi program, `Pulumi.yaml`, `Pulumi.<stack>.yaml` | this repo; secret values only as KMS ciphertext                                                                         |
-| State checkpoints                                    | state bucket                                                                                                            |
-| Credentials with no WIF path                         | Secret Manager; values as `gcpkms` config in `Pulumi.<stack>.yaml`, applied by Pulumi                                   |
-| Anthropic / Cloud SQL / GCP access                   | short-lived WIF/IAM credentials; nothing stored                                                                         |
-| Concrete model selection                             | gcpkms-encrypted Pulumi stack config; read at runtime (Secret Manager or config blob); never plaintext in tracked files |
-| KMS key                                              | Cloud KMS, IAM-gated, audit-logged                                                                                      |
-
-Committing `Pulumi.<stack>.yaml` (secrets-provider URL, project ID, region, resource names, ciphertext) is safe on the
-public mirror: identifiers are not credentials (access is IAM), ciphertext is KMS-gated, and the mirror carries only
-`main`'s files — CI, PR discussion, and logs stay in this private repo.
-
-Never in the repo or logs: plaintext secret values, service-account keys (none exist), identifiers of CPG infrastructure
-beyond the Spike's deploy project. The Spike is isolated and public-endpoints-only, so its config discloses nothing
-about the data estate.
-
-Bootstrap: the state bucket, KMS key ring, and WIF pool predate the first `pulumi up`; created once by a documented
-`gcloud` script (spike-infrastructure runbook deliverable).
-
-## Why Pulumi
-
-Candidates: Pulumi, Terraform/OpenTofu, `gcloud` scripts, manual + runbook. Manual fails reproducibility; scripts aren't
-idempotent or drift-aware. Versus Terraform:
-
-- Python program — same language and CI toolchain (ruff, pyright, pytest) as the rest of the repo; HCL is a second
-  language.
-- Secrets are encrypted inside state; Terraform state is plaintext, protected only at the storage layer (OpenTofu has
-  client-side state encryption, younger ecosystem).
-- Licensing: Terraform is BUSL since 2023; Pulumi CLI/SDKs are Apache-2.0.
-
-Accepted trade-offs: smaller module ecosystem and community. Pulumi's GCP provider is bridged from Terraform's, so
-resource coverage is equivalent. Pulumi Cloud / ESC is the upgrade path if self-managing chafes; the DIY backend keeps
-the Spike self-hosted.
-
-## Out of scope — stays with spike-infrastructure
-
-- GCP project layout, IAP/SSO, cost observability, audit/retention, agent sandbox image.
-- CI/CD pipeline shape beyond auth: Artifact Registry, image build, promotion path, preview environments.
-- Per-secret inventory and rotation cadence.
-- The fresh-environment runbook (absorbs the bootstrap steps).
+- **Terraform or OpenTofu:** Terraform requires HCL, which adds a second language outside our Python toolchain (`ruff`,
+  `pyright`, `pytest`). Its BUSL license, adopted in 2023, is also more restrictive than Pulumi's Apache-2.0 CLI and
+  SDKs. Terraform writes secret values in plaintext inside state files, relying entirely on bucket permissions for
+  confidentiality (OpenTofu supports client-side state encryption, but has a smaller ecosystem). Choosing Pulumi costs a
+  smaller community and module ecosystem, though GCP resource coverage is identical because `pulumi-gcp` bridges the
+  Terraform GCP provider. If self-managing state in GCS becomes burdensome, Pulumi Cloud / ESC provides a managed
+  upgrade path.
+- **Imperative `gcloud` scripts or manual runbooks:** Manual setup is not reproducible across environments, and shell
+  scripts are neither drift-aware nor safely idempotent across resource updates and deletions. We restrict `gcloud`
+  scripting to [`infra/bootstrap/bootstrap.sh`](../../infra/bootstrap/bootstrap.sh) for the small substrate that must
+  exist before Pulumi's first run.

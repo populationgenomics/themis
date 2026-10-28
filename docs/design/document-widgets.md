@@ -1,109 +1,113 @@
 # Design: document widgets
 
-**Status:** draft **Related:** [`workbench-workspace.md`](workbench-workspace.md) (the browser's copy of the repository
-a revision is read from, and how a curator's edit becomes a commit); [`document-pane.md`](document-pane.md) (the
-renderer, the citation directives, and the reveal a citation raises);
-[`agent-output-rendering.md`](agent-output-rendering.md) (why agent text never becomes markup, and how the client draws
-a value that a tab's build does not know); [`sheaf.md`](sheaf.md) (the pre-receive hook every agent push passes);
-[`proto.md`](proto.md) (the option pattern, and the compatibility gate that binds a schema from its first commit);
-[`svcv4-classification-widget.md`](svcv4-classification-widget.md) (the SVCv4 classification, the richest payload so
-far).
+**Related:** [`workbench-workspace.md`](workbench-workspace.md) (the browser's copy of the repository a revision is read
+from, and how a curator's edit becomes a commit); [`document-pane.md`](document-pane.md) (the renderer, the citation
+directives, and the reveal a citation raises); [`agent-output-rendering.md`](agent-output-rendering.md) (why agent text
+never becomes markup, and how the client draws a value that a tab's build does not know); [`sheaf.md`](sheaf.md) (the
+pre-receive hook every agent push passes); [`proto.md`](proto.md) (the option pattern, and the compatibility gate that
+binds a schema from its first commit); [`svcv4-classification-widget.md`](svcv4-classification-widget.md) (the SVCv4
+classification, the richest payload so far).
 
 ## Overview
 
-A working document is markdown, and markdown is the wrong medium for a classification table, a pedigree or a checklist a
-curator works through. A model asked to describe such a structure in prose writes a different table on every run, and
+A working document is markdown, and markdown is the wrong medium for a classification table, a pedigree, or a checklist
+a curator works through. A model asked to describe such a structure in prose writes a different table on every run, and
 nothing marks which numbers in its sentences came from a source and which it recalled. A widget replaces that prose with
 a typed block. The agent writes a file holding a serialized protobuf message, names it in the document with one
 directive, `::embed[<path>]`, and the client draws it.
 
-The file names its own type, as a `google.protobuf.Any`, and a hand-written registry in the client maps each type to the
-component that draws it. The file is binary, so the only way to produce one is to run a serializer over a typed message:
-a widget's contents arrive in a declared shape, through code, never hand-typed. An item that rests on a source carries
-its own citation. A payload type's schema is reviewed in a change of its own, ahead of the component that draws it. A
-type is *marked* once its schema carries the option that lets a document embed it. CI fails a marked type with no
-component, so the schema lands unmarked and the change that ships its component adds the mark.
+The file names its own type as a `google.protobuf.Any`, and a hand-written registry in the client maps each type to the
+component that draws it. Because the file is binary, the only way to produce one is to run a serializer over a typed
+message. A widget's contents therefore arrive in a declared shape, through code, never hand-typed. An item that rests on
+a source carries its own citation. A payload type's schema is reviewed in a change of its own, ahead of the component
+that draws it. The schema carries the option that marks it as a widget payload from its first commit, because the
+compatibility gate forbids adding that mark to an already-released message. CI fails a marked type that has no registry
+entry, so the contract change registers a placeholder entry until the change that ships the component replaces it.
 
 The document is the tip of a branch that the agent pushes to as it works, so at any moment it may name a file the agent
 has not written yet. The pre-receive hook, which checks every agent push before it lands, therefore does not check
-whether the document can be drawn. Instead a linter in the agent's sandbox and the renderer apply the same drawability
-rules. The linter reports every directive that would not draw while the agent can still fix it, and the renderer draws a
-visible placeholder for anything that fails and renders the rest.
+whether the document can be drawn. Instead, a linter in the agent's sandbox and the renderer in the browser apply the
+same drawability rules. The linter reports every directive that would not draw while the agent can still fix it. The
+renderer draws a visible placeholder for anything that fails and renders the rest of the document.
 
 Some of a widget's contents are a user's judgement on the rest, such as a curator's tick on a checklist item. A tick
 vouches for the item as the curator saw it, so it must not survive the agent changing that item, and the agent rewrites
 the same file whenever it revises its work. The payload's schema marks each field that holds a judgement as a guard. By
-default a guard judges every other field of its message and everything beneath them, apart from the item's key and other
-guards, so a tick on a checklist item judges that item's label and citation. The rule is that a guard holds a judgement
-exactly when the version before held the same judgement on the same content; in every other case it is at its default,
-"no judgement". So the agent can never set a guard, nor clear one without changing what it judges. It may still remove
-an item, and the user's judgement on it goes with it.
+default, a guard judges every other field of its message and everything beneath them, apart from the item's key and
+other guards, so a tick on a checklist item judges that item's label and citation. A guard holds a judgement after an
+agent change only when the version before held the same judgement on the same content; in every other case it resets to
+its default ("no judgement"). The agent can therefore never set a guard, nor clear one without changing what it judges.
+It may still remove an item, and the user's judgement on that item goes with it.
 
 Each writer is held to its side of that rule where its changes pass. A user edits in the browser, which refuses an edit
-that changes anything but guards. The hook every agent push passes refuses a change that breaks the rule, but the agent
-is not left to satisfy it by hand: it rebuilds a widget file with a helper that starts from the committed version and
-carries each judgement across wherever what it judges is unchanged. When the agent's work and a user's tick meet, the
-agent rebases onto the user's commits rather than merging them. If the rebase stops on a widget file, the helper
-rebuilds the file from the user's version, so the agent keeps the user's ticks by the same rule the hook checks.
+that changes anything other than guards. The pre-receive hook refuses any agent push that breaks the guard rule, and a
+helper in the sandbox builds widget files so the agent does not have to satisfy the rule by hand. The helper starts from
+the committed version and carries each judgement across wherever what it judges is unchanged. When the agent's work and
+a user's tick meet, the agent rebases onto the user's commits rather than merging them. If the rebase stops on a widget
+file, the helper rebuilds the file from the user's version, keeping the user's ticks by the same rule the hook checks.
 
 ## Background
 
-The working document and the conversation are drawn by one shared markdown component. The agent already writes two
-directives into them: `:paper[id]`, which cites a paper, and `:quote[id, text]`, which cites a passage in it. The
-renderer turns each into a mark a curator can click to open the paper beside the text
-([`document-pane.md`](document-pane.md) §Reveal). Anything added to that pipeline inherits two of its properties. The
-markdown as served is never rewritten, because `Locate`, the rpc that finds a quoted passage, returns code-point offsets
-into that exact text. And a directive the renderer does not recognise is turned back into literal text, because
-`remark-rehype`, the step that turns the markdown syntax tree into page elements, drops an unhandled directive and the
-token after it.
+One shared markdown component
+([`apps/web/src/components/workbench/markdown.tsx`](../../apps/web/src/components/workbench/markdown.tsx)) draws both
+the working document and the conversation. The agent writes inline citation directives into them: `:paper[id]`, which
+cites a paper, and `:quote[id, text]`, which cites a passage in it. The renderer turns each into a mark a curator can
+click to open the paper beside the text ([`document-pane.md`](document-pane.md) §Reveal). Anything added to that
+pipeline inherits its constraints. Nothing rewrites the served markdown, because `Locate`—the RPC that finds a quoted
+passage—returns code-point offsets into that exact text. And the renderer turns any directive it does not recognise back
+into literal text, because `remark-rehype` (which turns the markdown syntax tree into page elements) would otherwise
+drop an unhandled directive and the token after it.
 
-Everything in the document was written by a model, and much of it quotes pages the model read, so agent text reaches the
-page as elements, never as HTML ([`agent-output-rendering.md`](agent-output-rendering.md)). Nothing the agent writes may
-choose how it is drawn, carry styling, or introduce an element.
+A model writes the document, often quoting pages it has read, so the renderer turns agent text into React elements
+rather than HTML ([`agent-output-rendering.md`](agent-output-rendering.md)). Nothing the agent writes may choose how it
+is drawn, carry styling, or introduce an arbitrary element.
 
 A revision of the document is a commit of the Analysis's workspace repository, and the document is the file
 `working_document.md` at the tip of its collaborative branch. The browser keeps its own copy of the repository and reads
-the document, and every file the document names, at one commit ([`workbench-workspace.md`](workbench-workspace.md)). A
-commit never changes, so a path in a directive means one file for as long as that revision exists.
+the document, along with every file the document names, at one commit
+([`workbench-workspace.md`](workbench-workspace.md)). A commit never changes, so a path in a directive refers to one
+file for as long as that revision exists.
 
 Two writers change that branch. The agent pushes from its sandbox, and every push passes sheaf's pre-receive hook, which
 runs outside the sandbox and can refuse the push before any ref moves ([`sheaf.md`](sheaf.md)). The hook runs in the
 sandbox worker, the trusted process that holds the session's credentials and runs the agent's commands in an isolated
-guest ([`sandbox-worker.md`](sandbox-worker.md)). A curator's edit is committed by the browser and published through the
-BFF, the web tier's backend, without passing the hook. Curators act in good faith, and the browser is a trusted writer,
-as the sandbox worker is. The agent is the one untrusted writer.
+guest ([`sandbox-worker.md`](sandbox-worker.md)). The browser commits a curator's edit and publishes it through the BFF
+(the backend for the web tier) without passing the hook. Curators act in good faith, and the browser is a trusted
+writer, as the sandbox worker is. The agent is the untrusted writer.
 
 Clinical work has a shape that prose loses. An SVCv4 classification is a set of criteria, each with a status, a selected
-outcome, evidence and reasoning. Written as markdown, the table changes form from run to run, which defeats scanning it,
-comparing runs, and seeing which criteria went unanswered. A reader cannot tell whether a number in a sentence was
-retrieved or recalled by the model, and "every claim cites a reproducible source" ([`../PRODUCT.md`](../PRODUCT.md) §6)
-cannot be enforced against a sentence. Drawing is also deterministic work, and the principle that puts parsing and
-arithmetic in code and keeps the model for judgement applies to layout too.
+outcome, evidence, and reasoning. Written as markdown, the table changes form from run to run, which defeats scanning
+it, comparing runs, and seeing which criteria went unanswered. A reader cannot tell whether the model retrieved or
+recalled a number in a sentence, and the product rule that every claim cites a reproducible source
+([`../PRODUCT.md`](../PRODUCT.md) §6) cannot be enforced against free prose. Drawing is also deterministic work, so the
+principle that puts parsing and arithmetic in code while keeping the model for judgement applies to layout as well.
 
 ## Non-goals
 
-- **Presentation in the payload.** No payload field holds a colour, a width, a template or a label drawn as chrome. The
-  client owns the drawing, which is what keeps a widget inside the rule that agent text never becomes markup.
-- **Computing a classification.** A widget draws what its file carries. Points, totals and bands come from the
+- **Presentation in the payload.** No payload field holds a colour, a width, a template, or a label drawn as chrome. The
+  client owns the drawing, which keeps widgets inside the rule that agent text never becomes markup.
+- **Computing a classification.** A widget draws what its file carries. Points, totals, and bands come from the
   `themis.svcv4` library, and a second implementation inside a renderer would be a second thing to audit
   ([`curation-surface.md`](curation-surface.md) §Non-goals).
 - **Widgets in the conversation stream.** A widget's file is found relative to a document at a commit, and the stream
-  has no commit to resolve it against, so the mechanism itself enforces the exclusion. The stream draws each tool call
-  from the projection, the BFF's reading of the call's inputs into a label and a body
+  has no commit to resolve it against, so the mechanism itself excludes stream widgets. The stream draws each tool call
+  from the projection, which is the BFF's reading of the call's inputs into a label and a body
   ([`agent-output-rendering.md`](agent-output-rendering.md)).
 - **Typed values inside a sentence.** A value in a sentence is still typed by the model, so the argument for widgets
   applies to it too. A directive naming a field of a file would be cheap to resolve, but each kind of value (a
-  frequency, a p-value, a coordinate) has its own formatting rules, and a layer that gets one wrong mid-sentence is
-  worse than the model typing the number. That layer has decisions of its own, so this design stops at the block and
+  frequency, a p-value, a coordinate) has its own formatting rules, and a layer that formats one wrongly mid-sentence is
+  worse than the model typing the number. That layer has decisions of its own, so this design stops at block widgets and
   leaves typed values in prose for a later design.
 
 ## Design
 
 ### One widget, end to end
 
-Here is a checklist, the widget type this doc uses as its example, from the agent's write to a curator's tick. The agent
-builds a checklist message with the helper its sandbox ships, which serializes it, wraps it in an `Any` and writes the
-widget's file, its *asset*. The message is shown below in protobuf's text form; its schema is
+A checklist—the widget type this doc uses as its running example—illustrates the path from the agent's write to a
+curator's tick. The agent builds a checklist message with the widget helper in its sandbox
+([`themis/services/sandbox_worker/guest/widgets.py`](../../themis/services/sandbox_worker/guest/widgets.py)), which
+serializes the message, wraps it in a `google.protobuf.Any`, and writes the widget's file, called its *asset*
+([`themis/widgets/`](../../themis/widgets/)). The message is shown below in protobuf text format; its schema is
 [`checklist.proto`](../../schema/proto/themis/widgets/models/checklist.proto).
 
 ```
@@ -115,7 +119,8 @@ assets/review.binpb        a google.protobuf.Any
                { id: "PM2", label: "Absent from population controls", checked: false }
 ```
 
-It names the file on a line of its own in `working_document.md`, runs the linter, and commits and pushes both:
+The agent names the file on a line of its own in `working_document.md`, runs the document linter
+([`themis/document_linter/`](../../themis/document_linter/)), and commits and pushes both files:
 
 ```
 ### Curator checks
@@ -123,9 +128,10 @@ It names the file on a line of its own in `working_document.md`, runs the linter
 ::embed[assets/review.binpb]
 ```
 
-The browser reads the document at the new commit from its copy of the repository. For the directive it reads
-`assets/review.binpb` at the same commit, decodes the `Any`, finds `themis.widgets.models.Checklist` in its registry,
-and draws the checklist component in place of the line:
+The browser reads the document at the new commit from its copy of the repository. For the directive, it reads
+`assets/review.binpb` at the same commit, decodes the `Any`, looks up `themis.widgets.models.Checklist` in its widget
+registry ([`apps/web/src/components/widgets/`](../../apps/web/src/components/widgets/)), and draws the checklist
+component in place of the line:
 
 ```
  Curator checks
@@ -133,201 +139,234 @@ and draws the checklist component in place of the line:
    [ ] PM2  Absent from population controls
 ```
 
-A curator ticks PS3. The widget sets PS3's `checked` field in the asset as it was at the commit on screen, and the
-browser publishes the new file as a commit of its own on that commit. If the agent has moved the branch in the meantime,
-the browser applies the edit on the new tip only if the asset there has the same blob and mode as the version the
-curator saw. Otherwise the curator redoes the tick on the new version
+A curator ticks PS3. The widget sets PS3's `checked` field in the asset as it stood at the commit on screen, and the
+browser publishes the new file as a commit of its own on top of that commit. If the agent has moved the branch in the
+meantime, the browser applies the edit on the new tip only if the asset there has the same blob and mode as the version
+the curator saw. Otherwise, the browser asks the curator to redo the tick on the new version
 ([`workbench-workspace.md`](workbench-workspace.md) §"A curator's edit is rebased onto the tip, file by file").
 
 When the agent later revises the checklist, it rebuilds the file with the helper, which carries PS3's tick across for as
 long as PS3's label and citation are unchanged. If the agent changes PS3's label or citation, the tick clears and the
-curator reviews PS3 again. The hook refuses any push that drops the tick from an unchanged PS3, or keeps it on a changed
-one. The sections below explain each step.
+curator reviews PS3 again. The pre-receive hook refuses any push that drops the tick from an unchanged PS3 or keeps it
+on a changed one. The sections below explain each step.
 
 ### One directive, and the file names its own type
 
-The obvious syntax names the widget in the directive, `::pedigree[…]`, which reads better. It breaks because the file
-already names its type, and two declarations of one fact can disagree: a `::pedigree` pointing at a file of aligned
-reads is a state somebody would have to define behaviour for, and a rule the agent would have to be taught. So the
-directive names only the file, and the file's type decides what draws it. Adding a widget type then touches no grammar,
-because it is a payload schema and a component, and the directive set stays at three.
+The obvious syntax names the widget type in the directive, such as `::pedigree[…]`, which reads naturally in the
+markdown source. That breaks because the asset file already names its own type, and two declarations of one fact can
+disagree: a `::pedigree` pointing at a file of aligned reads is a mismatch somebody would have to define behaviour for,
+and a rule the agent would have to learn. Instead, the directive names only the file, and the file's type decides what
+draws it. Adding a widget type then touches no markdown grammar; it requires only a payload schema and a component, and
+the directive set stays at `:paper`, `:quote`, and `::embed`.
 
 `::embed[assets/review.binpb]` is a leaf directive whose label is a path relative to the document. Its two colons are
-the directive grammar's block form, where the citations' single colon is the inline one. A citation renders inside the
-paragraph that holds it, and a widget is a block: a chart inside a paragraph is markup the browser repairs by closing
-the paragraph early, so the rendered page would no longer match the document.
+the directive grammar's block form, whereas the single colon on `:paper` and `:quote` is the inline form. A citation
+renders inside the paragraph that holds it, while a widget is a block: placing a block chart inside a paragraph produces
+invalid HTML that the browser repairs by closing the paragraph early, so the rendered page would no longer match the
+document structure.
 
-An embed is drawn only where it stands on a line of its own at the top level of the document, written exactly as
-`::embed[<path>]`. Anything else that starts with `::embed` draws the placeholder, for example an embed inside a list, a
-block quote or a footnote, or one with text after the label. Markdown nests blocks in more ways than two parsers
-reliably agree on, and the linter and the renderer are two different parsers. One rule that both can apply the same way
-avoids the disagreement, and it costs the agent nothing it needs.
+The renderer draws an embed only when it stands on a line of its own at the top level of the document, written as
+`::embed[<path>]`. Anything else that starts with `::embed`—such as an embed inside a list, a block quote, or a
+footnote, or one with text after the label—draws the placeholder. Markdown nests blocks in more ways than two parsers
+reliably agree on, and the sandbox's linter (`markdown-it-py`) and the browser's renderer (`remark-directive`) use
+different parsers. Restricting `::embed` to a top-level line of its own gives one rule that both parsers apply
+identically, and it costs the agent nothing it needs.
 
-The same concern shapes how the label is read. A label is inline markdown, so a parser that interprets it would read
-`assets/_b_.binpb` as emphasis and `www.x.binpb` as a link, and the linter and the browser could resolve one directive
-to two different files. Neither interprets it. Both take the label's source text as written, by the mechanism in
-§"Appendix: reading an embed's label as source text". A path is admitted only over a conservative character set:
-letters, digits, `-`, `_`, `.` and `/`. That keeps it a plain relative path on every filesystem, and it keeps out `]`
-and the backslash, the two characters that could make the readers disagree on where a label ends. The linter refuses a
-path outside the set and the renderer draws the placeholder for one, so the producer renames the file.
+The same concern shapes how both parsers read the directive's label. In the directive grammar, a label is inline
+markdown, so a parser that interprets inline syntax reads `assets/_b_.binpb` as emphasis and `www.x.binpb` as a link. If
+the linter and the browser interpreted the label, they could resolve one directive to two different files. Neither
+interprets it. The renderer ignores the parsed inline children of the directive node and slices the source text between
+the label's `[` and `]`, and the linter takes the same source span from its own parse:
 
-The path is resolved against the revision's tree at render time, as a lookup, so the markdown itself is never rewritten
-and `Locate`'s offsets stay valid. The renderer knows `::embed` as it knows `:paper` and `:quote`, and a surface turns
-widgets on by giving it a way to read files at its revision, as it turns citations on by giving it a click handler. A
-surface that does not, such as the conversation stream, shows the directive as literal text.
+```
+document text                ::embed[assets/_b_.binpb]
+renderer's parsed children   "assets/"  emphasis("b")  ".binpb"      ignored
+renderer's source slice      assets/_b_.binpb
+linter's source text         assets/_b_.binpb
+```
+
+Both readers produce `assets/_b_.binpb`, whereas a reader that used the parsed inline children would look for
+`assets/b.binpb`. Slicing the source text works only if the label ends at the first `]` after its `[` and the characters
+between them mean themselves. The linter and the renderer therefore admit paths only over a conservative character set:
+ASCII letters, digits, `-`, `_`, `.`, and `/`. That keeps the path a plain relative path on every filesystem, and it
+excludes `]` and `\`, the two characters that could make the readers disagree on where a label ends. The linter refuses
+a path outside the character set and the renderer draws the placeholder for one, prompting the producer to rename the
+file.
+
+The renderer resolves the path against the tree of the revision at render time, so nothing rewrites the markdown and
+`Locate`'s offsets stay valid. A surface turns widgets on by giving the markdown component a way to read files at its
+revision, just as it turns citations on by passing a click handler. A surface that does not pass a revision, such as the
+conversation stream, renders the directive as literal text.
 
 ### The file is a binary `Any`, so a program built it
 
-The obvious format is JSON, which is readable and diffs well. It breaks because the agent is a model: it can write JSON
-by hand, and sooner or later it will, when a tool call fails and the file looks easy to fix. It cannot hand-write a
-serialized protobuf. Producing those bytes means running a serializer over a typed message, so the type checker and
-protovalidate, the proto validation rules, apply to a widget's contents as they apply to an rpc's. The helper the
-sandbox ships ([`sandbox-worker.md`](sandbox-worker.md) §"The guest's world is assembled at build time") builds the
-message, wraps it and writes it.
+The obvious file format for a widget asset is JSON, which is human-readable and diffs cleanly in git. JSON fails here
+because the agent is a language model: it can write JSON by hand, and when a tool call fails and the file looks easy to
+patch, it will. A model cannot hand-write a serialized protobuf. Producing those bytes requires running a serializer
+over a typed message, so the Python type checker and protovalidate rules apply to a widget's contents just as they apply
+to an RPC's. The helper in the sandbox builds the message, validates it, wraps it, and writes it.
 
-The file is the `Any` and nothing else: no envelope carrying who made it or when. The commit already records when the
-file was produced, and the run's trace records what produced it, so the file carries only the payload. A `created_at`
-field the model filled in would only be a field the model could get wrong. An envelope would also carry provenance at
-the wrong granularity: provenance belongs to each item, as the citation pattern below shows.
+The file contains the serialized `Any` and nothing else, with no outer envelope for who made it or when. The git commit
+already records when the file was produced, and the run's trace records what produced it, so the file carries only the
+payload. A `created_at` field filled in by the model would only be another field the model could get wrong. An envelope
+would also record provenance at the wrong granularity: provenance belongs on each item, as the citation pattern below
+shows.
 
-The `Any` is also held to one framing: the type URL, then the payload, and no other field. Protobuf parsers disagree on
-some malformed bytes. If the hook's parser and the browser's read a different type URL or different payload bytes out of
-one file, the hook might read it as no widget at all while the browser draws a ticked checklist, and that tick would
-never have been checked. In the one framing every parser reads the same type URL and the same payload bytes. The linter
-and the hook refuse a file that names a widgets type in any other framing. A file the hook cannot read as an `Any` at
-all passes it as no asset, but the renderer draws only the one framing, so such a file can never draw as a widget.
+The asset format ([`themis/widgets/asset.py`](../../themis/widgets/asset.py),
+[`apps/web/src/widgets/asset.ts`](../../apps/web/src/widgets/asset.ts)) also holds the `Any` to one canonical framing:
+the type URL field, then the payload bytes field, and no other fields. Protobuf parsers disagree on some malformed wire
+bytes. If the pre-receive hook's parser and the browser's parser read a different type URL or different payload bytes
+out of one file, the hook could treat the file as a non-widget while the browser drew a ticked checklist whose tick was
+never checked. In the canonical framing, every parser reads the same type URL and the same payload bytes. The linter and
+the hook refuse any file that names a widget type in another framing. A file the hook cannot parse as an `Any` at all
+passes the hook as a non-asset, and because the renderer draws only the canonical framing, such a file never draws as a
+widget.
 
-The binary format cannot show that a value was retrieved rather than recalled, because the model chooses what it passes
-to the constructor. That is the concern of the evidence services the agent reads its values from. What the format does
-guarantee is that each value went through a declared schema and a program. So it sits in a named, typed field with a
-slot for its citation, in a shape the client and the schema agree on.
+A binary format cannot prove that a value was retrieved from a database rather than recalled by the model, because the
+model still chooses what arguments it passes to the constructor. Provenance of values is the concern of the evidence
+services the agent reads its values from. What the binary format guarantees is that every value went through a declared
+schema and a program, arriving in a named, typed field with a slot for its citation, in a shape the client and the
+schema agree on.
 
 ### Where structure lives
 
-The other way to get structure out of a document is to read it out of the prose, with a tag vocabulary inside the
-markdown or a parser over headings. A vocabulary shared by the author, a parser and a renderer drifts, and a parser over
-prose fails silently: a heading one level off drops a criterion without saying so. The curation surface makes the same
-choice for a curator's worksheet, which is a form whose fields are a schema
-([`curation-surface.md`](curation-surface.md) §"What is captured, and why").
+An alternative way to get structure out of a working document is to parse it out of the prose, using a tag vocabulary
+inside the markdown or a parser over headings. A vocabulary shared across the model prompt, a parser, and a renderer
+drifts over time, and a parser over prose fails silently: a heading one level off drops a criterion without reporting an
+error. The curation surface makes the same choice for a curator's worksheet, which is a form backed by a schema rather
+than parsed notes ([`curation-surface.md`](curation-surface.md) §"What is captured, and why").
 
-Widgets make that choice for the agent's side. The markdown carries no schema, because `::embed` names a file and says
-nothing about its contents. The structure lives in the file, where a schema, the compatibility gate and the linter apply
-to it. Both apply one rule: anything that must be structured gets a declared schema, and prose is never parsed for
+Widgets apply that rule to the agent's side. The markdown carries no schema, because `::embed` names a file and says
+nothing about its contents. All structure lives in the asset file, where the protobuf schema, the compatibility gate,
+and the linter apply to it. Anything that must be structured gets a declared schema, and nothing parses prose for
 structure.
 
 ### Declaring a widget type
 
-A payload type is an ordinary proto message in the widgets package, marked by a message option
-([`widget.proto`](../../schema/proto/themis/widgets/models/widget.proto)). It works like the method option that marks an
-rpc the sandbox may call ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): one place to declare it, read from the
-descriptor, and absent means false. The linter reads the set of marked types from the descriptors, so the types it
-accepts cannot drift from the contract.
+A payload type is a protobuf message in the `themis.widgets.models` package, marked with the `widget` message option
+([`widget.proto`](../../schema/proto/themis/widgets/models/widget.proto)). That option follows the same pattern as the
+method option that marks an RPC the sandbox may call ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): one
+declaration in the schema, read from the descriptor pool, where absence means false. The linter reads the set of marked
+types from the descriptor pool, so the types it accepts cannot drift from the schema contract.
 
-The client's registry is written by hand, because behind each entry is a React component somebody wrote. A generated
-registry would find a type's component by deriving its name from the type's name. Nothing would check that convention,
-and when a component does not follow it, the failure is a component silently not found. Writing the registry by hand
-gives up the guarantee generation offers, an entry for every type, and a check gets it back: the pairing check fails CI
-for a marked type with no registered component, so no payload type ships without its component.
+Engineers maintain the web client's registry
+([`apps/web/src/components/widgets/registry.tsx`](../../apps/web/src/components/widgets/registry.tsx)) by hand, because
+each entry maps a payload schema to a bespoke React component. A generated registry would have to derive each
+component's name from the protobuf message name; nothing would check that naming convention at compile time, and a
+mismatch would surface only as a missing component at render time. Writing the registry by hand gives up automatic
+registration, and a CI pairing test restores the guarantee: it fails whenever a message marked `widget` has no entry in
+the registry, so no payload type ships without one.
 
-A payload type's schema lands in a change of its own, ahead of its component, and is reviewed as an interface
-([`review-policy.md`](review-policy.md)). Two checks decide what that change carries. The compatibility gate compares
-every committed proto from the change that first commits it, and it refuses a released message gaining the widget mark
-or a guard, since a push hook built before that change would check the message's assets differently from a newer one
-(§"A guard protects everything beside it unless it says otherwise"). So the mark and the ownership options on the
-payload's fields land with the message, in the contract change; once it merges, no change can add them to that message.
-The pairing check then fails the marked type until a component is registered for it, so the contract change also
-registers a placeholder, the way a contract change for a service stubs the rpcs whose implementation comes later.
-
-The placeholder draws what the renderer draws for a type this build has no component for: the neutral box that names the
-asset's path and says the build does not draw the type (§"Drawability is checked where the file is, and tolerated where
-it is shown"). It still parses the payload and checks it against its rules, so an asset written against the new type
-during component work fails as it would under the finished component.
-
-Component work is tried against example payloads, written in protobuf text format so a person can read and edit them. A
-local page on the fixture backend opens each example in a working document, drawn by the real component, where its ticks
-and notes work as they do in the workbench ([`widget-browser.md`](../runbooks/widget-browser.md)). A test holds every
-committed example to its type's rules, so an example that goes stale with its schema fails CI.
+A payload type's schema lands in a contract change of its own, ahead of its component, and is reviewed as an interface
+([`review-policy.md`](review-policy.md)). The compatibility gate
+([`tools/schema/buf_compat.py`](../../tools/schema/buf_compat.py)) and the pairing test together determine what that
+contract change contains. The compatibility gate compares every committed proto from the change that first commits it,
+and it refuses any change that adds the `widget` mark or a guard option to an already-released message, because a push
+hook built before that change would check the message's assets differently from a newer build (§"A guard protects
+everything beside it unless it says otherwise"). The `widget` mark and the ownership options on the payload's fields
+therefore land with the message in the contract change. Because the pairing test requires every marked type to appear in
+the registry, the contract change also registers the new schema with a `placeholder` entry, just as a service contract
+change stubs the RPCs whose implementation lands later.
 
 | Change               | What it does to the schema                                       | What the registry maps the type to |
 | -------------------- | ---------------------------------------------------------------- | ---------------------------------- |
 | The contract change  | declares the message, with its widget mark and ownership options | the placeholder                    |
 | The component change | changes it additively, if at all                                 | the component                      |
 
-Because the gate holds the schema from the contract change on, whatever the component work learns about the payload
-arrives as an additive change, a new field or a new message beside the old. A reshape the gate would refuse has to be
-settled while the contract change is under review.
+The `placeholder` entry draws the same neutral box that the renderer shows when a tab's build has no component for a
+type, naming the asset's path and stating that the build does not draw it (§"Drawability is checked where the file is,
+and tolerated where it is shown"). It still parses the payload and validates its rules, so an asset written against the
+new type during component development is checked the same way as under the finished component.
+
+Engineers develop and test components against committed example payloads in
+[`apps/web/src/widgets/examples/`](../../apps/web/src/widgets/examples/), written in protobuf text format so humans can
+read and edit them. A local page on the fixture backend (`/dev/widgets`) opens each example in a working document drawn
+by the real component, where ticks and notes work as they do in the workbench
+([`widget-browser.md`](../runbooks/widget-browser.md)). A CI test validates every committed example against its schema
+rules, so an example that falls out of step with its schema fails CI.
+
+Because the compatibility gate holds the schema from the contract change onward, anything component development learns
+about the payload lands as an additive change, such as a new field or a new message beside the old one. Any structural
+reshape that the gate would refuse has to be settled while the contract change is under review.
 
 From its first push on a deployment whose data is kept, a payload schema is persisted data. A pushed revision is never
-deleted ([`sheaf.md`](sheaf.md)), and `buf breaking` holds the schema's fields to additive changes
-([`proto.md`](proto.md) §Schema evolution). The widget options have a comparison of their own (§"A guard protects
-everything beside it unless it says otherwise"). Retiring a type is therefore a migration, never the removal of a
-registry entry. A type any pushed revision references must keep decoding, and a converter feeds its successor's
-component. For a type the tab's build does not know, the placeholder covers only the minutes of a deploy, when a tab
-still runs the previous build. A revision from years ago still has to draw in full.
+deleted ([`sheaf.md`](sheaf.md)), and `buf breaking` holds the schema's fields to additive evolution
+([`proto.md`](proto.md) §Schema evolution), while `buf_compat.py` checks the widget options (§"A guard protects
+everything beside it unless it says otherwise"). Retiring a type is therefore a data migration rather than the removal
+of a registry entry: a type referenced by any pushed revision must keep decoding, with a converter feeding its
+successor's component. For a type a tab's build does not yet know, the placeholder covers only the minutes of a
+deployment while an open tab still runs the previous build. A revision from years ago still draws in full.
 
 ### Patterns a payload follows
 
-The shapes below recur across payloads. Each is a decision about the framework rather than about one widget.
+Several field shapes recur across widget payloads. Each is a framework convention rather than a rule for a single
+widget.
 
-An item that rests on a source carries its own citation: a litcache `doc_id` and an optional quote. A click on it opens
-the paper, and the quote within it, as a `:paper` or `:quote` in prose does, and a malformed id draws the same visibly
-broken mark, never a guess at the nearest match. The citation sits on the item rather than on the file, because an SVCv4
-classification's codes rest on different sources. It stays a pattern rather than a type because not every payload cites
-literature (an aligned-reads view cites nothing; the reads are the evidence), and because a citation into a figure or a
-table may need more than a doc id and a quote. The SVCv4 classification needed no more, so the first payload that does
-decides that shape.
+An item that rests on a source carries its own citation, consisting of a litcache `doc_id` and an optional verbatim
+`quote`. Clicking the citation opens the paper and highlights the quote in the document pane, just as `:paper` and
+`:quote` in prose do, and a malformed ID draws the same visibly broken mark rather than guessing at a match. The
+citation sits on the individual item rather than on the asset file because different items in one widget (such as the
+criteria of an SVCv4 classification) rest on different sources. Citation remains a field pattern rather than a shared
+message type because not every payload cites literature (an aligned-reads view cites nothing; the reads themselves are
+the evidence), and a future citation into a figure or table may need more than a document ID and a quote.
 
-A payload about a place in the genome says which place, as an interval: the shared `themis.evidence.models.GenomicSpan`
-beside the chromosome accession it lies on, the pairing the evidence contracts use. Normalising an allele belongs to the
-evidence layer, and a widget carrying a normalised id would be a second place that decides identity. A document that
-embeds a pedigree and an aligned-reads view then states which locus each is about, for a reader who arrives at a widget
-out of context and for a run whose document weighs more than one candidate.
+A payload about a place in the genome identifies that place as an interval: the shared
+`themis.evidence.models.GenomicSpan` paired with the chromosome accession it lies on, matching the evidence service
+contracts. Normalising an allele belongs to the evidence layer, and a widget carrying a normalised variant ID would
+become a second place that decides variant identity. Carrying the locus on each genomic widget means a document that
+embeds both a pedigree and an aligned-reads view states which locus each widget describes, helping both a reader who
+arrives at a widget out of context and an analysis whose document weighs more than one candidate variant.
 
 ### A user's judgement stands only while what it judges is unchanged
 
-Most of a payload is the agent's: a checklist's items, their labels, their citations. One field records a user's
-judgement on the rest: whether a curator ticked the item. Both live in one file, and the agent rewrites that file
-whenever it revises its work. In the walk-through above, the curator ticked PS3. Suppose the agent then rebuilds the
-checklist from its own notes, where PS3 is unticked, and pushes. Nothing in the file format stops that push from
-silently undoing the tick, and nothing stops the agent from writing a tick itself, which the workbench would draw
-exactly like a curator's.
+Most of a widget payload is written by the agent: a checklist's items, their labels, and their citations. Specific
+fields record a user's judgement on that content, such as whether a curator ticked an item. Both live in one asset file,
+and the agent rewrites that file whenever it revises its work. In the walk-through above, the curator ticked PS3.
+Suppose the agent then rebuilds the checklist from its own notes, where PS3 is unticked, and pushes. Nothing in the file
+format stops that push from silently undoing the curator's tick, and nothing stops the agent from setting
+`checked: true` itself, which the workbench would draw identically to a curator's tick.
 
-The obvious answer is to mark the fields a user writes, with a `written_by` option in the schema, to match the items of
-two versions of the list by a key, and to hold the agent to keeping the user's fields on every item it keeps. That gets
-two things right: the agent cannot write a tick, and it cannot undo one by rebuilding the list. It breaks because a tick
-is a judgement on a specific statement and its citation, and nothing in that rule ties it to them. On the dev
-deployment, an agent's commit relabelled every item of a checklist in which a curator had ticked two, and both ticks
-survived, because the keys had not changed. By the same rule the agent could reword "PM2 applies" to "PM2 does not
-apply" and keep the tick, which would then vouch for a claim the curator never saw. The two ways of getting this wrong
-cost different amounts. A tick cleared when it could have stayed costs the curator a click to give it again, whereas a
-tick that outlives what it judged is a false attestation in the record.
+The obvious rule is to mark user-written fields with a `written_by` option in the schema, match list items across
+versions by a key, and require the agent to preserve the user's fields on every item it keeps. That prevents the agent
+from forging a tick or dropping one when rebuilding the list, but it fails because a tick is a judgement on a specific
+statement and citation, and nothing in that rule ties the tick to them. On the dev deployment, an agent commit
+relabelled every item of a checklist in which a curator had ticked two items; both ticks survived because the item keys
+had not changed. Under that rule, the agent could reword "PM2 applies" to "PM2 does not apply" and keep the curator's
+tick, leaving the tick to vouch for a claim the curator never saw. Clearing a tick when it could have stayed costs the
+curator one click to re-apply it, whereas keeping a tick after what it judged has changed leaves a false attestation in
+the clinical record.
 
-So a judgement is tied to what it judges. The schema marks each field that holds a user's judgement as a *guard*. A
-guard's default value, unset, means "no judgement". For a plain proto3 `bool` such as `checked`, unset and `false` are
-the same bytes. For a guard that has presence, such as a message or an `optional` field, an explicit `false` is a
-judgement, so "no judgement" is unset. The agent never writes a guard: it either carries a user's judgement across or
-leaves the guard unset.
+The design therefore ties each judgement to the content it judges
+([`themis/widgets/ownership.py`](../../themis/widgets/ownership.py),
+[`apps/web/src/widgets/ownership.ts`](../../apps/web/src/widgets/ownership.ts)). The schema marks each field that holds
+a user's judgement with the `guard` field option. A guard's default value (unset) means "no judgement". For a plain
+proto3 `bool` such as `checked`, unset and `false` serialize to the same empty bytes. For a guard with explicit
+presence, such as a message or an `optional` scalar, an explicit `false` is a judgement and "no judgement" is unset. The
+agent never sets a guard: it either carries a user's existing judgement across or leaves the guard unset.
 
-Comparing two versions of an asset needs two more terms. An *element* is an entry of a repeated message field, such as
-one item of a checklist. Two versions of a list are matched element by element through a field the schema marks as the
-element's *key*, here the item's `id`. The payload's root message counts as an element with no key. A key anywhere else,
-on a singular message or on the root, is ordinary content: an agent that changes it has changed what the judgement is
-about.
+To compare two versions of an asset, an *element* is an entry in a repeated message field, such as one item of a
+checklist. The ownership check matches elements across two versions of a list by a scalar field marked with the
+`element_key` option (here, the item's `id`). The payload's root message counts as a single element with no key. An
+`element_key` field on a singular message or on the root message is ordinary content: if the agent changes it, it has
+changed what the judgement is about.
 
-What a guard judges is its *protected content*. By default that is every other field of the guard's message and
-everything beneath them at any depth, with three exceptions. The element's key is how the element is recognised, so it
-is not part of what is judged. A guard is never part of another guard's protected content, so one user's judgement never
-clears another. And a guard's `ignores` option lists fields of its message that the judgement is not about, which are
-excepted with everything beneath them.
+What a guard judges is its *protected content*. By default, a guard's protected content is every other field of the
+guard's message and everything beneath those fields at any depth, except for:
 
-The guard's position in its message and its field number play no part in what it protects. By convention a payload
-declares its guards first, from field 1, so a reader meets the judgement before the fields it judges, and a field added
-later takes the next number after them rather than landing between a guard and the content it protects. A released
-message gains no guard (§"A guard protects everything beside it unless it says otherwise"), so a message's guards are
-all declared with it and can always take its first numbers.
+- The element's `element_key`, which is how the element is matched across versions and is therefore outside the
+  protected content of that list element.
+- Every guard at any depth, so one user judgement never clears another.
+- Any field listed in the guard's `ignores` option (along with everything beneath that field), because the schema
+  declares that this judgement is not about that field.
 
-Its scope stops at its own message. A tick on one checklist item covers that item only, not the neighbouring items or
-the list that holds them:
+A guard's position in its message and its field number do not affect what it protects. By convention, a payload schema
+declares its guards first, starting at field 1, so a reader meets the judgement before the fields it judges, and fields
+added later take higher numbers rather than landing between a guard and the content it protects. Because a released
+message cannot gain new guards (§"A guard protects everything beside it unless it says otherwise"), all of a message's
+guards are declared in its initial commit and can always occupy its first field numbers.
+
+A guard's scope is bounded by its own message. A tick on one checklist item covers that item alone, not neighbouring
+items or the list that holds them:
 
 ```proto
 message Checklist {
@@ -341,42 +380,44 @@ message Checklist {
 }
 ```
 
-§"A guard protects everything beside it unless it says otherwise" argues why protection is every field rather than a
-list of them, and why it reaches all depths. Protected content is compared by its bytes under a deterministic
-serialization, except that a list whose elements are matched by key is compared as a set of elements, so that its order
-is not part of the content.
+The ownership check compares protected content by its bytes under deterministic serialization. It compares a repeated
+message field whose elements match by `element_key` as a set of elements, so reordering the list does not count as a
+change to the protected content.
 
-The rule itself is stated from the version before the change. A guard holds a judgement on an element exactly when the
-version before had the same element, with the same protected content, unknown fields included, and the same judgement.
-In every other case the guard is at its default. The rule gives the following:
+When the agent changes an asset, a guard on an element holds a judgement if and only if the version before the change
+had the same element, with the same protected content (including any unknown fields) and the same judgement value. In
+every other case, the guard must be at its default value:
 
-- a new element's guards are at their default, because there is no version before to hold a judgement;
-- on an element present before and after, a guard whose protected content is unchanged is itself unchanged, and a guard
-  whose protected content changed is at its default;
-- an element may be removed. If a later change adds an element back, under its old key or a new one, it starts with its
-  guards at their default;
-- removing a singular message that holds a guard clears that guard, because the judgement and what it judged are gone
-  together;
-- reordering a list whose elements are matched by key changes nothing, neither for its elements nor for a guard that
-  protects the list.
+- On a new element, all guards are at their default value, because there was no element before the change to hold a
+  judgement.
+- On an element present before and after the change, a guard whose protected content is unchanged stays unchanged, and a
+  guard whose protected content changed resets to its default value.
+- An element may be removed. If a later change adds an element back under its old key or a new one, its guards start at
+  their default value.
+- Removing a singular submessage that holds a guard clears that guard, because the judgement and what it judged are
+  removed together.
+- Reordering a keyed list changes nothing, neither for the guards on its elements nor for any guard on an enclosing
+  message that protects the list.
 
-Two constraints make the rule checkable:
+For that comparison to be well-defined across builds and inputs:
 
-- on an element present before and after, fields the checking build does not know stay byte-identical, and a new element
-  carries none;
-- a list whose elements are matched by key may not repeat a key, since "the same element" would then name two.
+- On an element present before and after the change, any unknown fields (written by a newer schema than the checking
+  build knows) must stay byte-identical, and a new element may carry no unknown fields.
+- A keyed list may not contain two elements with the same `element_key`, because matching an element across versions
+  would be ambiguous.
 
-Between them, the first two consequences mean the agent never moves a guard to a value other than its default. Only a
-user creates a judgement. The second also rules out a bare retraction: the agent may not clear a tick while leaving what
-it judges as it was. A retraction like that would overrule the curator on content they had seen and accepted, and the
-rebuild from stale notes at the start of this section would be one. To clear a judgement, the agent changes what the
-judgement is about, or removes the element.
+Consequently, the agent can never move a guard to a non-default value; only a user creates a judgement. Nor can the
+agent perform a bare retraction by clearing a guard while leaving its protected content unchanged. A bare retraction
+would overrule the curator on content they had already reviewed and accepted—which is what happens when an agent
+rebuilds a checklist from stale notes. To clear a judgement, the agent must either change the content the judgement is
+about or remove the element.
 
-The agent does not have to hold itself to the rule by hand. It rebuilds an asset through the helper's
-`update(path, build)`. The `build` function returns the agent's new version with every guard unset. `update` matches its
-elements against the committed version by key, carries each guard across where the element's protected content is
-unchanged, and reports on stderr each judgement it cleared, with the reason. Here is PM2, ticked by a curator, rebuilt
-two ways through `update`, and then written twice bypassing it:
+The agent does not have to maintain guards by hand. It updates an asset through the sandbox helper's
+`update(path, build)` function. The caller's `build` callback returns the new payload with every guard left at its
+default value. `update` matches elements against the committed version at `HEAD` by `element_key`, copies each guard
+across where its protected content is unchanged, and prints a line to stderr for each judgement it cleared explaining
+which field changed. Below, a curator has ticked `PM2` in the committed file; the first two rows show `update` carrying
+or clearing the tick, and the last two show what happens when the agent writes the file directly and bypasses `update`:
 
 ```
 committed          { id: "PM2", label: "PM2 applies",        checked: true }
@@ -393,33 +434,34 @@ bypassing update
   agent writes     { id: "PM2", label: "PM2 applies" }                          refused: the tick cleared and nothing changed
 ```
 
-A push that bypasses the helper meets the hook, and git relays the hook's refusal to the agent's `git push` as `remote:`
-lines. Each names the file, the element and the guard, and says how to comply. The last row above, a bare retraction, is
-refused with:
+If a push bypasses `update`, sheaf's pre-receive hook refuses the push and returns `remote:` diagnostic lines to
+`git push`. Each refusal names the asset path, the element and guard (such as `items[PM2].checked`), what the change did
+to the guard, and how to comply (keep the user's value, change the content it judges, or remove the element).
 
-```
-remote: sheaf: refused: assets/review.binpb: items[PM2].checked is a user's judgement, and the agent's change alters it though nothing it judges changed; keep the value the user set; to clear a judgement, change what it is about, or remove the element
-```
+The rule allows removing an element because the agent's analysis genuinely changes shape over time: it may split a
+criterion in two or drop an item that no longer applies. Removing an item costs the user's judgement on that item, which
+the curator must give again. The agent's prompt instructions state this cost so that it restructures a reviewed widget
+only when the analysis requires it. Moving an asset file to a new path has the same effect: the file at the new path is
+a new asset, and all of its guards start at their default values.
 
-Removal is allowed because the agent's work does change shape: it splits a criterion in two, or drops an item it no
-longer thinks applies. What removal costs is the user's judgement on that item, which the user then has to give again.
-The agent's instructions say so, so that it restructures a reviewed checklist only when the work calls for it. Moving a
-file to another path counts the same way: the file at the new path is new, and its guards start at their default.
+Holding unknown fields byte-identical on kept elements (and forbidding them on new elements) covers payloads written by
+a newer build than the one checking the push. A build that does not recognise a field number cannot tell whether that
+field is a guard or protected content. Requiring unknown fields to stay byte-identical on existing elements and absent
+on new elements satisfies both possibilities: if the unknown field is a guard, the agent cannot set or alter it; if it
+is content, the agent cannot change it under a standing guard.
 
-The constraint on unknown fields covers a payload written by a newer build than the one checking it. A build that does
-not know a field cannot tell whether it is a guard or content. If it is a guard, "the same judgement" means its value
-must not change, and on a new element it must be absent, since the agent could have set it. So the build holds the field
-to its exact bytes, and a new element may carry no such field.
+That same constraint closes a wire-parsing gap that canonical `Any` framing alone does not cover (§"The file is a binary
+`Any`, so a program built it"). Canonical `Any` framing ensures every parser sees the same payload bytes, but different
+protobuf implementations (`upb` in Python vs `@bufbuild/protobuf` in the browser) handle mismatched wire types on known
+fields differently. The Python parser refuses any payload that encodes a known field with a wire type other than its
+schema's, and any other unrecognised tag becomes an unknown field that the ownership rule forbids adding or changing. As
+a result, a payload that the browser would read differently from the hook cannot carry a forged or altered tick past the
+hook.
 
-The same constraint closes a gap that the `Any`'s one framing leaves open (§"The file is a binary `Any`, so a program
-built it"). The framing gives every parser the same payload bytes, but parsers can still disagree on how to read them.
-The hook refuses a payload that carries a known field in a wire type other than its own. Any other bytes its parser
-cannot place as a known field become unknown fields, which the rule refuses when they are new or changed. So a payload
-that the browser reads differently from the hook cannot carry a new tick past the hook.
-
-A merge has more than one version before it, and the rule holds against every parent. Suppose the branch is at `c41e…`,
-where a curator has ticked PM2. The curator's commit U, on `c41e…`, unticks PM2. The agent's commit A, also on `c41e…`,
-edits only PS3 and still has PM2 ticked. A merge M takes the agent's side of the file:
+A merge commit has more than one parent, and the ownership rule must hold against every parent individually
+([`themis/widgets/commits.py`](../../themis/widgets/commits.py)). Suppose the branch is at `c41e…`, where a curator has
+ticked PM2. The curator's commit `U` on `c41e…` unticks PM2. The agent's commit `A`, also branched from `c41e…`, edits
+only PS3 and still has PM2 ticked. A merge commit `M` takes the agent's side of the file:
 
 ```
 c41e…  PM2 ticked
@@ -427,39 +469,42 @@ c41e…  PM2 ticked
   └── A  agent edits PS3, PM2 ticked ───┴── M  merge keeping A's file
 ```
 
-M matches parent A exactly, with the same PM2 content and the same tick. Checked against A alone, M would pass and
-silently undo the curator's untick. Against U, M's tick on PM2 changed while PM2 did not, so M is refused. Holding a
-merge to every parent means the agent can never merge a user's edit to a widget file, because a merge that takes in the
-user's change to a guard breaks the rule against the agent's own parent. That costs nothing, since the agent rebases
-onto the user's commits instead of merging them (§"Each writer's change is checked where it passes").
+`M` matches parent `A` byte-for-byte on PM2, with the same content and the same tick. If the hook checked `M` against
+only one parent or checked only what `M` introduced beyond both parents together, `M` would pass and silently undo the
+curator's untick in `U`. Checked against `U`, `M` sets a tick on PM2 where `U` had none, so the hook refuses `M`.
+Requiring a merge commit to satisfy the rule against every parent means the agent cannot merge a branch in which a user
+edited a widget file, because keeping the user's guard change violates the rule against the agent's parent, while
+dropping it violates the rule against the user's parent. Instead, the agent rebases onto the user's commits (§"Each
+writer's change is checked where it passes").
 
-The schema has no separate declaration of who writes a field. A user's edit may change only guards (§"Each writer's
-change is checked where it passes"), so the guards are exactly the fields a user writes, and a second option stating the
-same fact could disagree with the first.
+The schema needs no separate option declaring who writes a field. Because the browser's write path allows a user edit to
+change only guards (§"Each writer's change is checked where it passes"), the guards are the exact set of user-writable
+fields, and a second option stating the same fact could only disagree with the first.
 
-Freezing a judged element would keep every tick: while a guard is set, the agent could change nothing it protects. It
-lost because the agent's work has to stay revisable. When new evidence arrives the agent must be able to correct a claim
-a curator has ticked. Under a freeze it could do that only by removing the item and adding it again under a new key,
-which loses the tick anyway and hides that the item is the same one.
+Other models for keeping judgements valid were rejected:
 
-Stamping each judgement with the commit it was made on, a `judged_commit`, would keep the tick in the file and let a
-reader work out whether the item has changed since. It keeps more than a cleared guard does, since a reader could show
-that the tick was given on an earlier version and what has changed. It lost because every reader, the agent included,
-would have to recompute staleness from the history before trusting a tick, and a reader that skipped the step would take
-a stale tick for a current one. Under the guard rule, no change the agent makes can leave a tick beside content other
-than the content it was given on, so a reader can take a tick in the file to refer to the content next to it.
+- **Freezing a judged element.** Preventing the agent from changing any field protected by a set guard would preserve
+  every tick, at the cost of making reviewed work uneditable. When new evidence arrives, the agent must be able to
+  revise a claim a curator has already ticked. Under a freeze, the agent could revise the claim only by deleting the
+  element and re-adding it under a new key, which still loses the tick and obscures that the element is the same one.
+- **Stamping each judgement with `judged_commit`.** Recording the commit hash on which the user made each judgement
+  would let the tick stay in the file after an edit and let readers compute whether the item had changed since. That
+  preserves history inside the file, at the cost of requiring every reader—including the agent—to diff git history
+  before trusting any tick. A reader that forgot to check history would mistake a stale tick for a current one. Clearing
+  the guard on change means any tick present in the file always applies to the content beside it.
 
 ### A guard protects everything beside it unless it says otherwise
 
-The obvious way to say what a guard judges is to list it, with a `protects` option naming the fields the tick is about.
-Each guard's scope would then read straight off its declaration. It fails in the dangerous direction when a schema
-grows. A field added later and left off the list is unprotected, so the agent can change it under a standing tick and
-nothing reports it. The guard option works the other way round: every field of the guard's message is protected, and
-`ignores` names the exceptions. A field someone forgot to think about stays protected, and the worst the omission does
-is clear a tick that could have stayed.
+The obvious way to specify what a guard judges is an explicit allowlist, such as a `protects` option naming the fields
+the tick covers. While an allowlist makes the guard's scope explicit at declaration time, it fails unsafely when a
+schema evolves: if an engineer adds a field later and forgets to add it to `protects`, the new field is unprotected, and
+the agent can change it under a standing tick without clearing the judgement. The `guard` option inverts that default:
+every sibling field in the message is protected automatically, and `ignores` names the exceptions. If an engineer adds a
+field and forgets to consider `ignores`, the new field is protected by default, and the worst consequence is clearing a
+tick that could have stayed.
 
-Depth follows the same argument. A guard protects everything beneath the fields of its message, nested lists included,
-unless `ignores` names the field. Here is a sketch of an evidence-tree node whose claim rests on its sub-nodes:
+Nested messages follow the same rule. A guard protects everything beneath the fields of its message, including nested
+lists, unless `ignores` names the field. Consider an evidence-tree node whose claim rests on its child nodes:
 
 ```proto
 message Node {
@@ -471,223 +516,220 @@ message Node {
 }
 ```
 
-Suppose a curator accepts the PS3 node, whose claim that functional studies support a damaging effect rests on two
-children, one per study. The agent later rereads one of the studies and changes that child's claim. Under the default,
-the child is part of PS3's protected content, so PS3's acceptance clears and the curator reviews PS3 again. That is
-right when accepting PS3 meant accepting the argument beneath it. A schema in which accepting a node judges only its own
-claim, with each child accepted separately, declares that with `ignores: ["children"]`. Each child's own `accepted` is a
-guard, so it is never part of PS3's protected content, and a curator accepting a child never clears its parent. The
-dependency runs one way only: a child's acceptance judges the child's own content, so a change to PS3's claim clears
-PS3's acceptance and leaves the children's standing.
+Suppose a curator accepts the PS3 node, whose claim that functional studies support a damaging effect rests on two child
+nodes, one per study. The agent later re-reads one study and changes that child's `claim`. Under the default rule, the
+child's content is part of PS3's protected content, so PS3's `accepted` guard clears and the curator reviews PS3 again.
+That matches a tree where accepting a parent node means accepting the argument beneath it. A schema in which accepting a
+node judges only its own `claim`—with each child accepted independently—declares `ignores: ["children"]`. Even under the
+default rule, each child's own `accepted` field is a guard and therefore excluded from PS3's protected content, so a
+curator ticking a child never clears its parent. The dependency runs upward only: changing PS3's own `claim` clears
+PS3's `accepted` guard while leaving the children's `accepted` guards intact.
 
-A guard declared without anyone thinking about depth then clears a tick too often rather than keeping one too long,
-which is the cheaper of the two mistakes (§"A user's judgement stands only while what it judges is unchanged").
-`ignores` is for a field the judgement is not about, and naming it is a decision somebody makes on purpose.
+A CI schema check (`check_schema` in [`themis/widgets/ownership.py`](../../themis/widgets/ownership.py) and
+[`apps/web/src/widgets/ownership.ts`](../../apps/web/src/widgets/ownership.ts)) rejects any payload schema to which the
+ownership rule cannot be applied, such as a repeated message that holds a guard without marking a single scalar
+`element_key`, a map whose values hold guards, a closed enum, or an `ignores` entry that names a non-existent field, an
+`element_key`, or another guard.
 
-A CI test fails a payload type the rule cannot be applied to, such as a list whose elements hold a guard but mark no
-key, or an `ignores` entry that is not a field of the guard's message.
+During a deployment, the sandbox worker checking a push may run a build older than the schema with which an asset was
+written. That older worker reads the widget options as they stood when it was built. For a released message, an older
+hook may check an asset more strictly than a newer hook, never more laxly, because a laxer hook would let the agent
+change content beside a guard the older build does not know about. Because `buf breaking` does not inspect custom
+protobuf options, the compatibility gate ([`buf_compat.py`](../../tools/schema/buf_compat.py)) compares the widget and
+ownership options of every released message against the baseline ref:
 
-The worker checking a push may run a build older than the schema an asset was written with, during a deploy. Such a
-build reads the widget options as they were when it was built. The principle for a released type is that an older hook
-may check an asset more strictly than a newer one, never more laxly, since a laxer hook would let the agent change
-content beside a guard it cannot see. `buf breaking` reads no custom option, so the compatibility gate
-([`buf_compat.py`](../../tools/schema/buf_compat.py)) compares the widget options of every released message beside it.
-It allows a difference between builds only where one cannot be avoided, and it refuses the rest:
-
-- a released field keeps whether it is a guard and whether it is an element key;
-- a guard's `ignores` may gain a field only if the field is new in the same change. An older hook holds that field
-  byte-identical as an unknown field, which is stricter;
-- a guard's `ignores` may not lose an entry, because an older hook would still ignore the field and let the agent change
-  it under a standing judgement;
-- a released message gains no guard. An older hook, not knowing the new field is a guard, holds it byte-identical as an
-  unknown field, where the newer rule requires it to clear when what it judges changes, so the two builds would
-  disagree;
-- nor does a released message gain a guard beneath a message that held none, the case below;
-- a released message neither gains nor loses its `widget` mark.
-
-The rule descends only into messages that held a guard when a build was made. Suppose an evidence-tree payload was
-released with a `Node` that held no guard, and a later change adds `accepted` to it. A hook built before that change
-does not look inside `Node` for guards at all, so it would not hold the agent to the new judgement, not even as an
-unknown field.
+- A released field cannot gain or lose `guard` or `element_key`.
+- A guard's `ignores` list may gain a field only if that field is added in the same change. An older hook treats the new
+  field as an unknown field and holds it byte-identical, which is stricter than ignoring it.
+- A guard's `ignores` list cannot drop a field, because an older hook would still ignore that field and let the agent
+  change it under a standing judgement.
+- A released message cannot gain a new guard field. An older hook, not knowing the new field is a guard, would hold it
+  byte-identical as an unknown field, whereas the newer build requires it to clear when its protected content changes,
+  so the two builds would disagree.
+- A released message that previously held no guards (directly or in nested messages) cannot gain a guard beneath it. The
+  ownership check descends only into submessages that hold guards; an older hook would not descend into that submessage
+  at all, leaving the new guard unchecked even as an unknown field.
+- A released message cannot gain or lose the `widget` option.
 
 ### Each writer's change is checked where it passes
 
-The two writers reach the repository by different routes, and each route checks its writer's side of the rule.
+The agent and the curator write to the repository through different paths, and each path enforces its writer's side of
+the ownership rule.
 
-The agent's pushes pass the pre-receive hook. The hook knows nothing about widgets: the sandbox worker hands it this
-check, as it hands it the protected paths ([`sheaf.md`](sheaf.md) §"Protecting what the agent must not write"). An
-asset, to the hook, is a changed file that parses as a `google.protobuf.Any` naming a type in the widgets package,
-`themis.widgets`. Any other file, such as a PNG, a markdown file or bytes that are no `Any`, is not an asset to the hook
-and passes it. For each new commit, the check takes every asset the commit writes differently from any one of its
-parents, and holds it to the rule against every parent. The protected-path check reads a merge another way. It looks at
-what the merge introduces compared with all its parents together, so a merge that takes one side's protected file
-unchanged introduces nothing and passes. Under the widget check, a merge that takes one side's asset unchanged still has
-to keep the rule against the other side, which is how M in the previous section is refused.
+Every agent push passes sheaf's pre-receive hook. Sheaf itself is domain-agnostic; the sandbox worker passes it the
+widget content check
+([`themis/services/sandbox_worker/widget_check.py`](../../themis/services/sandbox_worker/widget_check.py)) alongside the
+protected-path list ([`sheaf.md`](sheaf.md) §"Protecting what the agent must not write"). To the hook, a widget asset is
+any changed regular file that parses as a `google.protobuf.Any` whose type URL falls under `themis.widgets.`. Any other
+file—such as a PNG, a markdown file, or bytes that do not parse as an `Any`—is not a widget asset and passes the widget
+check untouched. For each pushed commit, the check inspects every widget asset that differs from any parent and verifies
+the ownership rule against every parent individually. That differs from sheaf's protected-path check on a merge commit:
+the protected-path check compares a merge against all of its parents together, so a merge that takes one parent's
+version of a protected file unchanged introduces no new change and passes. The widget check compares a merge against
+each parent separately, which is why merge `M` in the previous section is refused.
 
-The hook refuses an `Any` that names a widgets-package type its build does not know, or whose payload does not parse,
-and names the file, because it cannot read the guards in it. A document that names a file the agent has not written yet
-still passes, since the hook reads only the files a push changes.
+If a changed `Any` names a `themis.widgets.` type that the worker's build does not know, or if its payload bytes fail to
+parse or use mismatched wire types, the hook refuses the push and names the file, because it cannot check the guards in
+that file. A commit whose `working_document.md` embeds a path the agent has not written yet still passes the hook,
+because the hook inspects only the files changed in the push.
 
-The agent should rarely meet a refusal, because the same check runs earlier. The helper's `update` carries a judgement
-across only where its protected content is unchanged, and reports each judgement it clears, so the agent knows which
-items the user has to review again. The helper and the linter both apply the rule before the push, against the versions
-the hook will compare the file with, and each failure says how to comply.
+In normal operation the agent does not hit hook refusals, because the sandbox runs the same checks before pushing. The
+helper's `update` function carries judgements across only where their protected content is unchanged and logs any
+cleared judgements to stderr so the agent knows which items need fresh curator review. Both `write`/`update` in the
+helper and `themis.document_linter` run `against_push` ([`themis/widgets/commits.py`](../../themis/widgets/commits.py))
+against `HEAD` and any unpushed commits on the branch, reporting violations with instructions on how to fix them before
+`git push` runs.
 
-The agent rebases onto the user's commits rather than merging them, since a merge that takes in a user's judgement is
-refused. Rebasing replays each of the agent's commits on top of the user's latest version, and the sandbox's git rebases
-when it pulls. When the rebase stops on a widget file that both sides changed, the agent resolves it with `update`,
-which rebuilds the file from the user's version and carries each judgement across where what it judges is unchanged. The
-hook checks the result as it checks any push.
+Because a merge commit that incorporates a user's guard edit is refused by the hook, the agent rebases onto the user's
+commits (`git pull --rebase`) instead of merging them. Rebasing replays the agent's commits on top of the user's latest
+commit. When a rebase stops on a widget file that both the user and the agent changed, the agent resolves the conflict
+by running `update`, which reads the user's committed version at `HEAD` and carries each judgement across wherever its
+protected content matches the agent's new version.
 
-On the user's side, a widget's edit changes only guards, and the browser's write path checks that the new payload
-differs from its version at the edit's base in guards alone. When the agent has moved the tip, the edit is applied there
-only under the condition the walk-through gives. The browser writes the asset in the one framing. The payload inside is
-the widget's re-encoding of what it decoded, and that re-encoding carries back unchanged any field the browser's build
-does not know ([`workbench-workspace.md`](workbench-workspace.md) §"A curator's edit is rebased onto the tip, file by
-file").
+On the curator's side, a widget edit in the browser may change only guards. Before publishing an edit, the browser's
+SharedWorker runs `checkUserEdit` ([`apps/web/src/widgets/user-edit.ts`](../../apps/web/src/widgets/user-edit.ts)) to
+verify that the new asset bytes keep the same payload type, use the canonical encoding, pass validation, and differ from
+the base commit's version in guards alone. When the agent has moved the branch tip while the curator was viewing the
+document, the browser's SharedWorker
+([`apps/web/src/workspace-copy/publish.ts`](../../apps/web/src/workspace-copy/publish.ts)) rebases the curator's commit
+onto the new tip only if the asset file at the tip has the same blob and mode as the base commit the curator edited.
+When re-encoding the edited payload, the browser preserves any unknown fields from a newer agent build unchanged
+([`workbench-workspace.md`](workbench-workspace.md) §"A curator's edit is rebased onto the tip, file by file").
 
-The browser's check is the only one a curator's edit meets. The BFF checks only that the curator belongs to the
-Analysis's Project, and a publish does not pass the hook. That follows from the trust placed in each writer: the browser
-is trusted, so its check guards against a defective widget, one that would change a field it should not. Script running
-on the page could publish through the BFF directly and skip the check, and keeping script off the page is the renderer's
-job everywhere ([`agent-output-rendering.md`](agent-output-rendering.md)). This write path adds no defence of its own.
+`checkUserEdit` in the browser is the only content check a curator's edit passes; the BFF checks only that the curator
+is authorised for the Analysis's Project, and curator publishes do not run the pre-receive hook. That matches the trust
+boundary: the browser is a trusted writer, so `checkUserEdit` guards against a bug in a widget component that might
+accidentally mutate an agent-owned field. Malicious script running in the page could call the BFF directly and bypass
+`checkUserEdit`, and keeping script out of the page is the markdown and widget renderer's responsibility everywhere
+([`agent-output-rendering.md`](agent-output-rendering.md)).
 
 ### Drawability is checked where the file is, and tolerated where it is shown
 
-The document is the tip of a branch, and a push lands whether or not the document at its tip can be drawn
-([`workbench-workspace.md`](workbench-workspace.md)). The linter and the renderer apply the same drawability rules. The
-linter applies them while the agent holds the file and can fix it; the renderer applies them to what it is asked to
-draw. A document draws in full when:
+Because `working_document.md` sits at the tip of the working branch, every push lands whether or not the document at its
+tip is currently drawable ([`workbench-workspace.md`](workbench-workspace.md)). The sandbox linter and the browser
+renderer apply the same drawability rules at different points in the lifecycle: the linter runs while the agent holds
+the workspace and can fix problems, and the renderer runs when displaying a revision. A document draws in full when:
 
-- `working_document.md` exists at the root of the revision's tree;
-- every `::embed` stands alone on a line at the top level of the document, written exactly as `::embed[<path>]` (§"One
+- `working_document.md` exists at the root of the revision's git tree;
+- every `::embed` stands alone on a line at the top level of the document, written as `::embed[<path>]` (§"One
   directive, and the file names its own type");
-- every path the document names, an `::embed` file or an image, is over the admitted character set and resolves segment
-  by segment to a regular file in the tree, with no absolute path and no segment that is empty, `.` or `..`;
-- every widget file decodes as a marked type: the `Any` is in the one framing, its type names a message the build knows
-  and the option marks, its payload parses as that message, and the message passes protovalidate. Checking the type
-  alone would accept bytes that do not decode, and decoding alone would accept a payload missing a field its component
-  needs;
-- every image's bytes are one of a fixed set of raster formats: PNG, JPEG, WebP or GIF.
+- every path the document names (for an `::embed` asset or an image) uses only characters from `A-Z`, `a-z`, `0-9`, `-`,
+  `_`, `.`, and `/`, and resolves segment by segment to a regular file in the revision's tree, with no leading `/`, no
+  empty, `.`, `..`, or `.git` segments, and no symbolic links;
+- every widget asset decodes as a marked payload type: the outer `Any` is in the canonical framing, its type URL names a
+  message in the descriptor pool marked with `(themis.widgets.models.widget) = true`, its payload bytes parse as that
+  message with matching wire types, and the message passes its protovalidate rules;
+- every image file's bytes match one of the admitted raster formats: PNG, JPEG, WebP, or GIF.
 
-For everything that fails, the renderer draws a neutral placeholder naming the path and the problem, and renders the
-rest of the document. The client draws a value that a tab's build does not know the same way
-([`agent-output-rendering.md`](agent-output-rendering.md)): a partly drawn document is worth more than none, and the tip
-is partly drawn whenever the agent has written a directive and not yet its file. A component that fails while drawing is
-contained the same way. The placeholder replaces that one widget, and a failure of the document as a whole is confined
-to the document pane.
+Whenever any of those conditions fails for an embed, the renderer draws a neutral placeholder
+([`apps/web/src/components/widgets/placeholder.tsx`](../../apps/web/src/components/widgets/placeholder.tsx)) naming the
+path and the reason, and renders the rest of the document normally. That matches how the client handles an unknown enum
+or oneof value during a rolling deploy ([`agent-output-rendering.md`](agent-output-rendering.md)): a partially drawn
+document is more useful than a blank pane, and the branch tip is legitimately incomplete whenever the agent has
+committed `working_document.md` before writing all of its assets. A runtime error thrown inside a widget component is
+caught by a React error boundary around that single embed and replaced by the same placeholder, isolating the failure to
+that widget.
 
-The linter reports each error to the agent, the one party that can fix it, while the agent still holds the file. It
-ships into the sandbox beside the helper, reads the marked types from the same descriptors, and reports each failing
-directive with the reason, so the agent fixes it before it commits, or after it sees the placeholder in the
-conversation. It also reports an `::embed` that is nested or malformed, and a file the push would not carry, one that is
-untracked or ignored by git, since the browser only ever sees what was pushed.
+The linter ([`themis/document_linter/`](../../themis/document_linter/)) reports every drawability or ownership problem
+to the agent while the agent can still fix it before pushing. It runs in the sandbox alongside the widget helper, reads
+the marked types from the same protobuf descriptors, and checks both markdown syntax and git tracking state: if an
+embedded file is untracked or ignored by git, the linter flags it because no push would carry it to the browser.
 
-Nothing stops a push that fails the linter. The pre-receive hook is the one point the producer cannot skip, so checking
-drawability there would mean a stored revision could never be undrawable. But the document is a branch tip, and a gate
-there would either refuse the agent's ordinary work-in-progress commits or demand a second act that marks a state
-finished. A visible unfinished state costs less than either, and the linter gives the producer the same report where it
-can act on it.
+Nothing in the pre-receive hook blocks a push that fails the linter. Enforcing drawability in the hook would guarantee
+that every stored revision renders without placeholders, at the cost of either rejecting the agent's intermediate
+work-in-progress commits or requiring a separate "publish finished document" step. Tolerating an unfinished state at the
+branch tip with a visible placeholder is simpler than either alternative, and the linter gives the agent the exact same
+diagnostics inside the sandbox.
 
-The linter parses the document as generic markdown, with a directive rule that understands fences and code spans, and
-reads `::embed` lines and images out of the syntax tree. A directive inside a fenced block or a code span is text to the
-linter and the browser alike, so it is neither checked nor drawn.
+Both the linter and the renderer parse the document as CommonMark with GFM tables and leaf directives, so an `::embed`
+inside a fenced code block or inline code span is treated as literal code text by both and is neither linted nor drawn.
 
-Images are raster because an SVG is a document the browser interprets, with scripts, event handlers and links. Inside an
-`<img>` tag the browser neutralises all of that. But the client draws each image from a `blob:` URL over the bytes in
-its copy of the repository, and a `blob:` URL is same-origin and can be opened: a curator who opens the image in a new
-tab would load the SVG as a page on the workbench's origin, where its script runs in the curator's session. A run that
-read a hostile page could write that file. Admitting SVG would need a safeguard that makes the bytes inert wherever they
-can be reached. One option is an allowlist of elements and attributes applied by both the linter and the renderer, which
-is a second parser to maintain. The other is rasterisation in the client before anything gets a URL. A vector drawing
-the agent produces is better expressed as a widget, typed data the client draws. So images stay raster, and whichever
-safeguard is chosen is built when a need for SVG figures appears.
+Images in the working document are restricted to raster formats (PNG, JPEG, WebP, GIF) because SVG is an executable
+document format that can contain `<script>` tags, event handlers, and external links. Although browsers disable scripts
+when rendering an SVG inside an `<img>` tag, the workbench serves workspace files from its local copy via same-origin
+`blob:` URLs: if a curator opened an SVG image in a new tab, the browser would execute its scripts in the workbench's
+origin under the curator's session. A prompt-injected agent that read a hostile web page could write such an SVG into
+the workspace. Supporting SVG safely would require either maintaining an element-and-attribute sanitizer in both the
+linter and the renderer, or rasterising SVGs in the client before creating a `blob:` URL. Any structured diagram the
+agent produces is better represented as a typed widget drawn by client code, so images remain raster-only unless a
+concrete need for SVG figures arises.
 
 ### Widgets over live data carry references, not bytes
 
-Some widgets draw data far larger than a revision should hold: aligned reads at a locus, coverage across a region, a
-reference track. The file carries what identifies the data (sample ids, the locus, the tracks) and never the data
-itself. The client reads ranges through an authenticated app route on the pattern the paper pane uses: the route
-resolves the object and redirects to a short-lived signed URL, so the bytes flow between the browser and the bucket
-([`document-pane.md`](document-pane.md) §"Backend seam"). The route has its own resolver, scoped to the Project and
-pinned to the case-genomes bucket, because a resolver never spans two buckets. Every request signs afresh, so when a
-curator loses access, it takes effect at their next read, even in a session left open at one locus.
+Some widgets display data far too large to store inside a git revision, such as aligned sequencing reads at a locus,
+coverage across a region, or a reference genome track. For these widgets, the asset file carries only the references
+that identify the slice of data (sample IDs, the genomic locus, and track identifiers), never the underlying data bytes.
+The browser fetches byte ranges through an authenticated app route following the same pattern as the paper pane: the
+route resolves the object and responds with a redirect to a short-lived signed GCS URL so the bytes stream directly
+between the browser and the bucket ([`document-pane.md`](document-pane.md) §"Backend seam"). That route uses its own
+resolver, scoped to the Project and pinned to the case-genomes bucket, because a storage resolver never spans multiple
+buckets. Because every range request signs a fresh URL, revoking a curator's access takes effect on their next read,
+even in a tab left open at a locus.
 
-Size is not the only reason. A pushed revision never changes and stays readable by the Project for as long as it exists,
-while an authorisation decision has to be made on each read, against the reader, at the time of the read. Baking a slice
-of patient data into a committed file would move that decision to commit time and apply it to the wrong subject.
+Keeping raw genomic slices out of git revisions is also an authorisation requirement. Every pushed git revision is kept
+indefinitely and remains readable by anyone in the Project, whereas access to patient genomic data must be checked
+against the reader at the time of each read. Embedding a slice of patient reads inside a committed widget asset would
+freeze that access check at commit time and apply it to the wrong principal.
 
-The data such a widget reads is the Analysis's input. Whether that input can change under an Analysis is a question for
-the Analysis rather than the widget ([`workspace-model.md`](workspace-model.md) §"Open questions"), so a widget carries
-no checksum or version of the data it names.
+The genomic data such a widget reads is part of the Analysis's input datasets. Whether those input datasets are pinned
+or can change beneath an Analysis is a workspace-level question ([`workspace-model.md`](workspace-model.md) §"Open
+questions"), so the widget payload carries no checksum or dataset version of its own.
 
-The aligned-reads view is the example of this class: its file names the locus, the samples and the tracks, and the
-client fetches ranges through the authorising route, with the reference genome and shared tracks resolved the same way.
-It depends on things this design does not supply. The case data needs per-sample alignments to read from. And the route
-has to resolve a sample to a Project before it signs a read, because a Project is the access boundary over datasets as
-well as users ([`workspace-model.md`](workspace-model.md)). In the sandbox, a sample id can only reach the sample
-registry, so checking the session is enough. A browser route can be asked for any sample id, so it has to check that the
-sample belongs to the curator's Project before it signs.
+An aligned-reads view is the prototype for this class of widget: its asset names the genomic span, the sample IDs, and
+the tracks, and the browser fetches BAM/CRAM ranges through the authorising route alongside the reference genome and
+shared annotation tracks. Building that widget depends on pieces outside this doc's scope: per-sample alignment files in
+the case datasets, and a Project-membership check on sample IDs in the browser route. Inside the sandbox, a sample ID
+can only reach the sample registry configured for the session, so checking the session is sufficient; a browser route
+can be asked for any sample ID and must verify that the requested sample belongs to the curator's Project before signing
+a read URL ([`workspace-model.md`](workspace-model.md)).
 
-Ranged reads through a redirecting route rely on browser behaviour defined by the Fetch standard: a browser re-issues a
-redirected `GET` with the original headers, dropping only `Authorization` when the redirect crosses origins
-([Fetch Standard, "HTTP-redirect fetch"](https://fetch.spec.whatwg.org/#http-redirect-fetch)). So a `Range` header
-survives the redirect to the signed URL, and the case-genomes bucket's CORS rule has to admit it.
+Ranged reads across a redirecting route rely on standard Fetch behaviour: when following an HTTP redirect on a `GET`,
+the browser re-issues the request with the original `Range` header and drops only `Authorization` when crossing origins
+([Fetch Standard, "HTTP-redirect fetch"](https://fetch.spec.whatwg.org/#http-redirect-fetch)). The case-genomes bucket's
+CORS policy must therefore allow the `Range` request header.
 
 ### The SVCv4 classification and the pedigree
 
-Beyond the checklist in the walk-through, the design was pressure-tested against three types: the SVCv4 classification,
-the hardest structure the scenario needs; the pedigree, the simplest thing that is not prose; and the aligned-reads view
-above, whose data cannot live in a revision.
+Beyond the checklist in the walk-through, this design was shaped by the SVCv4 classification (the most complex
+structured record in the curation workflow), the pedigree (the simplest diagram that does not fit in prose), and the
+aligned-reads view above (whose data lives outside the git revision).
 
-The SVCv4 classification draws one run's point tally: the routing, a row per evidence code with its status, points,
-evidence and reasoning, and the curator's tick and note at three levels. Its payload is a message of its own that shares
-the curator's worksheet's vocabulary, so the run-review loop reads both sides in the same terms.
-[`svcv4-classification-widget.md`](svcv4-classification-widget.md) is its design.
+The SVCv4 classification widget draws one run's point tally: the routing choice, a row per evidence code with its
+status, points, evidence, and reasoning, and the curator's tick and note at the item, code, and overall classification
+levels. Its payload
+([`svcv4_classification.proto`](../../schema/proto/themis/widgets/models/svcv4_classification.proto)) shares the
+vocabulary of the curator's worksheet so the run-review loop can compare agent runs against human curations in the same
+terms. [`svcv4-classification-widget.md`](svcv4-classification-widget.md) covers its design in full.
 
-A pedigree draws the family behind a proband as the chart a clinical geneticist reads. Its payload names the locus the
-chart is about, as a genomic span. How it represents the family is decided with the type, starting from grus
-([github.com/populationgenomics/grus](https://github.com/populationgenomics/grus)), CPG's open-source pedigree IR in
-protobuf, with a renderer and importers.
+A pedigree widget draws the family structure around a proband as a standard clinical pedigree chart. Its payload names
+the genomic locus the chart describes using a `GenomicSpan`. Its family representation will build on grus
+([github.com/populationgenomics/grus](https://github.com/populationgenomics/grus)), CPG's open-source protobuf pedigree
+intermediate representation and renderer.
 
 ## Alternatives considered
 
-- **A JSON payload in a fenced code block.** No proto, no generated code and no separate file, so it is the least
-  machinery. It lost because agent-written data would sit in the document as text the client parses and draws, the shape
+- **A JSON payload in a fenced code block.** Putting JSON directly inside `working_document.md` would avoid protobuf
+  schemas, generated code, and separate asset files. It was rejected because the model can hand-edit JSON in prose and
+  because parsing agent-written text blocks in the client to drive rendering reintroduces the failure modes that
   [`agent-output-rendering.md`](agent-output-rendering.md) rules out.
-- **A shared `Citation` type every payload embeds.** The reveal would be structural in every widget. It lost because it
-  fixes a shape before the payload that needs a richer citation exists, and some payloads have no use for the field.
-- **Rendering widgets to HTML or SVG on the server.** The client would need no component per type. It lost because it
-  puts markup back on the path from agent-written content to the page, and a server-drawn image cannot be interacted
-  with.
-- **One file per document holding every payload.** Fewer files to manage. It lost because the directive would need an
-  index into that file, which is the widget-name coupling again, and one unreadable file would lose every widget rather
-  than one.
-- **A user's judgement in a file of its own, on a path the agent may not write.** The existing protected-path rule would
-  keep the agent out with no new check. It lost because the payload's schema would no longer say which fields hold a
-  user's judgement, each widget type would need its own convention for where that file lives and how it refers to the
-  agent's items, and the two files could disagree about which items exist. A judgement kept apart from its content also
-  could not be cleared when that content changes, since the agent may not write the file that holds it.
-- **A git merge driver for widget files.** git would resolve a widget file that both sides of a rebase changed by
-  itself, applying the rule, so the rebase would not stop there. It lost because the agent already resolves such a stop
-  with one call to `update`, so a driver would only save it a turn.
-
-## Appendix: reading an embed's label as source text
-
-The linter and the renderer parse the document with different parsers, and each has to arrive at the same path for a
-label. The renderer's markdown parser parses a directive's label as inline content, as it does every label. The renderer
-ignores those parsed children. It takes the directive node's position in the source and slices the document's text
-between the label's `[` and `]`. The linter takes the same span as source text from its own parse. For
-`::embed[assets/_b_.binpb]`:
-
-```
-document text                ::embed[assets/_b_.binpb]
-renderer's parsed children   "assets/"  emphasis("b")  ".binpb"      ignored
-renderer's source slice      assets/_b_.binpb
-linter's source text         assets/_b_.binpb
-```
-
-Both readers produce `assets/_b_.binpb`, the file the agent wrote. A reader that used the parsed children would look for
-`assets/b.binpb`. The slice is right only if the label ends at the first `]` after its `[`, and only if the text between
-them means itself. The character set keeps `]` and the backslash out of any admitted path, so a label that passes it
-holds no escape and no bracket for the two readers to treat differently.
+- **A shared `Citation` message type embedded by every payload.** Sharing one `Citation` protobuf message across all
+  widget schemas would make the citation reveal uniform at the type level. It was rejected because it locks in one
+  citation shape before any payload needs figure or table coordinates, and several widgets (such as aligned reads or a
+  pedigree) do not cite literature at all.
+- **Rendering widgets to HTML or SVG on the server.** Server-side rendering into markup would spare the web client from
+  shipping a React component per widget type. It was rejected because it puts markup back on the path from agent-written
+  data to the page, and a static server-rendered image cannot support interactive curator ticks and notes.
+- **One bundle file per document holding every widget payload.** Packing all of a document's widgets into a single
+  binary file would reduce the number of files in the workspace. It was rejected because each `::embed` directive would
+  have to name a key inside that bundle (reintroducing a second identifier that can drift), and corrupting or
+  conflicting on that one file would break every widget in the document instead of one.
+- **Storing user judgements in a separate protected file.** Putting curator ticks and notes in a separate file on a path
+  the agent is forbidden to write would reuse sheaf's existing protected-path check without a custom content check. It
+  was rejected because the payload schema would no longer declare which fields are user judgements, each widget type
+  would need a separate convention for pairing judgements with items, and the two files could drift out of sync when
+  items change. Keeping judgements in a file the agent cannot write also makes it impossible for an agent edit to clear
+  a stale tick when the claim it judged changes.
+- **A custom git merge driver for widget assets.** Configuring a git merge driver in the sandbox would let `git rebase`
+  resolve conflicting widget files automatically by running the ownership carry rule during the rebase. It was rejected
+  because the agent already resolves a rebase stop on a widget file with one call to `update`, so a custom merge driver
+  would add git plumbing only to save a single tool call when a conflict occurs.

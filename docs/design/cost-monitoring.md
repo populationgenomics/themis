@@ -1,451 +1,560 @@
-# Design: Cost monitoring
+# Cost monitoring
 
-**Related:** [`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md) (the Anthropic-side identities each
-workload federates into, and their scopes), [`deployment.md`](deployment.md) (the GitHub-to-GCP federation pool CI runs
-authenticate through, and where a secret lives), [`spike-infrastructure.md`](spike-infrastructure.md) (§5 — GCP infra
-budgets, which this doc does not replace), [`agent-runtime.md`](agent-runtime.md) (the trace's per-turn token telemetry,
-and why a session's cost is not summed from it), [`managed-agents.md`](managed-agents.md) (how sessions come to exist),
-[`evidence-fulltext.md`](evidence-fulltext.md) (the conversion lane whose direct model calls this monitor counts).
+**Related:** [Claude API WIF runbook](../runbooks/claude-api-wif.md) (how workloads exchange GCP identities for
+Anthropic tokens), [Deployment](deployment.md) (GitHub-to-GCP Workload Identity Federation and deploy service account
+reach), [Agent runtime](agent-runtime.md) (how the CLI drives Managed Agents sessions and writes session traces),
+[Evidence full-text](evidence-fulltext.md) (the PDF convert worker that calls the Messages API directly),
+[PR screenshots](pr-screenshots.md) (why Pulumi grants use predefined IAM roles rather than custom roles)
 
 ## Overview
 
-Themis spends on Anthropic in three places, and only the invoice sees all three together. This doc designs the monitor
-that shows that spend as it happens — a dashboard, alerts, and a morning Slack report — without holding a credential
-that could read the invoice.
+Themis spends money on Anthropic in three places: Managed Agents sessions for the research agents, synthesizer, and
+critic; the PDF convert worker, which calls the Messages API (`messages.stream` with `claude-sonnet-5`) directly for
+page OCR; and Claude Code workflows in GitHub Actions for the review bot, the doc garden, and merge follow-ups. Without
+client-side cost telemetry, only the monthly invoice sees all three together. Anthropic's server-side usage and cost
+report endpoints cannot fill this gap for an automated service, because they require an organization-admin key
+(`sk-ant-admin...`) that spans every workspace in the organization and cannot be minted through Workload Identity
+Federation.
 
-- **Spend is observed client-side, by the code that incurs it.** The provider's own spend reports need an
-  organization-admin credential — no read-only or workspace-scoped form of them exists — and nothing in Themis holds
-  one. So each place our code or our tooling makes a billable call reports what it used: the **cost exporter** polls the
-  workspace's Managed Agents sessions, whose listing carries every session's cumulative usage and list cost; the
-  **convert worker** counts the tokens of each direct Messages API call at the call site; and the Claude Code runs in CI
-  export Claude Code's own usage metrics. Nothing else in the codebase bills.
-- **Tokens are the unit; dollars are derived at query time.** Tokens are the raw fact every source exposes. A list-price
-  table in the Pulumi program, rendered into every query it emits as literal multipliers, prices them for the dashboard,
-  the alerts and the report alike. Where the provider computes a dollar figure — a session's list cost, Claude Code's
-  own cost metric — that figure is kept, because it accounts for charges tokens cannot. A model the price table lacks
-  raises an alert rather than pricing at zero.
-- **One write path.** Every producer writes through OpenTelemetry over OTLP to Google's Telemetry API, and everything
-  downstream reads Cloud Monitoring with PromQL. Dashboard, alert policies, notification channel and the report Job are
-  Pulumi resources.
-- **Two series kinds, two query shapes.** A polled running total is a gauge whose window figure is the exact rise
-  between two samples and whose silence means the poller is dead; a counted event is a counter whose window figure is an
-  increase and whose silence means an idle lane. The freshness alert therefore watches the exporter alone.
-- **No store of record, no admin-capable identity.** Anthropic retains sessions until we delete them, so the API is the
-  raw store and drill-down is a live query; each producer's identity can write metrics and nothing more.
+Each producer therefore exports its own usage to Cloud Monitoring in the environment's GCP project through OpenTelemetry
+(`OTLPMetricExporter` targeting Google Cloud's OTLP endpoint `https://telemetry.googleapis.com:443`, which writes
+`prometheus.googleapis.com/<name>/gauge` and `prometheus.googleapis.com/<name>/counter` series). Where a producer's
+surface reports list-price dollars directly—Managed Agents on each `Session.usage.list_cost` field and Claude Code in
+its built-in OpenTelemetry cost counter—we export those dollar figures as the headline spend, because neither can be
+reconstructed from aggregate token counts alone. A session's cost includes container runtime and web searches alongside
+tokens, and a Claude Code turn's cost depends on whether that individual request crossed the 200k-token context tier.
+Only the convert worker lacks a provider dollar figure, so it exports a request-token counter and the Pulumi program
+([`infra/themis_infra/cost_prices.py`](../../infra/themis_infra/cost_prices.py)) multiplies those token counts by a
+static price table when rendering PromQL queries.
+
+From those Cloud Monitoring series, the Pulumi program
+([`infra/themis_infra/cost.py`](../../infra/themis_infra/cost.py)) builds three operator surfaces: a single 12-column
+Cloud Monitoring dashboard (`Themis — Anthropic Cost`) covering all three producers, four alert policies that page Slack
+on a 30-minute spend spike, a silent session exporter, unpriced convert-worker usage, or a failed morning report job,
+and a scheduled Cloud Run Job (`themis-cost-report`, `0 8 * * *` `Australia/Sydney`) that posts a 24-hour hourly spend
+chart and summary to Slack whenever the workspace spent money in the prior 24 hours.
 
 ## Background
 
-**Where the dollars are.** A direct Messages API response carries a `usage` block — token counts by component — and no
-price. A Managed Agents session carries cumulative `usage` too, and in addition a `list_cost`: model tokens at published
-list rates, plus web search and session running time
-([pricing](https://platform.claude.com/docs/en/about-claude/pricing)), rounded to the cent and growing as the session
-works. That is the only dollar figure readable with a workspace credential. The organization-wide usage and cost reports
-of the Admin API are readable with an Admin API key, an organization-admin token, or a key not scoped to a workspace
-acting with its owner's permissions; no read-only or workspace-scoped scope exists for them
-([authentication](https://platform.claude.com/docs/en/manage-claude/authentication)). Claude Code, when told to, exports
-its own metrics over OpenTelemetry: tokens by type and model, and a cost figure in dollars it computes per request.
+### Why we cannot read Anthropic's billing API
 
-**What bills, in this codebase.** Every use of the Anthropic SDK in Themis is one of three things. Managed Agents
-plumbing — the web tier creating sessions and sending and reading events, the dispatcher draining the work queue, the
-sandbox worker serving a session's tool calls — whose model calls all bill through the session. Read-only calls — the
-exporter listing sessions. And one direct model call: the convert worker transcribing a PDF
-([`evidence-fulltext.md`](evidence-fulltext.md)), the only Messages API caller
-([`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py)). Outside the codebase, the review bot,
-the doc garden and the merge follow-ups run Claude Code in GitHub Actions under the workspace's CI identity. That is the
-whole list, and it is what the monitor covers.
+Anthropic exposes organization-level usage and cost endpoints (`/v1/organizations/usage_report/messages` and
+`/v1/organizations/cost_report`), but both sit behind an organization-admin key (`sk-ant-admin...`). That key has
+administrative reach across every workspace in the organization and cannot be minted short-lived through Workload
+Identity Federation (see the [Claude API WIF runbook](../runbooks/claude-api-wif.md)).
 
-**What a sessions listing returns.** The listing carries each session's full usage, so one paginated listing is a
-complete snapshot of cumulative cost for every session ever created. Three properties of the API shape the design:
+Workloads in Themis instead authenticate to Anthropic by exchanging a GCP service account identity for a short-lived
+workspace token (`workspace:developer` or `workspace:inference`). Workspace tokens can run models and list resources
+inside a single workspace, but cannot read organization billing reports. Observing spend without holding a long-lived
+org-admin secret therefore requires reading usage from the workspace's own API surfaces and callers.
 
-- **There is no change feed.** Sessions filter by creation time, status and agent, never by "updated since", and nothing
-  pushes usage changes. Any monitor is a poller re-summing full listings.
-- **Cost can grow at any age.** A session that finishes its work goes idle, not terminated, and accepts new events
-  indefinitely, so last month's session can resume tomorrow and spend more. Anthropic retains sessions until explicitly
-  deleted ([retention](https://platform.claude.com/docs/en/manage-claude/api-and-data-retention)); nothing ages out.
-- **Archived sessions are excluded by default.** A naive listing under-counts; the monitor asks for them.
+### The three Anthropic spenders
 
-**How a session's list cost is made up.** For a Themis session it has three components: model tokens at list price,
-session runtime at a flat rate per hour the session had a thread running (the session reports those seconds), and
-server-side web searches at a flat rate per request (the session reports the count; web fetch is free). Tool execution
-runs in our own sandbox, so no server-side execution charge applies. A session reports no model; which model an agent
-runs is its configuration.
+Themis makes billable Anthropic calls across three execution surfaces:
 
-**What Cloud Monitoring accepts.** Points are immutable once written — no upsert, no backfill beyond a day, 24 months of
-retention — so the monitor must feed it only values that never need rewriting. Google's ingestion path for application
-metrics is OpenTelemetry: OTLP to the Telemetry API, which files each metric as a Prometheus-style series readable by
-its OTLP name in PromQL. The API places a point by two labels it derives from the OpenTelemetry resource, a location and
-an instance, and drops a point lacking either. Its metrics ingestion is in Preview.
+1. **Managed Agents sessions** ([`agent-runtime.md`](agent-runtime.md)): Workloads create and drive sessions on the
+   Managed Agents service (`v1/sessions`). While a session runs and after it finishes,
+   `beta.sessions.list(include_archived=True)` returns typed `Session` objects with `session.agent.name` and cumulative
+   `session.usage`. The typed `usage` object carries `list_cost` (whole-cent USD `BetaManagedAgentsCost`),
+   `active_seconds`, `server_tool_use.web_search_requests`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`,
+   and `cache_creation` split into `ephemeral_1h_input_tokens` and `ephemeral_5m_input_tokens`.
+1. **The PDF convert worker** ([`evidence-fulltext.md`](evidence-fulltext.md)):
+   [`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py) is the only place in the codebase that
+   calls the Messages API directly (`client.messages.stream(...)` using `_MODEL = 'claude-sonnet-5'`), running page OCR
+   outside any Managed Agents session. Each completed stream yields a final message carrying `usage` (`input_tokens`,
+   `output_tokens`, `cache_read_input_tokens`, and `cache_creation_input_tokens`), `model`, and `stop_reason` (while a
+   stream interrupted mid-flight records tokens seen so far under `stop_reason='unfinished'`).
+1. **Claude Code in GitHub Actions**: Outside the Python codebase, `.github/workflows/internal-review.yml` and companion
+   workflows run Claude Code in GitHub Actions. Claude Code ships with built-in OpenTelemetry support
+   (`CLAUDE_CODE_ENABLE_TELEMETRY=1`) that emits two cumulative counters per process: `claude_code.token.usage`
+   (labelled by `model` and `type`) and `claude_code.cost.usage` (labelled by `model`, in USD), configured via the
+   action's `settings.env` block (including `"OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES": "false"` so resource attributes
+   such as `service.namespace` stay on `prometheus_target` rather than being duplicated onto metric labels).
 
-**Who else looks at cost.** The trace records each turn's token usage for engineering analytics on analysis runs
-([`agent-runtime.md`](agent-runtime.md)), but only for sessions that produce a trace, and the trace's spans cannot be
-summed to a session's cost. Workspace spend accrues from every session — analysis runs, eval loops, ad-hoc experiments —
-and from calls that are not sessions at all. That is this monitor's gap.
+### How a Managed Agents session is priced
+
+Calling `beta.sessions.list(include_archived=True)` returns all `Session` objects in the workspace—including archived
+sessions—regardless of which machine started them or whether a caller crashed mid-run. Every session created by Themis
+carries `session.agent.name` inline, and `session.usage` exposes `list_cost` (cumulative list-price cost in whole USD
+cents), `active_seconds`, and `server_tool_use.web_search_requests` directly on the typed SDK model
+(`anthropic>=0.96.0`).
+
+A session's `list_cost` is the sum of three distinct charges:
+
+- **Container runtime**: `usage.active_seconds` billed at `$0.08` per session-hour (`8¢/h`, or
+  `active_seconds / 3600 * 8` cents).
+- **Web searches**: `usage.server_tool_use.web_search_requests` billed at `$10` per 1,000 searches (`1¢` per search).
+- **Tokens**: `Session.usage` reports session-wide token totals across the whole run. It does not break tokens down by
+  model when a session switches models or spawns subagents on a cheaper model, and it does not record which individual
+  turns exceeded 200k input tokens (where long-context pricing doubles the per-token rate). Subtracting the runtime and
+  web-search charges from `list_cost` in PromQL (`infra/themis_infra/cost_promql.py`) isolates the residual token spend.
+
+### Cloud Monitoring's ingestion constraints
+
+All three producers write to Cloud Monitoring through Google Cloud's OTLP endpoint
+(`https://telemetry.googleapis.com:443` in [`themis/telemetry`](../../themis/telemetry/__init__.py)), which maps each
+OpenTelemetry instrument onto `prometheus.googleapis.com/<metric_name>/gauge` or
+`prometheus.googleapis.com/<metric_name>/counter` and attaches the `prometheus_target` monitored resource (`project_id`,
+`location`, `cluster`, `namespace`, `job`, and `instance`, populated from `GoogleCloudResourceDetector` and
+`service.instance.id`).
+
+Cloud Monitoring enforces two limits per time series (a unique combination of metric labels and resource labels):
+
+1. **Minimum 5-second sampling period**: Writing two points to the same time series less than 5 seconds apart fails with
+   `INVALID_ARGUMENT`, and the exporter drops the entire metric batch containing the offending point.
+1. **25,000-series cardinality ceiling per metric name**: Minting a fresh random `instance` UUID on every short-lived
+   job execution or CI step leaves a dead time series behind after each exit, steadily consuming the metric's
+   cardinality budget.
 
 ## Non-goals
 
-- **Billed-dollar accuracy.** List price is the tracked figure; reconciling against the invoice (discounts, credits) is
-  a finance activity, not a monitoring one.
-- **Per-session runaway alerting.** The platform-enforced session budget set at creation guards against a single looping
-  session, and the morning report is the human backstop. Per-session series would be unbounded label cardinality, and
-  the monitor does not carry them.
-- **A store of record.** Anthropic retains every session's usage until we delete it, and the metric store keeps 24
-  months; a copy of our own buys nothing yet asked for (Alternatives considered).
-- **Cross-workspace aggregation.** Workspaces are per environment
+- **Exact reconciliation with the Anthropic invoice**: Metrics reflect list prices and ignore enterprise discounts,
+  credits, and tax. The goal is catching runaway loops and tracking relative spend across agents, workers, and CI
+  workflows within a few percent.
+- **Automated budget cutoffs**: Alerts page Slack when spend spikes. Terminating an active session or disabling a
+  workflow is an operator decision.
+- **GCP infrastructure billing**: Cloud Run, Artifact Registry, Secret Manager, and Cloud Storage costs sit on the GCP
+  billing account (covered by standard GCP billing budgets) and amount to a few dollars a month next to LLM spend.
+- **Per-session or per-analysis cost attribution**: Attributing spend to an individual session or clinical analysis
+  belongs to trace storage ([`agent-runtime.md`](agent-runtime.md))—which records each turn's token usage for
+  engineering analytics on analysis runs, though only for sessions that produce a trace and without spans that can be
+  summed to a session's total cost—whereas this design covers workspace-wide operational spend aggregated by agent,
+  worker model, and CI workflow. Operators who need to inspect individual sessions during an incident use the CLI
+  drill-down in the [Appendix](#appendix-per-session-drill-down).
+- **Per-session runaway alerting**: The platform-enforced session budget set at creation guards against a single looping
+  session, and the morning report is the human backstop. Per-session metric series would introduce unbounded label
+  cardinality, so the monitor does not carry them.
+- **Cross-workspace aggregation**: Workspaces are per environment
   ([`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md)), and so is the Pulumi program; each environment's
   stack monitors its own workspace.
-- **Spend made outside the workspace's identities.** A person's own key spends as that person; the monitor covers what
-  the deployed workloads and the repository's CI incur.
-- **GCP infrastructure cost.** CPG's per-project budgets govern it ([`spike-infrastructure.md`](spike-infrastructure.md)
-  §5) and a native billing dashboard charts it; what scales with usage — sandbox runtime, Cloud SQL storage, GCS growth
-  — belongs on that dashboard, not this one.
-- **A curator-facing surface.** This is a dev/ops dashboard; cost never appears in the curator UI.
 
 ## Design
 
-### Three producers, one workspace figure
-
-A **producer** is one place spend is incurred and reported. The monitor has three, and the dashboard's headline is their
-sum in dollars.
-
-**Sessions — polled by the cost exporter.** A Cloud Run Job on a five-minute schedule lists every session in the
-workspace, archived included, and sums each session's cumulative usage by **agent name**: list cost in cents, tokens by
-type, active seconds, and web-search requests. It writes each sum as a gauge and exits; the entry point is
-[`themis/services/cost_exporter`](../../themis/services/cost_exporter/__main__.py). The four figures are enough to
-decompose a session's list cost without a model label: runtime is active seconds at the flat hourly rate, search is
-requests at the flat per-request rate, and token cost is what remains of list cost once both are subtracted. The
-decomposition is exact up to the cent rounding of each session's list cost, and it is a query, not something the
-exporter computes.
-
-Attribution is the agent's name because it is what a session records. The session object names no creator, so "who spent
-this" has no server-side answer; each workload runs its own agent, so agent and workload coincide. If two workloads ever
-share an agent their spend merges until sessions are stamped with a creator (Alternatives considered).
-
-**The convert worker — counted at the call site.** The one direct model call in the codebase adds its response's token
-counts to a counter, labelled by the **model** the response reports, the **token type**, and the **stop reason**
-([`themis/telemetry/request_tokens.py`](../../themis/telemetry/request_tokens.py)). The stop reason is a label because a
-truncated or refused transcription is billed like a complete one, and a lane paying for output it then discards is what
-an operator reading this dashboard wants to see. The counter is recorded before the outcome is judged, for the same
-reason. The conversion library itself depends on no telemetry: it takes a counter interface, and the worker hands it the
-telemetry one, so the library stays importable and testable without a meter.
-
-**Claude Code in CI — Claude Code's own metrics.** The three workflows that run Claude Code enable its native
-OpenTelemetry export through the action's settings, pointed at the same Telemetry API. Claude Code reports tokens by
-type and model, and a cost figure in dollars by model. The **workflow** rides as the OpenTelemetry service namespace, so
-the three are told apart by the resource their series belong to rather than by a label on the points, which carry none
-of the resource's attributes. Nothing is parsed from the run's output.
-
 ```mermaid
 flowchart LR
-    A[Managed Agents sessions] -- list, every 5 min --> E[cost exporter Job]
-    E -- gauges: running totals by agent, heartbeat --> T[Telemetry API]
-    W[convert worker] -- counter: tokens by model, type, stop reason --> T
-    C[Claude Code in CI] -- Claude Code's counters, by workflow --> T
-    T --> M[Cloud Monitoring]
-    M --> D[dashboard]
-    M --> P[alert policies] --> S[Slack]
-    M -- PromQL --> R[morning report Job] --> S
+  subgraph Producers
+    MA["Managed Agents API\nbeta.sessions.list(include_archived=True)"] -->|"Cloud Scheduler */5 * * * *\nOneShotReader"| CE["Cloud Run Job:\nthemis-cost-exporter"]
+    CW["Cloud Run:\nthemis-convert-worker"]
+    CI["GitHub Actions:\nClaude Code workflows"]
+  end
+
+  CE -->|"gauges:\nlist_cost_cents, tokens,\nactive_seconds, web_search_requests,\nlast_success_timestamp_seconds"| CM[("Cloud Monitoring OTLP\nprometheus.googleapis.com/*")]
+  CW -->|"counter:\nthemis_anthropic_request_tokens"| CM
+  CI -->|"counters:\nclaude_code.cost.usage\nclaude_code.token.usage"| CM
+
+  CM -->|"PromQL"| DB["Spend dashboard\n(Cloud Monitoring)"]
+  CM -->|"PromQL + Job execution filter"| AL["Alert policies\n(spend spike, exporter freshness,\nunpriced usage, report failed)"]
+  CM -->|"PromQL HTTP API\n08:00 Sydney"| CR["Cloud Run Job:\nthemis-cost-report"]
+  AL -->|"page"| SL["Slack"]
+  CR -->|"24h summary + PNG chart"| SL
 ```
 
-### The series
+### Observing each producer
 
-Everything downstream reads these series and nothing else. The Themis names live in one module
-([`themis/telemetry/names.py`](../../themis/telemetry/names.py)) — underscores rather than OpenTelemetry's dotted
-convention, since a dotted name has to be quoted in every PromQL expression that touches it; the Pulumi program cannot
-import the module and keeps a copy that a test holds to it constant by constant. Claude Code's two are its own
-instruments, dotted, and quoted where read.
+The obvious way to record Managed Agents spend would be to emit OpenTelemetry metrics from a local caller when a session
+finishes, or to sum token counts across trace files written to Cloud Storage. That approach fails in three ways: a
+developer laptop does not hold GCP credentials to write metrics to the project, a caller killed mid-run (`SIGKILL` or a
+lost laptop connection) never writes a final trace even though the session kept billing on Anthropic's servers, and
+trace spans do not record container runtime or web-search charges.
 
-| Metric                                                     | Kind                 | Unit                    | Labels                                                       | Written by                        | Counts                                                  |
-| ---------------------------------------------------------- | -------------------- | ----------------------- | ------------------------------------------------------------ | --------------------------------- | ------------------------------------------------------- |
-| `themis_anthropic_session_list_cost_cents`                 | gauge, running total | cents                   | `agent`                                                      | exporter, every run               | the agent's sessions' cumulative list cost              |
-| `themis_anthropic_session_tokens`                          | gauge, running total | tokens                  | `agent`, `type`                                              | exporter, every run               | cumulative tokens by component                          |
-| `themis_anthropic_session_active_seconds`                  | gauge, running total | seconds                 | `agent`                                                      | exporter, every run               | cumulative running time the runtime charge is priced on |
-| `themis_anthropic_session_web_search_requests`             | gauge, running total | requests                | `agent`                                                      | exporter, every run               | cumulative web-search calls                             |
-| `themis_anthropic_exporter_last_success_timestamp_seconds` | gauge                | seconds since the epoch | none                                                         | exporter, every run               | when the last run succeeded                             |
-| `themis_anthropic_request_tokens`                          | counter              | tokens                  | `model`, `type`, `stop_reason`                               | convert worker, per Messages call | each direct call's tokens by component                  |
-| `claude_code.token.usage`                                  | counter              | tokens                  | `type`, `model`, `query_source`, and Claude Code's `user.id` | Claude Code in CI                 | each run's tokens by component                          |
-| `claude_code.cost.usage`                                   | counter              | USD                     | `model`, `query_source`                                      | Claude Code in CI                 | Claude Code's own list-price cost                       |
+Instead, each producer is observed where its state actually lives:
 
-`type` takes `input`, `output`, `cacheRead` and `cacheCreation` everywhere.
+- **Managed Agents sessions via a scheduled Cloud Run Job**: A Cloud Run Job, `themis-cost-exporter`
+  ([`themis/services/cost_exporter/`](../../themis/services/cost_exporter/), provisioned in
+  [`infra/themis_infra/cost.py`](../../infra/themis_infra/cost.py)), is triggered every 5 minutes (`*/5 * * * *`) by
+  Cloud Scheduler. Each execution pages through `beta.sessions.list(include_archived=True)` using a workspace-scoped
+  Anthropic token, sums cumulative usage across all sessions by `agent` (`session.agent.name`), and flushes the totals
+  once via `OneShotReader` with `service.instance.id = settings.workspace_id`. Because
+  `sessions.list(include_archived=True)` is workspace-wide and includes archived sessions, every session in the
+  workspace is counted regardless of how it was started or whether it has since been archived.
+- **Convert worker via in-process counters**: The PDF convert worker
+  ([`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py)) calls `client.messages.stream(...)`
+  directly, which leaves no server-side session listing to poll. Because the worker already runs on Cloud Run under a
+  GCP service account, it increments an in-process OpenTelemetry counter (`themis_anthropic_request_tokens` in
+  [`themis/telemetry/`](../../themis/telemetry/)) after every stream—recording `stop_reason` from the final message on
+  completion or `stop_reason='unfinished'` if the stream fails partway through.
+- **Claude Code via built-in OpenTelemetry in CI**: Each Claude Code workflow in GitHub Actions
+  ([`.github/workflows/internal-review.yml`](../../.github/workflows/internal-review.yml)) authenticates to GCP via
+  Workload Identity Federation (`google-github-actions/auth`) and enables Claude Code's native OTLP exporter inside the
+  action's `settings.env` block (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_METRICS_EXPORTER=otlp`,
+  `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, `OTEL_EXPORTER_OTLP_ENDPOINT=https://telemetry.googleapis.com`,
+  `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer <token>`,
+  `OTEL_RESOURCE_ATTRIBUTES=service.namespace=<workflow>,service.instance.id=<run_id>-<run_attempt>`, and
+  `OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES=false`), sending `claude_code.cost.usage` and `claude_code.token.usage`
+  straight to Cloud Monitoring.
 
-Every series is a `prometheus_target` in Cloud Monitoring, so it also carries the labels the Telemetry API derives from
-the producer's resource: `location` (the region), `job`, `instance` and `namespace`. The exporter writes as
-`job=themis-cost-exporter` with one fixed `instance` per environment — the Anthropic workspace id — so every execution
-extends one series and a rise over it means something. The worker writes as `job=themis-convert-worker` with one
-`instance` per Cloud Run instance: separate counter series, summed at query time. CI writes as `namespace=<workflow>`,
-`job=<workflow>/claude-code`, one `instance` per run. The series Themis writes also carry `scope_name=themis`.
+### Decomposing provider dollars and pricing tokens
 
-### Tokens are the unit; dollars are a query
+A uniform pricing model would multiply every producer's token series by a static model price table in PromQL. That works
+for the convert worker—every OCR call uses a known model ID (`claude-sonnet-5`) returned on `response.model` and renders
+a single PDF page well under the 200k-token long-context threshold—but it misprices the other two producers:
 
-Every source exposes tokens; only some expose dollars. Making tokens the unit keeps the three producers on one
-vocabulary — one metric family, one `type` label, one price table — and keeps pricing out of the producers, which would
-otherwise each carry a copy of a table that changes when the provider's prices do.
+- For **Managed Agents**, `Session.usage` reports only session-wide token totals. It does not record which model served
+  which turn when subagents use different models or whether any turn crossed 200k input tokens.
+- For **Claude Code**, `claude_code.token.usage` aggregates tokens by model across the process lifetime without
+  recording which individual turns crossed 200k tokens, whereas `claude_code.cost.usage` computes each turn's dollar
+  cost at the moment the turn finishes and sums the resulting dollars.
 
-**The price table is static, in the program.** List prices per model and token type live in one module of the Pulumi
-program ([`infra/themis_infra/cost_prices.py`](../../infra/themis_infra/cost_prices.py)), and the program renders them
-into every query it emits — dashboard, alerts, report — as literal multipliers on the token series. One source prices
-everything, with no runtime series carrying a constant and no join in the query, and the convert lane's dollars depend
-on nothing but its own counter. A query can also ask which usage the table does not price — tokens whose model is not
-among the ones the table names — and the **unpriced-usage alert** fires when the convert worker reports such a model,
-rather than the multiplier silently pricing it at nothing. The table names the models Themis calls or is likely to, and
-grows when a caller reaches for another; that alert is what makes a model outside it page rather than price at zero. A
-price edit is a code change, deployed, and reprices history (Consequences accepted).
+We therefore use provider-reported dollars whenever the provider supplies them (`usage.list_cost` for Managed Agents
+sessions; `claude_code.cost.usage` for Claude Code) and apply our static price table only to the convert worker's token
+counter when the Pulumi program renders PromQL
+([`infra/themis_infra/cost_promql.py`](../../infra/themis_infra/cost_promql.py)). Baking the convert worker's prices
+([`infra/themis_infra/cost_prices.py`](../../infra/themis_infra/cost_prices.py)) into the rendered PromQL rather than
+into the worker container means a price update or new model entry in `cost_prices.py` takes effect on `pulumi up`
+without redeploying the worker, and reprices the full historical token series on the dashboard.
 
-**Provider dollars are kept where they exist.** A session's list cost includes runtime and web search, which are not
-tokens, so pricing a session's tokens alone would under-count it; the list cost is the session figure, and the token
-price is used only to read the split. Claude Code's cost figure accounts for per-request context tiers a longer
-conversation crosses — a request over the standard context window is priced higher — which an aggregate token count
-cannot recover; so its figure is the CI figure. Only the convert worker's spend is derived from tokens: one model, one
-tier, one request shape, so nothing but the token counts varies between its calls.
+To show *why* Managed Agents sessions cost what they do—separating idle container time, web searches, and token
+spend—the session poller
+([`themis/services/cost_exporter/sessions.py`](../../themis/services/cost_exporter/sessions.py)) exports the raw typed
+fields from `Session.usage` (`list_cost` in cents, `active_seconds`, and `server_tool_use.web_search_requests`) and
+[`infra/themis_infra/cost_promql.py`](../../infra/themis_infra/cost_promql.py) decomposes `list_cost` in PromQL into
+three additive shares:
 
-**The label vocabulary is Claude Code's.** The `type` label takes Claude Code's four values — input, output, cache read,
-cache creation — so a session's tokens, the worker's and Claude Code's break down on one axis and one price table covers
-them all. The convert worker's cache-creation count covers both cache lifetimes together and is priced at the
-five-minute write rate; a one-hour write costs twice that and is under-priced by the difference until a caller uses
-one-hour caches, at which point the split is a new label value, not a new metric. Labels for service tier, inference
-geography, speed and context tier are likewise deferred until a caller sets any of them: the worker runs one model at
-the standard tier, and an unset label is a series dimension with one value.
+1. **Container runtime**: computed in PromQL from `themis_anthropic_session_active_seconds` at `$0.08/h`
+   (`active_seconds / 3600 * 8` cents).
+1. **Web search**: computed in PromQL from `themis_anthropic_session_web_search_requests` at `$0.01/search`
+   (`1¢/search`).
+1. **Tokens (remainder)**: computed in PromQL by subtracting the runtime and web-search cent rises from the
+   `themis_anthropic_session_list_cost_cents` rise (`session_cents - session_runtime_cents - session_search_cents`), so
+   the three shares sum to the exact provider-billed `list_cost`.
 
-### Running totals and event counters
+### Metric instruments and resource identity
 
-The two ways spend reaches the monitor differ in kind, and the difference decides how each is queried and alerted.
+The metric names and label schemas are defined in [`themis/telemetry/names.py`](../../themis/telemetry/names.py) and
+queried by the same names in [`infra/themis_infra/cost_promql.py`](../../infra/themis_infra/cost_promql.py). Our custom
+instruments already carry their unit suffix in the instrument name (`_cents`, `_seconds`) and pass no OpenTelemetry
+`unit=` argument so Cloud Monitoring's OTLP mapper does not append a duplicate suffix:
 
-**A polled total is a gauge of a running total.** The exporter writes each agent's cumulative figures unconditionally on
-every run, whether or not anything changed; differences, rates and windows are computed at query time. The window figure
-over such a series is its **rise**: the newest sample less the newest sample a window earlier, read exactly rather than
-extrapolated — `delta` extrapolates to the window's edges, which on dev over-read a young series by up to a third and
-drew a sawtooth as the extrapolated stretch grew between samples. A series younger than the window reads its rise since
-its first sample in the window. Each end reads the newest sample within the freshness window the exporter is paged on,
-so a stale exporter yields its last known total until that alert names the fault, and no figure beyond it — never a
-zero. This carries most of the exporter's design:
+| Instrument (`themis/telemetry/names.py`)                   | Cloud Monitoring metric (`prometheus.googleapis.com/<name>/<kind>`) | Labels                                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `themis_anthropic_session_list_cost_cents` (gauge)         | `themis_anthropic_session_list_cost_cents/gauge`                    | `agent`                                                           |
+| `themis_anthropic_session_tokens` (gauge)                  | `themis_anthropic_session_tokens/gauge`                             | `agent`, `type` (`input`, `output`, `cacheRead`, `cacheCreation`) |
+| `themis_anthropic_session_active_seconds` (gauge)          | `themis_anthropic_session_active_seconds/gauge`                     | `agent`                                                           |
+| `themis_anthropic_session_web_search_requests` (gauge)     | `themis_anthropic_session_web_search_requests/gauge`                | `agent`                                                           |
+| `themis_anthropic_exporter_last_success_timestamp_seconds` | `themis_anthropic_exporter_last_success_timestamp_seconds/gauge`    | *(none)*                                                          |
+| `themis_anthropic_request_tokens` (counter)                | `themis_anthropic_request_tokens/counter`                           | `model`, `type`, `stop_reason`                                    |
+| `claude_code.token.usage` (Claude Code built-in counter)   | `claude_code_token_usage_total/counter`                             | `model`, `type`, `namespace` (on `prometheus_target`)             |
+| `claude_code.cost.usage` (Claude Code built-in counter)    | `claude_code_cost_usage_USD_total/counter`                          | `model`, `namespace` (on `prometheus_target`)                     |
 
-- **Nothing ever needs rewriting.** A cumulative total observed at time T is a fact about T; a resumed session makes
-  later points larger, never past points wrong, so Monitoring's immutability stops being a constraint.
-- **The exporter is stateless.** Writing increments needs the previous value; a total needs nothing — no state store, no
-  read-modify-write, no recovery logic.
-- **Missed runs need no repair.** A skipped tick leaves a sparser series; the next point carries the full total and any
-  window rise over it stays correct. Duplicate or racing runs write near-identical points harmlessly — the failures a
-  increment scheme double-counts or drops.
-- **Session deletion shows honestly.** Deleting a session steps its agent's total down, which a window rise shows as
-  negative spend — odd-looking but truthful, except during a series' first window, where the fallback reads the rise
-  since the lowest point instead. This is why the series is a gauge and not a counter, whose reset semantics would read
-  the dip as a restart and fabricate a spend spike.
-- **Silence means the poller is dead.** Because the gauge is written every run, a silent exporter — crash, timeout,
-  revoked credential — is indistinguishable from and detected as missing data. The **freshness alert** is the absence of
-  the exporter's heartbeat — the time of its last successful run, written whether or not the workspace has sessions, so
-  an empty workspace does not read as a dead exporter — and it is the one alert that covers every way the exporter can
-  die, since a dead exporter cannot report on itself.
+The choice of OpenTelemetry instrument type follows how each producer observes state:
 
-**A counted event is a counter.** The worker's token counter and Claude Code's counters count events as they happen; the
-window figure is the **increase**, which sums across the counter resets a restarted process produces. Silence here means
-the lane was idle — no conversion ran, no CI job ran — and is not a fault, so no freshness alert watches a counter. Each
-Cloud Run instance of the worker counts from zero in its own series; the query sums them. Each CI run is its own series
-set: the run is the instance, and Claude Code stamps a per-runner user id on every point besides, so one run could not
-extend another's series even if that were wanted; the query sums those too.
+- **Polled workspace totals are gauges**: `themis-cost-exporter` runs as a periodic Cloud Run Job that observes the
+  workspace-wide sum across `beta.sessions.list(include_archived=True)`. Because each job invocation is a fresh process,
+  emitting a cumulative counter from a stateless job would reset on every run, whereas emitting gauges with a stable
+  `service.instance.id = settings.workspace_id` extends a single continuous time series per `agent`. After a complete
+  pagination sweep succeeds, the job writes the current Unix epoch seconds to
+  `themis_anthropic_exporter_last_success_timestamp_seconds`.
+- **In-process event totals are cumulative counters**: Both the convert worker (`themis_anthropic_request_tokens`,
+  labelled by `model`, `type`, and `stop_reason`) and Claude Code (`claude_code.cost.usage` and
+  `claude_code.token.usage`) accumulate events inside a single process where totals only increase until the process
+  exits. Recording them as cumulative counters lets PromQL's `increase()` sum deltas cleanly across process restarts and
+  concurrent instances.
 
-What a polled total costs is freshness: it is exactly as current as the last poll, so session spend appears with up to
-one tick of latency, and per-cent rounding hides sub-cent growth until it accumulates.
+To satisfy Cloud Monitoring's 5-second sampling floor and 25,000-series cardinality limit, each producer configures its
+`prometheus_target` resource labels (`job`, `namespace`, and `instance`) to match its process lifecycle:
 
-### One write path: OpenTelemetry to the Telemetry API
+| Producer                      | Process lifecycle                                | `instance` strategy                                                         | Export cadence                                                                                                             | Why this avoids collisions and cardinality blow-up                                                                                                                                                                                                                                                                  |
+| ----------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `themis-cost-exporter`        | Cloud Run Job triggered every 5m (`*/5 * * * *`) | Static `settings.workspace_id` (`service.instance.id`)                      | One-shot flush via `OneShotReader` at the end of each 5-minute job execution                                               | Every job execution writes to the same workspace-scoped `instance` series per `agent`, and consecutive runs are 5 minutes apart, well above the 5-second floor.                                                                                                                                                     |
+| `themis-convert-worker`       | Autoscaled Cloud Run service (`max > 1`)         | Process-unique replica ID from `GoogleCloudResourceDetector`                | Buffered by `PeriodicExportingMetricReader` to every 60 seconds ([`themis/telemetry`](../../themis/telemetry/__init__.py)) | Concurrent replicas write to distinct `instance` series so they never collide, and the 60-second buffer prevents rapid back-to-back OCR calls inside one replica from writing within 5 seconds.                                                                                                                     |
+| Claude Code in GitHub Actions | Ephemeral CI runner per job                      | `<github.run_id>-<github.run_attempt>` (with `namespace=<github.workflow>`) | Default 60-second periodic export plus `PeriodicExportingMetricReader.onForceFlush` on `process.exit`                      | Two concurrent PR reviews have distinct `run_id` values so their exports never collide; total series grow only by one per workflow run (well under the 25,000 limit); and keeping the default 60s interval avoids a `<5s` collision when `onForceFlush` fires on process exit shortly after a periodic export tick. |
 
-Three producers in two languages and two runtimes write through one mechanism: an OpenTelemetry meter whose exporter
-speaks OTLP to Google's Telemetry API, authenticated by the workload's own Google identity. The shared pipeline for the
-Python producers is [`themis/telemetry`](../../themis/telemetry/__init__.py); Claude Code brings its own. OpenTelemetry
-is the standard for this, Google states it as the direction and has deprecated its Monitoring-API exporters, and a
-metric lands in Cloud Monitoring under one uniform prefix whatever produced it. The API's Preview status is accepted:
-what it costs is the possibility of a breaking change to the ingestion path, which would break the write, visibly, and
-not the data already written.
+### Querying gauges and counters in PromQL
 
-**What the endpoint requires shapes each producer's resource.** A point is placed by a location and an instance, so the
-pipeline refuses to build a resource that yields neither rather than let every point be dropped. Beyond that the
-instance is chosen per producer for the query shape above: fixed for the exporter Job, whose every execution is a new
-process, detected from the environment for the worker, and the run itself in CI (§The series).
+All PromQL expressions for the dashboard, alerts, and morning report are generated by
+[`infra/themis_infra/cost_promql.py`](../../infra/themis_infra/cost_promql.py).
 
-**The worker exports off the request path.** Its meter exports periodically, so a conversion never waits on a metric
-write and a failed export is logged, not raised: the export can fail without a paper failing, and a paper can fail
-without its tokens going unrecorded. Shutdown flushes the last points inside Cloud Run's termination grace. The exporter
-Job, by contrast, exports once at the end — the totals and the heartbeat together — and exits non-zero if the API
-refuses, so a run that failed leaves no heartbeat behind.
+For the convert worker and Claude Code counters, each process writes its own cumulative series identified by `instance`.
+PromQL therefore evaluates `increase(metric[W])` per series first—which handles counter creation and process restarts
+per worker replica or CI run—and then `sum`s across `instance`.
 
-**Claude Code's export runs on an interval, and its flush at exit is what carries the last response.** Cloud Monitoring
-refuses a second point on a series within five seconds of the last, so a frequent cadence would land that exit flush
-inside the window behind a periodic export and lose it; at Claude Code's default cadence the odds are small, and since
-the counters are exported as cumulative totals the intermediate exports add nothing to a run's total that the final one
-does not carry. The accepted consequence is a small chance per run of losing the last response's tokens; the alternative
-kept in reserve is in Alternatives considered.
+For the session exporter's gauges, measuring how much spend rose over a window `W` requires more care. The obvious
+PromQL function for a gauge change is `delta(metric[W])`, but `delta()` breaks on a polled step gauge for two reasons:
 
-### What reads the metrics
+1. **Extrapolation sawtooth**: `delta(metric[W])` takes the difference between the first and last sample in `W` and
+   scales it by `W / (t_last - t_first)`. On a 5-minute poll, the first and last samples in a 1-hour window sit 55
+   minutes apart. When a session spends `$1.00` in the final 5 minutes after 50 minutes of silence, `delta(metric[1h])`
+   scales `$1.00` by `60 / 55` to `$1.09`, then drops back on the next poll—drawing a sawtooth across every step change.
+1. **Single-sample blindness after a restart**: `delta()` requires at least two samples inside `W`. If the exporter
+   restarts or is first deployed and only one poll has landed inside `W`, `delta(metric[W])` returns no data.
 
-Everything downstream reads Cloud Monitoring, with PromQL, so everything downstream is a Pulumi resource in the same
-program that deploys the producers.
+Instead of `delta()`, `cost_promql.py` measures a gauge's rise over window `W` by direct subtraction with a freshness
+lookback `F` (`20m`, or 4 poll intervals):
 
-**The dashboard** has a section per producer under a workspace headline: the workspace dollar total stacked by producer;
-sessions — list cost by agent, and its runtime, token and search split; the convert lane — tokens by type and model,
-with the derived dollars beside them; CI — tokens by workflow and model, and Claude Code's own cost.
+```promql
+last_over_time(m[20m])
+  - (last_over_time(m[20m] offset W) or 0 * last_over_time(m[20m]))
+```
 
-**Three alert policies over the metrics, and a fourth over the report Job's executions**, all notifying Slack through
-Monitoring's incident lifecycle:
+Here `last_over_time(m[20m])` reads the gauge's current value, and `last_over_time(m[20m] offset W)` reads its value at
+`t - W`. If an agent did not exist yet at `t - W`, the `or 0 * last_over_time(m[20m])` fallback supplies `0` with the
+exact label set of the current series, so the entire current total counts as rise over `W`:
 
-- **A spend spike** on the one workspace dollar total — sessions' list-cost rise, plus the worker's token increase at
-  list price, plus Claude Code's cost increase — over a rolling window against a threshold in stack configuration. One
-  total rather than one alert per producer, because the question a spike answers is "is the workspace spending faster
-  than we expect", and which producer is the dashboard's to show.
-- **Freshness**, the absence of the exporter's heartbeat (§Running totals and event counters), written as a PromQL
-  condition rather than Monitoring's own absence condition because only a PromQL condition can be declared before its
-  metric exists — a fresh environment deploys before the first point is written.
-- **Unpriced usage**, when the worker reports tokens under a model the price table lacks — a static matcher over the
-  models the table names (§Tokens are the unit).
-- **A failed morning report**, on the report Job's executions. The report posts only when a figure moved, so without
-  this a failed morning would be indistinguishable from a quiet one.
+```
+Gauge value ($)
+  $12.00 |                          o-----o-----o   now: last_over_time(m[20m]) = $12.00
+         |                          |
+   $8.00 |        o-----o-----o-----o               t - W: last_over_time(m[20m] offset W) = $8.00
+         +--------+-----+-----+-----+-----+-----+-> time
+                t - W                           now
+                Rise over W = $12.00 - $8.00 = $4.00 (exact, no extrapolation)
+```
 
-**A morning report**, distinct from alerting. A second Cloud Run Job, on a daily schedule in Sydney time, evaluates a
-fixed set of PromQL queries against Monitoring's Prometheus HTTP API — the Pulumi program renders them into the Job's
-environment, so it stays the one source of PromQL over the spend metrics, and the report parses what it is given
-strictly — and posts to the spend channel: the total first, then dollars per producer with the sessions split, and a
-chart of hourly dollars stacked by producer, one upload carrying the message as its comment. A producer no series
-answered for reads as no data, not as nothing spent; a negative figure is shown as it is. It posts only when a figure
-moved, so the channel carries information on the normal days and the alert path stays reserved for the abnormal ones.
-Tokens stay on the dashboard; the report is the dollar view. The window is the 24 hours to the run, so on a
-daylight-saving changeover it covers one hour twice or not at all; the heading names the window's end, so the figure
-stays true to what it says.
+Using gauges of live sessions with direct subtraction carries one operational rule: **do not manually archive or delete
+sessions in the workspace**. Because archiving or deleting a session removes its historical total from `v1/sessions`,
+the workspace gauge steps down by that session's lifetime cost. Under subtraction, a deletion inside `W` produces a
+negative spend delta until the deletion timestamp scrolls past `t - W` (1 hour on the hourly chart, 24 hours on the
+daily total). Neither the exporter, `cost_promql.py`, nor the morning Slack report clamps negative deltas to zero,
+because clamping a downward step while keeping subsequent upward steps would double-count spend whenever a session is
+deleted and replaced.
 
-**Drill-down is a live query, not a stored view.** "Which session is that spike?" is answered against the API, which
-holds every session's cumulative usage indefinitely; the appendix carries a worked example. "Which conversion?" is
-answered from the worker's log, which records each transcription's model and token counts.
+### Identity and failure posture
 
-### Identity
+Each producer authenticates with the narrowest identity that its platform and target API allow:
 
-No identity in the monitor can read the provider's spend reports, because none is admin-capable, and no identity holds
-more than its producer needs.
+- **Session exporter (`themis-cost-exporter`)**: Runs under its own GCP service account with `grants.TelemetryWriter`,
+  and exchanges its GCP OIDC token for a short-lived Anthropic token via Workload Identity Federation
+  ([Claude API WIF runbook](../runbooks/claude-api-wif.md)). Because Anthropic's `workspace:inference` scope excludes
+  `v1/sessions` and Anthropic provides no read-only workspace scope, the exporter's federation rule uses
+  `workspace:developer` on its own dedicated Anthropic service account (`themis-cost-exporter-<env>`), separate from the
+  application runtime's identity so its audit trail and revocation remain isolated.
+- **Convert worker (`themis-convert-worker`)**: Uses its existing Cloud Run service account, which already holds
+  `grants.TelemetryWriter` ([`infra/themis_infra/grants.py`](../../infra/themis_infra/grants.py)).
+- **Claude Code in GitHub Actions**: Authenticates to GCP through the repository's GitHub Workload Identity Pool as a
+  dedicated CI telemetry service account
+  ([`infra/themis_infra/ci_telemetry.py`](../../infra/themis_infra/ci_telemetry.py)). Unlike the Pulumi deploy service
+  accounts (which are restricted to specific branches and environments in [`deployment.md`](deployment.md)), the CI
+  telemetry service account's WIF binding allows any workflow run in the repository on any ref or trigger event, because
+  Claude Code runs on pull requests and issue comments as well as on `main`. Its only project grant is
+  `grants.TelemetryWriter` (`roles/monitoring.metricWriter` and `roles/serviceusage.serviceUsageConsumer`; see
+  [PR screenshots](pr-screenshots.md) for why we use predefined roles rather than a custom role).
+  - *Accepted cost*: Any workflow run on any branch in the repository can impersonate the CI telemetry service account
+    and write points to `prometheus.googleapis.com/*` metrics in the project. It cannot read secrets, buckets, or
+    artifacts, and cannot modify infrastructure.
 
-**The exporter** runs as its own GCP service account and exchanges that identity for a short-lived Anthropic token under
-a dedicated Anthropic service account and federation rule — the established path and naming in
-[`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md), whose Anthropic side is an organization-admin
-registration that follows the first deploy minting the GCP identity the rule pins. It shares the web app's identity on
-neither side, so disabling it touches nothing else and Anthropic-side attribution stays legible per workload. The
-exchange grants the workspace-developer scope because nothing narrower reaches sessions — the only other workspace scope
-excludes Managed Agents, and read-versus-write scopes do not exist — and that is enough to list the workspace's
-sessions, usage included. On the Google side the exporter holds one capability, writing metrics
-([`grants.TelemetryWriter`](../../infra/themis_infra/grants.py)): it writes points to any metric in the project — a
-point under a name the project has not seen creates the metric — and, through Google's predefined Service Usage Consumer
-role, uses the project's service quota and may also list the project's time series. A custom role holding only the
-quota-use permission was considered and rejected on lifecycle, for the reasons [`pr-screenshots.md`](pr-screenshots.md)
-records for its area: the deploy identity cannot create roles, and a deleted custom role blocks its id for weeks.
+Across all three producers, telemetry failures are isolated so they neither fail workloads nor manufacture false spend
+numbers:
 
-**The convert worker** already federates into Anthropic as itself for the transcription; it gains the same
-metrics-writer capability and nothing else.
+- **Workloads fail open on telemetry errors**: In the convert worker, `PeriodicExportingMetricReader` exports on a
+  background daemon thread that logs Cloud Monitoring errors to stderr without raising into the OCR caller. In GitHub
+  Actions, the `google-github-actions/auth` step for telemetry sets `continue-on-error: true`, so a GCP WIF outage skips
+  metric export for that run without failing the pull request check.
+- **The session exporter fails closed on partial or malformed reads**: During a poll cycle, any page failure from
+  `GET /v1/sessions` (such as a 401/403 from a broken WIF rule, a 429 rate limit, or a 5xx error) or any session that
+  violates [`sessions.py`](../../themis/services/cost_exporter/sessions.py)'s schema preconditions (an unnamed
+  `session.agent.name`, a non-`USD` or fractional-cent `list_cost`, or a missing required usage field; only
+  `cache_creation` may be `None`) raises `SessionRecordError` and aborts the job run before calling
+  `OneShotReader.collect()`. Writing a partial sum when a page failed or skipping a malformed session would dip the
+  gauge and manufacture a false rebound on the next poll; writing nothing holds the previous reading steady (including
+  `themis_anthropic_exporter_last_success_timestamp_seconds`) until the staleness window expires and the
+  `themis-cost-exporter-freshness` alert pages. The exporter's run has a hard deadline well under its 5-minute schedule
+  interval so an invocation against a slow upstream times out before the next tick starts. Scanning the full session
+  list on every poll is deliberate: at current volume it is a handful of pages against a documented per-minute request
+  ceiling, and the run deadline is the tripwire for revisiting incremental scans
+  ([Alternatives considered](#alternatives-considered)).
 
-**The CI runs** authenticate to Google through the repository's GitHub federation pool
-([`deployment.md`](deployment.md)) as a service account that holds the metrics-writer capability and nothing else, so a
-run that takes it can write metric points and do nothing more; any run of the repository may take it, whatever its ref
-or event. The account is program-managed
-([`infra/themis_infra/ci_telemetry.py`](../../infra/themis_infra/ci_telemetry.py)) since, unlike the deploy identities,
-nothing needs it before Pulumi can run. What a run gains is a bearer token for the export, not a credentials file on
-disk. The step that obtains it never blocks the job it precedes: a failed exchange lets the review, the garden or the
-follow-ups run without telemetry, which shows as a producer with no data on the report and an empty CI section on the
-dashboard, not as a failed review. Telemetry is never allowed to break the work it observes.
+### Operator surfaces: dashboard, alerts, and daily Slack report
 
-**The report Job** reads Monitoring under a viewer-only identity and posts with a Slack bot token — the one secret the
-monitor holds, kept on the deployment's secret path ([`deployment.md`](deployment.md)). A bot token rather than an
-incoming webhook because the chart is a file upload, which only the Web API can do.
+#### Dashboard
 
-### What is stored where
+[`infra/themis_infra/cost_dashboard.py`](../../infra/themis_infra/cost_dashboard.py) provisions a 12-column Cloud
+Monitoring mosaic dashboard (`Themis — Anthropic Cost`) with an `agent_filter` dashboard template variable and four
+collapsible sections (`Workspace`, `Managed Agents sessions`, `Convert worker`, and `CI (Claude Code)`):
 
-Anthropic holds the raw data: every session, its cumulative usage, its transcript, until we delete it. Cloud Monitoring
-holds the derived signal — the gauges and the counters — for 24 months. Nothing else is stored: the price table is code,
-the exporter keeps no state, the report reads and posts, and the bot token is a secret like any other.
+```
++-----------------------------+-----------------------------+-----------------------------+
+| Workspace 24h Spend         | Burn Rate ($/h over 1h)     | Exporter Last Success       |
+|        [scorecard]          |        [scorecard]          |        [scorecard]          |
++-----------------------------+--------------+--------------+-----------------------------+
+| Hourly spend by source (sessions, convert, CI)  [6 cols]  | Cumulative 24h spend        |
++-----------------------------------------------------------+-----------------------------+
+| v Managed Agents sessions                                                               |
+|   Hourly spend by agent            [6 cols]  | Hourly spend by component (tok/run/srch) |
+|   Tokens / hour by type            [6 cols]  | Active container-hours & web searches    |
++----------------------------------------------+------------------------------------------+
+| v Convert worker                                                                        |
+|   Hourly spend & tokens / hour by model/type | Tokens / hour by stop_reason             |
++----------------------------------------------+------------------------------------------+
+| v CI (Claude Code)                                                                      |
+|   Hourly spend by workflow & model [6 cols]  | Tokens / hour by type           [6 cols] |
++----------------------------------------------+------------------------------------------+
+```
 
-### Failure posture
+The top scorecards and workspace charts answer whether total workspace spend is normal and which of the three producers
+is driving it. The `Managed Agents sessions` section splits session spend by `agent` and by cost component (tokens,
+container runtime, and web searches) so an idle container leak or a runaway search loop stands out immediately from
+model token spend.
 
-Correctness is never traded for liveness. The exporter's run has a hard deadline well under its schedule interval, and
-any error — a page that fails, a session missing a field the totals need (one field excepted: the API omits the
-cache-creation object on a session that wrote nothing to the cache, which reads as zero), an export the API refuses —
-aborts the run with nothing written, because a partial total written as the gauge would read as spend shrinking, a
-silent wrong answer, where a missing point is a visible gap the freshness alert catches. The full scan is deliberate: at
-current volume it is a handful of pages against a documented per-minute request ceiling, and the deadline is the
-tripwire that says when to revisit (the incremental option is in Alternatives considered). The worker's counter can
-neither fail a conversion nor be failed by one. In CI a telemetry failure costs the run its metrics, never its result,
-and a healthy export can lose at most the last response.
+#### Alerts
 
-### Consequences accepted
+[`infra/themis_infra/cost_alerts.py`](../../infra/themis_infra/cost_alerts.py) and
+[`infra/themis_infra/cost_report.py`](../../infra/themis_infra/cost_report.py) declare four Cloud Monitoring alert
+policies wired to the environment's Slack notification channel:
 
-- **The exporter's credential can write.** The workspace-developer scope is the scope the data plane creates sessions
-  with — read-only is the exporter's behaviour, not its token's ceiling — so a compromised exporter could spend in the
-  workspace. The bounds: the workspace's own spend and rate limits cap the damage, the short-lived token is mintable
-  only by the pinned GCP identity, disabling that identity revokes everything, and the spend such a compromise would
-  create lands on exactly the dashboard and alerts this design builds.
-- **The figure is list price**; a contracted discount makes the real bill lower, never higher.
-- **The price table is hand-maintained, and an edit reprices history**, since the multipliers apply to whatever range a
-  query reads. Accepted: Anthropic ships a new model id at a new price rather than changing an existing id's, and a
-  corrected row should apply retroactively anyway. The table itself has no staleness guard: the unpriced-usage alert
-  catches a model outside it, but a list price Anthropic changed for an existing model id would go unnoticed until
-  someone edits the row — accepted for the same reason, and because list price is already an approximation of the bill.
-- **A CI run may lose its last response's tokens**, with small odds per run, and each run is its own series set:
-  cardinality grows with runs, within what a repository's workflow volume produces.
-- **History beyond 24 months is gone from the metric**, re-derivable from the API for sessions while they exist and not
-  at all for the counters.
-- **A new breakdown dimension starts from its introduction**; Monitoring cannot backfill the past.
+1. **30-minute spend spike (`themis-cost-spike`)**: Sums trailing 30-minute spend (`workspace_cents('30m')`) across
+   Managed Agents sessions, the convert worker, and Claude Code in CI. When combined 30-minute spend exceeds the stack's
+   `spike_cents` threshold (`$50` in `dev`), the policy pages Slack.
+1. **Session exporter freshness (`themis-cost-exporter-freshness`)**: Fires when
+   `absent_over_time(themis_anthropic_exporter_last_success_timestamp_seconds[25m])` holds for one 5-minute poll tick.
+   We query `absent_over_time(...[25m])` rather than `time() - metric > 1500` because when the exporter stops writing,
+   no new points arrive; once the PromQL lookback window expires, `time() - metric` evaluates to an empty vector and
+   never triggers, whereas `absent_over_time` turns an empty 25-minute window (5 missed polls) into `1`. Because a dead
+   exporter stops advancing session gauges—which would otherwise read as `$0.00` of new session spend—paging on 25
+   minutes of missing heartbeats ensures exporter failures cannot masquerade as a quiet workspace.
+1. **Unpriced convert usage (`themis-cost-unpriced-usage`)**: Fires when `unpriced_request_tokens('1h') > 0`—that is,
+   when `themis_anthropic_request_tokens` records positive token usage in the last 1 hour under a `model` label not
+   listed in [`infra/themis_infra/cost_prices.py`](../../infra/themis_infra/cost_prices.py), ensuring a model upgrade in
+   `anthropic_ocr.py` cannot silently omit convert-worker spend from the dashboard and spike alert. The price table
+   itself has no staleness guard: this alert catches a model ID outside the table, whereas a list price changed by
+   Anthropic for an existing model ID goes unnoticed until someone edits the row (accepted because Anthropic ships a new
+   model ID at a new price rather than repricing an existing ID, and list price is already an approximation of the
+   invoice).
+1. **Morning report job failure (`themis-cost-report-failed`)**: Watches
+   `run.googleapis.com/job/completed_execution_count` for `job_name="themis-cost-report"` with `result="failed"`.
+   Because `themis-cost-report` intentionally stays silent on days with zero spend, a missing morning Slack message
+   cannot by itself distinguish a quiet day from a crashed job; alerting on failed job executions closes that gap.
+
+#### Morning Slack report
+
+[`infra/themis_infra/cost_report.py`](../../infra/themis_infra/cost_report.py) provisions a Cloud Scheduler job that
+triggers the `themis-cost-report` Cloud Run Job
+([`themis/services/cost_exporter/report.py`](../../themis/services/cost_exporter/report.py)) every morning at
+`08:00 Australia/Sydney` (`0 8 * * *`). The job authenticates to Cloud Monitoring via ADC and posts to Slack using a bot
+token from Secret Manager (`slack-bot-token`)—the one secret the monitor holds, kept on the deployment's secret path
+([`deployment.md`](deployment.md)). It uses a bot token rather than an incoming webhook because the chart is a file
+upload, which only the Slack Web API can perform.
+
+On each run, `report.py` queries Cloud Monitoring's PromQL HTTP API across the trailing 24 hours: an instant query over
+`24h` for total spend by producer (`sessions`—with its runtime, token, and search shares and per-agent breakdown—plus
+`convert` and `ci`) and a 1-hour step range query over `24h` for the hourly series. If no counter or gauge moved in the
+prior 24 hours (`not day.moved`), the job exits cleanly without posting so idle environments do not clutter Slack.
+Otherwise, it renders a 24-hour stacked hourly bar chart as a PNG and uploads the chart and a text breakdown in a single
+Slack `files.uploadV2` call.
+
+### Trade-offs and limitations
+
+- **Exporter credential reach**: Because Anthropic offers no read-only workspace scope, `themis-cost-exporter` uses
+  `workspace:developer` to call `v1/sessions`, which also grants permission to create sessions and run models in that
+  workspace. Isolating the exporter on its own GCP and Anthropic service accounts (`themis-cost-exporter-<env>`) keeps
+  its audit log and revocation boundary separate from the application runtime. The blast radius of a compromised
+  exporter credential is bounded: the workspace's own spend and rate limits cap the damage, the short-lived token is
+  mintable only by the pinned GCP identity, disabling that identity revokes everything, and any spend such a compromise
+  created would land on the exact dashboard and alerts this design builds.
+- **Session deletion dips**: `rise()` assumes `beta.sessions.list(include_archived=True)` is append-only because Themis
+  archives rather than deletes sessions. If an operator manually deletes a session, that agent's gauge steps down and
+  `rise(W)` reports a smaller (or negative) rise for the next window `W` until the step ages past `offset W`.
+- **Single-tier, hand-maintained convert pricing**: `cost_prices.py` prices convert-worker tokens at the base (`≤200k`
+  input token) rate. Page-by-page OCR prompts are a few thousand tokens per page, well below 200k; if a direct Messages
+  API caller ever sent >200k-token prompts, `cost_prices.py` would underprice those requests by 2x. Because the price
+  multipliers are embedded in query expressions, editing a row reprices historical queries retroactively, and the table
+  has no staleness guard against Anthropic changing the list price of an existing model ID.
+- **Hard-killed CI steps**: In GitHub Actions, Claude Code flushes its final OTLP batch via `onForceFlush` on normal
+  `process.exit`. If a runner step is hard-killed (`SIGKILL`) on job cancellation, turns since the last 60-second
+  periodic export are not flushed.
 
 ## Alternatives considered
 
-- **The Admin API's usage and cost reports.** Billed dollars, org-wide, and tokens by workspace and service account —
-  but only under a credential that can also manage the organization (§Background), and the dollar report offers daily
-  buckets and no per-workload split. A monitor should not hold such a credential to read its own workspace's spend;
-  ruled out, to be revisited only if a scoped read-only credential ships.
-- **Priced tokens only, no provider dollars.** One rule for every producer — but it under-counts sessions, whose runtime
-  and search charges are not tokens, and misprices Claude Code, whose per-request context tiers an aggregate cannot see.
-  Provider dollars where they exist, tokens elsewhere.
-- **The price table as a runtime series**, written by the exporter every run and joined to the token series in the
-  query. It would record the rate in force at each point in time, so a window spanning a price change would price each
-  side at its own rate — but that is a runtime write for a constant, and it couples every producer's dollar figure to
-  the exporter being alive. Literal multipliers rendered into the queries read the same table with neither.
-- **Log-based metrics** for the worker's usage: one structured line per conversion, turned into a series by Monitoring.
-  No metric client in the worker, and the line doubles as an audit trail — but the metric is bespoke to Monitoring, is
-  its delta kind rather than a counter, lands about ten minutes behind the log, and turns a log line's format into a
-  contract. OpenTelemetry writes the same fact as a counter, on time, in the shared vocabulary.
-- **The Monitoring API's write call**, directly. Google's guidance for application metrics is OpenTelemetry rather than
-  that call, and it offers no counter semantics for a per-call event: a caller would aggregate and keep start times
-  itself, re-implementing the SDK.
-- **A table of cost surfaces** — a declared list of producers driving the dashboard, alerts and report from one
-  structure. A generalisation built from one row; with three producers whose queries differ in shape, each surface is
-  written where it is read.
-- **A post-step parsing Claude Code's execution file** instead of its native export. The file carries the run's exact
-  usage and cost after the fact, so it loses no tail; it is also a second mechanism, bespoke to CI, parsing a file whose
-  format is the action's. Kept as the fallback if the exit flush proves to lose the last response often enough to
-  matter.
-- **A store of record** (append-only per-session snapshots in BigQuery), Monitoring derived from it. Indefinite
-  retention, deletion-proof history, re-derivable breakdowns — and the natural extension if any of those become needs.
-  Rejected for now: Anthropic already retains the raw data, so the store duplicates it to serve queries nobody is
-  asking, and drags in a dataset and a dashboard surface that cannot be charted from Monitoring.
-- **Exporter-computed deltas, or Monitoring's cumulative kind.** Deltas make the exporter stateful and turn missed runs
-  into gaps needing repair; the cumulative kind's reset semantics turn a deletion's step-down into a fabricated spike. A
-  gauge of a running total gets immutability for free and is honest under deletion.
-- **Incremental scans.** Bounding the frequent scan by creation date needs a second unbounded pass for resumed old
-  sessions, and filtering by status risks silently dropping sessions when the status vocabulary grows. Complexity
-  against a problem the full scan will not have for years; the run deadline says if that changes.
-- **Creator stamped in session metadata.** The clean who-launched-it dimension, and the upgrade path if agent-name
-  attribution blurs — but it needs a change in every session-creating path and cannot cover sessions that already exist.
-- **A federation rule on the web service account** for the exporter. Registering a rule is gated by the same
-  organization-admin permission as creating a service account, so it saves no request, and it would merge the exporter's
-  attribution into the web identity for nothing in return.
-- **Push instead of poll.** No usage-change events exist.
+### Polling Anthropic's organization usage and cost endpoints
 
-## Open questions
+Anthropic's `/v1/organizations/usage_report/messages` and `/v1/organizations/cost_report` return server-side bucketed
+token and dollar totals across an organization. However, both endpoints require an organization-admin key
+(`sk-ant-admin...`), which cannot be federated via WIF and has administrative control over every workspace in the
+organization. Storing a long-lived org-admin key in Secret Manager just to read dev and prod spend would violate our
+credential-isolation posture ([Claude API WIF runbook](../runbooks/claude-api-wif.md)).
 
-- Alert thresholds and windows are operational tuning, set from the first weeks of data rather than designed here.
-- How often Claude Code's exit flush loses a run's last response is measured against runs' execution files; if the loss
-  proves material, the post-step fallback replaces the export.
+### Summing token usage from trace files in Cloud Storage
 
-## Appendix — drill-down worked example
+Summing token counts from completed session traces would miss sessions that are still running, sessions whose caller
+crashed before archiving a trace, container runtime and web-search charges on sessions, and all spend from the convert
+worker and Claude Code in CI.
 
-The dashboard's sessions section says *which agent* and *when*; the session behind a spike is one query away, no admin
-credential involved:
+### Recording polled session totals as monotonic counters
+
+We considered exporting the polled workspace session totals from `themis-cost-exporter` as OpenTelemetry cumulative
+counters so all three producers could be queried with `increase()`. Because `themis-cost-exporter` runs as a stateless
+Cloud Run Job every 5 minutes, a process-local cumulative counter would reset on every invocation, and any session
+deletion in the workspace would be misinterpreted by PromQL's `increase()` as a counter reset to zero followed by the
+entire remaining workspace total as fresh spend.
+
+### Pricing Managed Agents and Claude Code from token counters
+
+We considered ignoring `Session.usage.list_cost` and `claude_code.cost.usage` and pricing every producer from its token
+series via `cost_prices.py`. For Managed Agents, `Session.usage` lacks per-model attribution when subagents use
+different models and lacks per-turn context lengths for >200k-token pricing. For Claude Code, `claude_code.token.usage`
+aggregates across turns without recording which individual turns crossed 200k input tokens, whereas
+`claude_code.cost.usage` prices each turn accurately before summing.
+
+### Writing the price table as a runtime metric series
+
+We considered having the exporter write the per-model price table as a gauge series on every run and joining it to token
+series in PromQL, which would record the rate in force at each point in time. We rejected it because it turns a static
+constant into a runtime write and couples every token-priced producer's dollar figure on the dashboard and alerts to the
+session exporter being alive.
+
+### Log-based metrics for the convert worker
+
+We considered having the convert worker emit one structured log line per conversion and configuring Cloud Monitoring to
+extract a log-based counter metric from it, avoiding a metric client in the worker and doubling as an audit trail. We
+rejected it because log-based metrics are bespoke to Cloud Monitoring, produce a delta metric rather than a cumulative
+counter, add roughly ten minutes of ingestion lag on top of the alert window, and turn a log line's field layout into a
+monitoring contract.
+
+### A BigQuery store of record for session snapshots
+
+We considered appending per-session usage snapshots to a BigQuery table on each poll for indefinite retention,
+deletion-proof history, and ad-hoc breakdowns. We rejected it because Anthropic already retains the raw session records,
+duplicating them into BigQuery serves queries nothing currently asks for, and it introduces a storage dataset and a
+second dashboard surface outside Cloud Monitoring.
+
+### Incremental session scans
+
+We considered bounding the 5-minute poll by creation date or session status instead of scanning the full workspace
+session list. Bounding by creation date requires a second unbounded pass to catch older sessions that were resumed, and
+filtering by status risks silently dropping sessions if the upstream status vocabulary grows. Because a full scan at
+current volume is a handful of pages against a generous per-minute request ceiling, we scan in full and use the job's
+run deadline as the tripwire for revisiting pagination bounds.
+
+### Stamping a creator in session metadata
+
+We considered stamping the caller identity in `session.metadata` at creation time to provide a "who launched it"
+dimension if agent-name attribution ever blurs. We rejected it for now because it requires modifying every
+session-creating call path and cannot retroactively cover existing sessions.
+
+### Sharing a WIF federation rule on the web service account
+
+We considered attaching the exporter's Anthropic WIF rule to the existing web application service account instead of
+provisioning a dedicated `themis-cost-exporter` service account. Registering a WIF rule is gated by the same
+organization-admin permission as creating an Anthropic service account, saves no setup step, and would merge the
+exporter's audit attribution and revocation boundary into the web identity.
+
+### Push events instead of polling
+
+We considered driving session cost updates from webhook or streaming events rather than a 5-minute poll, but the Managed
+Agents sessions API publishes no usage-change events outside an attached session stream.
+
+### Routing CI telemetry through a self-hosted OTLP collector
+
+We considered running an OpenTelemetry Collector on Cloud Run for GitHub Actions workflows to push OTLP metrics to. That
+would add an internet-facing Cloud Run service and its own authentication layer for work that Google Cloud's native OTLP
+ingestion endpoint (`https://telemetry.googleapis.com:443`) performs directly from the GitHub runner using a
+WIF-federated service account with `roles/monitoring.metricWriter`.
+
+### Sending the daily report from a Cloud Monitoring notification channel
+
+Cloud Monitoring alert policies only fire when a threshold is crossed and cannot attach a rendered 24-hour PNG chart or
+format a multi-query producer breakdown. Running a lightweight daily Cloud Run Job (`themis-cost-report`) from the same
+container image as `themis-cost-exporter` keeps the query logic, chart rendering, and Slack upload testable in Python.
+
+## Appendix: per-session drill-down
+
+When the dashboard or `themis-cost-spike` alert shows a spike in `Managed Agents sessions`, an operator can inspect
+individual sessions in the workspace directly with the `ant` CLI:
 
 ```sh
-ant beta:sessions list \
-  --created-at-gte 2026-08-01T00:00:00Z --created-at-lt 2026-09-01T00:00:00Z \
-  --include-archived --max-items -1 --format jsonl \
-  --transform '{id,created_at,status,agent:agent.name,cost:usage.list_cost.amount}'
+ant beta:sessions list --limit 50 --format json \
+  | jq 'sort_by(.usage.list_cost.amount | tonumber) | reverse | .[:10]
+        | map({id, title, status, agent: .agent.name,
+               cost_usd: ((.usage.list_cost.amount | tonumber) / 100),
+               active_s: .usage.active_seconds,
+               searches: .usage.server_tool_use.web_search_requests})'
 ```
-
-Sorting the output by cost names the culprit; `ant beta:sessions retrieve` on its id gives the full picture, and the
-session's transcript — retained until deleted — holds what it was doing.

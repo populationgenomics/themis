@@ -1,412 +1,470 @@
 # Design: workbench document pane
 
-**Status:** draft **Related:** [`frontend-framework.md`](frontend-framework.md) (web tier + BFF this rides on;
-anchored-comment offset convention); [`literature-evidence-layer.md`](literature-evidence-layer.md) (litcache + the
-evidence service that gains `Locate`/`Validate`); [`litcache-manifest.md`](litcache-manifest.md)
-(`Manifest`/`Rendering`/`AssociatedFile` this resolves against); [`workbench-workspace.md`](workbench-workspace.md) (the
-browser's copy of the workspace repository a revision of the working document is read from);
-[`document-widgets.md`](document-widgets.md) (the typed blocks `::embed` draws); [`services.md`](services.md) (the
-proto+`grpc.aio`+fixture pattern the evidence-service additions follow); [`proto.md`](proto.md) (schema +
-serialization); [`workbench-navigation.md`](workbench-navigation.md) (the pages this one lives on, and its chrome);
-[`conversation-view.md`](conversation-view.md) (what the conversation region renders).
+**Related:** [`workbench-navigation.md`](workbench-navigation.md) (Analysis page chrome and arrangement persistence);
+[`conversation-view.md`](conversation-view.md) (what the conversation region renders);
+[`workbench-workspace.md`](workbench-workspace.md) (the browser's copy of the workspace repository from which working
+document revisions are read); [`document-widgets.md`](document-widgets.md) (typed blocks embedded in the working
+document); [`literature-evidence-layer.md`](literature-evidence-layer.md) (the evidence service that resolves paper
+content and locates quotes); [`litcache-manifest.md`](litcache-manifest.md) (`Manifest`, `Rendering`, and
+`AssociatedFile` records in litcache); [`frontend-framework.md`](frontend-framework.md) (Next.js BFF and code-point
+offset convention).
 
 ## Overview
 
-The workbench is a **conversation region** beside a **tab area**. Every document surface is a tab of one **content
-kind** — the working document, an opened paper (markdown or PDF), a supplementary file. The **conversation is not a
-tab**: it is a dedicated region docked to any of the **main** window's four edges, in a resizable split with the tab
-area. The tab area is a **tab pane** that splits **left/right into at most two panes**, each with its own tabs and its
-own active tab; a **tab lives in exactly one pane** across all windows. A citation opens its paper **beside its source**
-— a document citation splits the pane, a conversation citation opens in the tab area — so the source and the cited paper
-are visible at once; a paper already open is **surfaced, not duplicated**. Three-or-more surfaces at once come from
-**more windows**: exactly one **main** window holds the single source of truth (and the conversation), and every other
-is a **thin mirror** with a tab area only.
+During an Analysis, a curator reads the working document, steers the agent in the conversation stream, and verifies
+claims against cited papers and their figures. A workspace layout for this loop has to keep a claim and its cited source
+visible side by side without losing the conversation stream or forcing the curator to manage a complex tiling grid.
 
-One structural model spans every surface — reveal, split, pop-out, and collapse fall out of it rather than being
-special-cased per pane. Every layout curators have described reduces to two shapes: **at most two documents side by
-side**, and **the conversation spanning an edge**. A two-pane tab area plus a special conversation region delivers both
-at the lowest structural cost — an in-window two-up split for the common pairings, more windows for more density.
+The workbench (`apps/web/src/components/workbench/`) splits the main window into two regions: a dedicated conversation
+region docked to any of the window's four edges, and a tab area beside it. Every document surface — the working
+document, an opened paper, or a supplementary file — is a tab in the tab area. The conversation is not a tab. The tab
+area holds one tab pane by default and splits left/right into at most two panes, each with its own tab strip and active
+tab. Each tab lives in at most one pane across all open windows.
+
+When a curator clicks a citation, the workbench opens the cited paper beside the surface that cited it. Clicking a
+citation inside a document splits the tab area so the source document and the cited paper sit side by side. Clicking a
+citation inside the conversation opens the paper in the tab area while the conversation stays visible in its dock. If
+the paper is already open in any pane or window, the workbench surfaces that existing tab rather than opening a second
+copy. When a curator wants three or more document surfaces visible at once, they pop tabs out into additional browser
+windows. Exactly one main window holds the conversation and owns the workspace state; every child window is a thin
+mirror that renders only a tab area.
+
+Every layout curators have asked for reduces to at most two documents side by side with the conversation spanning an
+edge. A two-pane tab area paired with a docked conversation region covers those pairings with a bounded depth-2 layout,
+while child windows handle multi-monitor density without a recursive split tree inside a single window.
 
 ## Background
 
-Citations exist upstream as markdown directives `:paper[id]` and `:quote[id, text]` (the syntax originated in
-litmanager, which is reference-only and not in this loop; the agent authors the directives to that convention). Papers
-live in litcache on GCS as XML→markdown `Rendering`s and/or PDF revisions with an optional recoverable text layer;
-`Manifest.files` lists `AssociatedFile`s (figures and supplementary, same structure, distinguished by `role`), lazily
-fetched. Quote→location resolves two ways: code-point offsets in markdown, bounding boxes in a PDF (via anchorite,
-folded into the evidence service). `id` in a directive is the litcache canonical `doc_id` (UUID).
+The agent authors citations in both the conversation and the working document using two markdown directives:
+`:paper[id]` and `:quote[id, text]`. That directive syntax originated in litmanager, which is a reference system outside
+this runtime loop. The `id` in both directives is the canonical litcache document UUID (`doc_id`).
 
-The earlier two-group model targeted every reveal at *the other group* — teleporting the paper into a distant pane that
-could displace whatever was parked there. Opening the paper **beside its source** by splitting locally makes placement
-predictable and never disturbs a distant pane. Treating the conversation as a tab among documents was also a poor fit:
-it is a persistent companion, not a document.
+In litcache on Google Cloud Storage (GCS), each paper is stored as a `Manifest`
+([`litcache-manifest.md`](litcache-manifest.md)) with one or more markdown `Rendering`s derived from publisher XML or
+PDF OCR, PDF revisions with an optional text layer, and `Manifest.files` entries (`AssociatedFile` records for figures
+and supplementary attachments, distinguished by `role` and fetched lazily). Resolving a `:quote[id, text]` directive to
+a visual highlight depends on which representation the curator is viewing: in markdown, a quote resolves to code-point
+offsets, whereas in a PDF it resolves to page bounding boxes via anchorite inside the Python evidence service
+([`literature-evidence-layer.md`](literature-evidence-layer.md)).
+
+An earlier workbench layout organized the screen into two identical tab groups, placed the conversation inside one of
+those groups as an ordinary tab, and targeted every citation reveal at "the other group". That model broke down in two
+ways. First, revealing a citation from one group teleported the paper into the distant group and displaced whatever
+document the curator had parked there. Second, treating the conversation as a document tab meant that opening papers in
+the same group hid the conversation behind a tab strip, even though curators use the conversation continuously alongside
+documents.
 
 ## Non-goals
 
-- **More than two panes in one window / recursive grids.** The tab area splits into at most two panes (left/right).
-  Three-or-more simultaneous surfaces come from additional windows, not a wider in-window layout, and not a recursive
-  N-way grid. A split half cannot split again — the window is a bounded depth-2 arrangement (conversation region beside
-  the tab area; the tab area optionally split), no tree, no grid.
-- **The conversation as a tab or tile.** The conversation has no tab strip and no icon; it never sits in a tab pane. It
-  is a dedicated region of the main window (as VS Code docks its terminal rather than nesting it among editors). It
-  cannot be placed alone on a second monitor; the whole main window goes there instead — an accepted limitation.
-- **Drag-to-desktop tear-off to spawn a window.** HTML5 DnD delivers no `drop` outside a document, and `dragend` screen
-  coordinates are zeroed in Firefox/Safari; tab tear-off is privileged browser chrome. Window creation is a menu item.
-- **Restoring open tabs or a multi-window arrangement on reload.** A load opens one main window holding the working
-  document; neither the open papers nor the window distribution is restored. What persists is how a curator works, not
-  what they were working on (see §Windows, and [`workbench-navigation.md`](workbench-navigation.md) §"The arrangement
-  persists").
-- **Rich supplementary-file rendering.** Supplementary files (arbitrary MIME) open as a download / open-externally tab
-  only. Figures (images) do render inline.
-- **Directives outside the conversation and working document.** Paper content is a pure display target; it carries no
-  `:paper`/`:quote`, so papers never cite papers here.
-- **Cross-device layout sync.** Layout memory is per-browser, not a server-side per-user setting.
-- **Client-side quote matching.** All quote→location resolution is server-side (see §Highlight resolution); the client
-  only applies a returned location.
+- **More than two panes in one window or recursive grids.** The tab area splits left/right into at most two panes. A
+  split half cannot split again; the window is a bounded depth-2 arrangement (conversation region beside the tab area,
+  with the tab area optionally split in two). Showing three or more document surfaces at once uses additional browser
+  windows.
+- **Placing the conversation in a tab or standalone child window.** The conversation has no tab strip and no tab icon,
+  and it never sits in a tab pane. It lives only in the main window's docked region. A curator who wants the
+  conversation on a second monitor moves the main window there and pops documents into child windows.
+- **Tearing a tab off to the desktop by dragging.** HTML5 drag-and-drop fires no `drop` event outside a browser
+  document, and Firefox and Safari zero out `dragend` screen coordinates. Creating a new window is a menu action.
+- **Restoring open paper tabs or multi-window layouts on reload.** Reloading an Analysis opens a single main window
+  containing only the working document in the curator's saved arrangement
+  ([`workbench-navigation.md`](workbench-navigation.md)). Open papers and child windows are not restored.
+- **Rendering arbitrary supplementary files inline.** Supplementary files (spreadsheets, archives, arbitrary MIME types)
+  open as a download / open-externally fallback tab. Figures (images) render inline inside markdown.
+- **Parsing citation directives inside paper content.** Paper content is a read-only display target and carries no
+  `:paper` or `:quote` directives.
+- **Syncing layout preferences across devices.** Layout arrangement is stored per browser in IndexedDB, not on the
+  server.
+- **Client-side quote matching.** Quote-to-location resolution belongs on the evidence service so authoring validation
+  and UI reveal share one matcher; the browser only applies a returned location (with one transitional exception in the
+  markdown arm, covered in [Highlight resolution](#highlight-resolution-server-side-one-matcher)).
 
 ## Design
 
 ### Layout: a conversation region beside a two-pane tab area
 
-- The **tab area** is a **tab pane** — a tab strip + content, holding document tabs (working document, papers,
-  supplementary). It splits **left/right into two** panes (at most two), one draggable divider; each pane has its own
-  tabs and its own active tab. A tab belongs to exactly one pane; moving it removes it from its source. Closing or
-  collapsing returns a two-pane area to one. When the tab area is **empty** (its sole pane holds no tabs — e.g. the
-  working document popped to a child), the **conversation fills the window**; a reveal or reparent brings the split back
-  (the reducer keeps a zero-tab pane as the reveal/reparent target). A pane's **header collapses its actions** — strip
-  label mode (icons ↔ titles), split, swap, move, reopen-last-closed (main only), and (in a child window) move-back —
-  into a single **overflow menu** (`⋯`), one affordance rather than a row of glyphs.
-- The **conversation** is a **special region** (no tab strip, no icon) docked to **any of the four edges** of a
-  resizable split with the tab area, chosen from a four-edge selector in the Analysis page's chrome (the analogue of the
-  earlier `[ ]`/`[|]`/`[-]` control), persisted. Present only in the **main** window. The steer composer is inside the
-  region, below the stream ([`conversation-view.md`](conversation-view.md)), so it travels with it across dock edges
-  rather than being pinned to the window.
-- **Structure.** A window is a bounded **depth-2 panel arrangement**: an outer split `[conversation | tab area]` whose
-  direction flips for a left/right vs top/bottom dock edge, and an inner split `[pane | pane]` for the tab area. Nested
-  `react-resizable-panels` `PaneGroup`s; the outer ratio is **orientation-specific** (a width % when docked left/right,
-  a height % when top/bottom), so a flip does not carry a width ratio into a height. Nothing else shares the window:
-  creating an Analysis belongs to the Project page ([`workbench-navigation.md`](workbench-navigation.md)).
-- **Default:** conversation on the left, the working document the sole tab of a single pane.
+An obvious way to let curators arrange a conversation, a working document, and several papers is a general tiling tree
+where any pane can hold any surface and split horizontally or vertically. In practice, arbitrary nesting makes it easy
+to lose track of where a revealed paper will land and forces the conversation to compete with documents for tab-strip
+space.
 
-### Tabs: kinds, pinning, movement
+Instead, the main window (`apps/web/src/components/workbench/`) is a bounded depth-2 arrangement built from two nested
+`react-resizable-panels` `PaneGroup`s:
 
-A tab is one **content kind**:
+```
+Main window (conversation docked left, tab area split into two panes)
++------------------+-----------------------------+-----------------------------+
+| Conversation     | [Working doc] [Paper A]  ⋯  | [Paper B]                ⋯  |
+| (main-only dock: |-----------------------------|-----------------------------|
+|  left / right /  |                             |                             |
+|  top / bottom)   |  Working document           |  Paper B (Markdown | PDF)   |
+|                  |                             |                             |
+|                  |  ...claim citing :quote[B]  |  ...highlighted passage...  |
+|                  |                             |                             |
+| +--------------+ |                             |                             |
+| | Steer...     | |                             |                             |
+| +--------------+ |                             |                             |
++------------------+-----------------------------+-----------------------------+
 
-- `working-doc` — the deliverable. **Pinned** (non-closable), movable. One exists.
-- `paper{id, representation}` — closable; `representation` toggles markdown ↔ PDF (below). One tab per `id`.
-- `supplementary{id, name}` — closable; download / open-externally fallback (non-goal: rich rendering).
+Child window (thin mirror: tab area only, 1 or 2 panes)
++------------------------------------------------+-----------------------------+
+| [Paper C]                                   ⋯  | [Paper D]                ⋯  |
+|------------------------------------------------|-----------------------------|
+|  Paper C                                       |  Paper D                    |
++------------------------------------------------+-----------------------------+
+```
 
-(The conversation is no longer a content kind — it is the region above.) Each pane has its own active tab. Tabs move
-three ways:
+The outer split places the **conversation region** (`conversation-dock.tsx`) beside the **tab area** (`tab-area.tsx`). A
+four-edge selector in the Analysis page header docks the conversation to the left, right, top, or bottom edge of the
+main window (defaulting to the left edge, with the working document as the sole tab of an unsplit tab area). The steer
+composer lives inside the conversation region below the message stream ([`conversation-view.md`](conversation-view.md)),
+so it travels with the conversation across dock edges. Because flipping the dock from left/right to top/bottom turns a
+width split into a height split, the workbench stores separate outer split ratios for horizontal and vertical
+orientations. Nothing else shares the window; creating an Analysis belongs to the Project page
+([`workbench-navigation.md`](workbench-navigation.md)).
 
-- **Split** — split the pane left/right and place the acted-on tab in the new pane (at most two; splitting when two
-  exist is a no-op).
-- **Move** — to the other pane; to a **new** pane (creates the split from a single pane); or to a new/existing **child**
-  window, by cross-window drag or the context menu. Move-to-window is offered only when the move **leaves something
-  behind** in the source window: the **main** window always keeps its conversation region, so it always qualifies (even
-  the sole working document, which pops out to read standalone); a **child** window is a tab area only, so a lone tab
-  there does not offer it (moving it would just bounce the sole tab into another empty window). The pane-menu variant
-  moves the **whole pane**; the per-tab menu moves a single tab.
-- **Swap** — when the tab area is split, swap the two panes left ↔ right. Their contents (tabs + active tab) trade sides
-  while each slot keeps its id, so the divider widths stay put; it is involutive.
-- **Close** — closable tabs close; closing a pane's last closable tab collapses a two-pane area to one. A **pinned** tab
-  (working document) never closes, so a pane holding only a pinned tab does not collapse by closing.
+The inner split divides the tab area into one or two **tab panes** (`pane.tsx`) separated by a single left/right
+draggable divider. Each pane has its own tab strip and its own active tab. A tab belongs to at most one pane across all
+windows, so moving a tab removes it from its previous pane. When the last tab in one of two panes closes or moves away,
+the two-pane split collapses back to a single pane. If the sole pane in the main window has zero tabs — for example,
+after the curator pops the working document out into a child window — the conversation expands to fill the main window,
+while the reducer retains the empty pane as the target for future reveals or reparented tabs.
 
-Drag (native HTML5, §Alternatives) is the discoverable in-window gesture; the **context menu** is the non-drag path and
-the only one that is keyboard-operable (`Shift+F10` / Menu key, arrow-navigable, focus returned on close), works on
-touch, reaches a **popped-out** window, and creates the split from a single pane. It reuses the repo's dependency-free
-`role="menu"` pattern. Drops are handled **type-agnostically**: a strip accepts any drag (`preventDefault` at
-`dragover`, since payload values are unreadable until `drop`) and **validates the payload's shape at `drop`** — a tab
-move, a same-place no-op, or (a capability this affords, specced separately) an **external file** dropped for ingestion.
-A cross-window tab move carries its payload via a `dragstart` `BroadcastChannel` handshake keyed to an **opaque
-drag-session id** (placed in a standard drag type), so it survives a cross-window OS drag without leaking structured
-data into external drop targets; the drop validates a live session matches. **Window creation is menu-only** (a drop
-outside any document is undetectable), and cross-window drag can only target a **visible, non-overlapping** window — the
-inherent DnD limit, with the menu as the secondary path.
+Each pane's header collapses all strip and pane actions into a single overflow menu (`⋯`): toggling strip labels between
+compact icons and full titles, splitting, swapping panes, moving the pane to a window, reopening the last closed tab (in
+the main window), and moving the pane back to the main window (in a child window).
 
-### Reveal: beside the source, surface if already open
+### Tabs: kinds, pinning, and movement
 
-`:paper`/`:quote` are parsed by `remark-directive` on the **shared `Markdown` component** (`markdown.tsx`), which both
-the conversation and working-document renderers use; a click handler wires each directive to a `reveal`. A citation
-*inside* a widget ([`document-widgets.md`](document-widgets.md)) raises the same `reveal`, so everything in this section
-applies to it unchanged. A reveal opens the paper **beside its source** so both are visible. The **already-open check
-runs first**: a paper is never duplicated (a tab lives in one pane). Let the *computed target* be the pane the placement
-rules below select.
+Every tab in a pane (`workspace-model.ts`) has one of three content kinds:
 
-- **Already open somewhere.** Open in the **same window** → its existing tab **moves to the computed target** (so a
-  document-sourced reveal still lands it beside the source). Open in a **different window** → that window is **raised**
-  and the tab activated there (surfaced, not yanked); if the browser blocks programmatic `focus()`, the tab moves into
-  this window's computed target instead.
-- **Document-sourced** (citation in the working document or a paper, in pane *X*): the computed target is the **other
-  pane**, splitting the tab area if it is single-pane; if that pane already holds tabs, the paper **appends and
-  activates** there. Source stays in *X* — side by side, the verification loop.
-- **Conversation-sourced** (the conversation is main-only and is not a pane): the target keys on where the working
-  document is —
-  1. working doc in main, tab area **unsplit** → the working document's pane (a zero-tab second pane does not count as
-     split);
-  1. working doc in main, tab area **split** → the pane that is **not** the working document's;
-  1. working doc in a **child window** → main's **active pane** (a bare tab).
+- `working-doc` — the Analysis deliverable. Exactly one exists, and it is **pinned** (non-closable) but movable between
+  panes and windows.
+- `paper{id, representation}` — a cited paper, closable, with `representation` toggling between markdown and PDF. At
+  most one tab per paper `id` exists across all windows.
+- `supplementary{id, name}` — a supplementary file on paper `id`, closable, rendering a download / open-externally card.
 
-The source-dependent asymmetry is deliberate: a document-sourced reveal always splits beside (verification is inherently
-side-by-side), while conversation-sourced case 1 merely tabs the paper in (the conversation source stays visible in its
-dock). A `:paper[id]` whose `id` is not a well-formed, known canonical UUID renders as a **visibly broken, non-navigable
-citation showing the raw id** — fail loud, debuggable, never a fuzzy nearest-match guess.
+Curators rearrange tabs using four operations:
 
-A revealed paper's tab appears **immediately** in a loading state (a spinner and a "Loading…" label), placed before its
-metadata resolves, then filled in when the fetch lands; a failed fetch **keeps the tab in an error state** (labelled
-"Unavailable", with the reason in the content area) rather than letting it vanish, and records nothing for reopen. So a
-click gives instant feedback rather than waiting on the round-trip, and a not-in-corpus paper is a visible failure, not
-a silently swallowed one.
+- **Split** splits a single-pane tab area left/right and moves the target tab into the new right-hand pane. Splitting
+  when two panes already exist is a no-op.
+- **Move** relocates a single tab (from the per-tab context menu or by drag) or every tab in a pane (from the pane
+  header's `⋯` menu) to the other pane in the same window, to a new split pane, or to a new or existing child window.
+  Moving to another window is offered only when the move leaves something behind in the source window. The main window
+  always retains its conversation region, so any tab in the main window — including a lone working document — can pop
+  out into a child window. A child window has only a tab area, so a child window with a single remaining tab does not
+  offer "Move to new window", which would otherwise close the source child window just to open an identical one.
+- **Swap** trades the tab lists and active tabs of the left and right panes while keeping each pane slot's identity and
+  divider width in place. Swapping twice returns to the starting state.
+- **Close** removes a closable tab. Closing the last tab in one half of a split collapses the tab area to a single pane.
+  Because `working-doc` is pinned, a pane holding it never collapses via close.
 
-Highlight lifecycle is **per-tab**: each paper tab retains at most one active highlight (its most-recent citation);
-manually switching tabs shows each tab's retained highlight. The per-tab quote lives in shared state; the **window
-rendering the paper** resolves offsets and applies the visual highlight locally (offsets are per-rendering).
+For mouse users, dragging a tab across strips or across windows is the direct gesture; for keyboard and touch users, the
+per-tab context menu (`Shift+F10` or the Menu key, arrow-navigable, restoring focus on close) is the primary path and
+the only way to reach a hidden window or spawn a new one.
+
+Cross-window drag cannot use a pointer-event library such as `dnd-kit` because the browser captures pointer events to
+the origin document while the mouse button is held, leaving other `window.open` windows blind until release. The tab
+strip therefore uses native HTML5 drag-and-drop (`tab-dnd.ts`), which rides the OS drag session across same-origin
+windows. Because OS drag sessions can strip custom MIME types across windows and do not expose payload contents during
+`dragover`, every tab strip accepts any drag at `dragover` (`event.preventDefault()`) and validates the payload shape at
+`drop`. On `dragstart`, the source window announces the dragged tab on the workspace `BroadcastChannel` keyed by an
+opaque drag-session ID placed in a standard drag data type; on `drop`, the target strip checks that the session ID
+matches a live session before moving the tab. Accepting any drag at `dragover` and discriminating at `drop` also keeps
+the strip open to external file drops for ingestion. Dragging still cannot create a new window by dropping on the
+desktop and requires both windows to be visible on screen, which is why the context menu provides the complete fallback.
+
+### Reveal: open beside the source, surface if already open
+
+When a curator clicks a `:paper[id]` or `:quote[id, text]` chip — whether rendered by the shared `Markdown` component
+(`markdown.tsx`) in the conversation or working document, or raised from inside a document widget
+([`document-widgets.md`](document-widgets.md)) — the workbench reveals paper `id` (`reveal.ts`).
+
+The naive rule is to open the paper in whichever pane is currently active, or always in "the other pane". Opening in the
+active pane covers up the document the curator was just reading; always targeting a fixed second group fails when the
+citation came from the conversation or when the working document has been moved to a child window. Instead, reveal
+computes a target pane that keeps the citation's source visible beside the newly opened paper:
+
+```
+Citation clicked
+  │
+  ├─ From a document tab in pane X ──► Target is the pane beside X in the same window
+  │                                    (splitting the tab area first if unsplit)
+  │
+  └─ From the conversation (main) ───► Where is the working document?
+                                         ├─ In main, tab area unsplit ─► Working doc's pane
+                                         ├─ In main, tab area split ───► The pane NOT holding working doc
+                                         └─ In a child window ─────────► Main's active pane
+```
+
+Before opening a new tab, the workbench checks whether paper `id` is already open anywhere in the workspace:
+
+- **Already open in the same window:** the existing tab moves to the computed target pane and activates there, so a
+  citation clicked in a document still places the paper beside the citing document.
+- **Already open in another window:** the workbench calls `focus()` on that window and activates the tab there without
+  pulling it out of the window where the curator parked it. If the browser blocks programmatic `focus()`, the tab moves
+  into the current window's computed target pane instead.
+- **Not yet open:** a new paper tab opens and activates in the computed target pane.
+
+The asymmetry between document-sourced and conversation-sourced reveals is deliberate. Verifying a claim in the working
+document against a paper requires reading two documents side by side, so a document citation always splits the tab area.
+When a curator clicks a citation in the conversation while the tab area is unsplit, the conversation remains visible in
+its dock, so tabbing the paper into the single pane keeps both the conversation citation and the paper visible without
+forcing a three-column layout (`[conversation | working doc | paper]`). Once the curator splits the tab area, subsequent
+conversation citations preserve the working document in its pane and route papers to the other pane.
+
+If a `:paper[id]` directive carries an `id` that is not a well-formed canonical UUID, `Markdown` renders a visibly
+broken, non-navigable citation showing the raw ID string rather than guessing a match. When a valid citation is clicked,
+the paper tab appears in the target pane immediately in a loading state (a spinner and a `"Loading…"` title) before
+`DescribePaper` returns. If the metadata fetch fails — for example, when the paper UUID is not in litcache — the tab
+stays open in an error state (`"Unavailable"`, displaying the error reason in the tab body) and is omitted from the
+reopen-last-closed stack, so a missing paper fails visibly rather than silently disappearing.
+
+Each paper tab retains at most one active quote highlight at a time, corresponding to the most recent `:quote` reveal
+for that paper. Switching away from a paper tab and back preserves its highlight. The active quote string for each paper
+lives in the shared workspace state, while the window actually rendering that paper tab resolves the quote to offsets or
+bounding boxes locally.
 
 ### Representation: markdown vs PDF
 
-A paper tab prefers **markdown when an XML-derived rendering exists** (its source is the `xml` lineage), because that
-text is high-fidelity. When the only rendering is **LLM-OCR of a PDF** (lossy), the tab defaults to **PDF**. The toggle
-is always available. The citation (id + quote) is the durable anchor; the highlight is **recomputed per representation**
-on toggle (an XML-derived markdown and a PDF text layer differ in whitespace/hyphenation/ligatures, so a location valid
-in one may be a `Locate` miss in the other).
+When a paper tab first opens, it defaults to **markdown** if the paper has an XML-derived markdown rendering in litcache
+(whose source is the publisher `xml` lineage), because XML-derived markdown preserves clean text and inline figures. If
+the only available markdown rendering comes from LLM OCR of a PDF, the tab defaults to **PDF** instead, because OCR
+markdown is lossy. The curator can toggle between markdown and PDF at any time in the tab header.
+
+A citation carries `(id, quote)` rather than precomputed coordinates. When the curator toggles a paper tab between
+markdown and PDF, the tab recomputes the highlight for the newly selected representation, because XML-derived markdown
+and PDF text layers differ in whitespace, hyphenation, and ligatures.
 
 ### Highlight resolution: server-side, one matcher
 
-All quote matching is server-side, so `Validate` (agent authoring-time) and `Locate` (UI reveal-time) share **one
-implementation** and cannot skew. The evidence service exposes `Locate(id, quote, representation)` returning either
-**code-point offsets** (markdown; the offset convention `frontend-framework.md` fixes for comments) or
-**`{page, rects[]}`** (PDF). The client only **applies** the result:
+An appealing shortcut for markdown highlights is to run a substring search in the browser with
+`String.prototype.indexOf` and skip a server round-trip. That breaks whenever the agent's quote came from a different
+representation or differs in whitespace, punctuation normalization, or soft hyphens from the rendered markdown: a
+citation that the evidence service accepted at authoring time via `Validate` would fail to highlight in the browser.
 
-- offsets → a DOM `Range` → the **CSS Custom Highlight API** (`CSS.highlights`); no DOM mutation, so clear = drop the
-  range, add = register the next. `scrollIntoView` on the range.
-- `{page, rects[]}` → absolutely-positioned overlay divs over the `pdfjs` page (`react-pdf`), mapping the coordinate
-  space through the page viewport transform. Clear = remove overlays.
+To prevent authoring validation and UI reveal from drifting apart, quote matching lives in the Python evidence service
+(`themis/services/evidence/literature/`), where `Validate` and `Locate` share one normalization-aware matcher. On
+reveal, the browser calls `Locate(id, quote, representation)` (`schema/proto/themis/rpc/literature.proto`), which
+returns one of three outcomes:
 
-A quote **unlocatable in the shown representation** clears the highlight and shows a **persistent warning chip** with
-the quote text (docked at the top of the tab's content area), occupying the tab's single highlight slot until the next
-successful reveal. No auto-toggle to the other representation.
+- **Markdown code-point offsets (`TextOffsets`):** the browser maps `[start, end)` code-point offsets (using the offset
+  convention from [`frontend-framework.md`](frontend-framework.md)) to a DOM `Range` (`highlight.ts`) and registers it
+  with the CSS Custom Highlight API (`CSS.highlights`), scrolling the range into view without mutating the DOM. Clearing
+  or replacing the highlight drops the registered range.
+- **PDF bounding boxes (`PdfRegion` with `{page, rects[]}`):** the browser renders absolutely positioned overlay `<div>`
+  elements over the `react-pdf` (`pdf.js`) page, transforming normalized page coordinates through the page viewport.
+- **Not located (`QuoteNotLocated`):** the tab clears any previous highlight and docks a persistent warning chip at the
+  top of the tab's content area showing the unlocated quote text. The tab does not automatically switch representations.
 
-The shipped markdown arm diverges from "the client only applies the result": `Locate(…, MARKDOWN)` is consumed as a
-**boolean** (matched / not), and the client re-derives the DOM position itself with `indexOf(quote)` over the rendered
-text, then walks text runs to a `Range`. This holds while the matcher's normalization and the DOM's text agree
-character-for-character; a quote the **normalization-aware** matcher locates but whose exact substring is not present in
-the rendered DOM (collapsed whitespace, an entity, a soft hyphen) is a server hit but a client `indexOf` miss, and
-surfaces as the warning chip. Wiring the client to apply the server's returned offsets instead of re-finding the quote
-closes that gap (see Open questions).
+Two transitional gaps remain in the current highlight path (`tab-views.tsx`, `highlight.ts`):
+
+1. **Markdown offset application:** although `Locate(..., MARKDOWN)` runs the normalization-aware matcher on the server
+   and returns `TextOffsets`, the browser currently consumes that response as a boolean match check and re-locates the
+   quote in the rendered DOM text runs with `indexOf(quote)` (`locateQuoteInRuns` in `highlight.ts`). When a quote
+   matches on the server only after whitespace or character normalization, `indexOf` misses in the browser and falls
+   back to the warning chip. In browsers without `CSS.highlights`, a located quote also falls back to the warning chip.
+1. **PDF matcher wiring:** the anchorite PDF matcher behind `Locate(..., PDF)` currently raises
+   `PdfLocationUnavailableError` (gRPC `UNIMPLEMENTED`) until the cross-repo coordinate contract is finalized (see
+   [Open questions](#open-questions)); the BFF catches `UNIMPLEMENTED` and surfaces the warning chip rather than failing
+   the paper reveal.
 
 ### Windows: one source of truth, N thin mirrors
 
-Exactly one window is **main** and holds the single source of truth (and the conversation); every other is a **thin
-mirror** with a tab area only. A **group** never pops; a **window** does, holding one or two panes of tabs.
+When a curator pops tabs out onto a second monitor, the multi-window state has to stay consistent without split-brain
+races. Handing state ownership to child windows or running an election when the main window closes complicates every tab
+move and close event.
 
-- A `BroadcastChannel` carries a **whole-workspace snapshot** to every window and **commands back** to main; each window
-  renders only its own tab area; main applies and re-broadcasts — no split-brain. The snapshot is **structure plus small
-  signals** (window/pane/tab descriptors, ids, ratios, active ids, the highlight quote map, the strip label mode) and,
-  for the working document, its **tip commit + analysisId** — the refetch signal, not the body. The two large bodies
-  stay **off** the channel: the conversation transcript is main-only (children never render it), and the
-  working-document **revision is read by each window from the browser's copy of the repository**, which one SharedWorker
-  owns for every window, keyed on the broadcast commit, so a child re-reads when the tip moves. (Unlike an immutable
-  paper, the working document moves; the commit is what a mirror needs, the body is what it must not carry.)
-- **Version pin.** The working-doc tab's payload may carry a **view-only pin** `{analysisId, version}` selecting a
-  historical version, `version` being a commit id on the branch's history (the header dropdown writes it via `patchTab`,
-  listing from the branch's history in the browser's copy ([`workbench-workspace.md`](workbench-workspace.md) §"Versions
-  are the branch's history")). A window holding the tab fetches the pinned revision instead of the tip; a null or absent
-  pin follows the current document, and readers ignore a pin naming another analysis (stale after a switch). Riding the
-  tab payload means the pin crosses the channel with the snapshot and survives moving the tab between windows, with no
-  protocol addition; it is transient by construction — a load starts the working-doc tab with an empty payload.
-- **Process model: one process, one main thread.** Children open via `window.open` with the opener retained, so
-  (same-origin) they share main's renderer **process and event loop** — not N parallel processes. Main holds the child
-  handles for a direct `child.close()`, and a crash takes all windows together (no orphaned mirror outlives its source
-  of truth). The trade is **no compute isolation** — a heavy synchronous render janks all windows; pdfjs's worker
-  offloads PDF *parsing* but **canvas rasterization stays on the main thread**, mitigated only by lazy/virtualized
-  rendering. Mirror actions round-trip through main and share that thread, so they can lag under heavy render (not
-  split-brain).
-- **Continuous gestures are local, committed on release.** A divider drag updates only the acting window and writes to
-  shared state on pointer-up — one broadcast, not one per frame.
-- **Lifecycle.** The **conversation is anchored to main** — it relocates only within main (any of the four edges), never
-  to a child. The **working document may move to a child window**; if that child closes it **reparents into main's
-  active pane** (appended as a tab); if main closes it reconstitutes on relaunch (a singleton, server-backed), so no
-  arrangement can lose it. Closing a child reparents its pinned tabs into main's active pane and closes its closable
-  tabs; a child whose tab area becomes empty closes itself; **main** may show an empty tab area (the conversation only),
-  which stays a single **zero-tab pane** so an active pane always exists as a reveal/reparent target. Closing a child
-  via OS chrome may not fire `beforeunload`/`pagehide` reliably; the backstop is relaunch reconstitution of pinned
-  content, so a pinned tab can transiently vanish but is never lost. Bookkeeping is **O(N)**: per-child window handles
-  (runtime refs, outside the snapshot/persistence), per-child close routing, disambiguating which child sent a close,
-  and re-registering a child the user manually reloads.
-- **Persistence and restore.** The workbench persists **how a curator works, never what they were working on**
-  ([`workbench-navigation.md`](workbench-navigation.md) §"The arrangement persists"). So the arrangement persists
-  (IndexedDB, `lib/browser-store.ts`): the conversation edge, the orientation-specific outer ratio, the strip label
-  mode, and the inner two-pane ratio — each a preference set once and wanted everywhere. **No tab content persists**:
-  which papers are open is a property of one Analysis, restoring it saves a click on a citation, and one route per
-  Analysis remounts this workbench across a switch, so a restored set would arrive under the wrong Analysis. The
-  reopen-last-closed stack is runtime state on the same terms: closing a tab is undoable for as long as the page lives,
-  and a load starts it empty. A load therefore opens a single main window holding the working document alone, in the
-  curator's arrangement; papers return as citations are revealed. Window distribution and geometry are not persisted
-  either — `window.open` needs a user gesture (no silent respawn), and restoring saved positions misfires exactly when
-  the environment changed, a monitor unplugged or a laptop undocked. `highlights` are transient.
+Instead, the **main** window is the single source of truth (`workspace-sync.ts`), and every child window opened via
+`window.open` is a **thin mirror** that renders only its own two-pane tab area:
+
+- **Snapshot broadcast and command forwarding:** a `BroadcastChannel` carries a `WorkspaceSnapshot` from the main window
+  to every child window and carries `WorkspaceCommand` messages from children back to the main window. Child windows do
+  not mutate state locally; they send commands to the main window, which updates the reducer and broadcasts the new
+  snapshot. The snapshot carries only layout structure and small signals: window, pane, and tab descriptors, split
+  ratios, active tab IDs, the per-paper highlight quote map, the strip label mode, and the working document's current
+  `(analysisId, tipCommit)` pair.
+- **Large document bodies stay off the channel:** the conversation transcript is rendered only in the main window, and
+  each window that holds the `working-doc` tab reads the working document revision directly from the browser's copy of
+  the workspace git repository (`working-document.ts`, owned by a `SharedWorker` shared across same-origin windows as
+  described in [`workbench-workspace.md`](workbench-workspace.md)). When the tip commit advances in the broadcast
+  snapshot, any window displaying the tip re-reads the updated revision from the repository worker.
+- **Working document version pin:** the `working-doc` tab payload carries an optional view-only pin
+  `{analysisId, commit}` (`DocumentPin` in `workspace-model.ts`) set by the version picker in the tab header, which
+  lists commits from the branch history in the browser's copy of the repository
+  ([`workbench-workspace.md`](workbench-workspace.md); earlier pre-repository slices used integer versions over a
+  fetched markdown body). A window rendering `working-doc` reads the pinned commit when present, or follows `tipCommit`
+  when the pin is absent, ignoring any stale pin whose `analysisId` does not match the current Analysis. Storing the pin
+  on the tab payload means it travels with the tab across windows over the existing snapshot channel and resets on page
+  reload.
+- **Shared renderer process:** child windows are opened via same-origin `window.open` without `noopener`, so they share
+  the main window's renderer process and event loop. That lets the main window retain child `WindowProxy` handles to
+  call `child.focus()` and `child.close()` directly, and ensures a renderer crash takes all windows down together rather
+  than leaving orphaned mirrors. The cost is that heavy main-thread work (such as `pdf.js` canvas rasterization, which
+  stays on the main thread even though PDF parsing runs in a worker) is shared across all open windows, mitigated by
+  lazy per-page rendering.
+- **Local divider gestures:** dragging a split divider updates panel sizes locally in the acting window and commits a
+  single command on pointer release, avoiding a `BroadcastChannel` round-trip on every animation frame.
+- **Window lifecycle and pinned tab safety:** closing the main window closes every mirror (`main-closing`), while
+  closing a child window reparents any pinned tab (`working-doc`) into the main window's active pane and closes the
+  child's closable tabs. If removing or moving tabs leaves a child window with zero tabs, the child window closes
+  itself. If the main window closes — or if closing a child window via OS window chrome does not deliver `beforeunload`
+  or `pagehide` — `working-doc` reconstitutes on relaunch (a singleton, server-backed) so it can never be permanently
+  lost. Runtime bookkeeping scales as $O(N)$ in the number of child windows for window handles, close routing, and
+  re-registering a child window that the curator reloads manually.
+- **Persistence and restore:** on reload, the workbench restores how the curator arranges their workspace, not which
+  papers they had open ([`workbench-navigation.md`](workbench-navigation.md)). IndexedDB (`lib/browser-store.ts`)
+  persists four arrangement settings: the conversation dock edge, the horizontal and vertical outer split ratios, the
+  strip label mode, and the inner two-pane split ratio. Open paper tabs, active highlights, the reopen-last-closed
+  stack, and child windows are not persisted: which papers are open is a property of one Analysis, restoring them saves
+  only a click on a citation, and because one route per Analysis remounts this workbench across a switch, a restored set
+  would arrive under the wrong Analysis; `window.open` requires a user gesture and saved monitor coordinates break when
+  a laptop is undocked.
 
 ### Accessibility
 
-- The **context menu** is the keyboard/touch path for split, move-to-pane, and move-to-window; drag is a mouse
-  enhancement with no keyboard requirement.
-- Dividers are `role="separator"` with an `aria-label` (e.g. "Resize conversation and documents"), resizable by arrow
-  keys. The four-edge conversation selector uses text labels.
-- Since windows have no user-assigned titles, **move-to-window names each destination by its active (or pinned) tab**.
-  After a tab leaves a window (move-to-window) or a pane collapses, focus lands on the source pane's new active tab.
+Every layout and tab operation has a keyboard-operable path (`pane.tsx`, `tab-area.tsx`):
+
+- The per-tab and pane-header context menus (`role="menu"`) provide keyboard and touch access to split, swap,
+  move-to-pane, and move-to-window operations; HTML5 drag-and-drop is a mouse-only convenience.
+- Split dividers render as `role="separator"` with descriptive `aria-label` attributes (such as
+  `"Resize conversation and documents"`) and support arrow-key resizing. The four-edge conversation dock selector uses
+  text labels.
+- Because child windows do not have user-assigned titles, the "Move to window" menu labels each destination window by
+  its active or pinned tab title. When a tab moves to another window or a split pane collapses, keyboard focus moves to
+  the source pane's new active tab.
 
 ### Backend seam: structured over Connect, bytes over presigned redirects
 
-Litcache resolution logic (`doc_id → chosen rendering hash → object path`,
-`figure name → AssociatedFile → content-addressed path`, lazy-fetch of un-fetched files) stays in **one language** — the
-Python evidence service — and is not reimplemented in the TypeScript BFF. The service (per `services.md`) exposes
-`DescribePaper`, `ResolveContent` (`(id, what) → gs:// object`), `Locate`, and `Validate`; the BFF reaches it behind a
-TypeScript **literature port** (`server/adapters`, the `THEMIS_BACKEND` fixture/live split), the live adapter a gRPC
-client (ID-token interceptor, audience = the service URL), the fixture serving a seeded corpus offline.
+Litcache manifest resolution — choosing a rendering hash for a `doc_id`, mapping a figure filename to its
+`AssociatedFile` entry and content-addressed GCS object path, and lazily fetching unfetched files — already lives in the
+Python evidence service (`themis/services/evidence/literature/`). Reimplementing manifest parsing in the TypeScript BFF
+would duplicate that logic across two languages. Instead, the evidence service exposes `DescribePaper`,
+`ResolveContent`, `Locate`, and `Validate` (`schema/proto/themis/rpc/literature.proto`), and the BFF calls it through a
+TypeScript `LiteraturePort` (`apps/web/src/server/ports.ts`), backed either by the live gRPC adapter (sending an IAM ID
+token for the evidence service audience) or by an offline fixture adapter serving a seeded local corpus. (Currently,
+resolving an `AssociatedFile` listed in `Manifest.files` without a cached `path` raises `MissingContentError` until
+on-demand fetch and manifest write-back are wired in the evidence service.)
 
-The browser reaches the BFF over **two seams**, split by payload shape:
+Between the browser and the BFF, requests split across two seams according to payload shape:
 
-**Structured messages ride Connect.** `DescribePaper(doc_id) → PaperInfo` and
-`Locate(doc_id, quote, representation) → LocateResponse` are methods on the browser↔BFF `Workbench` service
-(`workbench/rpc/workbench.proto`), reusing the `literature` proto messages as the view model. They inherit that
-service's protovalidate interceptor, one Connect error model, and default-on IAP-identity auth — the consolidation
-`proto.md`/`security.md` require and `#272` established. The BFF servicer delegates straight to the literature port.
-They are **not** hand-rolled REST routes: a bespoke per-route validation/error/auth surface is exactly what `#272`
-removed.
+```
+Browser                           Next.js BFF                           Python Evidence Service / GCS
+  │                                    │                                              │
+  ├─ 1. Connect RPC (JSON/proto) ─────►│ Workbench.DescribePaper / Locate             │
+  │     DescribePaper(doc_id)          ├──────────── gRPC (LiteraturePort) ──────────►│ Evidence service
+  │     Locate(doc_id, quote, repr)    │                                              │
+  │                                    │                                              │
+  ├─ 2. HTTP GET /api/papers/[id]/... ►│ LiteraturePort.resolve* ────────────────────►│ Evidence service
+  │     (markdown, pdf, files/[name])  │   returns gs://corpus-bucket/key             │   ResolveContent
+  │                                    │ ContentPort Verify bucket pin + IAM signBlob │
+  │◄─── 302 Location: https://storage.googleapis.com/... (signed V4 URL) ─────────────┤
+  │                                    │                                              │
+  └──── GET signed URL (Range / fetch / <img>) ──────────────────────────────────────►│ GCS corpus bucket
+```
 
-**Content bytes ride plain HTTP, served by GCS directly.** `GET /api/papers/[id]/{markdown,pdf}` and
-`/api/papers/[id]/files/[name]` are deterministic routes that resolve the object and, on the live adapter, **`302` to a
-short-lived presigned GCS URL** — so the bytes flow browser↔GCS with no BFF proxying: `react-pdf` gets HTTP Range
-requests back (progressive paging of publisher-sized PDFs) and there is no Cloud Run buffering. Bytes do not ride
-Connect because proto3-JSON base64-inflates and buffers them, and the consumers (`<Document file>`, `<img>`) want a URL,
-not an RPC reply. The fixture adapter has no bucket to sign against, so offline those same routes serve the seeded bytes
-inline (the one place a byte-stream path survives — behind the port, live never streams).
+**Structured metadata and quote locations ride Connect.** `Workbench.DescribePaper` and `Workbench.Locate`
+(`schema/proto/themis/workbench/rpc/workbench.proto`) are unary methods on the browser-to-BFF `Workbench` Connect
+service, reusing `PaperInfo` and `LocateResponse` from `literature.proto`. Riding the Connect service gives both calls
+`protovalidate` request validation, one error model, and default-on IAP identity verification (`proxy.ts` and
+`context.ts`) rather than bespoke validation and error handling on custom REST routes.
 
-The literature port **resolves** each selected object to a `ContentObject` (its `gs://` location live, a store path
-offline) and hands it to an injected **`ContentPort`** that serves it: a `302` to a signed URL (live) or the seeded
-bytes (fixture). `ContentPort` is the generic "serve a GCS object to the browser" primitive — signing, egress typing,
-the `302` — reusable by any surface backed by a bucket; resolution (`doc_id + selector → object`) stays
-evidence-specific. The working document is not such a surface: it lives inside git packs in sheaf's bucket, whose signed
-URLs the sheaf service mints, because it is the one identity with a role on that bucket
-([`workbench-workspace.md`](workbench-workspace.md) §"Packs come straight from the bucket, by URLs the sheaf service
-signs"). Presign specifics:
+**Paper content bytes ride HTTP GET routes that redirect to presigned GCS URLs.** Sending multi-megabyte PDFs, markdown
+bodies, and figure images through Connect RPC responses would base64-inflate and buffer them in Node/Bun memory, and
+browser consumers (`react-pdf`'s `<Document file={url}>` and `<img src={url}>`) expect a URL rather than an RPC payload.
+Instead, `GET /api/papers/[id]/{markdown,pdf}` and `GET /api/papers/[id]/files/[name]` (`apps/web/src/app/api/papers/`)
+call `LiteraturePort` to resolve the target object (`ResolveContent`) and hand the resulting `ContentObject` to
+`ContentPort` (`apps/web/src/server/content-egress.ts`). On the live adapter, `ContentPort` responds with an HTTP `302`
+redirect to a short-lived V4 presigned GCS URL; on the offline fixture adapter, where no GCS bucket exists,
+`ContentPort` streams the seeded bytes directly. Redirecting to GCS lets `react-pdf` issue HTTP `Range` requests
+directly to GCS for progressive PDF paging without buffering bytes through Cloud Run.
 
-- The web SA signs V4 URLs via IAM `signBlob` (no stored key; `serviceAccountTokenCreator` on itself).
-- The **evidence adapter pins the corpus bucket**: it refuses a resolution naming an object outside it before handing it
-  to the `ContentPort`, so an evidence-service bug can't turn a content route into a signed read of any other bucket the
-  web SA holds or is later granted. The pin is the resolver's (which bucket it trusts), not the generic port's — a
-  second surface pins its own.
-- Egress typing — corpus content is third-party, so anything off the inline allowlist is forced to
-  `Content-Disposition: attachment`, carried on the live path by the signed URL's `response-content-disposition`
-  override (`response-content-type` sets the media type). A downloaded file's declared name rides that same disposition
-  (RFC 5987 `filename*`), so it does not save under the resolved object's content-addressed key.
-  `X-Content-Type-Options: nosniff` cannot ride a signed URL — GCS serves no such header — but it is moot there: the
-  bytes come from the GCS origin, cross-origin to the workbench, so publisher HTML/SVG cannot execute into it
-  regardless. The fixture's same-origin byte path still sets `nosniff`.
-- The bucket needs a **CORS** rule for the workbench origin: `pdf.js` and `fetch().text()` read the body cross-origin
-  (an `<img>` figure does not).
-- The `302`'s `Cache-Control` `max-age` is capped **strictly below** the signature lifetime (a skew/latency margin): the
-  browser's cache clock starts at response receipt, not at mint, so a redirect reused at the edge of its window must
-  still point at a live signature (past it is a 403). The TTL itself is chosen for the bearer-capability window, not
-  freshness — the corpus is immutable.
+`ContentPort` is the generic BFF primitive for serving a bucket object to the browser, while bucket selection stays in
+the domain adapter (`apps/web/src/server/adapters/live/literature.ts`). Unlike litcache papers, the working document is
+not served through `ContentPort`: it lives in git packfiles inside sheaf's bucket, whose signed URLs are minted by the
+sheaf service ([`workbench-workspace.md`](workbench-workspace.md)). Presigned paper delivery enforces five invariants:
 
-**Offsets stay stable because the markdown is never rewritten.** `Locate` returns code-point offsets into the markdown
-*as served*; the renderer resolves a figure ref `![](name)` to the deterministic files route **at render time** (an
-image-renderer lookup, never a string substitution on the source), so both sides index the identical text. Rewriting
-refs into signed URLs would shift every following offset and mislocate the highlight.
+- **Keyless V4 signing:** the web service account signs V4 GCS URLs via IAM `signBlob` (`serviceAccountTokenCreator` on
+  itself), so the BFF holds no long-lived service account key.
+- **Corpus bucket pinning:** the live literature adapter verifies that the `gs://` bucket returned by `ResolveContent`
+  matches the configured litcache corpus bucket before passing the object to `ContentPort`. A bug or misconfiguration in
+  the evidence service cannot trick the BFF into signing a read URL for any other bucket the web service account can
+  read.
+- **Safe egress typing ([`content-egress.ts`](../../apps/web/src/server/content-egress.ts)):** because publisher files
+  are third-party content, only media types on the explicit inline allowlist in
+  [`content-egress.ts`](../../apps/web/src/server/content-egress.ts) are served inline. Everything else — including
+  `image/svg+xml` and `text/html` — is forced to `Content-Disposition: attachment` with an RFC 5987 `filename*` carrying
+  the file's declared name rather than its content-addressed object hash. On the live path, GCS sets those headers via
+  the signed URL's `response-content-disposition` and `response-content-type` query parameters. GCS does not emit
+  `X-Content-Type-Options: nosniff` on signed URL responses, which is safe because `storage.googleapis.com` is
+  cross-origin to the workbench and cannot execute script in the workbench origin; the same-origin fixture byte stream
+  still sets `nosniff`.
+- **CORS on the corpus bucket:** the litcache bucket configures CORS for the workbench origin so `pdf.js` and
+  `fetch().text()` can read redirected PDF and markdown bodies cross-origin.
+- **Redirect cache lifetime below signature lifetime:** the `302` response sets `Cache-Control: private, max-age=...`
+  strictly shorter than the V4 signature's expiration window to leave a clock-skew and network-latency margin. Because
+  the browser starts its cache age timer when it receives the `302` rather than when the BFF minted the signature, a
+  cached redirect reused near the end of its `max-age` still points to a valid GCS signature. The TTL itself is chosen
+  for the bearer-capability window, not freshness — the corpus is immutable.
 
-**Authorization is IAP-only.** A paper belongs to no Project — litcache is a shared corpus and entitlement is a deferred
-non-goal (`literature-evidence-layer.md`) — so both seams require only a verified IAP identity (`proxy.ts` +
-`context.ts`, app-wide), not Project membership. A real entitlement model lands at the evidence service later.
+**Markdown text is never rewritten before rendering.** `Locate` computes code-point offsets against the exact markdown
+stored in litcache. Rather than rewriting relative figure references (`![](figure-1.png)`) into signed URLs inside the
+markdown string — which would shift every subsequent code-point offset and misalign highlights — the markdown renderer
+resolves image URLs at render time to `/api/papers/[id]/files/[name]`. Both `Locate` and the browser DOM therefore see
+identical markdown text.
+
+**Authorization requires IAP identity only.** Litcache is a shared corpus and paper-level entitlement is a deferred
+non-goal of the current evidence layer ([`literature-evidence-layer.md`](literature-evidence-layer.md)), so both the
+Connect RPCs and the `/api/papers/...` routes verify the caller's IAP identity without checking Project membership. A
+real entitlement model lands at the evidence service later.
 
 ## Alternatives considered
 
-- **N-up resizable pane row / arbitrary in-window tiling** — rejected. Three-plus simultaneous surfaces come from more
-  windows; an N-row multiplies divider and reorder logic for a density a reading surface rarely wants.
-- **Single tab pane per window, no in-window split** (OS-window tiling only) — rejected. It hands the common
-  document-beside-paper pairing to the OS window manager, which on a single screen tiles worse than an in-app divider.
-- **Conversation as a tab / co-equal tile** — rejected. It is a persistent companion, not a document; a tab strip and
-  tiling among papers misrepresents it and reintroduces the reveal-into-the-other-group feel.
-- **Recursive split tree** (per-pane orientation, arbitrary nesting) — rejected. Buys only mixed-orientation nesting no
-  described layout needs, at real persisted-structure and get-lost cost.
-- **Reveal in place, tab-switch to compare** — rejected. Verifying a claim against its cited quote is inherently
-  side-by-side; tab-switching shows them only in sequence. Document-sourced reveal auto-splits beside instead.
-- **Reveal into "the other group"** (the two-group model) — superseded. Automatic placement into a *distant* pane
-  displaces parked content; a *local* split beside the source does not. This deletes the fixed group count, "the other
-  group", per-group reveal targeting, and the conversation-as-a-tab treatment.
-- **Type-gated drop discrimination** (accept only a recognized custom MIME type at `dragover`) — rejected. Custom types
-  can be stripped on a cross-window OS drag, breaking drop-target recognition, not just the payload. Accept-any-drag +
-  validate-shape-at-`drop` is robust to that and affords external-file ingestion.
-- **Pop-out with ownership transferred to a child** (survives main close) — rejected: split-brain and a fragile
-  hand-off; the thin mirror is simpler and main-survival is not required.
-- **Separate renderer process per window** (`noopener` / COOP) — deferred. Buys compute and crash isolation but loses
-  the opener handles (`focus`/`close`) and needs a heartbeat + raise-window story, for isolation the workload does not
-  yet need.
-- **Drag-to-desktop tear-off** — rejected: no drop fires outside a document; `dragend` screen coords are zeroed in
-  Firefox/Safari; tear-off is privileged chrome. Window creation is a menu item.
-- **Restore saved window positions on reload** — rejected. Needs a user gesture (no silent respawn) and misfires on
-  monitor/config changes (off-screen windows, popup pile-up); one window is predictable, and a paper is a click from the
-  citation that opened it.
-- **Client-side naive substring matching for markdown** (instant, no round-trip) — rejected. A `:quote` carries the
-  quote text but not the representation it was drawn from; against a different rendering, exact substring **fails on a
-  valid citation**. Server-side matching costs a round-trip per markdown highlight but is robust and shares one matcher
-  with `Validate`.
-- **`dnd-kit` (pointer-based) for tab drag** — rejected; **native HTML5 DnD** chosen. A pointer-based drag cannot cross
-  a `window.open` boundary: while a button is held the browser delivers the pointer stream only to the origin window
-  (implicit capture is per-document), so the other window is blind until release. Native HTML5 DnD rides the OS drag
-  session, which delivers `dragover`/`drop` to the other same-origin window. The cost — weaker ergonomics, no
-  touch/keyboard — is borne by the "Move" context menu, which is the accessible/touch/cross-window path anyway.
-- **BFF reads litcache from GCS directly** — rejected. Reimplements manifest/lazy-fetch logic already in Python;
-  service-resolves / BFF-streams keeps that logic single-language.
-- **BFF subprocess-spawns Python anchorite** — rejected. Needs Python in the Bun image, per-request process spawn, no
-  proto contract, no fixture seam.
-- **PDF quote→bbox precomputed and stored** — rejected; the directive carries only text, so location resolves live.
-- **`grpc-js` + `ts-proto` for the live BFF adapter** (instead of `connect-node`) — rejected. ts-proto's draw is DX, not
-  a goal here; it adds a second, redundant codegen emitting an incompatible copy of messages `regen` already produces as
-  `protobuf-es`. connect-node reuses those exact messages (one toolchain), and the four unary RPCs need none of
-  grpc-js's lower-level streaming/deadline control.
-
-## Implementation state
-
-This section describes the endpoint the three stacked frontend changes reach together (the workspace logic core, the BFF
-paper surface, the windowed UI). At an intermediate commit only the layers below the reader's have landed — the
-reducer/drag/highlight core carries this doc, and the routes and mirror controller it names land above it.
-
-**Shipped** on the fixture evidence adapter (the BFF's own seeded corpus — no Python service, no gRPC transport, so the
-whole frontend builds and tests offline): the evidence-service proto + a fail-loud fixture backend; the BFF evidence
-port + IAP-only paper routes; the conversation region + two-pane tab area with the four-edge dock selector; reveal
-beside the source with surface-if-already-open and the loading placeholder; split / move / close / swap and within- and
-cross-window tab drag; the N-window main-authoritative mirror with move-to-window and per-window working-document fetch;
-the working-document version picker (a view-only pin in the tab payload; any historical version fetchable per window);
-and arrangement-only persistence (conversation edge, outer ratios, label mode, inner ratio), in IndexedDB.
-
-**Deployed to dev** behind the unchanged proto contract: the live evidence adapter (the BFF's first gRPC client — a
-Connect gRPC transport over the `protobuf-es` messages, ID-token interceptor) and the evidence Cloud Run service reading
-real litcache — content resolution and the normalization-aware markdown matcher. Markdown papers reveal and highlight
-end to end there.
-
-**Remaining:**
-
-- **Repository reads** — the pane fetches the working document as a markdown body and the picker lists integer versions;
-  reading the document and its files at a commit from the browser's copy of the repository, the commit-id pin and the
-  history behind the picker land with that copy ([`workbench-workspace.md`](workbench-workspace.md)).
-- **PDF quote highlighting** — the anchorite PDF matcher behind `Locate(…, PDF)` is not wired; until it is, that arm
-  fails loud (gRPC `UNIMPLEMENTED`) and the BFF surfaces it as the pane's not-located warning rather than erroring the
-  reveal. Blocked on the anchorite coordinate contract (see Open questions).
-- **Lazy fetch of an associated file** — content resolution raises `MissingContentError` for a file the manifest lists
-  without a `path` (the seed corpus has every file fetched, so nothing exercises it yet); fetch-on-demand + write-back
-  is the remaining piece.
-- **Highlight-API fallback** — a browser without the CSS Custom Highlight API renders a *located* quote as the
-  "unlocatable" warning chip; a standalone fix, independent of the workspace model.
+- **N-up resizable pane row or recursive split tree in one window.** A recursive split tree or N-column row lets a
+  single window show three or more documents at once, or mix horizontal and vertical document splits. We rejected it
+  because reading surfaces rarely fit three readable documents on one monitor, and recursive splits add divider
+  management and make reveal target placement hard to predict. Multi-window pop-out handles three-or-more documents
+  across monitors without complicating single-window layout.
+- **Single tab pane per window (relying on OS window tiling for side-by-side reading).** Dropping the in-window split
+  makes each window a single tab strip. We rejected it because reading a claim beside its cited paper is the core
+  verification loop, and an in-app two-pane split tiles two documents on one screen much more cleanly than OS window
+  management.
+- **Conversation as a tab or co-equal tile.** Treating the conversation as a tab reuses the tab strip and pane reducer
+  for every surface. We rejected it because hiding the conversation behind document tabs interrupts steering, and
+  docking the conversation in its own region lets document reveals split the tab area without displacing the
+  conversation.
+- **Reveal in place (switching tabs to compare) or reveal into "the other group".** Revealing a paper in the same pane
+  as the citing document forces the curator to flip back and forth between tabs to compare a claim with its quote.
+  Revealing into a fixed "other group" (the earlier two-group design) displaced whatever document was parked in that
+  group. Splitting locally beside the source pane keeps both visible without disturbing distant panes.
+- **Type-gated `dragover` discrimination.** Accepting a drag at `dragover` only when `dataTransfer.types` contains a
+  custom MIME type is a common HTML5 DnD pattern, but OS drag sessions across browser windows can strip custom types,
+  preventing drop targets from activating. Accepting any drag at `dragover` and validating the `BroadcastChannel` drag
+  session at `drop` works reliably across windows and allows external file drops.
+- **Transferring state ownership to a child window on main close, or running separate renderer processes (`noopener`).**
+  Letting a child window take over when the main window closes avoids closing child mirrors, and opening children with
+  `noopener` isolates renderer processes so a heavy PDF rasterization in one window cannot jank another. We rejected
+  ownership hand-off because of split-brain hazards and a fragile hand-off — the thin mirror is simpler and main-window
+  survival is not required — and deferred `noopener` because losing `WindowProxy` handles gives up direct
+  `child.focus()` and `child.close()` calls for process isolation the workload does not yet need.
+- **BFF reading litcache from GCS directly or spawning Python anchorite as a subprocess.** Reading manifests in
+  TypeScript would duplicate Python resolution logic; spawning Python from the Bun BFF container would bloat the runtime
+  image and bypass the gRPC service and fixture seams.
+- **Precomputing PDF quote bounding boxes at ingestion.** Precomputation is impossible because `:quote[id, text]`
+  directives are authored dynamically by the agent with arbitrary quote substrings, so `Locate` resolves them on demand.
+- **`grpc-js` + `ts-proto` instead of `@connectrpc/connect-node` for the BFF's gRPC client.** Using `ts-proto` would add
+  a second protobuf codegen pipeline producing message types incompatible with `@bufbuild/protobuf`, whereas
+  `connect-node` reuses the existing generated messages across both Connect and gRPC transports.
 
 ## Open questions
 
-- **Anchorite coordinate contract** — units, origin corner, and page indexing of the PDF `rects[]` are a cross-repo
-  seam; the `Locate` response is the boundary and needs pinning with anchorite's owner before the PDF highlight path is
-  real.
-- **Quote source representation** — a `:quote` does not record which rendering its text came from, so a valid quote can
-  be a `Locate` miss in the shown representation (mitigated by the toggle + warning chip). Recording the source
-  representation in the directive would remove the miss but is an upstream authoring change, out of scope here.
-- **Markdown offsets: apply, don't re-find** — the client re-derives the markdown highlight position with `indexOf`
-  rather than applying the offsets `Locate` already returns (see Highlight resolution), so a normalization-only server
-  match can still miss client-side. Applying the returned offsets removes the second matcher; deferred, no consumer of
-  the offsets exists yet.
+- **Anchorite PDF coordinate contract.** What page indexing (0-based vs 1-based), origin corner, and coordinate units
+  will anchorite's PDF matcher emit in `PdfRegion` (`schema/proto/themis/rpc/literature.proto` currently reserves
+  normalized `[0, 1]` coordinates from the top-left corner)? Pinning that contract with anchorite's owner unblocks
+  wiring `Locate(..., PDF)`.
+- **Recording source representation on `:quote` directives.** A `:quote[id, text]` directive does not record whether the
+  agent extracted `text` from the XML-derived markdown or the PDF text layer, so a valid quote from one representation
+  can miss in `Locate` when the curator views the other. Recording the source representation in the directive would
+  avoid false misses, but requires an upstream agent-authoring change.
+- **Applying server-returned markdown offsets in the browser.** Switching `tab-views.tsx` and `highlight.ts` from
+  client-side `indexOf(quote)` to applying the `[start, end)` code-point offsets already returned by
+  `Locate(..., MARKDOWN)` will allow normalization-only server matches to highlight in the DOM.

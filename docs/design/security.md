@@ -1,205 +1,223 @@
 # Design: security architecture
 
-**Status:** current **Related:** [`frontend-framework.md`](frontend-framework.md) (§Auth — the web request-auth
-chokepoint), [`sandbox-worker.md`](sandbox-worker.md) (the hatch the sandboxed agent's calls leave through),
-[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (the condition an rpc meets before the agent may call it),
+**Related:** [`frontend-framework.md`](frontend-framework.md) (§Auth — the web request-auth chokepoint),
+[`rpc-authorization.md`](rpc-authorization.md) (the data-plane RPC authorization interceptor),
+[`sandbox-worker.md`](sandbox-worker.md) (the hatch that sandboxed agent calls leave through),
+[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (the condition an RPC meets before the agent may call it),
 [`workspace-model.md`](workspace-model.md) (cross-Project default-deny), [`pr-screenshots.md`](pr-screenshots.md) (the
-one public bucket), [`spike-infrastructure.md`](spike-infrastructure.md) §6 (the deployables diagram),
-[`../PRODUCT.md`](../PRODUCT.md) §9 (security posture this implements)
+public screenshot bucket), [`spike-infrastructure.md`](spike-infrastructure.md) (§6 — the deployables diagram),
+[`../PRODUCT.md`](../PRODUCT.md) (§9 — the security posture this design implements)
 
 ## Overview
 
-Cross-cutting security rules, distinct from the per-area docs that own each mechanism. Each is stated once here rather
-than re-argued per area:
+Themis enforces security across several boundaries: web requests, data-plane RPCs, sandbox egress, outbound calls to
+public databases, and public internet ingress. Rather than re-arguing the same security principles inside each area's
+design doc, this document establishes three cross-cutting rules that every boundary must satisfy.
 
-- **Every critical security check runs at a single default-on chokepoint** — never as a step each call site opts into.
-- **An outbound request carrying untrusted text is an exfiltration channel when the untrusted side can influence where
-  the bytes go, or can read them back later** — not merely because untrusted text crossed the perimeter.
-- **A request from the public internet passes IAP before it reaches anything Themis runs**, unless it is bound for a
-  named exception that carries controls of its own. IAP is Google's identity-aware proxy: it refuses a request that
-  carries no Google identity it admits, so a flaw in our code that fires before our own authentication is out of an
-  anonymous attacker's reach.
+First, every critical security check runs at a single default-on chokepoint at the protected resource, with exemptions
+explicitly allowlisted in one place. If each call site had to opt in to a check, omitting the check on a new route or
+tool would look identical to a deliberate exemption. Second, an outbound request carrying untrusted text counts as an
+exfiltration channel only when the untrusted input can steer where the bytes go or when the attacker can read those
+bytes back later. The analysis agent routinely queries public biology databases using identifiers read from untrusted
+literature; treating every outbound hop with untrusted text as a leak would condemn the product's core lookups while
+failing to distinguish fixed-destination read queries from attacker-steered URLs. Third, every request from the public
+internet must pass Google's Identity-Aware Proxy (IAP) before reaching any process Themis runs, unless the destination
+is an explicit exception with equivalent controls. Putting IAP in front of the stack prevents anonymous internet
+scanners from reaching framework and library code that runs before our own authentication checks complete, and prevents
+attackers from replaying leaked internal service tokens from outside the project.
 
 ## Background
 
-A security check that each call site must remember to invoke is a latent hole. The default is *unprotected*, and an
-omission — a new route, a new tool, a new egress path — is indistinguishable from a deliberate exemption. The system is
-only as safe as its least careful addition, and that addition is reviewed by someone who has to notice an *absent* line.
-Request auth, egress restriction, data-boundary enforcement, and sandbox tool-gating all share this shape.
+A security check that each call site must remember to invoke leaves the system unprotected by default. When a developer
+adds a route, an RPC method, or an egress path and forgets the check, the omission looks the same in code review as a
+deliberate exemption: the reviewer has to notice an absent line. Request authentication, egress restriction,
+cross-Project data isolation, and sandbox tool gating all fail the same way if they rely on per-call-site discipline.
 
-The second rule answers a different problem: a test that fires too often stops discriminating. The analysis agent is
-untrusted code reading untrusted text — published papers, third-party records — and the evidence rpcs it calls reach
-public databases on its behalf. That outbound hop is not incidental to the product; a variant lookup *is* a request to
-NCBI or VariantValidator with the caller's identifier in it. If every such hop counted as the external-channel leg of
-the lethal trifecta ([`../PRODUCT.md`](../PRODUCT.md) §9), the trifecta would close on the product's first feature, and
-"this is an exfiltration channel" would carry no information. What has to be decided, once, is which hops an attacker
-can actually get data out through.
+A different failure mode appears when a security criterion is too broad to discriminate. In Themis, the analysis agent
+is untrusted code reading untrusted text from published papers and third-party records, and the evidence RPCs it calls
+query public databases such as NCBI or VariantValidator on its behalf. Passing a caller-supplied gene symbol or variant
+identifier to an external database is the core mechanism of an evidence lookup. Under the lethal trifecta model
+([`../PRODUCT.md`](../PRODUCT.md) §9), combining private data, untrusted content, and an external communication channel
+allows exfiltration. If every outbound request carrying agent-supplied text counted as an external communication
+channel, the lethal trifecta would trigger on the first evidence lookup, and reviewers would learn to wave the finding
+through. We need a precise rule that separates safe database lookups from hops an attacker can actually use to extract
+data.
 
-The third rule is about the other direction: what a request from the internet reaches before anyone has checked who sent
-it. Every Themis service authenticates its callers, but a request is parsed by the framework, its libraries and the
-authentication code itself before that check can finish. A flaw in any of them that fires on an unauthenticated request
-is open to every scanner on the internet, and such flaws keep being found in the stack the web tier runs on.
+In the inbound direction, the risk is what an internet request touches before service-level authentication finishes.
+Every Themis service authenticates its callers, but the HTTP server, the web framework, and the authentication libraries
+all parse an incoming request before that check completes. A vulnerability in any of those layers that triggers on an
+unauthenticated request is exposed to every scanner on the internet. Because critical pre-authentication flaws regularly
+surface in web frameworks, service-level checks alone are not enough for internet-facing endpoints.
 
 ## Design
 
 ### One default-on chokepoint
 
-A critical security check MUST be a single chokepoint that is **enforced by default**, with exemptions **explicitly
-allowlisted** in one place.
+Every critical security check MUST run at a single chokepoint that is enforced by default, with any exemptions
+explicitly allowlisted in one place.
 
-- **Default-deny.** Absence of an explicit decision denies. A new code path inherits the check for free; exempting it is
-  a visible, reviewable edit to the allowlist — not a matter of remembering to add a line. The reviewer reads a present
-  entry, never has to spot a missing one.
-- **One implementation.** The check's logic lives once and is shared. Call sites neither re-implement nor re-decide it.
-- **At the resource, not only the perimeter.** The authoritative check sits where the protected resource is actually
-  accessed. A perimeter gate (an HTTP proxy, an API gateway) is defense-in-depth *on top*, never the sole authority: a
-  framework bug (e.g. Next.js CVE-2025-29927 skipped middleware via a request header) or a routing change that silently
-  drops coverage can bypass a perimeter while the resource-side check still holds.
-- **Fail loud.** A check that cannot run — missing config, unverifiable input — denies and raises. It never degrades to
-  allow ([`../style/general.md`](../style/general.md) "Fail loud").
+- **Default-deny.** In the absence of an explicit exemption, the check denies access. A new code path inherits the check
+  automatically, and exempting a path requires a visible edit to a central allowlist that a reviewer can inspect.
+- **Single shared implementation.** The check's logic lives in one place, so individual call sites neither re-implement
+  nor re-decide it.
+- **Enforced at the resource.** The authoritative check sits where the protected resource is accessed. A perimeter gate
+  such as an HTTP proxy or API gateway provides defense in depth, while the resource-side check remains the authority.
+  If a framework bug (such as Next.js CVE-2025-29927, where a request header skipped middleware) or a routing
+  misconfiguration bypasses the perimeter, the resource-side check still refuses the call.
+- **Fail loud.** A check that cannot run because of missing configuration or unverifiable input denies the request and
+  raises an error ([`../style/general.md`](../style/general.md) "Fail loud").
 
-"If at all possible" is a real qualifier. Where a language or framework offers no default-on seam, the fallback is the
-narrowest shared wrapper *plus* a lint/CI rule that fails when a call site skips it — the allowlist enforced
-mechanically, not by convention. A per-call-site check guarded only by reviewer discipline does not satisfy this rule.
+Where a language or framework offers no runtime seam for a default-on interceptor, the fallback is a narrow shared
+wrapper paired with a mechanical lint or CI test that fails the build if any call site bypasses it. Relying on reviewer
+attention alone never satisfies this rule.
 
 ### What counts as an exfiltration channel
 
-An outbound request that untrusted text reaches is an exfiltration channel unless both of these hold:
+An outbound request that carries untrusted text is an exfiltration channel unless both of the following conditions hold:
 
-- **Destination-fixed.** Scheme, host, port and route come from code constants, and no parameter is one the upstream
-  itself dereferences as a location — a `url=` it fetches, a callback it calls, a redirect target it hands back. The
-  untrusted text appears only as a percent-encoded parameter value, a path segment or a request body, so it selects what
-  comes *back* and never where the request *goes* — a body cannot steer a URL assembled from constants, which is why our
-  gnomAD GraphQL query and our ClinVar batch fetch are inside this and not exceptions to it. That second half cannot be
-  read off our call site: a location parameter leaves our own URL constant and the call a read, so both legs look
-  satisfied here while the upstream carries the text on to a host the attacker named — the same shape as a URL built
-  from fetched data, one hop out.
-- **Query-only.** The call's effect is to select a response. A call that *deposits* the text — a submission, a comment,
-  an upload, anything the upstream stores and later serves to someone else — is a publication channel, because the
-  reader on the far side can be whoever planted the text.
+- **Destination-fixed.** The scheme, host, port, and route come from constants in code, and no request parameter is
+  dereferenced by the upstream service as a network location (such as a `url=` parameter the upstream fetches, a webhook
+  callback it invokes, or a redirect target it returns). Untrusted text appears only as a percent-encoded query
+  parameter value, a percent-encoded path segment, or a request body, so it selects what record comes back without
+  influencing where the request goes. Because a request body cannot alter a URL assembled from constants, GraphQL POST
+  queries to gnomAD and batch fetches to ClinVar satisfy this condition directly. Whether an upstream dereferences a
+  parameter as a location cannot be seen from our call site alone: a call to a constant URL that passes
+  `callback=https://attacker.example` looks like a fixed-destination read locally, even though the upstream forwards the
+  payload to a host the attacker chose.
+- **Query-only.** The call's sole effect on the upstream service is to select and return a response. Any call that
+  deposits text on the upstream (such as a submission, a comment, or an upload that the upstream stores and later serves
+  to other readers) acts as a publication channel, because the attacker who planted the prompt injection can read the
+  deposited bytes back from the upstream.
 
-The two legs meet at the route. *Query-only* is asserted of an endpoint — this route on this host only answers — so a
-caller who can steer the route leaves the assertion nothing to attach to. Unencoded text in a path segment does exactly
-that: a `/` or a `../` walks onto a sibling route, and where the call carries no query parameters of its own, everything
-after a `?` is the caller's as well. A host that answers reads on one route and takes a submission on another is then a
-publication channel whose destination never moved, and the verb does not deny it (below).
+The two conditions depend on each other at the URL route. We assert that an endpoint is query-only for a specific route
+on a specific host. If untrusted text can alter the route, that assertion breaks. For example, if an adapter builds
+`https://api.example.org/v1/genes/{symbol}/summary` by string interpolation without percent-encoding, an attacker who
+supplies `../../submissions?text=secret` walks the path onto a sibling submission route on the same host.
+Percent-encoding turns `/` into `%2F` and `?` into `%3F`, keeping the untrusted text inside the single path segment
+where the route remains fixed.
 
-The query has the same failure, one step further on. Unencoded text in a query string assembled by hand lets the caller
-*add* a parameter rather than fill one — and the parameter worth adding is the location parameter the first leg bars us
-from passing, so the attacker supplies from inside the value what our code was careful never to name. We do not assemble
-query strings: every outbound call hands its parameters to the HTTP client, which encodes them, so an `&` in a search
-term stays inside that term's value instead of starting a parameter of its own. That is an invariant to keep rather than
-a defect to fix, and it is the reason percent-encoding the caller's text is not hygiene about which record comes back —
-it is what holds both legs up.
+Query string construction has the same failure mode. If an adapter concatenates raw caller text into a query string
+(such as `?term={query}`), an attacker who supplies `BRCA1&callback=https://attacker.example` injects a new parameter
+that our code never intended to pass. To prevent parameter injection, adapters never assemble query strings by hand;
+every outbound call passes structured parameters to the HTTP client, which percent-encodes `BRCA1&callback=...` into a
+single parameter's value. Percent-encoding path segments and query parameters is therefore what holds both conditions
+together.
 
-Where both hold, an attacker who has smuggled instructions into evidence text can make our service ask a public database
-an arbitrary question, and learns nothing: the bytes land in NCBI's request log, which they cannot read. A destination
-of their own is what they need, and destination-fixedness is what denies it.
+When both conditions hold, an attacker who smuggles instructions into evidence text can force our service to ask a
+public database an arbitrary question, and still learns nothing. The attacker's payload lands only in the upstream's own
+request logs, which the attacker cannot read.
 
-That last clause is the criterion's premise rather than an aside, and it is worth being exact about what it assumes.
-Assume every request we make is logged and kept somewhere. What the premise does *not* rest on is the operator: not that
-they are careful with our queries, and not that they are large enough to lose something by mishandling them. A public
-archive is under no duty to screen what it is sent — if we put a secret in a submission it publishes, that is our doing
-and not a lapse of theirs, and an upstream's standing bounds nothing. The assumption is mechanical, and it is two facts
-about a named host: it answers what we ask and keeps no copy it serves on to someone else, and it has no parameter that
-sends the request somewhere else. Neither is visible from our call site, which is why each is recorded per host in
-[`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) rather than left to whoever writes the
-next adapter. So the free-text identifier such an rpc takes — a gene symbol, an HGVS descriptor, a search term — is
-bounded by *where* it can be put, not by how long it is or what it looks like.
+This guarantee rests on a mechanical assumption about the upstream endpoint rather than on trust in the upstream
+operator's care or reputation. Even if every request we make is logged by the upstream, a public archive has no duty to
+screen what callers send it; if we sent a secret to an endpoint that publishes submissions, the leak would be our fault.
+What keeps the request safe is two concrete facts about the specific upstream host: its endpoint answers queries without
+serving the query text back to other users, and it exposes no parameter that forwards the request elsewhere. Because
+neither fact can be inferred from our call site alone, we record the determination for each allowed host in
+[`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) rather than leaving the judgment to
+individual adapter authors. When an RPC calls an admitted host under these rules, its free-text parameters (such as a
+gene symbol, an HGVS descriptor, or a literature search query) are confined by where the bytes can go rather than by
+what characters they contain.
 
-Three things the criterion deliberately does not rest on:
+Several properties that look related do not determine whether a call is an exfiltration channel:
 
-- **Not the HTTP verb.** Query-only is a property of the upstream operation, not of the method: our gnomAD adapter's
-  GraphQL query and our ClinVar batch fetch are both POSTs that only read, and a GET against an endpoint that records
-  what it was asked would be a deposit. This leg is therefore asserted by whoever exposes the rpc, from what the
-  upstream does with the request — it cannot be read off the call site.
-- **Not a size cap or a rate limit.** A secret fits in a short string and a single request, so neither bounds what
-  leaves in a request's content; offering one as the remediation for an exfiltration finding mistakes cost for
-  confidentiality. The exception is the channel that puts nothing in the request at all — the third residual below,
-  where a request budget is the only bound there is. Otherwise both are controls for cost and abuse, which the exposure
-  condition covers on its own terms ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Security).
-- **Not a closed value set.** Where a parameter's domain is finite, a constrained type is the better interface and
-  [`../PRODUCT.md`](../PRODUCT.md) §9 asks for it. It is not what confines this channel: with the destination fixed, an
-  accepted value and a rejected one leak the same nothing, and most of these parameters have no finite domain anyway (an
-  HGVS descriptor, a literature query). Validating a gene symbol against HGNC would buy clearer errors, at the price of
-  a symbol list that is stale the day a gene is renamed — a trade worth arguing on those merits, not as a leak control.
+- **HTTP method.** Whether an operation is query-only depends on what the upstream does with the request, not on the
+  HTTP verb. Our gnomAD GraphQL adapter and ClinVar batch adapter both issue `POST` requests that only read data,
+  whereas a `GET` request to an endpoint that publicly logs or stores incoming queries would still be a deposit. The
+  author exposing the RPC must verify how the upstream handles the call.
+- **Size caps and rate limits.** A secret fits inside a short string and a single request, so capping payload length or
+  request rate does not stop content-based exfiltration. Size and rate limits remain useful for controlling cost and
+  abuse ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Security), and a session request budget would bound the
+  timing-and-count side channel described below, but they do not make an unfixed or depositing endpoint safe.
+- **Closed value sets.** Constraining a parameter to a finite type when its domain is closed is good interface design
+  ([`../PRODUCT.md`](../PRODUCT.md) §9), and pattern validation such as requiring digits in an accession number helps
+  catch malformed inputs early. However, input validation does not close an exfiltration channel, and most free-text
+  identifiers (such as HGVS descriptors or search queries) have no finite domain. Validating a gene symbol against an
+  HGNC list can improve error messages at the cost of rejecting newly renamed genes, which is a usability trade-off
+  rather than a confidentiality control.
 
-Three residuals, which are the reason this is a criterion applied per rpc and not a blanket exemption: two are
-properties of the upstream, and the third carries nothing in the request at all. The upstream sees the text, so anyone
-who can read the upstream's view of it — its logs, or a query it stores and serves back — holds a channel; that is a
-property of the upstream, which is why *query-only* is asserted about a named upstream rather than assumed of all of
-them. And a destination that is fixed today stops being fixed the moment a URL is built from fetched data rather than
-from a constant: a host read out of a record, a link followed out of a search result, a redirect chased. That shape *is*
-a channel, and catching it is what the criterion is for.
+Applying this criterion per RPC leaves three residual risks that explain why we evaluate each upstream explicitly:
 
-The third carries nothing in the request. *Whether* we ask, and *when*, is visible to the upstream and to anyone reading
-its logs, so an attacker who can steer what the agent decides to look up can signal in the timing and count of our
-requests alone — a few bits at a time, with nothing in any request that the two legs above inspect. Nothing here bounds
-it and nothing cheaply can, because the traffic is indistinguishable from work. What would bound it is a budget on how
-many requests one session may make — the exposure condition's cost clause doing confidentiality work as a side effect —
-and no such budget exists: the exposed rpcs bound their own latency, not their rate. What exists instead is the record:
-every upstream call the shared client completes is logged with the URL asked, and the environment keeps its logs — these
-and every other, the window is the project's — for as long as it keeps its audit logs, so a pattern that looks like
-signalling is answerable after the fact even though nothing stops it in the moment. That record holds the caller's
-identifiers — the gene symbol, descriptor or coordinate a case was looked up by — and its readers are whoever holds
-log-viewer on the project. That set is already the set who can read the case itself, so the record widens no one's
-reach; the entry would need its own bucket in an environment where the two came apart. We accept the residual on those
-terms — detection rather than prevention, while the bandwidth stays this low. It is named so that a wider version of the
-same shape is recognised rather than rediscovered.
+1. **Upstream log visibility.** Because the upstream sees the query text, anyone who can read the upstream's internal
+   logs or query history can read the payload. We therefore assert the query-only property per named upstream host in
+   [`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) instead of assuming it holds for
+   arbitrary servers.
+1. **Data-derived destinations.** A destination stops being fixed the moment code constructs a URL from fetched data
+   (such as following a host read from a database record, chasing an arbitrary HTTP redirect, or fetching a link from a
+   search result). The criterion exists specifically to flag and forbid that pattern.
+1. **Request timing and count.** Even when request contents are unseen by the attacker, anyone who can observe the
+   upstream's traffic or side effects could infer a few bits of information from whether and when Themis queries a
+   record. Blocking this covert channel would require a strict per-session request budget, which our exposed RPCs do not
+   currently enforce because they bound latency rather than total session call count. Instead, we rely on auditability:
+   the shared HTTP client logs every completed upstream request URL, and the environment retains those logs alongside
+   its audit logs. Because those logs contain the gene symbols, descriptors, and coordinates looked up for a case, they
+   are readable only by principals with project log-viewer access, which is already a subset of the principals who can
+   read the case data itself. If an environment ever separates log viewers from case readers, those request logs will
+   need their own isolated log bucket. We accept detection over prevention here while the bandwidth of timing signals
+   remains low.
 
 Destination-fixedness is a property of code, and by the chokepoint rule above, a property each call site holds by
-remembering to hold it is not held. It splits in two, and only one half is held today.
+remembering to hold it is not held. It splits into two parts — which host the client may dial, and where untrusted text
+lands inside that host's URL — and neither half fully meets the chokepoint rule today.
 
-*Which host* is reachable is a chokepoint for everything riding the evidence image's shared client, which is every live
-upstream call it makes: the client is built with the admitted set, so a request to a host with no determination raises
-before it leaves, at the request rather than at a perimeter. Adding an upstream is an edit to
-[`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) that a reviewer reads. What keeps calls on
-that client, though, is the shape of the adapters — each is handed it rather than building one — and not a rule that
-fires when someone builds their own, which is the weaker form this section warns about. Two clients are already built
-elsewhere, both deliberately outside the set and neither carrying caller text: the gene-disease refresh job, whose URLs
-are constants and which follows redirects the admitted set could not allow, and the litcache ingest.
+*Which host* is reachable is a chokepoint for everything riding the evidence service's shared HTTP client. The client is
+initialized with the admitted host set from
+[`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) and raises an error before sending any
+request to an unlisted host. What keeps calls on that client, though, is the shape of the adapters — each is handed the
+shared client via dependency injection rather than building its own — and not a mechanical rule that fires when someone
+builds a standalone `httpx` client, which is the weaker form the chokepoint rule above warns about. Two batch components
+deliberately construct their own clients outside this set because neither carries caller-supplied text: the gene-disease
+refresh job, which fetches constant URLs and follows upstream redirects outside the admitted set, and the `litcache`
+ingestion pipeline.
 
-*Where the text lands inside that host's URL* is not. Each adapter percent-encodes its own path segments and hands its
-own parameters to the client, adapter by adapter, and one unencoded interpolation is all it takes to lose the route.
-Making that half structural too is the open question below.
+*Where the text lands inside that host's URL* is not held by a chokepoint at all. Each adapter percent-encodes its own
+path segments and hands its own query parameters to the client, adapter by adapter, and one unencoded interpolation is
+all it takes to lose the route. Making URL construction structural is tracked in [Open questions](#open-questions).
 
-The ordering this suggests is worth stating, because it is already how the gene-disease sources work: a hop you do not
-make cannot leak. Where a source publishes in bulk, a periodic refresh into our own bucket removes the channel outright
-— ClinGen's validity and dosage tables, GenCC and PanelApp are read from that copy, so no caller's text reaches those
-hosts at all. Only what cannot be mirrored is queried live, against the admitted set.
+Whenever an upstream dataset is published in bulk, we prefer mirroring it into our own storage on a schedule over
+querying the upstream live during an analysis. Mirroring eliminates the outbound hop altogether: the evidence service
+reads ClinGen validity and dosage tables, GenCC, and PanelApp from our internal mirror bucket, so no caller text ever
+leaves our environment for those sources. Only sources that cannot be mirrored in bulk are queried live against the
+admitted host set.
 
 ### Ingress from the public internet
 
-The question is which requests from the internet may reach a Themis process at all. The rule is that a request from the
-internet passes IAP before it reaches anything Themis runs, unless its destination is one of the exceptions listed
-below.
+Every request from the public internet must pass IAP before it reaches any process Themis runs, unless its destination
+is one of the explicit exceptions below. IAP is Google's identity-aware proxy; it rejects any request that does not
+carry an admitted Google identity before the request reaches our containers.
 
-The obvious answer is that each service authenticates its own callers, and every one already does. Cloud Run checks a
-caller's ID token against the service's invoker bindings. The web tier verifies IAP's signed assertion, the dispatcher
-verifies an HMAC signature, and the data-plane interceptor verifies the calling account again
-([`rpc-authorization.md`](rpc-authorization.md)). What this gets right is where the check sits: at the resource, as the
-chokepoint rule above asks. What it leaves open differs by service.
+The obvious alternative is to let each service authenticate its own callers directly. Every Themis service already
+performs resource-side authentication: Cloud Run checks the caller's ID token against the service's IAM invoker
+bindings, the web tier verifies IAP's signed assertion, the sandbox dispatcher verifies an HMAC signature, and the
+data-plane gRPC interceptor verifies the calling account ([`rpc-authorization.md`](rpc-authorization.md)). Resource-side
+authentication satisfies the chokepoint rule above, but leaving services directly reachable from the internet exposes
+two gaps.
 
-On the web tier it leaves open everything a request touches before the app's own check completes. CVE-2025-29927 let one
-request header skip Next.js middleware, which is where many apps authenticate. CVE-2025-55182, disclosed in December
-2025, was remote code execution in React Server Components, triggered by a single unauthenticated request. The web tier
-runs on both frameworks. With IAP in front, neither flaw is open to an anonymous scanner, because Google's proxy refuses
-a request that carries no admitted Google identity before it reaches our container.
+On the web tier, direct internet access exposes all the framework code that executes before the application's own
+authentication check completes. For example, CVE-2025-29927 allowed a single request header to bypass Next.js
+middleware, and CVE-2025-55182 (disclosed in December 2025) allowed unauthenticated remote code execution in React
+Server Components. Themis runs on both frameworks. Placing IAP in front of the web tier blocks anonymous internet
+scanners at Google's edge before a request ever touches Next.js or React.
 
-On the data-plane services, Cloud Run's invoker check already runs before any of our code, so the gap is a different
-one. If their ingress were open to the internet, an ID token taken from the web tier or the sandbox could be replayed
-from the attacker's own machine until it expired. The data-plane services therefore take traffic only from inside the
-project and from the load balancer, and their one route from the internet passes IAP like the web tier's.
+On the data-plane services (`themis-evidence` and `themis-sheaf`), Cloud Run's IAM invoker check runs before container
+code, so pre-authentication framework bugs are already blocked. The risk on the data plane is credential replay: if a
+data-plane service's `run.app` URL accepted traffic from the public internet, an attacker who extracted a
+service-account ID token from the web tier or sandbox could replay that token from their own machine until it expired.
+To close that path, data-plane services accept traffic only from inside the GCP project and from our external load
+balancer, where the single internet route passes through IAP.
 
-IAP admits a request only from a principal holding IAP access on the resource it fronts, and the accessors differ
-between the web tier and the data-plane services. On the web tier they are the people who use the app, which can be as
-wide as any signed-in Google account, where the app's own access list decides what each account sees. There IAP turns an
-anonymous attacker into one who must hold a Google account, but it does not narrow the attacker to our users. On the
-data-plane services the one accessor is the automation account `themis-clu`, which a maintainer acts as by impersonating
-it; who may do so is a group membership
-([`../runbooks/hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md)). No person calls evidence or sheaf in
-normal use: the web tier and the sandbox worker call them from inside the project, and only a maintainer driving a
-service by hand comes from outside.
+IAP admits a request only if the caller holds the IAP accessor role on the fronted resource, and we configure different
+accessors for the web tier and the data plane:
+
+- **Web tier (`themis-web`).** IAP admits the application's users. This binding can be as wide as any signed-in Google
+  account (`allAuthenticatedUsers`), with Themis's own database access lists deciding what Projects each account may
+  see. On this path, IAP turns an anonymous attacker into one who must hold a Google account, but it does not narrow the
+  attacker to our users.
+- **Data-plane services (`themis-evidence`, `themis-sheaf`).** No human user calls data-plane services during normal
+  operation; the web tier and sandbox workers call them internally over the VPC. The only external callers are
+  maintainers driving a service by hand
+  ([`../runbooks/hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md)). IAP on the data-plane
+  load-balancer backends admits only the automation service account `themis-clu`, which maintainers impersonate via a
+  restricted Google Group membership.
 
 ```mermaid
 flowchart LR
@@ -220,23 +238,29 @@ flowchart LR
   job -->|"run.app URL, own ID token"| sheaf
 ```
 
-Callers in the project reach a data-plane service at its `run.app` URL over the services VPC, presenting their own ID
-token, which Cloud Run checks against the invoker bindings. The web tier joins that VPC for this, with all of its
-outbound traffic routed through it. Routing only private address ranges through the VPC would not do: a `run.app` URL
-resolves to Google's public addresses, so the call would leave by the public path, and Cloud Run counts a request as
-internal only when it arrives over a VPC in the project. Routing everything has two costs. The web tier can now reach
-internal-only services it has no business calling, such as the hello service, at the network level; their invoker
-bindings, which do not name the web tier, still refuse it. And its calls to Anthropic go through the VPC's NAT gateway,
-which bills each gigabyte it carries and which every such call then depends on. Google warns that a new instance on this
-kind of egress can wait for its first outbound connections, but on the development deployment in October 2026, joining
-the VPC added at most two seconds to the web tier's cold start, and the first request after it read the database in
-about 30 ms.
+Internal callers inside the project reach each data-plane service at its `run.app` URL over the services VPC, presenting
+their own service-account ID token for Cloud Run's invoker check. To use this internal path, the web tier attaches to
+the services VPC and routes all of its outbound traffic through the VPC. Routing only private IP ranges
+(`PRIVATE_RANGES_ONLY`) would fail to satisfy Cloud Run's internal ingress check, because `run.app` URLs resolve to
+public Google IP addresses and Cloud Run treats a call as internal only when the packets arrive from an attached VPC
+network.
 
-A maintainer on a laptop goes through the load balancer instead. A Cloud Run service can serve several gRPC services, as
-evidence does. The load balancer sends the method paths, `/<package>.<Service>/…`, of each of them to one backend for
-that Cloud Run service, its operator backend, which has IAP enabled on it. The load balancer ends a request to such a
-backend after 60 minutes, which bounds the longest stream a maintainer can hold open. The call carries two tokens, both
-minted as the automation account:
+Routing all web-tier egress through the VPC carries two operational costs:
+
+- **Wider network reachability inside the VPC.** At the network layer, the web tier can reach internal-only services
+  that it has no reason to call, such as the hello service. Cloud Run's IAM invoker bindings on those services still
+  reject the web tier's service account.
+- **NAT gateway cost and dependency.** Outbound calls from the web tier to external APIs such as Anthropic traverse the
+  VPC's Cloud NAT gateway, which bills per gigabyte processed and sits on the critical path of those calls. Although
+  Google's documentation notes that routing all traffic through a VPC can add latency to initial outbound connections on
+  cold start, measurements on the development deployment in October 2026 showed at most 2 seconds of added cold-start
+  time on `themis-web`, with subsequent database reads completing in about 30 ms.
+
+When a maintainer calls a data-plane service from a laptop, the request enters through the external load balancer.
+Because a single Cloud Run service can host multiple gRPC services (as `themis-evidence` does), the load balancer
+matches each gRPC service prefix (`/<package>.<Service>/*`) and routes it to that Cloud Run service's operator backend,
+where IAP is enabled. The load balancer enforces a 60-minute timeout on operator backend requests, which caps the
+duration of any streaming RPC held open from a laptop. Each operator call carries two tokens minted as `themis-clu`:
 
 ```mermaid
 sequenceDiagram
@@ -252,135 +276,165 @@ sequenceDiagram
   app->>app: verify signature, email and audience
 ```
 
-The ID token in `authorization` is why each data-plane service checks its audience itself. IAP calls Cloud Run as its
-own service agent, so Cloud Run's invoker check admits the agent, and the caller's ID token reaches the container
-without Cloud Run examining it. Without the service's own check, a token minted for another audience passes: on dev, a
-token the automation account minted for `https://unrelated-audience.invalid` was accepted through IAP. Each service
-refuses a token minted for anything but its own URL, which the deployment hands it at startup, and a service that is not
-told its URL fails to start. Of the two URLs Cloud Run serves a service at, it is the one built from the service's name,
-the project number and the region, because that one is known before the service exists.
+The sequence above shows why each data-plane container must verify the `authorization` token's audience in application
+code ([`themis/clients/auth/`](../../themis/clients/auth/)). When IAP forwards a request to Cloud Run, IAP authenticates
+the hop using its own GCP service agent token in `X-Serverless-Authorization`. Cloud Run's IAM invoker check verifies
+the IAP service agent and passes the caller's `authorization` header straight through to the container without
+inspecting it. If the container did not check the audience claim on `authorization`, an ID token minted by `themis-clu`
+for an unrelated audience (such as `https://unrelated-audience.invalid`) would pass IAP and be accepted by the service.
+Each data-plane service is therefore given its deterministic Cloud Run URL (constructed from the service name, project
+number, and region before the service is created) at startup, refuses to start if that URL is missing, and rejects any
+ID token whose `aud` claim does not match it.
 
-A project has one IAP service agent, and it holds the invoker role on evidence and sheaf, so whoever passes any IAP gate
-in front of those services reaches them. The program therefore allows IAP in two places only: on each data-plane
-service's operator backend, which admits only the automation account, and on the web tier's Cloud Run service. The check
-below holds the program to both. An IAP grant made by hand at the project level would pass every operator backend at
-once, and nothing in the program can see it.
+A GCP project has a single IAP service agent, and that agent holds `roles/run.invoker` on both `themis-evidence` and
+`themis-sheaf`. Consequently, any principal who can pass *any* IAP gate in the project that routes to those services can
+invoke them at the Cloud Run layer. Our infrastructure code therefore permits IAP bindings in only two places: on each
+data-plane service's operator backend (restricted to `themis-clu`) and on the `themis-web` Cloud Run service. The
+automated ingress test below enforces this invariant across the Pulumi program. An IAP grant made by hand at the GCP
+project level would pass every operator backend at once, and nothing in the program can see it.
 
 #### The exceptions
 
-The internet reaches these without IAP, because IAP cannot sit in front of them, and each has controls that take its
-place.
+Three entry points accept traffic from the public internet without IAP because their callers cannot present a Google
+identity or because they use a separate Google-managed authentication plane. Each exception is enumerated in
+[`infra/themis_infra/public_ingress.py`](../../infra/themis_infra/public_ingress.py) with compensating controls.
 
 ##### The sandbox dispatcher's webhook
 
-Anthropic notifies the dispatcher by webhook when a session needs a sandbox, and Anthropic cannot present a Google
-identity, so IAP would refuse every delivery. The dispatcher authenticates each delivery by its HMAC signature
-([`sandbox-worker.md`](sandbox-worker.md)). In front of that check, a Cloud Armor policy on the dispatcher's
-load-balancer backend admits only Anthropic's published outbound range, `160.79.104.0/21`, and denies every other
-source; Anthropic commits not to change the range without notice, and publishes no IPv6 range, which the load balancer's
-IPv4-only address matches. The service takes only internal and load-balancer traffic, so from the internet its `run.app`
-URL offers no way around the policy; a workload inside our VPC can still reach that URL, and for it the signature is the
-only check. The range is shared by every Anthropic customer, which means a request from it says nothing about who sent
-it: the policy keeps scanners away from the dispatcher's HTTP stack, and the signature stays the authentication
-([`spike-infrastructure.md`](spike-infrastructure.md) §6, the deployables diagram).
+Anthropic notifies `themis-dispatcher` via webhook at `/webhooks/anthropic` when an analysis session needs a sandbox.
+Because Anthropic's webhook sender cannot authenticate with a Google identity, IAP would block every delivery. Instead,
+two controls protect the webhook endpoint ([`sandbox-worker.md`](sandbox-worker.md),
+[`spike-infrastructure.md`](spike-infrastructure.md) §6):
+
+- **Cloud Armor IP allowlist at the edge.** A Cloud Armor security policy on the dispatcher's load-balancer backend
+  admits only Anthropic's published outbound IPv4 CIDR (`160.79.104.0/21`) and denies all other sources. Anthropic
+  commits to giving advance notice before changing this range and publishes no IPv6 range, matching our load balancer's
+  IPv4-only address. Because `themis-dispatcher` is configured to accept only internal VPC and load-balancer traffic,
+  its `run.app` URL cannot be reached from the internet to bypass Cloud Armor.
+- **HMAC signature verification in the service.** Because `160.79.104.0/21` is shared across all Anthropic customers
+  (and internal VPC workloads can reach the dispatcher's `run.app` URL directly), source IP filtering only keeps random
+  internet scanners away from the dispatcher's HTTP stack. The dispatcher authenticates every webhook payload by
+  verifying Anthropic's HMAC signature before acting on the request.
 
 ##### The PR screenshots bucket
 
-A pull request that changes a rendered surface links screenshots, and GitHub fetches each image anonymously through its
-image proxy, so the objects have to be readable without credentials. Anyone may read an object by its name, and nobody
-may list the bucket. Each name is the SHA-256 of the image's content, so a name cannot be guessed, and every image is a
-capture of the app running against fixture data. Only an environment that opts in has the bucket
-([`pr-screenshots.md`](pr-screenshots.md)).
+Pull requests that change rendered UI surfaces embed screenshots that GitHub fetches anonymously through its image proxy
+([`pr-screenshots.md`](pr-screenshots.md)). To allow GitHub to load the images without credentials, the screenshot
+bucket grants `allUsers` permission to read individual objects (`storage.objects.get`) while denying bucket listing.
+Object names are the SHA-256 hash of the image content, making URLs unguessable, and screenshots are captured
+exclusively against synthetic fixture data. The bucket is provisioned only in environments that explicitly opt in.
 
 ##### Cloud SQL's public IP
 
-The database instance has a public address, because some of its clients are on no network the services share: the laptop
-tools and the CI migrate step have no VPC, and the Dataflow ingestion workers run on a network of their own. A private
-address would put each of them on the database's VPC. The public address takes no direct connection. The instance lists
-no authorized networks, so its firewall refuses every client, and it requires the Cloud SQL connectors, so it refuses a
-connection that does not arrive through one. A connector authenticates to the Cloud SQL Admin API, which issues it a
-short-lived client certificate only if its principal holds `cloudsql.client`, and then logs in with IAM database
-authentication. So the first check on this path is an IAM decision that Google makes, which is the role IAP plays on the
-others.
+The Cloud SQL PostgreSQL instance has a public IP address because several legitimate clients run outside the services
+VPC: maintainer laptop tools and CI database migration steps run without a VPC, and Dataflow ingestion workers run in
+their own separate network. Removing the public IP would require placing every such client inside the database VPC.
+
+The public IP never accepts raw TCP connections directly:
+
+- **Zero authorized networks.** The instance's IP firewall allowlist is empty, so direct connections to port 5432 are
+  refused for all source addresses.
+- **Mandatory Cloud SQL Connector and IAM authentication.** The instance requires all connections to arrive through the
+  Cloud SQL Auth Proxy / Connector protocol (`require_connectors`). A connector must first authenticate to the Google
+  Cloud SQL Admin API, which issues an ephemeral TLS client certificate only if the caller holds
+  `roles/cloudsql.client`, and then authenticate the database session using IAM database authentication. Google's IAM
+  check on the Admin API therefore plays the same pre-connection gatekeeper role for the database that IAP plays for
+  HTTP services.
 
 #### Scope
 
-The rule covers the routes by which a request reaches a process we run. A signed URL is outside it: the sheaf service
-and the web tier hand out time-limited URLs to objects in our buckets, and Cloud Storage checks the signature before it
-serves a byte, with no Themis code on the path. The Dataflow workers' external addresses are outside it too, because no
-firewall rule admits a connection to them from outside their own subnet.
+The public ingress rule governs every route by which an internet request can reach a process that Themis runs. Two
+external surfaces fall outside this scope because no Themis process sits on the request path:
+
+- **Cloud Storage signed URLs.** `themis-sheaf` and `themis-web` issue time-limited signed URLs for objects in internal
+  buckets. When a client fetches a signed URL, Google Cloud Storage verifies the cryptographic signature directly and
+  serves the object bytes without invoking any Themis code.
+- **Dataflow worker external IPs.** Dataflow ingestion workers are assigned external IP addresses by GCP to reach public
+  data sources, but VPC firewall rules block all inbound connections to those workers from outside their own subnet.
 
 #### The check
 
-The rule is enforced by [`infra/tests/test_public_ingress.py`](../../infra/tests/test_public_ingress.py), which runs the
-Pulumi program under mocks and reads every resource it declares. It holds each route in from the internet to the rule
-above, and each exception to the controls its section names; each test is named for the property it checks. The
-exceptions are a list beside the test in the infra code, each entry pointing at its section above, so adding one is a
-reviewed edit to the code and to this doc.
+We enforce the public ingress rule mechanically in
+[`infra/tests/test_public_ingress.py`](../../infra/tests/test_public_ingress.py). Because infrastructure declarations
+have no runtime interceptor seam, this test suite provides the mechanical CI enforcement required by the chokepoint
+rule.
 
-Infrastructure code has no runtime seam to put a gate in, so this test is the mechanical rule that the chokepoint
-section asks for where no such seam exists. It reads resources by kind, whichever module declares them, so a new
-service, bucket or backend is held to the rule without anyone remembering to add it. It sees the program and not the
-project, so a service or a grant created by hand in the console is outside it.
+The test runs the Pulumi infrastructure program under mocks and inspects every resource by resource type, regardless of
+which Python module declared it. Any newly added Cloud Run service, load-balancer backend, storage bucket, or Cloud SQL
+instance is automatically checked against the rule, and every exception in
+[`infra/themis_infra/public_ingress.py`](../../infra/themis_infra/public_ingress.py) links back to its subsection in
+this document. Adding a new public entry point requires a reviewed edit to both the allowlist in code and the exceptions
+section here. Because the test inspects Pulumi resource declarations rather than live GCP state, resources or IAM
+bindings created manually in the GCP console remain outside its reach.
 
 ### Where the rules land
 
-- **Web request auth** — a proxy default-deny perimeter plus a shared, request-scoped accessor that re-verifies the IAP
-  assertion at the data seam; `healthz` is the sole allowlisted exemption, reached directly by the Cloud Run probe
-  rather than through the load balancer. The data-seam check is an interceptor on the RPC router, so it covers every
-  method by construction. Owned by [`frontend-framework.md`](frontend-framework.md) §Auth.
-- **Data-plane rpc auth** — on the literature interface, an interceptor builds one authorization context per call (the
-  verified calling service, the Analysis the call is scoped to where there is one, and the person who approved it where
-  there is one) and denies unless the rpc's contract admits it — the `agent_exposed` proto option and its siblings
-  `admits_session` and `admits_caller`, read off the descriptor, so an rpc declaring none is denied at run time and who
-  may call is stated once. The interceptor is server-wide, with the health check its only exemption; the other evidence
-  interfaces' rpcs are all `agent_exposed`, so it gates them too, and their in-body session checks are redundant until
-  deleted. Owned by [`rpc-authorization.md`](rpc-authorization.md).
-- **Sandbox egress** — the guest process has no network at all; its one exit is the hatch, whose method allowlist is
-  generated from the proto rather than authored. Owned by [`sandbox-worker.md`](sandbox-worker.md), with the exposure
-  condition an rpc must meet in [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) §Security — the place the
-  exfiltration criterion is applied, since a forwarded rpc is how anything the agent says reaches a third party.
-- **Service egress** — the internal services' VPC is deliberately not sealed, so what an exposed rpc dials is bounded by
-  its own code and not by a network policy. The evidence image's shared HTTP client is that bound: it admits only the
-  hosts [`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) records a determination for.
-- **Public ingress** passes IAP or is a named exception with controls of its own, held by the program's tests (above).
-- **Cross-Project data** — default-deny sharing; case-level content never crosses Project boundaries implicitly. Owned
-  by [`workspace-model.md`](workspace-model.md) and [`../PRODUCT.md`](../PRODUCT.md) §7.
+Each boundary in the system applies the rules above through a concrete mechanism owned by its area design doc:
+
+- **Web request authentication** ([`frontend-framework.md`](frontend-framework.md) §Auth) combines a default-deny proxy
+  perimeter with a shared, request-scoped data-access interceptor that re-verifies the IAP assertion on every RPC router
+  method. The `/healthz` endpoint (reached directly by Cloud Run's liveness probe rather than through the load balancer)
+  is the sole allowlisted exemption.
+- **Data-plane RPC authorization** ([`rpc-authorization.md`](rpc-authorization.md)) runs a server-wide gRPC interceptor
+  that builds a verified authorization context per call (recording the calling service, the scoped Analysis session if
+  present, and the approving user if present) and checks it against the admission options declared on the protobuf
+  method descriptor (`agent_exposed`, `admits_session`, and `admits_caller`). Any RPC method that declares no admission
+  option is denied at runtime, leaving the gRPC health check as the only exemption. On the evidence service, the
+  interceptor was built for the literature interface first and also gates the remaining evidence interfaces (whose RPCs
+  are all `agent_exposed`), making their older in-body session checks redundant until they are removed.
+- **Sandbox egress** ([`sandbox-worker.md`](sandbox-worker.md), [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)
+  §Security) runs the untrusted guest process inside an empty network namespace with no network interfaces. Its only
+  exit is the local UNIX socket hatch, whose method allowlist is generated directly from protobuf annotations. Because a
+  forwarded hatch RPC is the only way agent-supplied text can reach a third party, an RPC must satisfy the exfiltration
+  channel criterion above before it may be exposed to the agent.
+- **Service egress** relies on application-level host enforcement rather than a VPC egress firewall. Because the
+  services VPC allows outbound internet traffic, what an exposed RPC may dial is bounded by the evidence image's shared
+  HTTP client, which admits only the upstream hosts recorded in
+  [`destinations.py`](../../themis/services/evidence/upstreams/destinations.py).
+- **Public ingress** passes through IAP or matches a named exception with compensating controls, enforced across all
+  Pulumi resource declarations by [`infra/tests/test_public_ingress.py`](../../infra/tests/test_public_ingress.py).
+- **Cross-Project data isolation** ([`workspace-model.md`](workspace-model.md), [`../PRODUCT.md`](../PRODUCT.md) §7)
+  enforces default-deny sharing so that case-level content never crosses Project boundaries implicitly.
 
 ## Alternatives considered
 
-- **Per-call-site enforcement** (each route/tool invokes the check itself). Rejected: opt-in, so the default is
-  unprotected and an omission reads the same as an intentional exemption — the Background failure mode.
-- **Perimeter-only enforcement** (one gate in front, nothing at the resource). Rejected as the *sole* layer: bypassable
-  by a framework bug (CVE-2025-29927) or a routing/matcher change that drops coverage unnoticed. It is a valid added
-  layer, not the authority.
-- **Any outbound hop carrying untrusted text is a channel.** Rejected: it condemns the evidence lookups the product is
-  made of, and a rule that fires on every feature is one reviewers learn to wave through — the finding stops being read.
-  Worse, it hides the shape that matters, since a data-derived destination and a constant one score alike.
-- **Bounding the text instead of the destination** (length caps, character classes on free-text identifiers). Rejected
-  as a leak control for the reason given above: a secret is short. Kept where it earns its place as input validation — a
-  bounded numeric run in an accession pattern is there so a malformed accession fails our parse, not so it fails to fill
-  a URL.
-- **An egress allowlist in front of the services** (proxy or firewall confining which hosts an internal service may
-  dial). Not rejected — a real second layer, and the one that would survive an adapter losing destination-fixedness. It
-  is not the authority: the request is legitimate to an allowlisted host either way, so the code-side property is what
-  decides. Worth its own design when the upstream set stops being a handful of public databases.
-- **Cloud Run IAM alone on the data plane, with ingress open to the internet.** It is simpler: there is no load-balancer
-  hop and no second token, and a maintainer calls the `run.app` URL directly. It lost for the reasons the data-plane
-  paragraph above gives: a credential leaked from any caller would work from anywhere.
-- **IAP on the data-plane Cloud Run services themselves**, as the web tier has it. It needs no load-balancer backend per
-  service. It lost because IAP on a Cloud Run service gates every path to it, the `run.app` URL included, so the web
-  tier and the sandbox worker would have to pass IAP too, with IAP tokens of their own, on every internal call.
-- **A VPN or a bastion host for maintainers.** It would leave the data plane with no public route at all. It lost
-  because it is another system to run and to keep patched, while IAP gives the same per-account gate and needs no
-  network of our own.
+- **Per-call-site security checks.** Having each route handler or tool invoke its own authentication or authorization
+  helper is straightforward to write initially, but leaves the system unprotected by default. A forgotten check on a new
+  endpoint looks identical to an intentional exemption during review.
+- **Perimeter-only authentication.** Enforcing authentication solely in an edge proxy or middleware layer keeps resource
+  handlers simple, but a single framework bypass (such as CVE-2025-29927) or matcher misconfiguration exposes the
+  underlying handlers. We use perimeter gates as defense in depth while keeping the authoritative check at the resource.
+- **Treating every outbound hop with untrusted text as an exfiltration channel.** A blanket ban avoids reasoning about
+  upstream behavior, but flags every evidence lookup the product performs. A rule that triggers on every feature teaches
+  reviewers to ignore the warning and obscures the real distinction between fixed-destination read queries and
+  data-derived URLs.
+- **Bounding free-text identifier length or character sets as a leak control.** Input validation (such as requiring
+  digits in an accession number) is useful for rejecting malformed inputs early, and we keep it for that purpose.
+  However, it fails as a confidentiality control because sensitive secrets fit inside short, syntactically valid
+  strings.
+- **A network-level egress allowlist in front of internal services.** A VPC egress proxy or firewall that restricts
+  which external hosts internal services may dial would provide defense in depth if an adapter bypassed the shared HTTP
+  client. It cannot replace the code-level criterion, because a request to an allowlisted host can still leak data if
+  the adapter fails to percent-encode path segments or uses a depositing endpoint. Designing a network egress layer
+  remains worthwhile once the set of upstream databases grows beyond a small list.
+- **Cloud Run IAM alone on data-plane services with public ingress enabled.** Allowing callers to reach data-plane
+  `run.app` URLs directly from the internet removes the load-balancer hop and the second token for maintainers, but
+  allows any service-account ID token leaked from the web tier or sandbox to be replayed from anywhere on the internet.
+- **Enabling IAP directly on the data-plane Cloud Run services.** Turning on Cloud Run's native IAP toggle (as we do on
+  `themis-web`) avoids creating separate load-balancer operator backends. However, Cloud Run's native IAP gates all
+  paths to the service, including internal `run.app` calls over the VPC, which would force `themis-web` and the sandbox
+  worker to mint and pass IAP tokens on every internal RPC.
+- **A bastion host or VPN for maintainer access.** Placing maintainers on a private network would let us remove public
+  routes to the data plane altogether, but introduces stateful network infrastructure to patch and operate.
+  Load-balancer operator backends behind IAP provide the same per-account identity gate using managed Google
+  infrastructure.
 
 ## Open questions
 
-- What makes destination-fixedness structural rather than per-adapter, in either half. Which host is reachable is bound
-  by the shared client, but nothing fails when a caller builds its own; where the text lands inside that host's URL is
-  each adapter's own encoding. One lint over client construction would close the first, and the candidate for the second
-  is one request builder the adapters compose through — constant base, path segments and parameters as arguments,
-  encoding applied by it — so that interpolating untrusted text into a URL is not something an adapter can express.
-  Whether that is worth its churn across the existing adapters, and whether a lint rule over URL construction is the
-  cheaper half, is undecided.
+- **How to make destination-fixedness structural across all adapters.** While the evidence service's shared HTTP client
+  enforces which hosts may be dialed, nothing currently fails the build if a developer constructs a standalone HTTP
+  client, and each adapter is still responsible for percent-encoding its own path segments. A lint rule forbidding raw
+  HTTP client construction would close the first gap. For the second gap, we could either introduce a single URL builder
+  interface that takes a constant base URL, path segment arguments, and query parameters (applying percent-encoding by
+  construction so raw string interpolation is impossible to express), or add a static lint rule over URL construction.
+  Whether the safety of a typed request builder outweighs the churn of migrating existing adapters remains undecided.

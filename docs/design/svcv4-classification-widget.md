@@ -1,130 +1,129 @@
 # Design: the SVCv4 classification widget
 
 **Related:** [`document-widgets.md`](document-widgets.md) (what a widget is, and the guard rule a curator's judgement
-follows); [`evidence-interfaces.md`](evidence-interfaces.md) (the evidence rpcs, and `themis.svcv4`, the library that
+follows); [`evidence-interfaces.md`](evidence-interfaces.md) (the evidence RPCs and `themis.svcv4`, the library that
 computes every point); [`curation-surface.md`](curation-surface.md) (the curator's worksheet, whose vocabulary this
 widget shares); [`workbench-workspace.md`](workbench-workspace.md) (how a curator's edit becomes a commit);
 [`agent-output-rendering.md`](agent-output-rendering.md) (why agent text is drawn as plain text).
 
 ## Overview
 
-A classification run ends in an SVCv4 point tally: each evidence code the variant's workflow admits has a status, some
-points, the evidence the call rests on and the reasoning from one to the other, and the points sum to a total that falls
-in a class band. The agent writes all of this into the working document as markdown today. The tables change shape from
-run to run, every number in them was typed by the model, and a curator has nowhere to record that they checked a code.
+A classification run ends in an SVCv4 point tally. Each evidence code that the variant's workflow admits receives a
+status, a point value, the supporting evidence, and the reasoning that connects them, and the points sum to a total that
+falls in a class band. Today the agent writes all of this into the working document as markdown. Those markdown tables
+change shape from run to run, the model types every number in them by hand, and a curator has nowhere to record that
+they checked a code.
 
-The SVCv4 classification widget replaces that markdown with one typed block. The library that computes the tally also
-builds the widget's payload, by running the classification itself, so every point, total and class the curator sees is
-the library's and none is the model's. The agent adds only what the library cannot know: the identifiers, each code's
-evidence and reasoning, and how open it considers each call. A code the agent does not restate keeps the reasoning the
-committed payload holds for it, so a curator's tick on a code the agent left alone survives the agent's next turn.
+The SVCv4 classification widget replaces that markdown with one typed block defined in
+[`svcv4_classification.proto`](../../schema/proto/themis/widgets/models/svcv4_classification.proto). The library that
+computes the tally also builds the widget's payload by running the classification itself, so every point, total, and
+class that the curator sees comes from the library rather than the model. The agent supplies only what the library
+cannot know: the identifiers, each code's evidence and reasoning, and how open the agent considers each call. A code
+that the agent does not restate keeps the reasoning that the committed payload holds for it, so a curator's tick on an
+untouched code survives the agent's next turn.
 
-The payload lists every code the paths taken admit, in the reference's fixed order, whether or not it was scored. A code
-therefore sits in the same place in every run, and a code the agent never addressed cannot silently drop out: the
-library refuses to build a payload that leaves one without a status.
+The payload lists every code that the paths taken admit, in the reference's fixed order, whether or not the code was
+scored. Every code therefore sits in the same place in every run, and a code that the agent never addressed cannot
+silently drop out because the library refuses to build a payload that leaves one without a status.
 
 A curator records judgements in three places: a tick and a note on each code, on the routing, and on the record as a
-whole. Each is a guard in the sense of [`document-widgets.md`](document-widgets.md), so it clears when the agent changes
-what it judges. The agent reads the notes at the start of its next turn and answers them by revising the record, which
-clears the note it answered.
+whole. Each judgement is a guard in the sense of [`document-widgets.md`](document-widgets.md), so it clears when the
+agent changes what it judges. The agent reads the notes at the start of its next turn and answers them by revising the
+record, which clears the note it answered.
 
-The widget draws colour for one thing only, the direction and size of each code's points, because that is what a reader
-scans for. Its signature is a points ruler pinned to the top of the widget: the class bands along an axis, each code's
-points stacked outward from zero, benign to the left and pathogenic to the right, and a needle at the total. Tallies the
-library computed under other values of the judgement inputs appear on the same ruler as further needles, so a curator
-sees at a glance what would move the variant over a band edge.
+The widget uses colour for one thing only: the direction and size of each code's points, because that is what a reader
+scans for. Its centrepiece is a points ruler pinned to the top of the widget. The ruler draws the class bands along an
+axis, stacks each code's points outward from zero with benign to the left and pathogenic to the right, and places a
+needle at the total. Tallies that the library computed under other values of the judgement inputs appear on the same
+ruler as further needles, so a curator sees at a glance what would move the variant across a band edge.
 
 ## Background
 
-This section introduces the parts of SVCv4 the widget has to show. A reader who knows the framework can skip to
+This section introduces the parts of SVCv4 that the widget has to show. A reader who knows the framework can skip to
 §Non-goals.
 
-SVCv4, the ClinGen pilot of ACMG V4, classifies one variant against one Monogenic disease entity (MDE): a gene, a
-disease and a mode of inheritance, where an allelic disorder that arises by a different mechanism is a different disease
-(SM21). Its rules are specified in numbered Supplementary Materials, cited here as SM*n*. Its unit of evidence is the
-**code**, named by a family and a concept: `POP_FRQ` is the population family's frequency code, `CLN_DNV` the clinical
-family's de novo code, `MIS_PRD` the missense family's predictor code. Each code carries points, positive towards
-pathogenic and negative towards benign, and the points sum to a total. The total falls in one of the framework's class
-bands:
+SVCv4, the ClinGen pilot of ACMG V4, classifies one variant against one monogenic disease entity. In SM21, a monogenic
+disease entity (MDE) is a gene, a disease, and a mode of inheritance, where an allelic disorder that arises by a
+different mechanism counts as a different disease. The framework's rules live in numbered Supplementary Materials, cited
+here as SM*n*. Its unit of evidence is the **code**, named by a family and a concept: `POP_FRQ` is the population
+family's frequency code, `CLN_DNV` is the clinical family's de novo code, and `MIS_PRD` is the missense family's
+predictor code. Each code carries points, positive towards pathogenic and negative towards benign, and the points sum to
+a total. The total falls in one of the framework's class bands:
 
 ```
   total  ≤ -4      -4 < t ≤ -1    -1 < t < 2    2 ≤ t < 4    4 ≤ t < 6    6 ≤ t < 10    ≥ 10
   band   B         LB             VUS-low       VUS-mid      VUS-high     LP            P
 ```
 
-Two families of codes reach the total differently. The **independent** codes, the population (`POP_`), clinical (`CLN_`)
-and locus (`LOC_`) families, are each clamped to their own range and added. The **variant-type** codes are scored on a
-**path** through the decision tree the variant's molecular consequence selects: a missense variant's amino-acid path
-sums `MIS_PRD`, `MIS_FXN` and `MIS_INF`; a nonsense variant's null path sums the `NUL_` codes. Inside a tree, the
-questions the variant answers on the way down select an **arm**, and the arm fixes which cells its codes are priced from
-and what caps them. The splice tree names its arms by colour: yellow where a splice effect is likely and the frameshift
-it causes predicts nonsense-mediated decay (NMD), orange where a splice effect is likely and NMD is not predicted, blue
-where the impact is uncertain, and violet where it is unlikely. Two arms can give a code the same points for different
-reasons: a predicted splice effect enters both yellow and orange at +3, but on yellow the +3 rests on the transcript
-being degraded, and on orange on a product that escapes decay. A path scales its positive predictive points by a
-**matrix multiplier** built from two judgement inputs, the mechanism level and the exon relevance, and caps its
-subtotal. The missense amino-acid path is the exception, scaled by exon relevance alone. A missense variant has two
-paths, amino-acid and splice, and the **max-path rule** counts the more positive one. Finally the gene-disease validity
-of the entity **gates** the class: Moderate validity caps it at LP and Limited at VUS, and below Limited the gate
-replaces the class outright with "Variant in Gene of Uncertain Significance" or, for a disputed relationship, "Do not
-report".
+Two families of codes reach the total differently. The **independent** codes belong to the population (`POP_`), clinical
+(`CLN_`), and locus (`LOC_`) families; the framework clamps each independent code to its own range and adds them. The
+**variant-type** codes are scored on a **path** through the decision tree that the variant's molecular consequence
+selects: a missense variant's amino-acid path sums `MIS_PRD`, `MIS_FXN`, and `MIS_INF`, while a nonsense variant's null
+path sums the `NUL_` codes. Inside a tree, the questions that the variant answers on the way down select an **arm**, and
+the arm fixes which cells its codes are priced from and what caps them. The splice tree names its arms by colour: yellow
+where a splice effect is likely and the resulting frameshift predicts nonsense-mediated decay (NMD), orange where a
+splice effect is likely and NMD is not predicted, blue where the impact is uncertain, and violet where a splice effect
+is unlikely. Two arms can give a code the same points for different reasons: a predicted splice effect enters both
+yellow and orange at +3, but on yellow the +3 rests on the transcript being degraded, and on orange on a product that
+escapes decay.
+
+A path scales its positive predictive points by a **matrix multiplier** built from two judgement inputs, the mechanism
+level and the exon relevance, and caps its subtotal. The missense amino-acid path is the exception and scales by exon
+relevance alone. A missense variant has two paths, amino-acid and splice, and the **max-path rule** counts the more
+positive one. Finally, the gene-disease validity of the entity **gates** the class. Moderate validity caps the class at
+LP and Limited caps it at VUS, while below Limited the gate replaces the class outright with "Variant in Gene of
+Uncertain Significance" or "Do not report" for a disputed relationship.
 
 The independent codes are priced per observation. `CLN_DNV` scores each de novo proband by the row of a table it falls
-in: a proband with a specific phenotype and confirmed parentage scores +7, one with unconfirmed parentage +2. The
-library names each row with a stable **cell id**, such as `CLN_DNV.specific.unconfirmed`, and the curator's worksheet
-stores the same ids ([`curation-surface.md`](curation-surface.md)). A path's codes are priced differently, from the tier
-the agent read off the decision tree, and the library names no cell for them.
+in: a proband with a specific phenotype and confirmed parentage scores +7, and one with unconfirmed parentage scores +2.
+The library names each row with a stable **cell id**, such as `CLN_DNV.specific.unconfirmed`, and the curator's
+worksheet stores the same ids ([`curation-surface.md`](curation-surface.md)). A path's codes are priced differently,
+from the tier that the agent read off the decision tree, and the library names no cell for them.
 
-The library that does all of this arithmetic is `themis.svcv4` ([`../../themis/svcv4/`](../../themis/svcv4)). The agent
-calls it in code mode with its judgement inputs: the tier it read off each decision tree, the mechanism level, the exon
-relevance, the points it priced each clinical observation at, and the entity's gate level. It gets back a
-`Classification`: an audit trail of lines whose points sum to the total, the paths it scored, the band, the VUS sub-band
-and the gated class. A run has two further outcomes beyond one total. A judgement input is **open** when the evidence
-leaves more than one value standing, and the agent then reports the tally under each surviving value. A **sensitivity**
-table varies each judgement input across its plausible range and reports what each value yields.
+The library that performs all of this arithmetic is `themis.svcv4` ([`themis/svcv4/`](../../themis/svcv4)). The agent
+calls the library in code mode with its judgement inputs: the tier it read off each decision tree, the mechanism level,
+the exon relevance, the points at which it priced each clinical observation, and the entity's gate level. The library
+returns a `Classification` containing an audit trail of lines whose points sum to the total, the paths it scored, the
+band, the VUS sub-band, and the gated class. A run has two further outcomes beyond one total. A judgement input is
+**open** when the evidence leaves more than one value standing, and the agent then reports the tally under each
+surviving value. A **sensitivity** table varies each judgement input across its plausible range and reports what each
+value yields.
 
-The working document follows an outline the kickoff fixes. Its "Evidence assessment" section carries each code's
-evidence, cell and reasoning, and its "Point tally" section carries the audit trail, the total, the class and the
-sensitivity table. Both are markdown today.
+The working document follows an outline that the kickoff fixes. Its "Evidence assessment" section carries each code's
+evidence, cell, and reasoning, and its "Point tally" section carries the audit trail, the total, the class, and the
+sensitivity table. Both sections are markdown today.
 
 ## Non-goals
 
-- **Computing anything in the client.** Points, totals, bands and classes arrive in the payload from the library. A
-  second implementation in the renderer would be a second thing to audit against the ClinGen calculator
+- **Computing anything in the client.** Points, totals, bands, and classes arrive in the payload from the library. A
+  second implementation in the renderer would be a second place to audit against the ClinGen calculator
   ([`document-widgets.md`](document-widgets.md) §Non-goals).
 - **Editing the classification in the widget.** A user may change only guards, so a curator cannot change a point, a
-  cell or a routing decision there. A curator who disagrees says so in a note or in the conversation, and the agent
-  reruns the library.
-- **Choosing the decision tree.** The ClinGen calculator lets a curator pick the variant type, because the curator
-  drives it. Here the agent made the routing call and states its reasons, so the widget shows the one route taken rather
-  than offering the others, whose codes would all be empty.
+  cell, or a routing decision in the widget. A curator who disagrees says so in a note or in the conversation, and the
+  agent reruns the library.
+- **Choosing the decision tree.** The ClinGen calculator lets a curator pick the variant type because the curator drives
+  it. Here the agent makes the routing call and states its reasons, so the widget shows the one route taken rather than
+  offering the others, whose codes would all be empty.
 
 ## Design
 
 ### One classification, end to end
 
-Here is a missense variant in FBN1, classified against Marfan syndrome, followed from the agent's call to a curator's
+Consider a missense variant in FBN1, classified against Marfan syndrome, followed from the agent's call to a curator's
 note and back.
 
-The agent has its judgement inputs: the gene's calibrated predictor places the variant at +1 on the amino-acid path, the
-splice path scores 0, the population frequency code scores 0, the proband is a de novo with a specific phenotype and
-unconfirmed parentage (+2), and the phenotype's diagnostic yield scores `LOC_PHE` +4. It passes them to the library's
-widget builder, the same inputs it would pass to `classify_variant`, together with its identifiers, its evidence and
-reasoning for each code, and the inputs of two alternatives. As a sketch, which the builder's own documentation replaces
-once it exists:
+The agent has assembled its judgement inputs: the gene's calibrated predictor places the variant at +1 on the amino-acid
+path, the splice path scores 0, the population frequency code scores 0, the proband is a de novo observation with a
+specific phenotype and unconfirmed parentage (+2), and the phenotype's diagnostic yield scores `LOC_PHE` at +4. The
+agent passes those inputs to the widget builder in [`themis/svcv4/widget.py`](../../themis/svcv4/widget.py) via the
+sandbox helper in
+[`themis/services/sandbox_worker/guest/widgets.py`](../../themis/services/sandbox_worker/guest/widgets.py), alongside
+the routing metadata, the evidence and reasoning for each code, and two sensitivity alternatives (`parentage confirmed`
+and `MIS_PRD at 0`).
 
-```python
-widgets.update('assets/svcv4.binpb', lambda committed: widget.build(
-    ref, inputs,                     # consequence, evidence, independent codes, gate level: as for classify_variant
-    routing=..., codes={'CLN_DNV': ..., 'POP_FRQ': ..., ...},     # each code's status, evidence and reasoning
-    sensitivity=[('parentage confirmed', inputs_with_dnv_confirmed), ('MIS_PRD at 0', inputs_with_prd_0)],
-    committed=committed,
-))
-```
-
-The builder runs the classification and each alternative itself, fills in every point, total and band from the results,
-and checks that the agent's annotations agree with them. It then writes the payload, and the agent names it in the
-document with `::embed[assets/svcv4.binpb]`. The curator sees:
+The builder runs the main classification and each alternative itself, fills in every point, total, and band from the
+results, and checks that the agent's annotations agree with them. The helper writes the payload to `assets/svcv4.binpb`,
+and the agent embeds it in the working document with `::embed[assets/svcv4.binpb]`. The curator sees:
 
 <!-- screen-ignore: synthetic example narrative -->
 
@@ -167,61 +166,67 @@ document with `::embed[assets/svcv4.binpb]`. The curator sees:
 ```
 
 The curator has ticked `POP_FRQ` and written a note on `CLN_DNV`: "The clinic letter confirms parentage by trio exome."
-Each is a commit the browser published on the revision shown. On its next turn the agent's helper prints the note, the
-agent reprices `CLN_DNV` at +7, restates that one code, reruns the builder, and pushes. The new payload says `CLN_DNV`
-+7 and a total of +12, Pathogenic. `CLN_DNV`'s note judged the old content, so it clears. The tick on `POP_FRQ` stays:
-the agent did not restate `POP_FRQ`, so the builder carried its reasoning across from the committed payload, and nothing
-`POP_FRQ` says changed. The sign-off on the whole record, had the curator given one, would clear, since the record
-changed.
+Each action is a commit that the browser published on the revision shown. On its next turn, the agent's helper prints
+the note, and the agent reprices `CLN_DNV` at +7, restates that one code, reruns the builder, and pushes. The new
+payload shows `CLN_DNV` at +7 and a total of +12, Pathogenic. `CLN_DNV`'s note judged the old content, so it clears. The
+tick on `POP_FRQ` stays because the agent did not restate `POP_FRQ`, the builder carried its reasoning across from the
+committed payload, and nothing in `POP_FRQ` changed. Had the curator ticked the whole record, that root sign-off would
+clear because the record changed.
 
 ### The library builds the payload
 
-The obvious way to produce the payload is for the agent to build the message itself: call `classify_variant`, read the
-result, and copy each total and band into the fields. That needs no new code in the library. It breaks on the property
-the widget exists to guarantee. A model copying numbers into a message will sooner or later copy one wrongly, or edit a
-point by hand when the numbers don't come out as it expected, and a payload built that way would look exactly like one
-built right.
+The obvious way to produce the payload is for the agent to build the protobuf message itself: call `classify_variant`,
+read the result, and copy each total and band into the fields. That approach needs no new code in the library, but it
+breaks the guarantee that the widget exists to provide. A model copying numbers into a message will eventually copy one
+wrongly, or edit a point by hand when the numbers do not come out as expected, and a payload built that way would look
+identical to one built from the calculator.
 
-So the library has a builder beside `classify_variant`, in [`themis/svcv4/`](../../themis/svcv4). It takes the same
-inputs, runs the classification itself, and fills every computed field from the result. It takes each alternative as a
-set of inputs too, and runs it the same way. The agent can still construct a message by hand in code mode, since nothing
-in a sandbox stops it, but the instructions have it call the builder, and a payload the builder made is one where every
-number came from a tally. The builder also refuses what it can check: an annotation that sets a computed field, cells
-whose priced sum differs from the points the code reached the tally with, a scored code with no rationale.
+The library therefore provides a builder beside `classify_variant` in
+[`themis/svcv4/widget.py`](../../themis/svcv4/widget.py). The builder takes the same classification inputs, runs the
+classification itself, and fills every computed field from the result. It also takes each alternative as a set of inputs
+and runs it the same way. Nothing in the sandbox prevents the agent from constructing a raw protobuf message by hand in
+code mode, but the skill instructions direct it to call the builder, and a payload produced by the builder guarantees
+that every number came from a library tally. The builder also rejects inconsistent annotations: an annotation that sets
+a computed field, per-observation cells whose priced sum differs from the points the code contributed to the tally, or a
+scored code with no rationale.
 
-Running the classification inside the builder, rather than accepting a finished result, matters for a second reason. A
-result object says what the tally was, but not every input that produced it: the mechanism level and the exon relevance
-survive only as a multiplier, and the arm of a tree the variant took survives only in a path's label. The builder has
-the inputs, so the routes and paths it records name the arm, the mechanism level and the exon relevance, and those
-always match the points beside them.
+Running the classification inside the builder, rather than accepting a finished `Classification` result, matters for a
+second reason. A result object records what the tally was, but not every input that produced it: the mechanism level and
+the exon relevance survive only as a combined multiplier, and the decision-tree arm that the variant took survives only
+in a path's label. Because the builder receives the inputs directly, the routes and paths it writes into the payload
+name the arm, the mechanism level, and the exon relevance, and those always match the points beside them.
 
-The payload's validation rules state the consistency a reader relies on: a scored code carries points and a rationale,
-and any other code a reason instead; exactly one path is the one counted; the class reported agrees with the tally. A
-revision draws only if its payload passes its rules, and a pushed revision must keep drawing, so a rule added after the
-first release would hide every earlier revision that breaks it. The rules can loosen later but never tighten, so they
-are all written with the schema.
+The payload's CEL validation rules in
+[`svcv4_classification.proto`](../../schema/proto/themis/widgets/models/svcv4_classification.proto) enforce the
+consistency that the renderer relies on: a scored code carries points and a rationale, while any unscored code carries a
+reason why it was not scored; exactly one path is the one counted; and the reported class agrees with the tally. A
+revision draws only if its payload passes its schema rules, and a pushed revision must keep drawing later, so tightening
+a rule after release would hide every earlier revision that violates it. Validation rules can loosen later but never
+tighten, so they are written into the schema from the start.
 
-The entity's required mode of inheritance is a rule added after the first release. A record written before it states its
-mode only in a field the schema has since retired, so it fails the new rule: it no longer draws, and reading it back
-refuses it. The break is taken in one change, which [`proto.md`](proto.md#schema-evolution) allows where the skew costs
-nothing real, because the only stored records are the classification runs on dev, and those are disposable. It lasts for
-good, since nothing rewrites those records; the run's next build of the widget writes one that states its mode and
-loads.
+The entity's required `mode_of_inheritance` field is a rule added after the first release. A record written before that
+change stated its mode only in a string field that the schema has since retired, so an older record fails the new rule:
+it no longer draws, and reading it back rejects it. We took that break in a single change, which
+[`proto.md`](proto.md#schema-evolution) allows where version skew costs nothing real, because the only stored records at
+the time were disposable classification runs on dev. The break lasts for good, since nothing rewrites those old dev
+records; the run's next build of the widget writes a payload that states its mode of inheritance and loads cleanly.
 
 ### A revision carries its reasoning forward
 
-The obvious way for the agent to revise the record is to rebuild it whole on every turn, annotations included. It breaks
-the curator's ticks. A turn starts with the agent's scratch files gone, so it writes each code's evidence and reasoning
-afresh, and prose written twice is never the same bytes. Every tick guards its code's reasoning, so every tick would
-clear on every turn, including the ones on codes nothing new had touched.
+The obvious way for the agent to revise the record is to rebuild the entire payload on every turn, including all
+annotations. That approach breaks the curator's ticks. Each turn starts with the agent's scratch files gone, so the
+agent would write each code's evidence and reasoning afresh, and prose written twice never produces the exact same
+bytes. Because every tick guards its code's reasoning, every tick would clear on every turn, including ticks on codes
+that no new evidence touched.
 
-So the builder starts from the committed payload. A code the agent restates gets the new annotation. A code it leaves
-out keeps the annotation the committed payload holds, but only while everything the library computed for the code is
-unchanged, and for a code on a path, the path's arm and the judgement inputs that scaled it as well. The builder
-([`themis/svcv4/widget.py`](../../themis/svcv4/widget.py)) holds the exact list. A clinical code also needs `POP_FRQ` to
-be unchanged, because the rarity gate reads `POP_FRQ`'s points to decide whether the clinical codes apply at all. Where
-any of these moved, the builder refuses the build and names the code, so prose never sits beside numbers it was not
-written about. In the FBN1 example, after the curator's note:
+The builder therefore starts from the committed payload. A code that the agent restates receives the new annotation. A
+code that the agent omits keeps the annotation from the committed payload, provided everything the library computed for
+that code is unchanged; for a code on a path, the path's arm and the judgement inputs that scaled it must also be
+unchanged. The builder in [`themis/svcv4/widget.py`](../../themis/svcv4/widget.py) enforces the full set of equality
+checks. A clinical code also requires `POP_FRQ` to be unchanged, because the rarity gate reads `POP_FRQ`'s points to
+decide whether the clinical codes apply at all. Whenever any of these computed values moves for an omitted code, the
+builder refuses the build and names the code, so carried-forward prose never sits beside numbers it was not written
+about. In the FBN1 example, after the curator's note:
 
 | Code                                     | Committed | New tally | Restated | The builder                               |
 | ---------------------------------------- | --------- | --------- | -------- | ----------------------------------------- |
@@ -229,115 +234,123 @@ written about. In the FBN1 example, after the curator's note:
 | `CLN_DNV`                                | +2        | +7        | yes      | takes the new annotation; the note clears |
 | `CLN_DNV`, had the agent not restated it | +2        | +7        | no       | refuses: its points moved                 |
 
-Points can stay put while their meaning moves. A splice predictor code whose path moved from yellow to orange keeps its
-+3 and is still refused, for the reason §Background gives. The routing's annotation carries across while the
-consequence, the paths taken and the gate level stay as they were.
+Points can also stay put while their meaning changes. A splice predictor code whose path moved from the yellow arm to
+the orange arm keeps its +3 and is still refused, because the two arms award +3 for different reasons (§Background). The
+routing's annotation carries across while the consequence, the paths taken, and the gate level remain unchanged.
 
-The cost is that stale prose can survive: a code whose evidence the agent revised without its points moving keeps the
-old reasoning unless the agent restates it. The instructions have the agent restate every code whose evidence it
-touched, and the alternative, a rewrite on every turn, would make a tick worthless.
+The cost of carrying annotations forward is that stale prose can survive when the agent revises a code's evidence
+without changing its points and forgets to restate the code. The skill instructions require the agent to restate every
+code whose evidence it touched, and the alternative of rewriting every code on every turn would make curator ticks
+worthless.
 
 ### Every code the paths taken admit, in the reference's order
 
-The obvious payload lists the codes the tally counted. It breaks twice. A code the agent never assessed would not
-appear, and a missing row is hard to see, which is exactly the omission a curator most needs to catch. And a code's
-position would shift from run to run as others came and went, which defeats reading a classification by where things
-are.
+The obvious payload lists only the codes that the tally counted. That approach fails in two ways. First, a code that the
+agent never assessed would not appear, and a missing row is the hardest omission for a curator to spot. Second, a code's
+position would shift from run to run as other codes came and went, which prevents a curator from reading a
+classification by spatial memory.
 
-So the payload lists every code the paths taken admit: all the independent codes, and every code of each path the
-variant was routed onto. A nonsense variant on the null arm lists the `NUL_` codes and not the `CDS_` ones, and a
-missense variant with no predicted splice effect has no splice path and lists no `SPL_` codes. They come in the order
-the library's reference declares them, and the client groups them by family without reordering. Each carries a status,
-in the vocabulary a curator's worksheet uses: scored, not applicable (the framework's own precondition bars the code,
-such as the rarity gate barring the clinical codes for a common variant), or no data (the code applies and nothing
-determines it). The builder refuses a payload that leaves an admitted code without one, so the agent has to account for
-every code, and a reader can tell an assessed zero from a code nobody looked at.
+The payload therefore lists every code that the paths taken admit: all independent codes, plus every code of each path
+onto which the variant was routed. A nonsense variant on the null arm lists the `NUL_` codes and omits the `CDS_` codes,
+and a missense variant with no predicted splice effect has no splice path and omits the `SPL_` codes. Codes appear in
+the order that the library's reference declares them, and the client groups them by family without reordering. Each code
+carries an assessment status from the curator worksheet's vocabulary: scored, not applicable when a framework
+precondition bars the code (such as the rarity gate barring clinical codes for a common variant), or no data when the
+code applies and no evidence determines it. The builder refuses a payload that leaves any admitted code without a
+status, forcing the agent to account for every code so a reader can distinguish an assessed zero from an unexamined
+code.
 
-The cost falls on the agent, which must state a status and a reason for up to twenty codes it would otherwise have left
-out. That is the work the framework asks of it anyway.
+The cost falls on the agent, which must state a status and a reason for up to twenty codes that it would otherwise have
+left out. That accounting is the work that the framework asks of the classification anyway.
 
 ### The library's vocabulary
 
-The payload names things the way the library does, since the library is what computes them. A per-observation row is the
-library's cell id. A class is `themis.svcv4.models.Classification`, the gate level the gene-disease rpc's `GateLevel`,
-and the consequence the evidence contracts' enum. The entity's mode of inheritance is the framework's own five-member
-`ModeOfInheritance`, beside `Classification` in [`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto), and
-never a curated source's term: which source record describes the entity is the agent's call
+The payload names concepts the way the library does, because the library computes them. A per-observation row uses the
+library's cell id. A class uses `themis.svcv4.models.Classification`, the gate level uses the gene-disease RPC's
+`GateLevel`, and the molecular consequence uses the evidence contracts' `Consequence` enum. The entity's mode of
+inheritance uses the framework's five-member `ModeOfInheritance` enum in
+[`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto) rather than a curated source's term, because
+choosing which source record describes the entity is the agent's call
 ([`evidence-interfaces.md`](evidence-interfaces.md#goal-is-the-gene-disease-relationship-valid-and-by-what-mechanism)).
-A code's status and the agent's confidence in a call live in the same file, because a run states both about each code as
-a curator does about each workflow.
+A code's assessment status and the agent's confidence in a call live in `svcv4.proto` as well, because a run states both
+about each code just as a curator states both about each workflow.
 
-That answers the question [`document-widgets.md`](document-widgets.md) left open, whether the payload reuses the
-curation contract's messages or maps onto them. It does neither: it is a message of its own that shares the worksheet's
-vocabulary. The worksheet's messages record a curator's selection with no points, and a payload built around them would
-have nowhere to carry the tally. Sharing the vocabulary gives the run-review loop, which reads a run against a curator's
-worksheet, the same statuses and confidences on both sides, and the same cell ids for the codes priced per observation.
+Sharing `svcv4.proto` answers the question that [`document-widgets.md`](document-widgets.md) left open: whether the
+widget payload reuses the curation contract's messages in
+[`curation.proto`](../../schema/proto/themis/curation/models/curation.proto) or maps onto them. It does neither, and
+instead defines its own message in
+[`svcv4_classification.proto`](../../schema/proto/themis/widgets/models/svcv4_classification.proto) that shares the
+worksheet's vocabulary enums. The worksheet's messages record a curator's selection without points, so a payload built
+around them would have nowhere to carry the tally. Sharing the vocabulary gives the run-review loop, which compares a
+run against a curator's worksheet, the same statuses and confidences on both sides and the same cell ids for codes
+priced per observation.
 
-A path's codes are the gap. The worksheet stores a cell id for the decision-tree row a curator chose on a path, such as
-the predictor row of `MIS_PRD`, but the library prices a path code from a tier and names no cell for it. The payload
-therefore carries the agent's own statement of the cell it read, in the framework's words, and the loop matches that to
-the curator's cell by reading, which is how it matches a run's stated derivations in any case
-([`curation-surface.md`](curation-surface.md) §"The framework's vocabulary, as used here"). A cell id for each path row
-in the library would close the gap for every consumer at once.
+Codes on a decision-tree path are the remaining vocabulary gap. The worksheet stores a cell id for the decision-tree row
+that a curator chose on a path, such as the predictor row of `MIS_PRD`, whereas the library prices a path code from a
+tier and names no cell for it. The payload therefore carries the agent's plain-text statement of the cell it read, in
+the framework's words, and the run-review loop matches that statement to the curator's cell by reading, just as it
+matches a run's stated derivations ([`curation-surface.md`](curation-surface.md) §"The framework's vocabulary, as used
+here"). Adding a cell id for each path row in the library would close this gap for every consumer at once.
 
-The library's vocabulary is also thinner than a reader would like in a cell's wording. The library describes a row
-tersely, in the words of its transcription ("SPECIFIC · unconfirmed parentage"), while the worksheet carries the
-calculator's full sentence. The payload carries the library's description, because the widget draws what the library
-knows.
+The library's cell descriptions are also terser than the calculator's sentences. The library describes a row in the
+shorthand of its transcription ("SPECIFIC · unconfirmed parentage"), whereas the worksheet carries the calculator's full
+sentence. The payload carries the library's description so that the widget depends only on what the library knows.
 
 ### What a curator records
 
-A curator can record a judgement in three places, each a pair of guards: a tick, meaning "I have reviewed this", and a
-note, the curator's own words. The record as a whole has one pair, the routing has one, and each code has one. Under the
-guard rule ([`document-widgets.md`](document-widgets.md) §"A user's judgement stands only while what it judges is
-unchanged"), each guard judges everything else in its message:
+A curator can record a judgement in three places, each represented by a pair of guards: a tick ("I have reviewed this")
+and a free-text note. The record as a whole has one pair, the routing has one, and each code has one. Under the guard
+rule ([`document-widgets.md`](document-widgets.md) §"A user's judgement stands only while what it judges is unchanged"),
+each guard judges every non-guard field in its enclosing message:
 
-| Where    | A tick or note there clears when the agent changes                                   |
-| -------- | ------------------------------------------------------------------------------------ |
-| a code   | that code: its status, points, cells, evidence, reasoning or confidence              |
-| routing  | the variant, the consequence, the entity, the paths taken or the routing's rationale |
-| the root | anything at all in the record, except another code's or the routing's tick and note  |
+| Where    | A tick or note there clears when the agent changes                                  |
+| -------- | ----------------------------------------------------------------------------------- |
+| a code   | that code: its status, points, cells, evidence, reasoning, or confidence            |
+| routing  | the variant, the consequence, the entity, the paths taken, or the routing rationale |
+| the root | anything in the record except another code's or the routing's tick and note         |
 
 A tick never clears a note, and neither clears a judgement elsewhere, because one guard is never part of what another
-protects. A code's points can move without the agent touching that code: a changed exon-relevance call rescales every
-predictive code on the path. The code's tick clears then, which is right, since the curator reviewed different points.
+guard protects. A code's points can move without the agent touching that code directly: for example, changing the
+exon-relevance call rescales every predictive code on the path. That code's tick then clears, because the curator
+reviewed a different point value.
 
-The note is a guard as well, which has a consequence worth stating. A note judges the content beside it, so it clears
-when the agent changes that content, and the agent changes it precisely when it acts on the note. The note then leaves
-the current revision. It stays in the history, and the skill has the agent record, under the document's open items, what
-each curator answer changed. The alternative, a note that survives the agent's revision, would sit beside content it was
-not written about, which is the stale judgement the guard rule exists to prevent.
+Because a note is also a guard, it judges the content beside it and clears when the agent changes that content—which
+happens as soon as the agent acts on the note. The note then leaves the current revision while remaining in the commit
+history, and the skill instructions require the agent to record under the document's open items what each answered note
+changed. If a note instead survived the agent's revision, it would sit beside content it was not written about, which is
+the stale judgement that the guard rule exists to prevent.
 
-The agent learns of a note by reading. Nothing starts a turn when a curator publishes, so a curator who has left notes
-tells the agent in the conversation, and at the start of each turn the widget helper in the sandbox prints every tick
-and note the committed payload carries. Publishing a note does not start a turn itself, because a curator working
-through twenty codes would start twenty.
+The agent learns of a note by reading the committed payload. Publishing a note does not start a turn automatically,
+because a curator working through twenty codes would otherwise start twenty turns. Instead, a curator who has left notes
+tells the agent in the conversation, and at the start of the turn the agent calls the sandbox widget helper to print
+every tick and note that the committed payload carries.
 
-A note can also arrive while the agent is mid-turn. If the agent's next push changes the code the note is on, the agent
-rebases onto the curator's commit, and rebuilding the file clears the note before the agent has read it. So the helper
-prints the text of every note it clears, and the agent treats a note it meets that way as one it read at the start of a
-turn.
+A note can also arrive while the agent is mid-turn. If the agent's next push changes the code that the note is on, the
+agent rebases onto the curator's commit, and rebuilding the file clears the note before the agent has read it. The
+sandbox helper therefore prints the text of every note it clears during an update, and the agent treats a note printed
+that way just like one it read at the start of a turn.
 
-"Needs review" is derived, not stored. A code needs review when it is unticked and either its confidence is leaning or
-open, or a sensitivity or open-value tally changes its points and lands in a different class. The filter "show only
-codes needing review" hides the rest.
+The client derives whether a code needs review from the payload rather than storing a flag. A code needs review when it
+is unticked and either its confidence is leaning or open, or a sensitivity or open-value alternative changes its points
+and lands in a different class. The "Show only codes needing review" toggle hides the remaining rows.
 
 ### How it is drawn
 
-Colour encodes the direction and size of points and nothing else. The obvious scheme gives each family its own hue,
-which makes a family easy to find. It costs the one thing the colour is most needed for: with seven family hues, colour
-no longer tells a benign contribution from a pathogenic one, and the reds and greens it would use already mean
-pathogenic and done elsewhere in the workbench. The fixed order and the family headings make a family easy to find
-without colour.
+The React renderer in [`apps/web/src/components/widgets/svcv4/`](../../apps/web/src/components/widgets/svcv4) uses
+colour to encode the direction and size of points and nothing else. The obvious alternative gives each code family its
+own hue to make families easy to spot. With seven family hues, however, colour no longer distinguishes a benign
+contribution from a pathogenic one, and the reds and greens it would consume already mean pathogenic and done elsewhere
+in the workbench. The fixed reference order and the family headings make each family easy to find without colour.
 
-The ruler is the widget's centre. It draws the bands the payload carries along a points axis, and below them two stacks
-that start at zero: the codes with negative points stacked to the left in the benign colour, and those with positive
-points stacked to the right in the pathogenic colour. An award on a path, such as SM7's award for a change at a critical
-amino-acid residue, stacks with the codes. A needle marks the total. Where a cap took points off a subtotal, the points
-it removed show hatched over the end of the stack it bounded, so a reader sees both what the evidence claimed and what
-the framework counted. The payload says which lines are caps and which awards, since the two look alike to a client that
-sees only a signed number. A reduction the matrix makes to one code shows in that code's row, as the raw points and the
-factor, rather than on the ruler. For the FBN1 record, whose codes no cap bounds:
+The ruler is the widget's centrepiece. It draws the bands from the payload along a points axis, and below them two
+stacks starting at zero: codes with negative points stack to the left in the benign colour, and codes with positive
+points stack to the right in the pathogenic colour. An award on a path, such as SM7's award for a change at a critical
+amino-acid residue, stacks alongside the codes, and a needle marks the total. Where a cap removes points from a
+subtotal, the removed points appear hatched over the end of the stack that the cap bounded, showing both what the raw
+evidence claimed and what the framework counted. The payload marks which audit-trail lines are caps and which are
+awards, because both look like signed numbers to a client. A reduction that the matrix multiplier makes to a single code
+appears in that code's row as the raw points and the multiplier factor rather than as hatching on the ruler. For the
+FBN1 record, where no cap bounds the codes:
 
 ```
                                                 2                   1
@@ -348,54 +361,59 @@ factor, rather than on the ruler. For the FBN1 record, whose codes no cap bounds
   1 if parentage confirmed +12 P    2 if MIS_PRD at 0 +6 LP
 ```
 
-The band edges come from the payload rather than from the client, so a record written under one revision of the
-framework draws against that revision's bands. The ruler stays pinned to the top of the widget while the curator scrolls
-through the codes, and hovering a segment highlights its code's row, and the other way round. Each row repeats its own
-segment in small, on the same scale, so a row reads as its share of the balance without the curator looking up.
+The band edges come from the payload rather than from client constants, so a record written under one revision of the
+framework always draws against that revision's bands. The ruler stays pinned to the top of the widget while the curator
+scrolls through the codes; hovering over a segment highlights its code row, and hovering over a row highlights its
+segment. Each row also repeats its own bar segment in miniature on the same scale, so a row shows its share of the
+balance without the curator looking back up to the ruler.
 
-Each evidence item says where it came from. A value an evidence rpc served names the source and release it was read at.
-A passage of a paper is a citation the curator can click to open the paper beside the document, as in prose. A passage
-of the clinical context is marked as the case's own words, and a web-search excerpt is marked unverifiable, as the skill
-already requires. A curator's note is drawn in the colours the workbench uses for the curator's own voice, so it is
-never mistaken for the agent's text.
+Each evidence item identifies where it came from. A value served by an evidence RPC names the source and release at
+which it was read. A paper passage renders as a clickable citation that opens the paper beside the document, just as in
+document prose. A passage from the clinical context is marked as the case's own words, and a web-search excerpt is
+marked unverifiable, matching the classification skill's rules. A curator's note renders in the palette that the
+workbench reserves for the curator's voice, so it is never mistaken for agent-written text.
 
-Container width decides the layout, because the document pane is a resizable split. At a narrow width a row's title
-moves below its code and the per-row segment gives way to the points alone. The layout holds a single column at every
-width.
+Container width governs the layout because the document pane sits inside a resizable split. At narrow widths, a row's
+title wraps below its code identifier and the miniature bar segment gives way to the numeric points alone. The widget
+maintains a single-column layout at every width.
 
 ### Open inputs and sensitivity
 
-The payload's main tally is the one the codes sum to, under the values the document proceeds on. Two lists of
-alternatives sit beside it, each a tally the agent computed through the library under other inputs: the other surviving
-values of an input the agent reports open, and the sensitivity rows. Each alternative is labelled with the assumption it
-makes and records which codes' points it changed.
+The payload's main tally is the total that the codes sum to under the input values on which the document proceeds. Two
+lists of alternatives sit beside it, each computed through the library under alternative inputs: the other surviving
+values of any input that the agent reports as open, and the sensitivity rows. Each alternative carries a label stating
+its assumption and records which codes changed points under that assumption.
 
-The class the record reports is the builder's, by the skill's rule: the main tally's class where every open value's
-class agrees with it, and "not established" otherwise. With CLN_DNV's parentage reported open in the FBN1 example, the
-two values land at LP and P, so the record would report no class, and the ruler would draw both needles as totals with
-the classes in contention beside them. Sensitivity needles are drawn fainter, since they are what-ifs rather than
-reported outcomes. "Not established" is then a run's finding in the same vocabulary as a curator's, since both mean that
-no single class survives what is known.
+The builder sets the record's headline class according to the classification skill's rule: the main tally's class when
+every open-input alternative lands in that same class, and "not established" otherwise. If `CLN_DNV`'s parentage were
+reported open in the FBN1 example, the two surviving values would land at LP and P, so the record would report "not
+established" and the ruler would draw both needles as totals with the contending classes beside them. Sensitivity
+needles draw more faintly because they represent what-if checks rather than reported outcomes. Reporting "not
+established" expresses an inconclusive run in the same vocabulary as a curator's worksheet, where the same status means
+that no single class survives what is known.
 
 ### The document around the widget
 
-The widget is the record of each code: its evidence, its cell, its points and why. The working document's "Evidence
-assessment" section keeps what spans codes, such as the choice of entity, the mechanism level's rubric sum and the exon
-relevance, and embeds the widget where the per-code tables stood. The "Point tally" section keeps the reading of the
-sensitivity table, whose numbers are in the widget. Writing each per-code claim once means the document cannot disagree
-with the widget about it.
+The widget is the single record of each code: its evidence, its cell, its points, and its rationale. The working
+document's "Evidence assessment" section retains the reasoning that spans multiple codes—such as the choice of disease
+entity, the mechanism level's rubric sum, and the exon relevance—and embeds the widget where the per-code markdown
+tables used to stand. The "Point tally" section retains the narrative interpretation of the sensitivity analysis, while
+the numbers themselves live in the widget. Recording each per-code claim only in the widget ensures that the surrounding
+document prose cannot drift out of sync with the tally.
 
 ## Alternatives considered
 
-- **A widget per code**, embedded where each code is discussed. The prose and the code would sit together. It lost
-  because the ruler needs every code's points to draw the balance, a code outside any record would be as easy to leave
-  out as it is today, and one record makes the whole classification one thing a curator can sign off.
-- **Wording from the worksheet's inventory.** The client could draw each cell with the calculator's sentence, which the
-  curation module already generates. It lost because the widget would then depend on the curation module, and a cell the
-  library adds before the worksheet does would draw with no wording.
-- **Richer judgements: agree or disagree.** A three-state guard would let a disagreement show in the widget without a
-  sentence. It lost because a bare disagreement gives the agent nothing to act on, and the note carries the same signal
-  with its reason.
-- **A curator's judgement on each evidence item.** Finer grained than a code. It lost because the note on the code
-  already reaches the item, and twenty codes with several items each would put more controls on the screen than a
-  curator would use. A later message type can still add it: only a released message can never gain a guard.
+- **A widget per code**, embedded wherever each code is discussed. Placing a widget beside each code's prose would keep
+  discussion and numbers together, but the ruler needs every code's points in one payload to draw the overall balance, a
+  code outside any record would be as easy to leave out as it is today, and a single widget makes the whole
+  classification one thing a curator can sign off.
+- **Wording from the worksheet's inventory.** The client could render each cell using the calculator's full sentence,
+  which the curation module already generates. Doing so would couple the widget renderer to the curation module, and any
+  cell added to `themis.svcv4` before the worksheet inventory is updated would have no wording to display.
+- **Richer judgements: agree or disagree.** A three-state guard would let a curator mark disagreement on a code without
+  writing a note. A bare disagreement flag gives the agent no reason to act on, whereas a free-text note carries both
+  the disagreement and its explanation.
+- **A curator's judgement on each evidence item.** Placing guards on individual evidence items would be finer-grained
+  than guarding each code, but a note on the code can already name the specific evidence item in question, and twenty
+  codes with several items each would clutter the widget with more controls than a curator uses. A later message type
+  can still add item-level guards if needed, because only an already-released message is barred from gaining new guards.

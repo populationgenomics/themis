@@ -18,10 +18,12 @@ can no longer gate anything:
    start of your run — the author may request a reviewer while you work. A review counts as given when submitted by
    someone other than the PR author and other than you (`claude`); a pending request counts as engaged.
 1. **Implementation mixed beyond the interface PR's bounds.** The diff carries second-review content plus implementation
-   beyond what the policy's "What the interface PR can hold is bounded" section allows. The bounds are not mixing: a
-   retirement's kept-in-place retiring field and `Partial<ServiceImpl<T>>` widening, an addition shipping with the
-   surfaces an exhaustiveness test binds it to, a migration's `deploy.yml` substitution, generated stubs and their lint
-   exclusions — the minimal coupling that keeps the split green. Substantive behaviour change riding along is.
+   beyond what the policy's
+   ["What an interface or migration PR can carry alongside the contract"](../../docs/design/review-policy.md#what-an-interface-or-migration-pr-can-carry-alongside-the-contract)
+   section allows. The bounds are not mixing: a retirement's kept-in-place retiring field and `Partial<ServiceImpl<T>>`
+   widening, an addition shipping with the surfaces an exhaustiveness test binds it to, a migration's `deploy.yml`
+   substitution, generated stubs and their lint exclusions — the minimal coupling that keeps the split green.
+   Substantive behaviour change riding along is.
 
 Anchor the comment to the second-review content itself (the migration file, the proto hunk, the design-doc change).
 Remediation, in preference order: request the other maintainer's review (`gh pr edit <n> --add-reviewer <login>`;

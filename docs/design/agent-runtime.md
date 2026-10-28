@@ -1,230 +1,368 @@
-# Design: Agent runtime for the Themis Spike
+# Design: the agent runtime
 
-**Parent epic:** [`issues/epic-themis-spike.md`](../../issues/epic-themis-spike.md) (PR #1) **Related:**
-[`spike-infrastructure.md`](spike-infrastructure.md) §8 owns the *infra* consequences (project, secrets, CI images,
-sandbox build, egress); this doc owns the *runtime* semantics. [`deployment.md`](deployment.md) governs confidential
-model config. [`conversation-view.md`](conversation-view.md) reads a session's threads back for the curator.
+**Related:** [`managed-agents.md`](managed-agents.md) (how the web backend creates, steers, and pages a session);
+[`sandbox-worker.md`](sandbox-worker.md) (the self-hosted worker, its bubblewrap guest, and the gRPC hatch);
+[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (how internal RPCs are exposed to the sandbox);
+[`analysis-scenarios.md`](analysis-scenarios.md) (how a scenario's kickoff and agent definition fit together);
+[`conversation-view.md`](conversation-view.md) (how the workbench reads and projects a session's threads);
+[`security.md`](security.md) (why sandbox egress is bounded by destination-fixedness); [`deployment.md`](deployment.md)
+(confidential model configuration and deploy-time agent updates); [`spike-infrastructure.md`](spike-infrastructure.md)
+(the Spike's GCP project, image builds, and network boundaries); [`../PRODUCT.md`](../PRODUCT.md) (§4 tool layer, §6
+facts and judgement, §7 workspace, §9 security, §11 evaluation).
 
-## Why this exploration
+## Overview
 
-The Spike runs several agent concerns over one `(variant, condition)` case — evidence gather (deterministic and
-agentic), aggregation to ACMG-V4 cells, holistic reasoning, adversarial review — sharing tool calls against a curated
-registry, structured output (claims, gaps, verdicts), trace emission, and model selection. The runtime choice fixes
-where the agent loop runs, how multi-agent work is scheduled, how the seams between roles are typed, and what crosses
-the data boundary.
+Classifying a `(variant, condition)` case runs several distinct kinds of work over the same evidence: deterministic and
+agentic evidence gathering, aggregation into ACMG-V4 evidence codes, holistic synthesis into a working document, and
+adversarial review. All of these share a curated tool surface, emit structured claims and verdicts, record provenance
+traces, and run under a single model configuration. Choosing the agent runtime fixes where the agent loop executes, how
+multi-agent work is scheduled, how roles hand off work, and what crosses CPG's network boundary.
 
-## What Anthropic runs vs. what we host
+Anthropic Managed Agents runs the agent loop and multi-agent scheduling, while CPG hosts the tool surface and the
+self-hosted execution sandbox. Within Managed Agents, a single `multiagent` coordinator agent orchestrates each case by
+delegating work to sub-agent threads that are copies of itself. Every thread shares the scenario's guiding prompt, tool
+surface, and model, and only the coordinator's prose brief distinguishes a literature sweep from an adversarial review.
+To emit structured output without dragging the web backend into a custom-tool handling loop, the agent writes code in
+its sandbox against generated gRPC stubs for our internal services, which validate the payloads against protobuf
+schemas, persist them, and record provenance.
 
-**Anthropic runs the agent loop and the multi-agent orchestration; we host only the tool surface and the execution
-sandbox.** This is the Managed Agents split — a hosted REST API where the loop, per-session container, session/event
-log, and coordinator scheduling are Anthropic's — paired with a **self-hosted execution sandbox** so code execution
-stays inside CPG's network ([`spike-infrastructure.md`](spike-infrastructure.md) §8).
+This split avoids building and operating our own loop, session store, and sub-agent scheduler during the Spike. The
+parts we do build — the internal gRPC services and the data-plane mediation — are independent of the agent runtime and
+carry over if we ever self-host orchestration.
 
-- **Tools** — the agent reaches our internal services in **code mode**: it writes code against their generated stubs
-  rather than issuing chains of discrete tool calls. The services are gRPC and internal-only; those that read private
-  data (Cloud SQL/GCS) hold the GCP identity. The sandbox holds no credential — a sandbox-local proxy injects the
-  per-session one on the way out, so the agent never touches the store directly (data-plane mediation — §8).
-- **Execution sandbox** — the self-hosted worker runs the agent's `bash` and generated code under our egress policy.
-- **Session client** — the web-app backend creates a session per submitted case and consumes its event stream (to drive
-  the workspace UI and write the trace). It is a thin client, **not** a workflow conductor: it starts the session and
-  observes; it does not sequence the agents.
+## Background
 
-There is no orchestrator in our code. Where [`spike-infrastructure.md`](spike-infrastructure.md) §8 calls the web app
-the "orchestrator/session-client," it means this session client — not a conductor; the data-plane mediation is the
-services tier's (above).
+In Anthropic Managed Agents, an **Agent** is a versioned control-plane resource that bundles a model, a system prompt,
+attached skills, a toolset, and an optional `multiagent` configuration. A **Session** is a per-case data-plane instance
+created against an Agent and an **Environment**. The platform runs the model turn loop, maintains the append-only
+session event log, manages prompt caching and context compaction, and schedules sub-agent **threads** when the agent is
+configured as a `coordinator`.
 
-## Decision: Managed Agents, coordinator-driven
+To keep code execution and private data inside CPG's network, sessions run against a `self_hosted` environment
+([`sandbox-worker.md`](sandbox-worker.md)). Anthropic's control plane plans the turns, while our self-hosted sandbox
+worker claims the session, runs the agent's commands and generated Python code under our egress policy, and returns tool
+results to the session log.
 
-Use **Managed Agents** as the runtime, with its **`multiagent` coordinator** as the model-driven orchestrator. A
-coordinator agent, given the case, decides per case how to gather, aggregate, reason, and review, delegating to
-sub-agent threads that are copies of itself (§Topology). Scheduling is the model's; we supply only the scenario
-specialization: the guiding prompt and tool surface, configured on the runtime, and the working document's outline,
-carried by the kickoff the session opens with ([`analysis-scenarios.md`](analysis-scenarios.md)). This is PRODUCT §4
-("the orchestrator decides scheduling per case… the framework scaffolds evidence, not agent topology") and the
-Bitter-Lesson stance of §6 (dynamic, model-composed workflows; just enough fixed scaffold to guarantee evidence
-coverage, traceability, and eval).
+```
+  Curator / Workbench
+          │
+          ▼
+   Session client (web BFF)
+     creates session, sends kickoff,
+     reads session & thread event logs
+          │
+          ▼
+  Anthropic Managed Agents (hosted control plane)
+     runs coordinator loop & sub-agent threads,
+     holds session state & event stream
+          │
+          │  dispatches tool calls (self-hosted environment)
+          ▼
+  Execution sandbox (CPG network)
+     runs shell & Python in code mode (no GCP identity);
+     local proxy injects per-session credential
+          │
+          │  gRPC over internal network
+          ▼
+  Internal services (CPG network)
+     validate proto schemas, hold GCP identity,
+     read/write Cloud SQL & GCS, emit trace records
+```
 
-### Why Managed Agents
+Three components on our side participate in a run:
 
-It skips building and operating the agent loop, the execution-sandbox lifecycle, per-session state, and the event stream
-— fast results, the Spike's goal — while the parts we do build (the internal services, the data-plane mediation) are
-runtime-independent and carry over if we ever move off it ([`spike-infrastructure.md`](spike-infrastructure.md) §8). The
-dependency it adds is Anthropic's (beta) agent API.
+- **Tools in code mode.** Rather than issuing long chains of discrete tool calls through the model loop, the agent
+  reaches our internal gRPC services in **code mode** by writing Python scripts against generated protobuf stubs inside
+  the sandbox ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). The internal services hold the GCP identity needed
+  to read and write Cloud SQL and GCS. The sandbox itself holds no cloud credentials; a sandbox-local proxy injects a
+  per-session credential on outbound calls so the agent never touches backing stores directly
+  ([`spike-infrastructure.md`](spike-infrastructure.md) §8).
+- **Execution sandbox.** The self-hosted worker
+  ([`../../themis/services/sandbox_worker/`](../../themis/services/sandbox_worker)) executes the agent's shell commands
+  and file operations inside our network and egress boundary.
+- **Session client.** The web backend
+  ([`../../apps/web/src/server/adapters/live/`](../../apps/web/src/server/adapters/live)) creates a session for each
+  submitted Analysis, sends the scenario kickoff message, and reads the session's event stream to drive the workbench UI
+  and emit traces ([`managed-agents.md`](managed-agents.md)). It is a thin client that starts and observes the session;
+  it does not sequence agents or conduct workflows. Where [`spike-infrastructure.md`](spike-infrastructure.md) §8 refers
+  to the web app as the "orchestrator/session-client", it means this thin session client, while data-plane mediation
+  lives in the services tier.
 
-### Why not the alternatives
+## Design
 
-- **Agent SDK (loop in our container) + Dynamic Workflows.** The Agent SDK runs the loop in our process, and its Dynamic
-  Workflows feature lets the model author a JavaScript orchestration script that fans out sub-agents — an attractive
-  model-composed-orchestration story. But *we* would then own the loop, session state, scaling, and — the deciding cost
-  — a runtime to execute the model-generated workflow plus a mechanism for the sandbox to launch further agents. That is
-  orchestration infrastructure we would build and operate, and it pulls agent-launching into the hardened execution
-  sandbox we are trying to keep minimal. The Managed Agents coordinator gives model-driven fan-out with none of that on
-  us — and is the more adaptive of the two: a Dynamic Workflow fixes its plan when the model writes the script, whereas
-  the coordinator decides each next delegation from the actual results returned to it, so the decomposition need not be
-  anticipated in advance. (Dynamic Workflows stays a future lever should Themis ever self-host orchestration.)
-- **Roll-your-own over the Messages API.** Rebuilds the loop, sub-agent dispatch, and session state we would otherwise
-  inherit.
-- **Claude Code as a subprocess.** Headless invocation plus stdout parsing loses structured output and turns trace
-  emission into a transcript scrape.
-- **LangGraph / DSPy / Inspect-AI.** Ceremony out of proportion to the Spike; a declarative-program model that is
-  premature; eval-shaped rather than a production runtime (Inspect-AI is the likely tool for the eval exploration, not
-  this).
+### Managed Agents coordinator owns scheduling
 
-## Topology: a coordinator delegating to copies of itself
+A variant classification could be wired as a fixed pipeline in application code — a gather step, an aggregation step, a
+drafting step, and a review step called in sequence by our backend. That rigid pipeline breaks as soon as cases vary in
+shape: a well-characterised ClinVar pathogenic variant needs almost no literature fan-out, whereas a novel missense
+variant with conflicting functional assays may need several rounds of targeted paper retrieval and follow-up questions
+before the evidence settles.
 
-A coordinator agent holds the long-running session context and delegates work to sub-agent threads — each a
-context-isolated thread with its own history, sharing the sandbox and filesystem but not context. It fans threads out in
-parallel, incorporates each result as it returns, and steers the next round from what came back, so it keeps an overview
-of a long case without its own context window filling with every gatherer's raw output. Threads persist: the coordinator
-can follow up with a thread it opened earlier, which retains its prior turns. The platform's limits: one level of
-delegation — a thread cannot delegate in turn — and at most 25 concurrent threads. See Anthropic's
-[Multiagent orchestration](https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration) docs.
+Instead, Managed Agents runs a `multiagent` coordinator that decides scheduling per case. Given the scenario kickoff
+([`analysis-scenarios.md`](analysis-scenarios.md)), the coordinator decides what to gather, when to fan out sub-agent
+threads, how to aggregate and reason over the results, and when to commission a review. We supply only the scenario
+specialisation: the guiding prompt and tool surface on the Agent resource, and the working document's outline in the
+kickoff message. This matches [`../PRODUCT.md`](../PRODUCT.md) §4 (the orchestrator decides scheduling per case while
+the framework scaffolds evidence) and §6 (model-composed workflows with just enough fixed scaffold to guarantee evidence
+coverage, traceability, and evaluation).
+
+The coordinator holds the long-running session context and delegates sub-tasks to context-isolated sub-agent threads
+([Multiagent orchestration](https://platform.claude.com/docs/en/managed-agents/multiagent-orchestration)). Each thread
+has its own conversation history and shares the sandbox filesystem (`/workspace`) with the coordinator, but does not
+share the coordinator's context window. The coordinator fans threads out in parallel, incorporates each summary as it
+returns, and steers the next round from what came back, keeping an overview of a long case without filling its own
+context window with raw search results and paper full texts. Threads persist across the session so the coordinator can
+send follow-up turns to an earlier thread with its prior context intact.
+
+Relying on the platform's coordinator accepts two platform limits: delegation is one level deep (a sub-agent thread
+cannot spawn further threads), and a session may run at most 25 concurrent threads. It also adds a runtime dependency on
+Anthropic's beta Managed Agents API, while keeping our internal services and sandbox mediation independent of that API.
 
 ### Every delegate is a copy of the coordinator
 
-The platform configures a coordinator with a **roster**: the list of agent definitions it may delegate to, each an Agent
-object in the platform's vocabulary — a model, a system prompt, tools and skills. A roster entry may name another
-definition, or it may name the coordinator itself, in which case a delegation opens a thread running the coordinator's
-own definition. A Themis scenario's roster names only the coordinator itself. A delegate therefore runs the scenario's
-whole definition — the same guiding prompt, carried as the skill attached to the agent, the same tool surface and the
-same model — from a fresh context, and the coordinator's brief is all that makes one thread a literature sweep and
-another a review: prose saying what to do, what the coordinator already holds, and what to report back. The brief's
-shape is part of the guiding prompt and versions with it; its content is the run's.
+Managed Agents configures a coordinator with a **roster**: the list of Agent definitions it may spawn as sub-agent
+threads. The obvious way to configure a multi-agent system is to define a separate Agent resource on the roster for each
+role — a literature gatherer, a variant classifier, an adversarial reviewer — each with its own prompt, tool subset, and
+model.
 
-The reason is what a delegate needs. Every role here reads evidence — a sweep fetches and quotes papers, a reviewer
-re-reads what the draft cites — and reading evidence takes the scenario's tool surface (the sandbox and the services
-reached from it) and the guiding prompt that says how to use it. A roster entry naming another definition carries none
-of the coordinator's: its tools, skill and model would be declared a second time on that definition and kept in step
-with the coordinator's, and what that buys is a narrower tool surface or a cheaper model for one role. The decision
-flips on either of two conditions: a platform on which a named entry inherits the coordinator's definition, or a role
-that eval shows wanting a narrower surface or a cheaper model. Either way the change is one of configuration; the
-threads and their briefs stay as they are.
+In practice, every delegated role in a classification run has to read primary evidence. A literature sweep fetches and
+quotes papers; an adversarial reviewer re-reads the database records and papers that the draft cites to verify whether
+they support its claims. Reading evidence requires the scenario's full tool surface (the sandbox and the internal
+services reachable from it) and the guiding prompt that explains how to use those tools and interpret ACMG-V4 rules. On
+Managed Agents, a roster entry that names another Agent definition inherits nothing from the coordinator: its tools,
+attached skills, and model would have to be declared a second time on that definition and kept in lockstep with the
+coordinator across deploys. All that duplication would buy is a narrower tool surface or a cheaper model for one role.
 
-What follows:
+A Themis scenario's roster ([`../../agents/svcv4-classifier.agent.yaml`](../../agents/svcv4-classifier.agent.yaml))
+therefore contains a single `self` entry naming the coordinator itself:
 
-- **No per-role scoping.** Every thread runs the coordinator's model with the whole tool surface; what a thread may do
-  is bounded by its brief, which is prose, not by configuration.
-- **A delegate does one whole job.** The platform allows one level of delegation, so a copy cannot fan out in turn: a
-  job handed to a copy runs whole in its thread — a case analysis's candidate variant, classified in a copy, gets its
-  literature sweep there rather than from a further copy.
-- **Threads are told apart by their briefs.** Every thread reports the coordinator's own agent name in the session's
-  event stream, so the name distinguishes nothing; the workbench shows a thread by its brief
-  ([`conversation-view.md`](conversation-view.md)).
+```yaml
+multiagent:
+  type: coordinator
+  agents:
+    - type: self
+```
 
-### The roles
+Every delegated thread runs the coordinator's own Agent definition — the same guiding skill, the same tool surface, and
+the same model — starting from a fresh context window. The coordinator's prose **brief** is the only thing that makes
+one thread a literature sweep and another an adversarial review. Each brief states what job to do, what context the
+coordinator already holds, and what to report back. The brief's template lives in the guiding skill and versions with
+it, while the coordinator fills in its content per delegation.
 
-The roles map onto the coordinator and the copies it briefs — kept as light as eval allows, not a fixed pipeline and not
-one-agent-per-cell:
+Using `self` for every delegate carries three consequences:
 
-- **Deterministic gather** (gnomAD AF, ClinVar structured fields, predictor scores) is **not** an agent — it is baseline
-  annotations precomputed upstream and/or tool calls the coordinator makes; it surfaces through the tool/context
-  surface.
-- **Agentic gather** (ClinVar free text, literature, gene–disease validity) is the coordinator's own work or a copy's,
-  as it sees fit. The literature sweep is the standing delegation: its raw material is what would fill the coordinator's
-  context.
-- **Aggregation** to ACMG-V4 cells is deterministic or agentic per [`aggregator.md`](aggregator.md); either way the
-  reasoning operates on claims and cell tags, not on the rolled-up score (PRODUCT §6).
-- **Reasoning and the working document** are the coordinator's. It holds the whole case, and judgement does not
-  transfer: a copy's report is a claim the coordinator checks against what it gathered, never a conclusion it adopts.
-- **Review** is a copy with a **fresh context**, briefed once the draft exists to read it against the evidence and
-  report where they diverge — not to redo the work. Adversarial review needs a separate context to beat self-review
-  (PRODUCT §6, §11), which a copy gives directly; the coordinator folds the findings into the draft. The platform's
-  advisor — a model the primary thread consults mid-turn, handed a prompt the platform composes and holding no tools —
-  is not a fit: a reviewer that cannot re-read the evidence re-reads only the prose.
+- **Prose-bounded roles rather than per-role tool scoping.** Every thread runs the coordinator's model with the full
+  scenario tool surface; what a thread does is bounded by the prose brief rather than by platform configuration.
+- **Each delegate executes one whole job.** Because the platform allows only one level of delegation, a copy cannot fan
+  out further sub-threads. A job handed to a copy — such as classifying one candidate variant during a multi-variant
+  case analysis — runs end-to-end inside that single thread, including its own literature sweep.
+- **Threads are identified by their briefs in the UI.** Every thread reports the coordinator's own Agent name in the
+  session event log, so the agent name distinguishes nothing; the workbench labels each sub-agent card with the opening
+  brief the coordinator sent it ([`conversation-view.md`](conversation-view.md)).
 
-How much the coordinator decomposes versus working in fewer, broader threads is the scaffold-vs-autonomy dial (PRODUCT
-§11) — set by eval, widened as the model proves it can own more.
+This decision flips if either of two conditions holds in the future: if the platform lets a named roster entry inherit
+the coordinator's tools and skills, or if evaluation shows a specific role benefits from a narrower tool surface or a
+cheaper model. Either way, the change is confined to the Agent configuration while the thread model and briefs stay the
+same.
 
-## Structured output: typed calls into our services
+### Mapping classification roles onto the coordinator and its copies
 
-Managed Agents has no per-session output-schema enforcement, and a client-side custom tool would drag the thin session
-client back into a handling loop. Instead, claims/gaps/verdicts are emitted by the agent **calling our tightly-typed
-services** — `record_claim` / `record_gap` / `record_verdict`, or writes to the working document. The agent writes code
-against the generated stubs; the call reaches the service through the sandbox-local proxy, and the service:
+Rather than assigning one agent per ACMG-V4 evidence code or enforcing a fixed multi-stage pipeline, the runtime maps
+the work onto the coordinator and the copies it briefs as lightly as evaluation allows:
 
-- validates the payload against the schema generated from [`proto.md`](proto.md);
-- persists it to our store (the service holds the GCP identity; the sandbox never touches the store); and
-- writes the matching trace record.
+- **Deterministic gather** (such as gnomAD allele frequencies, ClinVar structured fields, and in-silico predictor
+  scores) runs as baseline annotations precomputed upstream or as direct tool calls from the coordinator, rather than as
+  a separate sub-agent.
+- **Agentic gather** (such as reading ClinVar free-text summaries, searching literature, and checking gene–disease
+  validity) is performed either by the coordinator itself or by a delegated copy. The literature sweep is the standing
+  delegation because scanning candidate papers and extracting passages produces raw text that would otherwise crowd the
+  coordinator's context window.
+- **Aggregation** into ACMG-V4 evidence cells is either deterministic or agentic (see
+  [`evidence-interfaces.md`](evidence-interfaces.md) and
+  [`svcv4-classification-widget.md`](svcv4-classification-widget.md)); either way, downstream reasoning operates on the
+  underlying evidence claims and cell tags rather than on a rolled-up point total ([`../PRODUCT.md`](../PRODUCT.md) §6).
+- **Reasoning and the working document** stay with the coordinator. The coordinator holds the whole case, and clinical
+  judgement does not transfer from a delegate: a copy's return message is a claim that the coordinator checks against
+  gathered evidence, never a conclusion it adopts blindly.
+- **Adversarial review** runs in a copy with a fresh context window, briefed once the draft exists to check the draft
+  against the underlying evidence and report where they diverge rather than redoing the classification from scratch.
+  Separating the reviewer's context window from the drafter's is what makes adversarial review catch errors that
+  self-review misses ([`../PRODUCT.md`](../PRODUCT.md) §6, §11), and the coordinator folds the reviewer's findings back
+  into the working document. Managed Agents also offers an *advisor* feature — a secondary model that the primary thread
+  consults mid-turn using a platform-composed prompt and no tools — but a reviewer without tools can only critique the
+  draft's prose and cannot re-read the cited evidence to verify whether a paper actually says what the draft claims.
 
-The structured-output contract is therefore part of the service surface — no prose parsing, no file scraping, no
-custom-tool round-trip. The **working document** (PRODUCT §7) is the durable artifact, grown through these typed calls.
+How aggressively the coordinator decomposes work into sub-agent threads versus working in fewer, broader threads is the
+scaffold-versus-autonomy dial ([`../PRODUCT.md`](../PRODUCT.md) §11), tuned by evaluation and widened as models improve.
 
-## Untrusted gathered content
+### Structured output via typed calls to internal services
 
-Gathered ClinVar free text and literature are **untrusted content** (PRODUCT §9): the coordinator, and any copy it
-briefs to gather, read third-party text that can carry instructions injected to steer the model's tool use or its
-`record_*` output. The runtime treats that text as data, not instructions; it adds no separate instruction/data filter
-and relies on two properties the rest of the design already buys:
+The runtime needs the agent to produce structured records — evidence claims, information gaps, verdicts, and updates to
+the working document — that satisfy strict schemas. Managed Agents has no per-session output-schema enforcement on model
+turns, and defining client-side custom tools for structured output would force our thin session client back into an
+active tool-handling loop on every emit. Scraping structured records out of free-text markdown or files after the fact
+is brittle and divorces validation from the moment the agent makes the claim.
 
-- **Typed tool surface** — tools take constrained arguments (enums where the domain is finite, per PRODUCT §9,
-  [`tool-surface.md`](tool-surface.md)), so an injected instruction cannot widen what a tool reads or what
-  `record_claim` / `record_gap` / `record_verdict` persists; at most it supplies values the contract admits, which the
-  trace still attributes to their source. An identifier with no finite domain — an HGVS descriptor, a gene symbol —
-  stays a string, and what bounds it is where the service may put it, not what it looks like.
-- **No attacker-chosen destination** — the sandbox holds no GCP identity and no network of its own, so every outbound
-  hop is one of our services making the request on the agent's behalf. A steered call therefore reaches neither private
-  data nor a destination of the attacker's choosing: what an exposed rpc may dial comes from its own code, which is the
-  criterion in [`security.md`](security.md) §What counts as an exfiltration channel.
+Instead, the agent emits structured output by calling our tightly-typed internal gRPC services — such as `record_claim`,
+`record_gap`, `record_verdict`, or working-document write calls — directly from the sandbox in code mode. The agent
+writes Python against the generated protobuf stubs ([`proto.md`](proto.md)); the call passes through the sandbox-local
+proxy, which attaches the per-session credential, and the receiving internal service:
 
-The fresh-context reviewer is a partial backstop: it can reject a verdict the evidence does not support, but not an
-injected tool call mid-gather. Hardening the injection leg beyond this is tool-surface design, owned by
-[`tool-surface.md`](tool-surface.md).
+1. validates the payload against the protobuf schema ([`proto.md`](proto.md));
+1. persists the record to Cloud SQL or GCS using the service's own GCP identity; and
+1. writes the corresponding provenance trace record.
 
-## Trace integration
+Putting structured output on the internal gRPC surface eliminates prose parsing, file scraping, and custom-tool
+round-trips through the web backend. The working document ([`../PRODUCT.md`](../PRODUCT.md) §7) grows durably through
+these typed calls.
 
-The trace ([`trace-schema.md`](trace-schema.md)) has two feeders, both consistent with hosting only tools and sandboxes.
-They cover different halves of what a run did, and neither can supply the other's.
+### Defending against untrusted gathered content
 
-- **Our internal services** are where a call actually executes, so they are the only place that knows what it reached.
-  Each writes a provenance-rich record host-side as the call runs — the URL, the arguments, a hash of the response, the
-  version of the source database it read. That is the evidentiary half of the trace: what was looked up, where, and in
-  which snapshot of the data.
-- **The session client** reads Anthropic's event stream, which is the only place that knows what the *agent* did — its
-  thinking, the calls it chose to make, and the tokens each turn cost — and projects that stream into the trace
-  vocabulary. It reads the per-thread streams as well as the primary one: the coordinator fans out across threads, and a
-  sub-agent's narration and thinking never reach the primary stream.
+ClinVar free-text submissions and full-text papers are untrusted third-party content ([`../PRODUCT.md`](../PRODUCT.md)
+§9). When the coordinator or a gatherer thread reads a paper or database comment, that text can contain prompt
+injections attempting to steer the model's next tool calls or corrupt its `record_*` outputs.
 
-One limit of the second feeder bounds what per-thread cost reporting can ever show. Token and cache usage arrives on a
-span that carries no thread id — neither when the stream is read at session scope nor at thread scope — so per-thread
-cost cannot be summed from spans; it comes from the thread listing's own aggregated usage instead, at whatever
-granularity that listing offers.
+Rather than interposing a separate instruction-versus-data classifier inside the runtime, the design relies on two
+structural boundaries already enforced by the tool surface and sandbox:
 
-The mapping into the trace schema:
+- **Typed tool contracts.** Exposed RPCs take constrained protobuf arguments, using enums wherever the domain is finite
+  ([`../PRODUCT.md`](../PRODUCT.md) §9, [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). An injected instruction
+  cannot widen what a read tool fetches or what `record_claim`, `record_gap`, or `record_verdict` persists; at most it
+  can supply values that the schema already admits, which the trace still attributes to their source. Where an
+  identifier has no finite domain — such as an HGVS variant descriptor or a gene symbol — the field remains a string,
+  and safety rests on where the receiving service puts that string rather than on syntactic filtering.
+- **No attacker-chosen destination.** The sandbox holds no GCP identity and has no direct network egress, so every
+  outbound request is made by one of our internal services on the agent's behalf. A steered call therefore reaches
+  neither private data nor a destination of the attacker's choosing: every exposed RPC dials only fixed upstream
+  destinations hardcoded in the service implementation ([`security.md`](security.md) §"What counts as an exfiltration
+  channel").
 
-| What a feeder carries                     | Trace record                                 |
-| ----------------------------------------- | -------------------------------------------- |
-| A session, and each thread within it      | `AgentRun`                                   |
-| A tool call                               | `ToolCall`, with its `ToolCallIntent`        |
-| The agent's typed emits into our services | `EvidenceClaim`, `InformationGap`, `Verdict` |
+The fresh-context reviewer provides a partial backstop on the output side because it can reject a verdict that the cited
+evidence does not support, though it cannot prevent an injected tool call mid-gather. Hardening the injection leg beyond
+this belongs to the tool-surface design ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) and
+[`evidence-interfaces.md`](evidence-interfaces.md)).
 
-## Model selection
+### Two-feeder trace integration
 
-The model id lives on the Agent object, and it is secret-class confidential config (*Confidential config*,
-[`deployment.md`](deployment.md)): a general statement about the model is public, but the concrete id is not. So the
-agent's tracked declaration carries every model setting except the id. The id comes from gcpkms-encrypted stack config,
-and [`tools/agents`](../../tools/agents) supplies it when it applies the declaration. Every thread of a session runs the
-same model, the coordinator's and its copies' alike (§Topology), so the choice is made per scenario rather than per
-role.
+A complete audit trail of a classification run needs both what the external data sources returned and what the model
+reasoned and decided. Because Anthropic hosts the agent loop while we host the internal services, neither side sees the
+whole picture on its own.
 
-## Configuration and lifecycle
+The trace therefore combines two feeders:
 
-Control plane / data plane split, per [`spike-infrastructure.md`](spike-infrastructure.md) §6/§8: the agent is
-version-controlled YAML (`agents/svcv4-classifier.agent.yaml`) applied whole by the deploy workflow through
-`tools/agents`, which publishes its custom skills from the repo when their content moved and pins the agent to the
-version it published; the environment is created once by hand; sessions are created and driven from the web backend via
-the SDK.
+- **Internal services record evidentiary provenance.** Because our services execute the actual upstream lookups and
+  structured writes, they are the only place that sees the exact wire call. As each RPC runs, the service writes a
+  provenance record host-side capturing the upstream URL, request arguments, a hash of the response, and the version or
+  snapshot of the source database.
+- **The session client projects agent activity.** Anthropic's session event stream is the only place that records what
+  the model did — its thinking blocks, the tool calls it chose to invoke, the threads it spawned, and the token cost of
+  each turn. The session client reads both the primary session event stream and each spawned sub-agent thread's event
+  stream (since a sub-agent's narration and thinking are not cross-posted to the primary stream; see
+  [`conversation-view.md`](conversation-view.md)) and projects them into the trace schema.
 
-Much of the lifecycle is the platform's: automatic prompt caching within a session (the session keeps the 5-minute-TTL
-cache alive across the run), context compaction, and rescheduling on retryable errors. We add a per-session timeout, the
-idle-break gate (break on a terminal `stop_reason`, not on transient idle), the post-idle status-write race before
-cleanup, `user.interrupt` for cancellation, and handling for a stuck sub-agent thread.
+One platform limitation constrains per-thread cost attribution from the second feeder. Token and cache usage events
+arrive on `span.model_request_end` records that carry no `session_thread_id`, whether read from the primary session log
+or from a thread's own log. Per-thread token cost therefore cannot be summed from individual turn spans; it must be read
+from the thread listing's aggregated usage object at whatever granularity that listing provides
+([`cost-monitoring.md`](cost-monitoring.md)).
+
+Together, the two feeders map into the trace schema:
+
+| Feeder                             | What the feeder carries                        | Trace record                                 |
+| ---------------------------------- | ---------------------------------------------- | -------------------------------------------- |
+| Session client                     | A session and each sub-agent thread within it  | `AgentRun`                                   |
+| Session client + internal services | A tool invocation                              | `ToolCall`, paired with its `ToolCallIntent` |
+| Internal services                  | The agent's typed emits into internal services | `EvidenceClaim`, `InformationGap`, `Verdict` |
+
+### Confidential model selection per scenario
+
+Under our confidential configuration policy ([`deployment.md`](deployment.md) §"Confidential config"), our general
+family and tier of model is public, but the exact model identifier string is secret-class configuration. Storing the
+model ID in the version-controlled agent declaration would expose it in the repository.
+
+The tracked agent declaration ([`../../agents/svcv4-classifier.agent.yaml`](../../agents/svcv4-classifier.agent.yaml))
+therefore specifies every model setting (such as `effort`) except `model.id`, and the loader in
+[`../../tools/agents/`](../../tools/agents) rejects any YAML file that includes `model.id`. The concrete model ID lives
+in `gcpkms`-encrypted Pulumi stack config (`themis:anthropicAgentModelId`) and is injected by `tools/agents` when the
+deploy workflow applies the declaration. Because every sub-agent thread is a `self` copy of the coordinator, every
+thread in a session runs this same model, making model selection a per-scenario choice rather than a per-role choice.
+
+### Configuration and session lifecycle
+
+The runtime separates control-plane declarations from data-plane sessions
+([`spike-infrastructure.md`](spike-infrastructure.md) §6, §8):
+
+- **Control plane.** Each scenario's agent is declared in version-controlled YAML under [`../../agents/`](../../agents)
+  and applied as a whole by the deploy workflow through [`../../tools/agents/`](../../tools/agents). When custom skill
+  directories under `agents/skills/` change, `tools/agents` publishes a new immutable skill version, pins the Agent
+  resource to that version, and records the content digest and git commit in the Agent's metadata so unchanged deploys
+  are no-ops. The `self_hosted` Environment resource
+  ([`../../agents/selfhosted.environment.yaml`](../../agents/selfhosted.environment.yaml)) is created once out of band.
+- **Data plane.** The web backend creates and drives a Session per Analysis through the Anthropic SDK
+  ([`managed-agents.md`](managed-agents.md)), while the self-hosted sandbox worker claims and executes the session's
+  sandbox work ([`sandbox-worker.md`](sandbox-worker.md)).
+
+Managed Agents handles intra-session mechanics automatically: it keeps the 5-minute-TTL prompt cache warm across turns
+within a session, compacts context when a thread grows long, and reschedules turns on retryable upstream errors. On top
+of the platform's loop, our session runners
+([`../../apps/web/src/server/adapters/live/`](../../apps/web/src/server/adapters/live) and
+[`../../tools/run_review/run/`](../../tools/run_review/run)) add five lifecycle controls:
+
+1. **Per-session timeout** to bound total wall time on runaway runs.
+1. **Terminal idle-break gate**, distinguishing a transient `session.status_idle` with `stop_reason: requires_action`
+   (while the worker is executing a tool call) from a terminal `end_turn` or `retries_exhausted`.
+1. **Post-idle settle handling**, accounting for the status-write and workspace-push window after the session idles
+   before tearing down or collecting the run.
+1. **Cancellation via `user.interrupt`**, allowing a curator or evaluation harness to halt an in-flight step cleanly.
+1. **Stuck sub-agent thread handling**, bounding how long the runner waits when a child thread fails to return or idle.
+
+## Alternatives considered
+
+### Agent SDK with Dynamic Workflows in our own container
+
+Anthropic's Agent SDK can run the agent loop inside our own container, and its Dynamic Workflows feature lets the model
+author a JavaScript orchestration script that fans out sub-agents. That offers model-composed orchestration without
+depending on the hosted Managed Agents session service.
+
+However, running the Agent SDK in our container means we own the turn loop, session state persistence, scaling, and —
+the deciding cost — a runtime inside our infrastructure to execute the model-generated workflow script and spawn further
+agents from the sandbox. That pulls agent-launching authority into the hardened execution sandbox that we want to keep
+minimal ([`sandbox-worker.md`](sandbox-worker.md)). Furthermore, a Dynamic Workflow fixes its decomposition plan at the
+moment the model writes the script, whereas the Managed Agents coordinator decides each next delegation dynamically from
+the actual results returned by earlier threads. Dynamic Workflows remains a viable fallback if Themis ever needs to move
+off Managed Agents and self-host orchestration.
+
+### Custom loop over the Messages API
+
+Building our own turn loop directly on the raw Messages API avoids the beta Managed Agents surface and gives full
+control over event storage and thread scheduling. It loses because it forces us to build and operate the loop, tool
+dispatch queue, sub-agent scheduler, context compaction, and session store from scratch before we can evaluate a single
+variant classification.
+
+### Claude Code as a headless subprocess
+
+Invoking the `claude` CLI headlessly inside a container and reading its stdout is fast to prototype for single-turn
+coding tasks. For Themis, it loses structured output guarantees, provides no native multi-agent thread API for the
+workbench to project, and turns trace and conversation extraction into brittle stdout scraping.
+
+### LangGraph, DSPy, or Inspect-AI
+
+Graph-based and declarative agent frameworks provide ready-made abstractions for state machines (LangGraph), prompt
+optimisation (DSPy), or evaluation harnesses (Inspect-AI). For the production runtime, LangGraph adds ceremony out of
+proportion to the Spike, DSPy's declarative-program model is premature, and Inspect-AI is evaluation-shaped rather than
+a production runtime (though Inspect-AI is the likely tool for the evaluation exploration rather than the runtime).
 
 ## Open questions
 
-- **A role of its own** — whether any delegated job meets §Topology's condition for a named roster entry; per-thread
-  usage (§Trace integration) is the evidence and eval the arbiter.
-- **Aggregator shape** — deterministic vs. agentic vs. hybrid is owned by [`aggregator.md`](aggregator.md).
-- **Coordinator decomposition** — how far the coordinator should fan out versus work in fewer threads (the §11
-  scaffold-vs-autonomy dial); resolve via eval.
-- **Caching cadence** — what a session's automatic caching covers across a run (tool registry, ACMG-V4 framework text,
-  resolved-condition context) and whether explicit cache hints are warranted.
+- **Dedicated roster entries for specific roles.** Whether any delegated role eventually warrants its own named Agent
+  entry on the coordinator's roster (for a narrower tool surface or a smaller model), judged by per-thread token usage
+  and evaluation quality.
+- **Aggregator shape.** What mix of deterministic library arithmetic versus agentic interpretation belongs in the
+  aggregation step across all ACMG-V4 evidence families (see [`evidence-interfaces.md`](evidence-interfaces.md) and
+  [`svcv4-classification-widget.md`](svcv4-classification-widget.md)).
+- **Coordinator decomposition granularity.** How far the coordinator should fan out into narrow threads versus working
+  in fewer, broader threads along the scaffold-versus-autonomy dial ([`../PRODUCT.md`](../PRODUCT.md) §11), to be set by
+  evaluation.
+- **Prompt caching coverage.** Exactly which parts of a run (tool definitions, ACMG-V4 framework reference text,
+  resolved condition context) stay warm under Managed Agents' automatic session caching, and whether explicit cache
+  breakpoints are warranted.

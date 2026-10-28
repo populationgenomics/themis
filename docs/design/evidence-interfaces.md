@@ -1,7 +1,7 @@
 # Design: evidence interfaces — the curated-database half of `evidence`
 
 > **SVCv4 is a draft standard, and this is evaluation software.** The framework was released as a **pilot in July
-> 2026**; its point values, thresholds, code names and data model **may change before publication** (target: *Genetics
+> 2026**; its point values, thresholds, code names, and data model **may change before publication** (target: *Genetics
 > in Medicine*, ~Jan 2027), and Supplementary Material 17 (non-coding variants) is unreleased. These interfaces exist to
 > **evaluate whether the framework can be run autonomously**. They are **not a validated implementation, not for
 > clinical or diagnostic use, and their output is not a clinical variant classification** — the values they return are
@@ -10,7 +10,7 @@
 >
 > **The design is expected to move.** How the surface is split into services and interfaces, the contracts themselves,
 > and the implementations behind them will all change as the framework settles and the evaluation feeds back. What this
-> doc records is a concrete base layer to iterate on, not a final shape.
+> doc records is a concrete base layer to iterate on.
 
 **Related:** [`svcv4-interpretations.md`](svcv4-interpretations.md) (the clinical readings of the framework these
 interfaces apply — which frequency figure, which ClinVar terms, which exon tier), [`services.md`](services.md) (the
@@ -26,188 +26,203 @@ guest), [`run-review-loop.md`](run-review-loop.md) (the loop that reads runs aga
 
 ## Overview
 
-Nine gRPC interfaces on the shared `evidence` deployment — one per curated public source — that, given a variant, return
+Nine gRPC interfaces on the shared `evidence` deployment — one per curated public source — take a variant and return
 what that source holds about it: the non-literature evidence a single-variant ACMG **SVCv4** classification needs. They
 are the structured-data counterpart to the `literature` interface beside them in the same image, which answers from
 papers.
 
-The decision recorded here is a division of labour into four roles, and where each one lands. **Retrieval** that needs
-the open internet is a service-side rpc, because the agent's sandbox has no egress. The deterministic SVCv4
-**arithmetic** is a library shipped into the sandbox, `themis.svcv4`, because it needs no egress and the tally has to be
-reproducible. **Remapping** — the error-prone coordinate and vocabulary wrangling between the two — is service code, so
-the offline library never sees an upstream's serialisation quirks. Every call the framework hands to "an experienced
-analyst" stays with the model. SVCv4 dictates *what* evidence a classification needs; this doc decides *how gathering
-each line becomes runnable*.
+This design divides the work of variant classification into four roles and fixes where each role runs:
 
-So the design body is organised the way the framework asks its questions: one section per evidence-collection goal,
-naming the rpcs that serve it, what its upstream gives and what has to be remapped, a worked example, and the caveats
+- **Retrieval** that needs the open internet runs as a service-side RPC, because the agent's sandbox has no network
+  egress.
+- **Arithmetic** over SVCv4's deterministic rules ships into the sandbox as a Python library, `themis.svcv4`, because it
+  needs no egress and the point tally must be reproducible.
+- **Remapping** — the error-prone coordinate and vocabulary wrangling between upstream APIs and the rule library — runs
+  in service code, so the offline library never sees an upstream's serialisation quirks.
+- **Judgement** — every decision the framework hands to "an experienced analyst" — stays with the model and the human
+  curator.
+
+SVCv4 dictates *what* evidence a classification needs; this document decides *how gathering each line becomes runnable*.
+
+```
+sandbox (agent + themis.svcv4)              gRPC hatch            evidence deployment
+──────────────────────────────              ──────────            ───────────────────
+agent calls RPC ──────────────────────────► allowlist ──────────► Variant / Vep / Gnomad / ClinVar /
+                                                                  GeneDisease / Transcript / Splice /
+                                                                  MaveDb / Cspec  (+ Literature)
+                                                                        │
+                                                                  retrieves upstream data, remaps
+                                                                  coordinates/vocabularies, stamps
+                                                                  Provenance
+                                                                        │
+agent reads facts + makes judgements ◄─────────────────────────── typed response message
+        │
+        ▼
+calls themis.svcv4 (in-process, offline)
+        │
+        ▼
+derivation lines + points + class
+```
+
+The design body is organised in the order the framework asks its questions: one section per evidence-collection goal,
+naming the RPCs that serve it, what its upstream gives and what has to be remapped, a worked example, and the caveats
 that come with the source. What each of those readings of the framework *means* clinically — which frequency figure
-`POP_FRQ` compares against, which ClinVar terms are a pathogenic assertion, what licenses an exon-relevance tier — is a
-clinical judgement rather than a service-design one, and lives in
-[`svcv4-interpretations.md`](svcv4-interpretations.md).
+`POP_FRQ` compares against, which ClinVar terms count as a pathogenic assertion, what licenses an exon-relevance tier —
+lives in [`svcv4-interpretations.md`](svcv4-interpretations.md).
 
-The contracts are the nine `.proto` files. Each states its own identifier forms, its absence semantics and its
-field-to-SVCv4-code mapping, and that file is the spec — this doc explains it and does not repeat it.
+The contracts are the nine `.proto` files under [`schema/proto/themis/rpc/`](../../schema/proto/themis/rpc). Each states
+its own identifier forms, its absence semantics, and its field-to-SVCv4-code mapping; this document explains the design
+choices behind those contracts without restating their field lists.
 
 ## Background
-
-This section fixes the vocabulary, what the framework demands of a tool set, the boundary that decides where each piece
-can run, and the scale that makes every upstream a live wrap rather than a mirror.
 
 ### Vocabulary
 
 SVCv4 brings its own terms; each is used throughout and defined once here.
 
-| Term                            | Meaning                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **SVCv4**                       | ACMG/AMP/CAP/ClinGen Sequence Variant Classification v4 — the points-based successor to ACMG 2015 (`ACMG (V4)` in the glossary).                                                                                                                                                                                                                           |
-| **SM*n***                       | SVCv4 Supplementary Material *n*: the per-topic normative supplements the framework is specified in. The ones leaned on here: SM3 frequency and the DAFT; SM4 clinical observations; SM5 segregation; SM6 in-silico prediction; SM18 mechanism and exon relevance; SM19 informative variants; SM20 functional assays; SM21 the MDE and multiple disorders. |
-| **VBC**                         | The variant being classified.                                                                                                                                                                                                                                                                                                                              |
-| **MDE**                         | Monogenic disease entity: gene × disease × mode of inheritance; a different mechanism comes as a different disease. The unit SVCv4 classifies — not the gene.                                                                                                                                                                                              |
-| **Evidence code**               | One scored line of evidence, named by family: `POP_FRQ` / `POP_HMZ` (frequency), `*_PRD` (in-silico prediction), `*_INF` (other classified variants at the same codon or exon), `*_FXN` (functional assays), `CLN_*` (clinical), `LOC_*` (phenotype and segregation).                                                                                      |
-| **P/LP, B/LB**                  | Pathogenic or likely pathogenic; benign or likely benign — the classification pairs ClinVar records are grouped by.                                                                                                                                                                                                                                        |
-| **NMD / NSD**                   | Nonsense-mediated and non-stop decay: the pathways that decide whether a premature stop codon, or a missing one, leaves any protein. A **PTC** is a premature termination codon.                                                                                                                                                                           |
-| **MAVE**                        | Multiplexed assay of variant effect — a deep mutational scan, the assay class MaveDB deposits.                                                                                                                                                                                                                                                             |
-| **The matrix**                  | A molecular-mechanism × exon-relevance multiplier (×1.0 / 0.5 / 0.25 / 0) applied to *positive* predictive points.                                                                                                                                                                                                                                         |
-| **All / Most / Few**            | SM18's three exon-relevance tiers, the matrix's other axis: how many of the gene's transcripts carry the assessed exon, and how abundant those are. SM18's *admission filter* is the clause naming which transcripts count toward a tier at all, applied before the tier is read.                                                                          |
-| **GDV gate**                    | The gene-disease-validity gate: the curated validity level of the MDE caps the final class, and also gates the mechanism multiplier.                                                                                                                                                                                                                       |
-| **DAFT**                        | Disease allele frequency threshold: the frequency above which a variant is too common for the disease, and the comparator `POP_FRQ` is scored against.                                                                                                                                                                                                     |
-| **OddsPath**                    | The likelihood ratio a calibrated functional assay yields, which `*_FXN` reads.                                                                                                                                                                                                                                                                            |
-| **VCEP**                        | A ClinGen Variant Curation Expert Panel, which may publish its own gene-specific criteria specification.                                                                                                                                                                                                                                                   |
-| **Gold stars**                  | ClinVar's 0–4 review-status scale for how a record's classification was reviewed.                                                                                                                                                                                                                                                                          |
-| **MANE Select / Plus Clinical** | The RefSeq/Ensembl-agreed representative transcript of a gene, and the additional clinically-used ones.                                                                                                                                                                                                                                                    |
-| **pext**                        | gnomAD's proportion-expressed-across-transcripts: how much of a gene's expression includes a given base.                                                                                                                                                                                                                                                   |
-| **Splice colour**               | The trichotomy a splice prediction routes on — likely / indeterminate / unlikely disruptive — which each workflow prices per colour.                                                                                                                                                                                                                       |
-| **SVCv4 corpus**                | Our private checkout of the pilot's documentation set: the supplements as received, the practice variants, and our transcriptions of both. The reference's citations and the reference set point into it. Distinct from the literature corpus the `literature` interface serves.                                                                           |
-| **Reference set**               | The variants curators have classified on the curation worksheet, which the run-review loop reads runs against ([`run-review-loop.md`](run-review-loop.md)).                                                                                                                                                                                                |
+| Term                            | Meaning                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **SVCv4**                       | ACMG/AMP/CAP/ClinGen Sequence Variant Classification v4 — the points-based successor to ACMG 2015 (`ACMG (V4)` in the glossary).                                                                                                                                                                                                                                                     |
+| **SM*n***                       | SVCv4 Supplementary Material *n*: the per-topic normative supplements specifying the framework. The supplements referenced here are SM3 (frequency and the DAFT), SM4 (clinical observations), SM5 (segregation), SM6 (in-silico prediction), SM18 (mechanism and exon relevance), SM19 (informative variants), SM20 (functional assays), and SM21 (the MDE and multiple disorders). |
+| **VBC**                         | The variant being classified.                                                                                                                                                                                                                                                                                                                                                        |
+| **MDE**                         | Monogenic disease entity: gene × disease × mode of inheritance; a different mechanism comes as a different disease. The unit SVCv4 classifies is the MDE rather than the gene.                                                                                                                                                                                                       |
+| **Evidence code**               | One scored line of evidence, named by family: `POP_FRQ` / `POP_HMZ` (frequency), `*_PRD` (in-silico prediction), `*_INF` (other classified variants at the same codon or exon), `*_FXN` (functional assays), `CLN_*` (clinical), `LOC_*` (phenotype and segregation).                                                                                                                |
+| **P/LP, B/LB**                  | Pathogenic or likely pathogenic; benign or likely benign — the classification pairs ClinVar records are grouped by.                                                                                                                                                                                                                                                                  |
+| **NMD / NSD**                   | Nonsense-mediated and non-stop decay: the pathways that decide whether a premature stop codon, or a missing one, leaves any protein. A **PTC** is a premature termination codon.                                                                                                                                                                                                     |
+| **MAVE**                        | Multiplexed assay of variant effect — a deep mutational scan, the assay class MaveDB deposits.                                                                                                                                                                                                                                                                                       |
+| **The matrix**                  | A molecular-mechanism × exon-relevance multiplier (`×1.0` / `0.5` / `0.25` / `0`) applied to *positive* predictive points.                                                                                                                                                                                                                                                           |
+| **All / Most / Few**            | SM18's three exon-relevance tiers on the matrix's exon axis: how many of the gene's transcripts carry the assessed exon, and how abundant those transcripts are. SM18's *admission filter* names which transcripts count toward a tier before the tier is read.                                                                                                                      |
+| **GDV gate**                    | The gene-disease-validity gate: the curated validity level of the MDE caps the final class and gates the mechanism multiplier.                                                                                                                                                                                                                                                       |
+| **DAFT**                        | Disease allele frequency threshold: the frequency above which a variant is too common for the disease, and the comparator `POP_FRQ` is scored against.                                                                                                                                                                                                                               |
+| **OddsPath**                    | The likelihood ratio a calibrated functional assay yields, which `*_FXN` reads.                                                                                                                                                                                                                                                                                                      |
+| **VCEP**                        | A ClinGen Variant Curation Expert Panel, which may publish its own gene-specific criteria specification.                                                                                                                                                                                                                                                                             |
+| **Gold stars**                  | ClinVar's 0–4 review-status scale for how a record's classification was reviewed.                                                                                                                                                                                                                                                                                                    |
+| **MANE Select / Plus Clinical** | The RefSeq/Ensembl-agreed representative transcript of a gene, and the additional clinically used transcripts.                                                                                                                                                                                                                                                                       |
+| **pext**                        | gnomAD's proportion-expressed-across-transcripts: how much of a gene's expression includes a given base.                                                                                                                                                                                                                                                                             |
+| **Splice colour**               | The trichotomy a splice prediction routes on — likely, indeterminate, or unlikely disruptive — which each workflow prices per colour.                                                                                                                                                                                                                                                |
+| **SVCv4 corpus**                | Our private checkout of the pilot's documentation set: the supplements as received, the practice variants, and our transcriptions of both. The reference's citations and the reference set point into it. Distinct from the literature corpus that the `literature` interface serves.                                                                                                |
+| **Reference set**               | The variants curators have classified on the curation worksheet, which the run-review loop reads runs against ([`run-review-loop.md`](run-review-loop.md)).                                                                                                                                                                                                                          |
 
 ### SVCv4's shape drives the tool set
 
-Points-based ACMG: per-code points sum to a class. Two structures make the sum more than addition. Positive predictive
-points are scaled by the matrix, so a mechanism call and an exon call multiply into most positive paths. The GDV gate
-then caps the resulting class, and gates the mechanism multiplier itself. Each variant type has its own workflow, but
-the workflows are assembled from the same recurring evidence modules — frequency, in-silico prediction, other classified
-variants, functional assays, clinical observations, phenotype and segregation — so a module is built once and routed to
-by molecular consequence. These interfaces realise the public, non-literature, non-case subset of the modules' inputs.
+Under points-based ACMG, per-code points sum to a pathogenicity class, modified by two structural controls. First,
+positive predictive points are scaled by the matrix, so a mechanism call and an exon-relevance call multiply into most
+positive paths. Second, the GDV gate caps the resulting class and gates the mechanism multiplier itself. Each variant
+type has its own workflow, but the workflows are assembled from the same recurring evidence modules — frequency,
+in-silico prediction, other classified variants, functional assays, clinical observations, and phenotype and segregation
+— so each module is built once and routed to by molecular consequence. These interfaces supply the public,
+non-literature, non-case inputs to those modules.
 
 ### The sandbox boundary fixes where retrieval and arithmetic can live
 
-Untrusted agent code runs bubblewrapped with an empty network namespace, fail-closed, and reaches trusted services only
-through a method-allowlisted gRPC hatch ([`sandbox-worker.md`](sandbox-worker.md) §"The hatch is the capability
-boundary"). Trusted services egress normally. Two consequences fix the architecture:
-
-- retrieval that needs the open internet **must** be service-side, because the agent cannot egress at all; and
-- the deterministic arithmetic **must** be shippable into the image, because it has to run offline inside the sandbox.
-
-Neither consequence is a requirement to mirror anything.
+Untrusted agent code runs inside bubblewrap with an empty network namespace, fail-closed, and reaches trusted services
+only through a method-allowlisted gRPC hatch
+([`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary)). Trusted services egress to the internet
+normally. Because the agent cannot egress at all, any retrieval that needs the open internet must run service-side;
+conversely, deterministic arithmetic must ship into the sandbox image so it can run offline inside the guest. Neither
+constraint requires mirroring external databases locally.
 
 ### Scale: one variant at a time
 
-The Spike is curator-in-the-loop, per-variant evaluation — not VCF-wide, not batch (PRODUCT §12). Getting one
-classification right takes a couple of dozen public REST calls. Every upstream is therefore a thin **live** wrap of a
-public endpoint, stamped with its retrieval time. Local mirrors are the at-scale form of the same design, staged behind
-explicit triggers ([Alternatives considered](#alternatives-considered)), not a rejected option.
+The Spike targets curator-in-the-loop, single-variant evaluation rather than VCF-wide batch processing
+([`../PRODUCT.md`](../PRODUCT.md) §12). Classifying one variant takes a couple of dozen public REST calls. Every
+per-variant upstream is therefore wrapped live and stamped with its retrieval time. Local mirrors are the at-scale form
+of the same design, staged behind explicit volume and completeness triggers
+([Alternatives considered](#alternatives-considered)).
 
 ## Non-goals
 
-What these interfaces will never do, as opposed to what is merely not built yet.
-
-- **Literature-derived evidence.** Functional assays reported only in papers, clinical narrative, de-novo and
-  segregation from case reports. The `literature` interface owns find → fetch → distil over papers; no interface here
-  reads a paper.
-- **Case and patient-data evidence, as a *service* concern.** The `CLN_*` and `LOC_*` codes come from patient and
-  pedigree data no public database holds, so no rpc retrieves them. The library still scores them from the analyst's
-  categorical reading (see
-  [the library takes categorical judgements](#the-library-takes-categorical-judgements-and-returns-derivations)). Beyond
-  the public Spike, and gated tighter.
-- **The SVCv4 scoring and combining arithmetic.** A library, not an rpc — see
+- **Literature-derived evidence.** Functional assays reported only in papers, clinical narrative, and de-novo and
+  segregation observations from case reports belong to the `literature` interface, which owns find → fetch → distil over
+  papers ([`literature-evidence-layer.md`](literature-evidence-layer.md)).
+- **Case and patient-data evidence as a service concern.** The `CLN_*` and `LOC_*` codes come from patient and pedigree
+  data that no public database holds, so no RPC retrieves them. The in-sandbox library still scores them from the
+  analyst's categorical reading ([below](#the-library-takes-categorical-judgements-and-returns-derivations)). Beyond the
+  public Spike, and gated tighter.
+- **The SVCv4 scoring and combining arithmetic as an RPC.** Deterministic scoring lives in the in-sandbox library
   [`themis.svcv4`](#the-in-sandbox-library-themissvcv4).
-- **CNV / dosage classification.** A separate ACMG framework; a multi-gene event routes out.
-- **Evidence SVCv4 does not ask for.** No 3D-structure or PDB retrieval: the framework never cites structure, and
-  critical-residue evidence is UniProt domains plus the calibrated predictor. No general Grantham signal: the distance
-  appears only as the missense same-codon comparator inside the informative-variant rules. And none of the criteria v4
-  dropped — PP2/BP1 (subsumed into the calibrated predictor), PP5/BP6 (assertion-based, discontinued), standalone PM2
-  rarity — re-enters through an interface.
-- **Bulk annotation.** No VCF-wide runs; the standard pipeline produces baseline annotations upstream (PRODUCT §6).
-- **Hosting a prediction model on this deployment.** Predictors are live-queried: a self-hosted splice model or
-  `ensembl-vep` brings reference data and real compute, so it would be its own deployment
+- **CNV and dosage classification.** Copy-number variants follow a separate ACMG framework; multi-gene events route out.
+- **Evidence SVCv4 does not ask for.** No 3D-structure or PDB retrieval is included because the framework never cites
+  protein structure, and critical-residue evidence comes from UniProt domains plus the calibrated predictor. No
+  standalone Grantham signal is exposed because Grantham distance appears only as the missense same-codon comparator
+  inside the informative-variant rules. Criteria dropped in v4 — `PP2`/`BP1` (subsumed into the calibrated predictor),
+  `PP5`/`BP6` (assertion-based, discontinued), and standalone `PM2` rarity — do not re-enter through an interface.
+- **Bulk annotation.** No VCF-wide batch runs are supported here; the standard pipeline produces baseline annotations
+  upstream ([`../PRODUCT.md`](../PRODUCT.md) §6).
+- **Hosting a prediction model on this deployment.** Predictors are queried live; a self-hosted splice model or
+  `ensembl-vep` brings reference data and compute that belong on a separate deployment
   ([below](#one-interface-per-source-all-on-the-one-evidence-deployment)).
 
 ## Design
 
-The decision first — who does what and where each piece runs — then the deployment shape and the rpc surface, then one
-section per evidence-collection goal, and finally what cuts across all of them: the contract rules written against
-upstream failure modes, provenance, the library, how it is evaluated, and the proto layout.
-
 ### Four roles: retrieve, remap, compute, judge
 
-**A frontier model is the analyst.** It ingests the evidence and writes the report; everywhere SVCv4 hands a decision to
-"an experienced analyst", that seat is the model, curator-steered (PRODUCT §4, §6). The interfaces and the library feed
-and support that judgement rather than standing in for it. Four roles follow:
+A frontier model serves as the analyst: everywhere SVCv4 hands a decision to "an experienced analyst", the model makes
+that call under curator steering ([`../PRODUCT.md`](../PRODUCT.md) §4, §6). The interfaces and the library feed and
+support that judgement across four distinct roles:
 
-- **Retrieve** — an interface returning the upstream payload largely as-is, plus provenance, plus proto documentation
-  naming which SVCv4 codes each field feeds. The model parses raw JSON reliably, so nothing is re-modelled needlessly:
-  the value added is the egress and the documentation.
-- **Remap** — an interface returning typed values the service derived: cross-build and transcript projection, reducing
-  each splice predictor's per-transcript deltas onto a shared orientation, resolving ClinVar's review-status phrase to
-  gold stars, keying MaveDB on the variant's ClinGen allele. This is the wrangling the model should not hand-do.
-- **Compute** — `themis.svcv4`. Deterministic and offline, not because the model cannot add, but because the tally must
-  be reproducible and auditable and the score is *shown, not load-bearing* (PRODUCT §6).
-- **Judge** — the model. Every analyst call SVCv4 defines, each made with shown reasoning and an explicit uncertainty
-  the curator can threshold on, and each curator-overridable:
-  - the MDE, where the request names none, and which curated source record describes the MDE;
-  - ambiguous consequence routing;
-  - the mechanism level;
-  - the All / Most / Few exon-relevance call;
-  - which classified variants carry distinct, non-circular evidence;
-  - whether a functional assay measures the disease-relevant function and agrees with the mechanism;
-  - the splice product's consequence;
-  - DAFT parameters where no curated value exists;
-  - critical-residue determination and multiple-disorder aggregation;
-  - and the final holistic verdict, reasoned over the claims rather than the rolled-up score.
+- **Retrieve** — an interface returns the upstream payload largely as-is, attaches provenance, and documents in the
+  proto which SVCv4 codes each field feeds. Because the model parses raw JSON reliably, the service avoids remodelling
+  fields that nothing downstream branches on.
+- **Remap** — an interface returns typed values derived by the service across upstream conventions: cross-build and
+  transcript projection, reducing each splice predictor's per-transcript deltas onto a shared sign orientation,
+  resolving ClinVar's review-status phrase to gold stars, and keying MaveDB on the variant's ClinGen allele. Moving this
+  wrangling into service code keeps the model from doing coordinate or vocabulary conversions by hand.
+- **Compute** — `themis.svcv4` runs deterministic rule arithmetic offline inside the sandbox so the transparent point
+  tally, derivation lines, and class band are reproducible and auditable — shown to the curator, not load-bearing for
+  the clinical conclusion ([`../PRODUCT.md`](../PRODUCT.md) §6).
+- **Judge** — the model makes every analyst call SVCv4 defines, with explicit reasoning and uncertainty that the curator
+  can inspect and override:
+  - choosing the MDE when the request names none, and matching which curated source record describes that MDE;
+  - resolving ambiguous consequence routing;
+  - scoring the mechanism level;
+  - assigning the `All / Most / Few` exon-relevance tier;
+  - deciding which classified variants carry distinct, non-circular evidence;
+  - evaluating whether a functional assay measures the disease-relevant function and agrees with the mechanism;
+  - judging the splice product's consequence;
+  - choosing DAFT parameters when no curated value exists;
+  - making critical-residue determinations and multiple-disorder aggregations; and
+  - authoring the final holistic verdict reasoned over the claims rather than treating the rolled-up point total as the
+    argument.
 
-Most rpcs mix the first two roles, and which typed field is a copy and which is a derivation is a property of the field
-rather than of the rpc — an rpc chaining three upstreams can still return nothing but copies. Each proto documents what
-its own fields carry.
+Most RPCs combine retrieval and remapping, and whether a field is a verbatim copy or a derived value is documented per
+field in the proto.
 
-Two decisions run the other way, for the same reason: a choice made after seeing the answer is multiple testing rather
-than judgement. **Predictor selection is frozen policy**, exercised once in advance and per gene, and so are two
-frequency choices. Both are readings of the standard rather than service decisions, and both are in
-[`svcv4-interpretations.md`](svcv4-interpretations.md). Where a judgement input does stay open, the framework's own
-disposition applies, and what remains open is reported as no class.
+Where choosing a parameter *after* seeing the variant's data would constitute multiple testing, the choice is fixed in
+advance as policy rather than left as a per-variant judgement. In particular, predictor selection is frozen per-gene
+policy, and so are two frequency choices; both are documented in [`svcv4-interpretations.md`](svcv4-interpretations.md).
+Where a required judgement input remains unsettled, the framework's own disposition applies and the run reports no
+class.
 
 ### One interface per source, all on the one `evidence` deployment
 
-Nine gRPC services, one per curated source, attached to the one `evidence` server beside `literature` — a deployment and
-a gRPC service are not one-to-one ([`services.md`](services.md#one-deployment-several-interfaces)). **The source is the
-unit** because it is what a contract is written against: an interface's proto states the identifier forms, absence
-semantics and rate limits a caller has to know to read the answer, and it evolves when its upstreams do. An interface
-may reach a helper upstream — a crosswalk registry, a projection engine — behind that contract without changing whose
-vocabulary it speaks; the four whose answer no single vendor owns (`variant`, `transcript`, `splice`, `gene_disease`)
-are named for the question instead ([Alternatives](#alternatives-considered)). That contract is the whole of what an
-interface owns — the deployment, the image, the session resolver and the shared upstream clients are one for all of
-them.
+Nine gRPC services — one per curated source — attach to the single `evidence` server beside `literature`
+([`services.md`](services.md#one-deployment-several-interfaces)). Each interface is scoped to a source because the
+source is what a contract is written against: an interface's `.proto` states the identifier forms, absence semantics,
+and rate limits a caller needs to read the answer, and evolves when its upstream evolves. An interface may consult a
+helper upstream (such as a crosswalk registry or projection engine) behind that contract without changing whose
+vocabulary it speaks. The four interfaces whose answer no single vendor owns (`variant`, `transcript`, `splice`,
+`gene_disease`) are named for the domain question instead ([Alternatives considered](#alternatives-considered)). All
+nine interfaces share one deployment, container image, session resolver, and outbound HTTP client pool.
 
-Sharing a deployment has two consequences here, both of them the general ones ([`services.md`](services.md)) landing on
-this surface.
+Sharing a deployment has two operational consequences on this surface ([`services.md`](services.md)):
 
-- **The sandbox agent reaches these rpcs through a different gate than every other caller.** IAM is granted per
-  deployment, so any invoker — the web application's backend included — can call all twelve rpcs. The agent instead
-  reaches whatever the hatch's method allowlist covers, and that is decided per *rpc* by the `agent_exposed` option on
-  its declaration ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): a marked rpc, or nothing.
-- **`gene_disease` is a startup dependency of every other interface.** Failure isolates per rpc, but startup is shared:
-  an interface that cannot build its backend takes the process down. `GeneDisease.DescribeGene` loads four reference
-  tables before it serves, so a bucket it cannot read keeps the whole image down — which is the intended behaviour, not
-  a defect in the probe. A revision that came up serving an unreadable reference store would answer "absent" for every
-  gene-disease question put to it, and "absent" is scored evidence.
+- **The sandbox agent reaches these RPCs through a narrower gate than other callers.** Cloud Run IAM is granted per
+  deployment, so an authenticated backend service can call all twelve RPCs. The sandbox agent instead reaches only the
+  methods listed on the hatch's allowlist, controlled per RPC by the `agent_exposed` option on its proto declaration
+  ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
+- **`gene_disease` is a startup dependency of the entire process.** Request failures isolate per RPC, but startup is
+  shared. `GeneDisease.DescribeGene` loads four reference tables from GCS before serving; if that bucket cannot be read,
+  the container refuses to start — which is the intended behaviour, not a defect in the startup probe. Starting with an
+  unreadable reference store would answer "absent" for every gene-disease query, and an absence there is scored
+  evidence.
 
-A source earns its own **deployment** only on a real driver, never pre-emptively. Self-hosting a splice predictor, a
-dbNSFP query service or `ensembl-vep` would each bring a model or reference data plus real compute: a different image
-and a different scaling profile.
+A source moves to its own deployment only when it brings dedicated model weights, large reference data, or heavy compute
+— such as self-hosting a splice predictor, a local dbNSFP query service, or `ensembl-vep`.
 
 ### The rpc surface
 
-Twelve rpcs across the nine interfaces. This table is the index; each linked proto is the contract.
+The nine interfaces expose twelve RPCs ([`themis/services/evidence/`](../../themis/services/evidence/)):
 
 | RPC                              | Upstream(s)                                             | Feeds                                                                 |
 | -------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------- |
@@ -228,140 +243,138 @@ Protos: [`variant`](../../schema/proto/themis/rpc/variant.proto), [`vep`](../../
 [`gnomad`](../../schema/proto/themis/rpc/gnomad.proto), [`clinvar`](../../schema/proto/themis/rpc/clinvar.proto),
 [`gene_disease`](../../schema/proto/themis/rpc/gene_disease.proto),
 [`transcript`](../../schema/proto/themis/rpc/transcript.proto), [`splice`](../../schema/proto/themis/rpc/splice.proto),
-[`mavedb`](../../schema/proto/themis/rpc/mavedb.proto), [`cspec`](../../schema/proto/themis/rpc/cspec.proto). Auth is
-per the service pattern: the session token arrives as request metadata and never as a message field
-([`services.md`](services.md)) — the default-on chokepoint rule ([`security.md`](security.md)) applied to this surface.
+[`mavedb`](../../schema/proto/themis/rpc/mavedb.proto), [`cspec`](../../schema/proto/themis/rpc/cspec.proto).
+Authentication follows the standard service pattern: the session token arrives as gRPC request metadata and never as a
+message field ([`services.md`](services.md), [`security.md`](security.md)).
 
-Three properties of the surface are not visible in the table:
+Three cross-surface properties shape how callers use these twelve RPCs:
 
-- **VEP is a consolidator.** One call returns molecular consequence, per-transcript HGVS, MANE flags, six of the seven
-  SVCv4-calibrated missense predictors, splice deltas and an inline ClinVar/gnomAD snapshot, so several evidence modules
-  collapse onto one rpc and no predictor is self-hosted. The seventh calibrated predictor is one the public endpoint
-  does not serve at all, which matters only if a gene-specific calibration ever commits to it.
-- **`Variant.Normalize` is the spine, and it is RefSeq-only**, because VariantValidator serves RefSeq accessions and
-  refuses an Ensembl one. That is also why the exon-table and splice-outcome rpcs take RefSeq coding accessions.
-  Accepting the other identifier forms a caller may hold (VCF locus, gnomAD id, rsID, CAID, protein HGVS) is deferred
-  rather than refused on principle: each needs a different Allele Registry endpoint, a VCF locus additionally needs a
-  chromosome-accession table, and protein HGVS has no Allele Registry route at all. Closing that gap belongs in one
-  auditable normalisation step with its own provenance, not in a per-rpc sniffer.
-- **Which identifier form each rpc accepts tracks what its upstream is keyed on.** The frequency and splice-delta rpcs
-  take a positional id; the normalisation, ClinVar and VEP rpcs take HGVS. Every rejected form has a stated reason in
-  its contract, because a rejection a caller cannot explain reads as a defect.
+- **VEP acts as a consolidator.** One `Vep.Annotate` call returns molecular consequence, per-transcript HGVS, MANE
+  flags, six of the seven SVCv4-calibrated missense predictors, SpliceAI deltas, and an inline ClinVar/gnomAD snapshot,
+  so several evidence modules read from one RPC and no predictor is self-hosted. The seventh calibrated predictor is not
+  served by the public Ensembl endpoint, which matters only if a future gene-specific policy commits to it.
+- **`Variant.Normalize` is the spine, and it accepts RefSeq accessions only.** VariantValidator serves RefSeq accessions
+  and rejects Ensembl accessions, which is also why the exon-table and splice-outcome RPCs take RefSeq coding
+  accessions. Accepting other identifier forms a caller may hold (VCF locus, gnomAD ID, rsID, CAID, protein HGVS) is
+  deferred: each requires a different Allele Registry endpoint, a VCF locus also requires a chromosome-accession table,
+  and protein HGVS has no Allele Registry route. Adding those input forms belongs in `Variant.Normalize` with its own
+  provenance rather than in per-RPC format sniffers.
+- **Each RPC's accepted identifier form matches its upstream's native key.** The frequency and splice-delta RPCs take a
+  positional ID (`14-23424860-G-A`); the normalisation, ClinVar, and VEP RPCs take HGVS. Every rejected form has an
+  explicit reason in its contract so the caller gets an actionable error message.
 
 ### Goal: place the variant, and route it to a decision tree
 
-Before any evidence is scored, the variant has to be one thing. SVCv4 picks a decision tree by molecular consequence,
-and every source below is keyed differently: a positional id at gnomAD and the splice hosts, transcript HGVS at ClinVar
-and VEP, an HGNC id at `gene_disease`, a ClinGen allele id at MaveDB. One normalisation step, with its own provenance,
-is what keeps twelve retrievals talking about the same allele.
+Before any evidence is scored, all twelve retrievals must refer to the exact same allele. SVCv4 selects a workflow by
+molecular consequence, while each downstream source keys variants differently: a positional ID at gnomAD and the splice
+hosts, transcript HGVS at ClinVar and VEP, an HGNC ID at `gene_disease`, and a ClinGen allele ID at MaveDB.
 
-**RPCs.** `Variant.Normalize` is the spine ([the rpc surface](#the-rpc-surface)); `Vep.Annotate` supplies the
-consequence it routes on; `Transcript.GetStructure` places the allele inside its transcript — exon membership,
-splice-site distances, and each exon's skip frame.
+**RPCs.** `Variant.Normalize` is the spine ([the rpc surface](#the-rpc-surface)); `Vep.Annotate` supplies the routing
+consequence; `Transcript.GetStructure` places the allele inside its transcript (exon membership, splice-site distances,
+and each exon's skip frame).
 
-**What the upstreams give, and what has to be remapped.** The ClinGen Allele Registry canonicalises the allele and
-carries its crosswalks; VariantValidator validates the HGVS, projects it onto MANE Select and yields VCF loci on both
-builds; VEP states the molecular consequence. None of the three yields the join key in the form a caller needs, so the
-service derives it:
+**What the upstreams give, and what has to be remapped.** The ClinGen Allele Registry canonicalises the allele and holds
+its crosswalks; VariantValidator validates the HGVS, projects it onto MANE Select, and yields VCF loci on GRCh37 and
+GRCh38; VEP states the molecular consequence. Because none of the three returns the join keys in the exact form
+downstream RPCs require, `Variant.Normalize` derives them:
 
-- the canonical allele id is split out of a registry URL;
-- the positional ids are assembled from VariantValidator's VCF parts;
-- the transcript projections from both sources are deduped on the unversioned accession, and stamped per element with
-  who stated them;
-- and the consequence term is re-encoded onto the routing enum the workflows select on.
+- the canonical allele ID (`CA*`) is parsed out of the Allele Registry URL;
+- the positional IDs are assembled from VariantValidator's VCF components;
+- transcript projections from both sources are deduplicated on the unversioned accession and stamped per element with
+  which source stated them; and
+- the consequence term is mapped onto the routing enum that selects the SVCv4 workflow.
 
-The registry's **ClinVar crosswalk is surfaced typed** here rather than left in the payload — the variation id, its RCV
-accessions, the ClinVar allele id and the preferred name — because it is the key `ClinVar.DescribeVariant` fetches a
-record by, and its emptiness on a resolved allele is the novel-allele finding
-([below](#goal-what-else-has-been-classified-at-this-codon-this-exon-and-across-the-gene)). A field a downstream rpc
-takes as input, and a finding a run reports, are both load-bearing enough to type.
+`Variant.Normalize` also surfaces the Allele Registry's **ClinVar crosswalk as a typed message** (variation ID, RCV
+accessions, ClinVar allele ID, and preferred name) because `ClinVar.DescribeVariant` fetches the variant's record by
+that VCV accession, and an empty crosswalk on a resolved allele is how a run establishes that the allele is novel
+([below](#goal-what-else-has-been-classified-at-this-codon-this-exon-and-across-the-gene)).
 
-**Worked example.** "Take the MANE Select transcript" is not a safe instruction against the registry's answer: it lists
-a MANE pair once per accession namespace and flags both, with the Ensembl form first. A caller selecting by flag and
-position gets an `ENST`, which the exon-table, exon-relevance and splice-outcome rpcs all reject — so the response
-carries the namespace per projection and selection is on both.
+**Worked example.** Instructing an agent to "take the first MANE Select transcript" from the Allele Registry response
+fails: the registry lists a MANE pair once per accession namespace and flags both, with the Ensembl `ENST` entry first.
+Selecting by flag and position yields an `ENST` accession, which the exon-table, exon-relevance, and splice-outcome RPCs
+all reject. Stamping the namespace on each projection lets the caller filter by both MANE flag and `RefSeq` namespace.
 
-**Caveats.** The projection set is *this allele's*, not the gene's transcript set: a transcript the allele does not
-touch is absent, so it is the wrong denominator for an exon elsewhere in the gene
-([exon relevance](#goal-how-relevant-is-the-exon-the-variant-lands-in) owns that one). Where the variant arrives already
-annotated by the standard pipeline (PRODUCT §6), a caller can skip straight to the fact rpcs; normalisation is the route
-in, not a toll.
+**Caveats.** The projection list on `Variant.Normalize` covers only transcripts that *this allele* overlaps; transcripts
+the allele does not touch are absent, making it the wrong denominator for exon inclusion across the gene
+([`Transcript.AssessExonRelevance`](#goal-how-relevant-is-the-exon-the-variant-lands-in) owns the gene-wide transcript
+inventory). When a variant arrives pre-annotated by the standard pipeline ([`../PRODUCT.md`](../PRODUCT.md) §6), a
+caller can pass those keys straight to the fact RPCs without calling `Variant.Normalize` first.
 
 ### Goal: is the variant too common for the disease?
 
-`POP_FRQ` and `POP_HMZ` compare the variant's population frequency against a disease-specific threshold, so this goal
-needs a frequency, the quality verdict behind it, and homozygote counts — and it needs an absence to be *usable*, since
-absence from gnomAD is the rarity input rather than a failed lookup.
+`POP_FRQ` and `POP_HMZ` compare the variant's population frequency against a disease-specific threshold (the DAFT), so
+this goal requires an allele frequency, the quality verdict behind it, and homozygote counts — and it requires database
+absence to be a usable finding, since absence from gnomAD is the rarity input.
 
-**RPCs.** `Gnomad.DescribeVariant`, taking the positional id `Variant.Normalize` produced.
+**RPCs.** `Gnomad.DescribeVariant`, taking the positional ID produced by `Variant.Normalize`.
 
-**What the upstream gives, and what has to be remapped.** gnomAD's GraphQL API serves per-dataset and joint frequency
-blocks, the filtering allele frequencies maximised over genetic-ancestry groups, homozygote counts, the variant-QC
-verdict per dataset, gnomAD's own caveat flags, and coverage and constraint context. Almost none of it is remapped: the
-library reads the payload, at the paths `frequency.faf_from_gnomad` and `homozygotes_from_gnomad` name — the constraint
-and coverage context is `Transcript.AssessExonRelevance`'s, and nothing in the library reads it. What the service owes
-instead is three guards — the id is held to the stricter of the spellings its consumers accept, the dataset is checked
-against the releases this rpc serves, and every release the answer rests on is stamped. Which figure `POP_FRQ` is
-actually scored against, and what disqualifies one, is a reading of SM3 and of ClinGen's gnomAD guidance
-([`svcv4-interpretations.md`](svcv4-interpretations.md#frequency-which-figure-and-what-disqualifies-one)); the rpc
-returns the joint figure *and* each dataset's QC verdict because that reading needs both.
+**What the upstream gives, and what has to be remapped.** gnomAD's GraphQL API serves per-dataset (`exome`, `genome`)
+and `joint` frequency blocks, filtering allele frequencies (`faf95`) maximised over genetic-ancestry groups, homozygote
+counts, per-dataset variant-QC verdicts, caveat flags, and coverage and constraint context. The service passes the
+frequency payload through largely intact for `themis.svcv4` to read at `frequency.faf_from_gnomad` and
+`homozygotes_from_gnomad` (while `Transcript.AssessExonRelevance` consumes the constraint and coverage tracks). What the
+service adds is three boundary checks: holding the variant ID to the stricter of the spellings its consumers accept,
+checking the requested dataset against the releases the RPC serves, and stamping every release the answer rests on.
+Which frequency figure `POP_FRQ` is scored against, and what disqualifies one, is defined in
+[`svcv4-interpretations.md`](svcv4-interpretations.md#frequency-which-figure-and-what-disqualifies-one); the RPC returns
+both the `joint` figure and each dataset's QC verdict so `themis.svcv4` has both inputs.
 
-**Worked example.** gnomAD answers an id it cannot parse with a **200 carrying an absence**, not an error. Unguarded,
-`17-4932566-A-T` mistyped is scored as "absent from gnomAD" — benign evidence manufactured from a typo, and never
-retried, because absence is a settled answer
-([where absence is scored](#where-absence-is-scored-a-shape-precondition-is-required-not-optional)).
+**Worked example.** gnomAD answers a variant ID it cannot parse with **HTTP 200 carrying a null variant**, identical to
+a genuine absence. Without an input shape precondition, a mistyped ID such as `17-4932566-A-T` is scored as "absent from
+gnomAD" — manufacturing benign/pathogenic rarity evidence from a typo and never retrying because absence is a settled
+answer ([see failure-mode rules](#where-absence-is-scored-a-shape-precondition-is-required-not-optional)).
 
-**Caveats.** A `NOT_FOUND` here carries no coverage distinction: "not observed at a well-covered position" and "position
-not covered" arrive the same way, and rarity evidence rests on the difference ([Open questions](#open-questions)). The
-rate limit is per IP, so concurrent sessions behind one egress address share it.
+**Caveats.** A `NOT_FOUND` response from `Gnomad.DescribeVariant` carries no coverage distinction: "not observed at a
+well-covered position" and "position not covered" return the same status, even though rarity evidence depends on the
+difference ([Open questions](#open-questions)). In addition, gnomAD's rate limit is enforced per IP address, so
+concurrent sessions behind one egress IP share the budget.
 
-**Moving off the upstream.** A local gnomAD mirror is the at-scale form of this rpc, not a different design; the
-triggers that flip it are in [Alternatives](#alternatives-considered).
+**Moving off the upstream.** A local gnomAD mirror is the at-scale form of this RPC; the triggers that flip it are in
+[Alternatives considered](#scale-and-framework-encoding).
 
 ### Goal: what does a calibrated predictor say about the substitution?
 
-The `*_PRD` codes read one calibrated predictor's score for the substitution, binned against that predictor's published
-thresholds. The engineering problem is not obtaining a score — it is obtaining *exactly one*, from the predictor a
-policy named in advance, without the others becoming a menu.
+The `*_PRD` codes score one calibrated predictor's output for the substitution against that predictor's published
+thresholds in SM6. The engineering problem is obtaining *exactly one* score from the predictor that policy selected in
+advance for the gene, without exposing the remaining predictors as a menu to cherry-pick from.
 
 **RPCs.** `Vep.Annotate`, the same call that supplies the routing consequence
-([above](#goal-place-the-variant-and-route-it-to-a-decision-tree)) and SpliceAI's deltas.
+([above](#goal-place-the-variant-and-route-it-to-a-decision-tree)) and inline SpliceAI deltas.
 
 **What the upstream gives, and what has to be remapped.** One VEP call carries per-transcript HGVS, exon numbers, MANE
-flags, the calibrated missense predictors, splice deltas and a colocated ClinVar/gnomAD snapshot — but VEP emits none of
-the per-transcript fields unless asked, so the rpc asks on every call. The predictors arrive by two different wire
-forms: some are first-class VEP fields, the rest reach VEP through its dbNSFP plugin, whose values arrive as
-per-transcript dotted strings and are resolved service-side to one value per transcript (a string naming several is an
-error, not a pick). The rpc also pins GRCh38, because MANE and AlphaMissense are GRCh38-only, so a reference that names
-no assembly is refused rather than read at the pinned build.
+flags, calibrated missense predictors, splice deltas, and a colocated ClinVar/gnomAD snapshot — provided the request
+explicitly enables those flags on every call. Predictor scores arrive in two different wire formats: some are
+first-class VEP fields, while others come through VEP's dbNSFP plugin as per-transcript dot-separated strings that the
+service resolves to a single float per transcript (raising an error if a string names multiple conflicting values for
+the same transcript). The RPC also pins GRCh38, because MANE and AlphaMissense are GRCh38-only, and rejects references
+that omit an assembly rather than assuming the build.
 
-Which predictor a gene's score comes from is frozen per-gene policy, versioned data shipped in `themis.svcv4` and read
+Which predictor governs a given gene is frozen per-gene policy shipped as versioned data inside `themis.svcv4` and read
 before the call
 ([`svcv4-interpretations.md`](svcv4-interpretations.md#in-silico-prediction-one-predictor-chosen-in-advance)).
-`Vep.Annotate` will serve any predictor on its allowlist, so **the single-predictor guarantee is the policy plus the
-library's enforcement, not the rpc**: the library's score-to-bin step scores the policy's predictor and no other, every
-selection reports the entry that decided it, and a missing or malformed gene id raises rather than defaulting. A caller
-that asks for a second predictor gets its score beside the first, as what a policy *revision* would be argued from.
+`Vep.Annotate` serves any predictor on its allowlist, while **`themis.svcv4` enforces the single-predictor guarantee**:
+its score-to-bin function scores only the predictor named by the gene's policy, reports the policy entry that selected
+it, and raises on a missing or malformed gene ID. If a caller requests a second predictor on `Vep.Annotate`, its score
+is returned alongside the first only as data for evaluating a future policy revision.
 
-**Worked example.** Ensembl ignores a flag it does not recognise: asking for `BayesDel` by a misspelled name returns a
-200 with the score absent, which no caller can distinguish from the variant having no score. So the predictor names are
-a closed set and one outside it is refused — the alternative is a run that silently scores nothing.
+**Worked example.** Ensembl VEP silently ignores any request flag it does not recognise: asking for `BayesDel` under a
+misspelled flag returns HTTP 200 with the score omitted, indistinguishable from the variant having no score. The RPC
+therefore validates requested predictor names against a closed allowlist and rejects unknown names with
+`INVALID_ARGUMENT`.
 
-The same silence hides a misread answer, which is why each score is a typed field rather than a key in the payload. Each
-wire form spells its score differently: the request names the dbNSFP column `BayesDel_noAF_score` and VEP answers under
-`bayesdel_noaf_score`, while AlphaMissense's score sits inside a per-flag object as `alphamissense.am_pathogenicity`. A
-caller that looks up the request's spelling finds nothing on any real response and reports MIS_PRD as undetermined, and
-tests written against a hand-made payload that shares the mistake still pass. The spellings are facts about the upstream
-that only a real response proves, so the service is the one place that reads them, and it states each score under the
-name the request used. What proves them is a VEP response recorded from the live API for the exact request the service
-builds and checked in beside the adapter's tests
-([`vep.json`](../../themis/services/evidence/upstreams/tests/fixtures/vep.json)); those tests read every accepted
-predictor's score off it.
+The same silent-omission hazard motivates returning each score as a typed `PredictorScore` message rather than passing
+through VEP's raw JSON keys. VEP's request flag and response key spellings differ across plugins: requesting the dbNSFP
+column `BayesDel_noAF_score` returns a field named `bayesdel_noaf_score`, whereas AlphaMissense returns a nested object
+at `alphamissense.am_pathogenicity`. A caller looking up the request's spelling on a real response would find nothing
+and report `MIS_PRD` as undetermined, while unit tests against a hand-written mock sharing the wrong key would pass. To
+lock the mapping to reality, `Vep.Annotate` normalises every score onto the request's canonical predictor name and tests
+that parser against a live-recorded VEP fixture checked in at
+[`vep.json`](../../themis/services/evidence/upstreams/tests/fixtures/vep.json).
 
-The scores sit on a typed element per annotated transcript, which keeps two absences apart. A transcript with no score
-for a requested predictor is VEP serving none on it, while a transcript missing from the list altogether is one VEP did
-not annotate. In the recorded response for `NM_001042492.3:c.3496G>C`, with BayesDel and AlphaMissense requested, VEP
-returns the MANE Select transcript as (trimmed)
+Attaching scores to a typed element per annotated transcript also separates two distinct absences: a transcript entry
+with no `scores` element for a requested predictor means VEP had no score for it on that transcript, whereas a
+transcript missing from `transcripts` altogether means VEP did not annotate that transcript. For
+`NM_001042492.3:c.3496G>C` with `BayesDel` and `AlphaMissense` requested, VEP returns the MANE Select transcript as:
 
 ```json
 {
@@ -372,7 +385,7 @@ returns the MANE Select transcript as (trimmed)
 }
 ```
 
-and `Vep.Annotate` states it as
+and `Vep.Annotate` remaps it to:
 
 ```textproto
 transcripts {
@@ -383,908 +396,915 @@ transcripts {
 }
 ```
 
-VEP annotates Ensembl transcripts only, so the element also carries the transcript's MANE RefSeq pair, which is how a
-caller holding the MANE Select `NM_` finds its transcript. The rpc asks VEP for versioned transcript ids, and the
-library (`themis.svcv4`), which does that lookup, applies one rule to both namespaces: an unversioned accession matches
-by its base, and a versioned one must agree exactly, because another version is another transcript model.
+Because VEP annotates Ensembl transcripts only, each element carries its `mane_select` RefSeq partner so a caller
+holding the MANE Select `NM_*` accession can locate its transcript. `Vep.Annotate` requests versioned transcript IDs
+from VEP, and `themis.svcv4` matches an unversioned accession by base while requiring an exact version match when the
+caller supplies a versioned accession, because a different version is a different transcript model.
 
-**Caveats and moving off the upstream.** The public Ensembl REST endpoint is frozen — its final release has shipped —
-which pins the Ensembl release and therefore the transcript set, the MANE version and the dbNSFP branch. Nothing breaks;
-the answers drift from current annotation silently, which is why the release stamps on the wire matter *more* under a
-freeze rather than less. One drift is not silent: when MANE moves a gene to a new transcript version after the freeze, a
-caller holding the current MANE Select accession no longer matches the version VEP pairs, and the library refuses the
-score rather than reading it off another model. The refusal names the version VEP holds, so the agent can decide whether
-to score against it and say so. The end state for this upstream is a self-hosted `ensembl-vep`, for reasons the
-announced successor makes concrete ([Alternatives](#alternatives-considered)).
+**Caveats and moving off the upstream.** EMBL-EBI has shipped the final release of the public Ensembl REST endpoint,
+freezing its Ensembl release, transcript set, MANE version, and dbNSFP branch. Responses remain reproducible and carry
+their exact release stamps in `Provenance`, but annotations gradually drift from newer releases. When MANE updates a
+gene to a newer RefSeq transcript version than the frozen VEP endpoint knows, `themis.svcv4`'s exact-version check
+refuses to read the score off the older transcript model and reports the version VEP holds so the analyst can decide
+whether to score against the older version explicitly. The long-term replacement for the frozen endpoint is a
+self-hosted `ensembl-vep` deployment ([Alternatives considered](#scale-and-framework-encoding)).
 
 #### Predictor data licensing binds on one trigger
 
-Ensembl's public REST serves the **commercial branch of dbNSFP** and passes the obligation straight through: users are
-solely responsible for establishing the nature of and complying with any restrictions. dbNSFP is free for academic and
-non-profit use and requires an annual licence for any use within a for-profit organisation, or incorporation into
-products that are sold or monetised. BayesDel itself states no licence, only a citation request.
+Ensembl's public REST API serves the **commercial branch of dbNSFP** and passes licensing responsibility through to the
+caller: dbNSFP is free for academic and non-profit research use and requires an annual commercial licence for use within
+a for-profit organisation or in a monetised product. BayesDel itself states no licence beyond a citation request.
 
-The assessment: use here is academic / non-profit research, which the grant covers, and nothing is redistributed — the
-service queries an API per variant and vendors no dbNSFP data. **The trigger that invalidates it: if this becomes a sold
-or monetised product, dbNSFP, REVEL and ClinPred all need revisiting.** Ensembl documents the latter two as
-non-commercial-use only, and both come back from the same VEP call; REVEL is on the predictor allowlist, so what keeps a
-non-commercial score out of a response today is the frozen policy, not the contract.
-
-The known alternative if that trigger fires or the terms change: BayesDel's author distributes the no-allele-frequency
-build directly, sidestepping the dbNSFP *compilation* licence entirely. That is two orders of magnitude larger than the
-gene-disease tables but the same shape — a periodically-refreshed reference the service reads, not a per-variant mirror.
+Our current evaluation use is academic / non-profit research, which the grant covers, and the service queries the public
+API per variant without vendoring or redistributing dbNSFP data. **The trigger that requires licensing action is
+commercialising or monetising the product**, at which point dbNSFP, REVEL, and ClinPred must be cleared or replaced
+(Ensembl documents REVEL and ClinPred as non-commercial-use only; both return from the same VEP call, and only the
+frozen per-gene policy currently keeps non-commercial predictors out of scored responses). If that trigger fires,
+BayesDel's author distributes the no-allele-frequency build directly, avoiding the dbNSFP compilation licence at the
+cost of hosting a periodic reference table two orders of magnitude larger than the gene-disease tables.
 
 ### Goal: does the variant disrupt splicing, and what does the product become?
 
-Every variant type checks a splice effect, so this goal splits in two: *whether* a splice site is lost, which two
-predictors answer with per-position deltas, and *what the transcript becomes* if one is — the fork between the null path
-(a PTC, NMD) and the coding path (an in-frame deletion), which no predictor answers at all.
+Every variant workflow checks for a splice effect, splitting this goal in two: *whether* a splice site is gained or lost
+(answered by two splice predictors with per-position deltas), and *what the transcript becomes* if an exon is skipped —
+the fork between the null path (a premature termination codon and NMD) and the coding path (an in-frame deletion), which
+splice predictors do not compute.
 
-**RPCs.** `Splice.PredictDeltas` for the deltas, `Splice.PredictSkipOutcome` for the product. `Vep.Annotate`'s inline
-SpliceAI deltas are a snapshot beside them, and `Transcript.GetStructure` supplies the exon table the product is built
-from.
+**RPCs.** `Splice.PredictDeltas` for the splice deltas and `Splice.PredictSkipOutcome` for the skipped-exon product
+(`Vep.Annotate` also returns an inline SpliceAI snapshot, and `Transcript.GetStructure` supplies the exon table).
 
-**What the upstreams give, and what has to be remapped.** The Broad's SpliceAI and Pangolin hosts each return
-per-transcript, per-position deltas — and they do not share a sign convention: SpliceAI's four deltas are magnitudes,
-Pangolin signs a loss negative. Taken raw, one predictor's maximum is not comparable with the other's and a predicted
-loss is invisible beside a co-reported gain. So each predictor is reduced to one gain and one loss on a shared
-orientation, maxed over the scored transcripts as well as over its own delta pair, and the pair is reported per
-predictor so the concordance check compares gain against gain. The library bins the trichotomy; the rpc does not.
+**What the upstreams give, and what has to be remapped.** Broad's SpliceAI and Pangolin hosts each return
+per-transcript, per-position delta scores, but they use incompatible sign conventions: SpliceAI reports all four deltas
+(`DS_AG`, `DS_AL`, `DS_DG`, `DS_DL`) as positive magnitudes, whereas Pangolin signs splice losses negative. Taking a raw
+maximum across Pangolin's deltas hides a predicted loss behind any co-reported gain and makes the two predictors
+incomparable. `Splice.PredictDeltas` therefore reduces each predictor to one maximum gain and one maximum loss on a
+shared positive orientation across the scored transcripts, returning the `(gain, loss)` pair per predictor so
+`themis.svcv4` can check concordance and bin the `SPL_PRD` trichotomy.
 
-`Splice.PredictSkipOutcome` composes rather than retrieves: it excises the named exon's span from the RefSeq transcript
-sequence and translates the result, so the PTC is *read off the sequence* rather than assumed from the frame shift. It
-returns the frame shift, which product class the aberrant transcript falls in, where the PTC lands, and the 50-nt NMD
-determination over the aberrant transcript's own exon structure. Its scope is stated so it is not over-read: it does not
-predict whether the defect occurs, and a retained intron is not part of the transcript it splices.
+`Splice.PredictSkipOutcome` composes VariantValidator's exon structure with the RefSeq transcript sequence from NCBI
+Nucleotide (`efetch`): it excises the named exon's coding span from the transcript sequence and translates the spliced
+product so any premature stop codon (PTC) is read directly off the sequence rather than assumed from the frame shift. It
+returns the frame shift, the aberrant product class, the PTC coordinate, and the 50-nt NMD determination computed over
+the aberrant transcript's own exon junctions. Its contract states its scope explicitly: it computes the consequence *if*
+the exon is skipped, not whether skipping occurs, and does not model intron retention.
 
-**Worked example.** A large indel spells a long positional id, and the Broad services carry it in a GET request line —
-whose hosts answer anything past ~8 kB with a bare 400. So length is refused *separately* from shape, with a message
-that says which: a 1 kb deletion's 1019-character id is well-formed and gets scored, where a format complaint about an
-id in exactly the right format would have closed splice prediction for every large indel.
+**Worked example.** A 1 kb deletion produces a 1,019-character positional ID, and the Broad splice hosts take the ID in
+a `GET` request line that fails with a bare HTTP 400 past ~8 kB. `Splice.PredictDeltas` therefore checks sequence length
+separately from coordinate syntax and returns a distinct error message for oversize alleles, so a well-formed 1 kb
+deletion is scored rather than rejected as a syntax error.
 
-**Caveats.** Both hosts answer every variant-level problem inside a 200 carrying an error string, so their 4xx is a
-malformed request line rather than a verdict on the caller's variant — which is why they are exempt from the 4xx mapping
-rule and why the id carries a shape precondition instead
-([the failure-mode rules](#the-contracts-are-written-against-the-upstreams-failure-modes)). Their rate limits are per
-IP, like gnomAD's.
+**Caveats.** Both Broad hosts report variant-level problems inside HTTP 200 payloads carrying an `"error"` string, so an
+HTTP 4xx from them indicates a malformed request line or moved endpoint rather than an invalid caller variant. That
+makes them exempt from the general 4xx-to-`INVALID_ARGUMENT` rule and requires the input shape precondition on
+`PredictDeltas` ([see failure-mode rules](#the-contracts-are-written-against-the-upstreams-failure-modes)). Like gnomAD,
+their rate limits are enforced per client IP.
 
-**Moving off the upstream.** Self-hosting a splice model brings the model plus real compute, so it is a separate
-deployment rather than an interface change — a [non-goal](#non-goals) until something forces it.
+**Moving off the upstream.** Self-hosting SpliceAI and Pangolin requires model weights and GPU/CPU compute, making it a
+separate deployment ([Non-goals](#non-goals)) until rate limits or latency force the move.
 
 ### Goal: what else has been classified at this codon, this exon and across the gene?
 
-The `*_INF` codes score *other* classified variants at the same codon or exon; SM18's exon-relevance signal reads the
-gene's pathogenic-variant density; and SM3's last DAFT method reads the gene's known pathogenic variants. ClinVar
-answers all three, and a single query cannot.
+ClinVar classifications feed three distinct SVCv4 steps: the `*_INF` codes score other classified variants at the same
+codon or exon (SM19), SM18's exon-relevance signal reads the gene's pathogenic-variant density, and SM3's fourth DAFT
+rung reads the highest-frequency known pathogenic variant in the gene. A single ClinVar query cannot serve all three.
 
-**RPCs.** `ClinVar.DescribeVariant` returns the queried allele's own record plus the **gene's pathogenic pool**;
-`ClinVar.SearchCodingSpan` returns **every** classification in a coding span. `Transcript.AssessExonRelevance` counts a
-pool of its own at a fixed floor ([below](#goal-how-relevant-is-the-exon-the-variant-lands-in)).
+**RPCs.** `ClinVar.DescribeVariant` returns the queried allele's own VCV record plus the **gene's pathogenic pool**;
+`ClinVar.SearchCodingSpan` returns **every** classification (including Benign, Likely Benign, and VUS) within a coding
+base span. (`Transcript.AssessExonRelevance` counts its own density pool at a fixed review-status floor; see
+[below](#goal-how-relevant-is-the-exon-the-variant-lands-in).)
 
-**Why two rpcs.** The gene pool is pathogenic *by its search term*, which makes it the right shape for the `*_INF`
-pathogenic arm, the P/LP density and the DAFT — and structurally unable to answer the other half of the `*_INF` rules,
-every one of which also scores a benign, likely-benign or VUS informative variant. Reading the second off the first is
-silently wrong wherever such a variant sits in the codon or exon: it went wrong on **four of seven evaluation cases**,
-one of which reported a code as not-determined having checked only the half that could not resolve it. And **the span,
-not the gene, is the unit** of the second rpc, because a codon or an exon is what the rules key on. A gene-wide
-all-classification pool would answer a question no rule asks. On the genes where the benign and VUS arms matter it is
-unfetchable anyway, so a bound would cut it to a prefix that settles no position.
+**Why two RPCs are required.** The gene-wide pool on `DescribeVariant` is restricted to pathogenic and likely pathogenic
+records by its search term, which fits the pathogenic arm of `*_INF`, SM18's P/LP density, and the DAFT. However, every
+`*_INF` rule in SM19 also checks for benign, likely benign, or VUS variants at the same codon or exon. Reading that
+second check off a P/LP-only gene pool silently misses benign and VUS neighbours: in our evaluation corpus, doing so
+went wrong on **four of seven cases**, including one run that reported an `*_INF` code as not-determined after checking
+only the pathogenic pool. Conversely, fetching all classifications across an entire gene is both unnecessary (no SVCv4
+rule asks for gene-wide benign/VUS records) and unfetchable on large genes where truncation would cut off the pool
+before reaching the target codon. `ClinVar.SearchCodingSpan` therefore scopes its all-classification query to the
+specific codon or exon coding span that SM19 keys on.
 
-**What the upstream gives, and what has to be remapped.** NCBI's E-utilities serve a text search (`esearch`), a bulk
-summary (`esummary`) and a full record fetch (`efetch`). Four remaps sit on top:
+**What the upstream gives, and what has to be remapped.** NCBI's E-utilities expose text search (`esearch`), bulk
+summaries (`esummary`), and full XML record fetch (`efetch`). Four remapping steps sit on top of those endpoints:
 
-- the review-status *phrase* is resolved to its gold-star count;
-- each record's HGVS title is parsed into coding coordinates, so placing a pool against an exon table is arithmetic
-  rather than a regex over display strings;
-- the pool's search term is built as an Entrez *property* term;
-- and the census bounding the pool is reported as typed state rather than left implicit.
+- resolving ClinVar's review-status *phrase* to its 0–4 gold-star count;
+- parsing each record's HGVS title into coding base coordinates (`c.`), so placing records against an exon table is
+  coordinate arithmetic rather than regex matching over display strings;
+- constructing the pool's query as an Entrez *property* term rather than a field term; and
+- returning the census bounding the pool as typed state on the response.
 
-The search term is where this rpc is most easily wrong. Written as an Entrez *field*, a pathogenic-significance query is
-not refused — Entrez has no such field, silently reinterprets it, and matched 1452 records on one gene, of which a
-sampled page was 60% *Uncertain significance*, where the correct property term matched 465. So the term is a property
-term, it is returned verbatim with the census, and every record's own classification is re-checked term by term after
-the search. Which terms count as a pathogenic assertion — and why the DAFT reads the same pool through a narrower gate —
-is a reading of the vocabulary
+Constructing the search term as an Entrez property term is critical because Entrez does not reject unknown field tags: a
+pathogenic-significance filter written as an Entrez field tag is silently reinterpreted as a free-text query, matching
+1,452 records on one test gene (of which a sampled page was 60% *Uncertain significance*) where the valid property term
+matched 465 records. The service therefore issues the verified property term, echoes it verbatim in the response census,
+and re-checks every returned record's classification term by term after retrieval. Which ClinVar classification strings
+count as a pathogenic assertion — and why the DAFT filters the same pool through a narrower gate — is documented in
+[`svcv4-interpretations.md`](svcv4-interpretations.md#which-clinvar-classifications-count-as-a-pathogenic-assertion).
+
+**A bounded pool is typed, not caveated in prose.** Because a well-studied gene can carry thousands of P/LP records, the
+pool returned by a single call may be a prefix and its count a lower bound. The response therefore carries a typed
+census (`search_term`, `total_count`, `fetched_count`, and whether the list is truncated) so the caller can branch on
+truncation and verify the exact six-token membership disjunction and star floor that defined the pool. Raw `esummary`
+payloads (~2.3 kB per record) are omitted in favour of typed fields on each record message.
+
+**Records whose coordinates cannot be placed are listed in `unparsed`, never dropped.** Copy-number records,
+uncertain-breakpoint titles, and **short-form repeat notation** (`c.571ATG[1]`, whose base extent cannot be derived from
+the title string without the reference sequence) carry no parseable coding span. Every such record is returned in the
+response's `unparsed` list rather than dropped, because silently dropping an unplaced record understates the pathogenic
+count of the exon it belongs to.
+
+**Disagreement on the gene symbol fails the RPC.** An empty span census and a gene symbol that ClinVar does not index
+produce the exact same empty `esearch` result, and an empty span census is a scored negative finding for `*_INF`. When
+the annotation sources disagree on the gene symbol, `ClinVar.SearchCodingSpan` fails with `FAILED_PRECONDITION` so an
+internal symbol mismatch is never scored as absence of informative variants.
+
+**The queried allele's own record is fetched by identity, not by HGVS string.** ClinVar indexes an allele only under the
+text expressions its submitters and curated expression list happen to carry, which often omit the caller's transcript
+version: for example, `HOXA13` `NM_000522.5:c.396_398del` is a one-star record classified by two laboratories, yet a
+ClinVar search for that exact `.5` string matches nothing because ClinVar indexes the allele under `.4` and under a
+repeat-notation title. A string search miss read as "novel allele" would make a false scored claim about an allele two
+laboratories have already classified.
+
+Instead, `Variant.Normalize` returns the ClinGen Allele Registry's ClinVar crosswalk (variation ID, RCV accessions,
+ClinVar allele ID, and preferred name), and `ClinVar.DescribeVariant` takes the `VCV*` accession from that crosswalk and
+fetches the record directly:
+
+- **An empty crosswalk on a resolved allele is the novel-allele finding**: the Allele Registry resolved the canonical
+  allele and links it to no ClinVar variation.
+- **A VCV accession named by the registry that ClinVar will not serve fails the RPC**: two upstreams disagree about
+  whether a record exists, so `ClinVar.DescribeVariant` raises `FAILED_PRECONDITION` rather than returning an absence.
+
+> **The novelty finding is bounded by the crosswalk's release.** Because the Allele Registry's crosswalk trails
+> ClinVar's own releases slightly, a variant classified after the last crosswalk ingest reads as novel until the next
+> sync. On a 30-record `MYH7` P/LP sample, 1 of 26 precise alleles sat inside that window (`VCV004884318`, `MYH7`
+> `c.1543A>G`, single submitter, evaluated 2026-08-04, had a registered allele with no ClinVar link two weeks later). A
+> novel-allele finding therefore means "no ClinVar variation as of the crosswalk release named in `Provenance`," a
+> window that closes once the dump-backed index below replaces the live query API.
+
+When the VCV record is returned, `ClinVar.DescribeVariant` includes the review-status *phrase* alongside the gold-star
+count, because an expert-panel classification is adopted based on which panel reviewed it rather than on the star count
+alone
 ([`svcv4-interpretations.md`](svcv4-interpretations.md#which-clinvar-classifications-count-as-a-pathogenic-assertion)).
 
-**A bounded pool is typed, not caveated.** A well-studied gene carries thousands of P/LP records, so the pool a call can
-carry is a prefix and its size is a lower bound. The census is therefore typed state on the response — the search term
-issued verbatim, the total it matched, how much of it was fetched, and whether what came back is a prefix — rather than
-a note in prose. The term is there because it is what says what the pool is a pool *of*: the membership gate is a
-six-token disjunction and the star floor rides in the same term, so nothing else distinguishes a complete census from a
-plausible-looking one. Truncation is there because a caller has to branch on it. The summaries themselves are not echoed
-back — an `esummary` runs ~2.3 kB per record — so every field the pool is read for is typed on the record message
-instead.
-
-**The records the coordinates cannot place.** Copy-number and uncertain-boundary titles carry no coding span, and
-neither does **short-form repeat notation** (`c.571ATG[1]`): the extent of the change is not derivable from that string
-without the reference sequence, so it is a declined form rather than a guessed span. Every such record is *named* in the
-response's unparsed list rather than dropped, because dropping one silently understates the exon it belongs to, and
-whether it belongs there is not a question the coordinates can settle.
-
-**Where the interface fails rather than answering.** An empty span census and a symbol ClinVar does not index are the
-same empty answer, and one of them is a *scored* negative — so where the annotation sources disagree about the gene's
-symbol, the rpc fails. That disagreement is this interface's own inconsistency to reconcile, not a finding a caller
-could score.
-
-**The queried allele's own record is asked for by identity, not by string.** ClinVar indexes an allele only under the
-renderings its submitters and its curated expression list happen to carry, and those need not include the transcript
-version a caller holds: `HOXA13` `NM_000522.5:c.396_398del` is a one-star record two laboratories classified, and a
-search for that exact string matches nothing — ClinVar indexes the allele under the `.4` spelling and under a
-repeat-notation title. No string bridges version × notation × shift, and a miss read as "novel allele" is a scored claim
-about an allele two laboratories have classified.
-
-So the lookup is keyed on the allele's identity. `Variant.Normalize` surfaces the ClinGen Allele Registry's ClinVar
-crosswalk as a typed field — the variation id, its RCV accessions, the ClinVar allele id and the preferred name — and
-`ClinVar.DescribeVariant` takes the VCV accession from it and fetches that record directly. Two things follow. **An
-empty crosswalk on a resolved allele is the novel-allele finding**: the registry knows the allele and crosswalks it to
-no ClinVar variation, which is the only evidence that supports reporting one as novel. And **a VCV accession the
-registry named that ClinVar will not serve is a loud inconsistency** — two upstreams disagreeing about whether a record
-exists — so it fails the rpc rather than arriving as an absence a caller could score.
-
-> **The novelty finding is bounded by the crosswalk's release, and that is accepted.** The registry's crosswalk trails
-> ClinVar's own releases, so a variant classified since the last crosswalk ingest reads as novel. Measured on a
-> 30-record `MYH7` P/LP sample, about one of 26 precise alleles sat inside that window: `VCV004884318` (`MYH7`
-> `c.1543A>G`, single submitter, evaluated 2026-08-04) had a registered allele carrying no ClinVar link two weeks later.
-> A novel-allele finding therefore means "no ClinVar variation as of the crosswalk release named in the provenance", and
-> the window closes under the dump-backed index below, where the crosswalk is ours and refreshed on our own cadence.
-
-Where the record does come back, its review-status *phrase* is returned beside the star count, because an expert-panel
-record is adopted on which panel reviewed it rather than on a count
-([`svcv4-interpretations.md`](svcv4-interpretations.md#which-clinvar-classifications-count-as-a-pathogenic-assertion)).
-
-**Moving off the upstream: a dump-backed index is where this goes.** One root cause is behind most of the machinery
-above — a bulk dataset is being queried through a rate-limited text-search API. It is what makes the pool truncatable,
-what makes the search term a correctness risk, what leaves the pool without per-submission detail (a bulk `esummary`
-carries none), what makes a repeat-notation title unplaceable, and what puts the whole surface behind an E-utilities
-rate limit. ClinVar publishes a **weekly VCV release**. Ingested and keyed on canonical SPDI, it dissolves all of those
-at once: the pool becomes a query over a local index, the membership gate a predicate rather than a search string, and
-the submission detail available for every record rather than only the queried one. A repeat-notation title becomes
-placeable too, since the reference sequence is in hand at ingest time. It also subsumes the crosswalk's freshness
-problem, because the mapping from allele to variation becomes ours, refreshed on our cadence.
-
-The cost is freshness — a local index is as old as its last ingest, which Provenance's release list states — and the
-ingest itself. Living with the query API is what is implemented; the triggers that pull the dump forward: the per-IP
-rate limits binding at multi-session scale, an `*_INF` completeness requirement the span search cannot meet under a
-bound, a need for pool-wide submission detail, or novelty findings going stale often enough on recently classified
-variants to matter.
+**Moving off the upstream to a dump-backed index.** Querying a bulk dataset through a rate-limited text-search API is
+the single root cause behind pool truncation, search-term fragility, missing per-submission detail on pool records (bulk
+`esummary` carries none), unplaceable repeat-notation titles, and E-utilities rate limits. Ingesting ClinVar's **weekly
+VCV release** and keying it on canonical SPDI resolves all five issues at once: the pool becomes a local index query,
+the membership gate becomes a predicate rather than a search string, per-submission detail is available for every record
+in the pool, repeat-notation titles are normalized against the reference sequence at ingest time, and the allele-to-VCV
+mapping is refreshed on our own schedule. The trade-off is operating the weekly ingest and bounding freshness by the
+last ingest timestamp in `Provenance`. Living with the query API is what is implemented now; the triggers that pull the
+dump ingest forward are per-IP E-utilities rate limits binding at multi-session scale, an `*_INF` completeness
+requirement that a bounded span search cannot meet, a need for pool-wide submission detail, or novelty findings going
+stale often enough on recently classified variants to matter.
 
 ### Goal: is the gene-disease relationship valid, and by what mechanism?
 
-Two of SVCv4's structural multipliers come from the gene rather than the variant: the curated **validity** level of the
-MDE caps the class and gates the mechanism multiplier, and the **mechanism** level scales positive predictive points.
-Both are stated per MDE — gene × disease × mode of inheritance — and never per gene, which is what shapes the response.
+Two of SVCv4's structural controls come from the gene and disease rather than the variant: the curated **validity**
+level of the MDE caps the pathogenicity class and gates the mechanism multiplier (SM21), and the **mechanism** level
+scales positive predictive points (SM18). Both are defined per MDE — gene × disease × mode of inheritance — and never
+per gene, which shapes `GeneDisease.DescribeGene`.
 
 **RPCs.** `GeneDisease.DescribeGene`.
 
-**What the upstreams give, and what has to be remapped.** This is the one goal with no per-variant API to wrap. Its four
-sources are gene-level datasets — ClinGen gene-validity, ClinGen dosage, GenCC submissions, and a PanelApp Australia
-dump — so the interface loads all four at startup from a GCS bucket and answers every lookup as an in-memory join.
-**Every table is keyed by HGNC id**, which is stable across symbol churn: a symbol can be retired and reassigned, so the
-request names the gene by that id alone and carries no symbol field for a lookup to drift from. (ClinVar stays
-symbol-keyed, because its upstream API searches by symbol.)
+**What the upstreams give, and what has to be remapped.** Unlike the variant-level goals, gene-disease validity has no
+per-variant API to wrap. Its four sources are gene-level datasets — ClinGen gene-validity, ClinGen dosage sensitivity,
+GenCC submissions, and a PanelApp Australia dump — so the interface loads all four at startup from a GCS bucket and
+answers every lookup as an in-memory join. **Every table is keyed by HGNC ID**, which remains stable across gene symbol
+retirements and reassignments; the request takes the HGNC ID alone and carries no symbol field that could drift from it.
+(ClinVar remains symbol-keyed because its upstream API searches by symbol.)
 
-**Sourcing from a bucket rather than downloading at startup is what keeps a scale-to-zero service viable.** GenCC's
-download endpoint caps near twenty requests a day, which per-startup downloads would exhaust under cold-start churn. So
-a weekly refresh Cloud Run Job is the only thing that touches those upstreams, and the interface reads what it left
-behind.
+**Loading from a GCS bucket rather than downloading from upstreams at startup keeps a scale-to-zero service viable.**
+GenCC's download endpoint caps near twenty requests a day, which cold-start churn would quickly exhaust. A weekly
+refresh Cloud Run Job is therefore the only process that touches those upstream hosts, and the `evidence` service reads
+the objects it writes to GCS.
 
-Three tables are stored **verbatim**, fetched with a conditional GET so an unchanged file is not rewritten. The PanelApp
-dump is **transformed**: the Mendeliome and Incidentalome panels — the two carrying the diagnostic long tail — are
-aggregated per HGNC id into the maximum confidence across the two, the mode of inheritance of the highest-confidence
-entry, the gain-of-function veto flag, and the de-duplicated per-gene evaluation comments. PanelApp publishes no entity
-tag, so it is rebuilt each run.
+Three tables are stored in GCS **verbatim**, fetched with conditional `GET` requests so unchanged files are not
+rewritten. The PanelApp Australia dump is **transformed**: the Mendeliome and Incidentalome panels (the two carrying the
+diagnostic long tail) are aggregated per HGNC ID into the maximum confidence across the two panels, the mode of
+inheritance of the highest-confidence entry, the gain-of-function veto flag, and the deduplicated per-gene evaluation
+comments. Because PanelApp publishes no entity tag, its summary object is rebuilt on each weekly run.
 
-The rpc's one live dependency is the MONDO subclass closure at EBI OLS4, reached only when a request names a disease
-term the gene is not curated for. Curators routinely curate a numbered subtype of the term a presentation names, so
-identifier equality alone under-matches, and the ontology's subclass relation is what settles "is a kind of" without a
-label comparison.
+The RPC's one live network dependency is the MONDO subclass closure at EBI OLS4, reached only when a request names a
+disease term that the gene is not directly curated for. Curators routinely curate a numbered subtype of the broader
+disease term named in a referral, so exact identifier equality under-matches, and the ontology's subclass relation
+settles whether one term is a subtype of another without fragile label comparisons.
 
-**The response shape follows from "per MDE".** Five decisions:
+**The response shape follows from "per MDE":**
 
-- **Nothing is reduced across entities and none is selected.** Which entity a presentation belongs to is a judgement
-  over the full clinical picture (SM21), and a gene-wide maximum answers it by taking the strongest, discarding the cap
-  the chosen entity imposes.
-- **Within one source's record of one entity, code does reduce**, because several submitters file assertions about the
-  same entity and an aggregation under a published vocabulary is not a judgement.
-- **Each source's mode of inheritance is returned in the source's own words, and nothing harmonises it** (below).
-- **A named disease term the curations do not settle raises, rather than resolving to the nearest.** The rpc returns
-  every curated record on the requested term, under every mode and from every source, or, where the gene is not curated
-  for that term, every record on the one curated term that is a MONDO subclass of it. Whether one term is a kind of
-  another is a question the ontology answers, so code answers it. Where several distinct curated terms sit under the
-  requested one, or none does, choosing among them is the caller's, and the rpc says so rather than picking.
-- **The classification-to-gate-level translation is the library's, not the caller's.** Curators publish
-  *classifications*, the gate is keyed by *levels*, and several published classifications name no level at all, so one
-  map holds vocabulary, strength rank and gate level together. The level is a `GateLevel` wherever it appears — what the
-  rpc states per entity, and what `themis.svcv4` takes. The framework partitions validity once; a second spelling inside
-  the library would be one more thing to keep in step with it.
+- **Records are never reduced across entities, and no entity is pre-selected.** Deciding which MDE a clinical
+  presentation belongs to is an analytical judgement over the full clinical picture (SM21); a gene-wide maximum would
+  always take the strongest curation on the gene and discard the class cap imposed by the chosen entity.
+- **Within one source's record for one entity, the service does reduce.** Several submitters file assertions in GenCC
+  about the same entity, and aggregating those assertions under a published vocabulary is deterministic bookkeeping
+  rather than clinical judgement.
+- **Each source's mode of inheritance is returned verbatim in the source's own words.** See below for why the service
+  does not harmonise inheritance modes across sources.
+- **A named disease term that the curations do not settle raises an error rather than resolving to the nearest match.**
+  The RPC returns every curated record on the requested MONDO term across all modes and sources, or — when the gene is
+  not curated directly on that term — every record on the *single* curated term that is a MONDO subclass of it. Where
+  several distinct curated subtype terms sit under the requested term, or none does, choosing among them belongs to the
+  caller, and the RPC fails with `FAILED_PRECONDITION` rather than picking.
+- **The classification-to-gate-level translation lives in the library and response contract, not in caller prose.**
+  Curators publish *classifications* (`Definitive`, `Strong`, `Moderate`, `Limited`, `Disputed`, `Refuted`,
+  `Supportive`, `No Known Disease Relationship`), whereas the GDV gate is keyed by *levels*, and several published
+  classifications name no level directly. One canonical map holds the vocabulary, strength rank, and `GateLevel`
+  together across both `GeneDisease.DescribeGene` and `themis.svcv4`.
 
-**The sources' modes stay verbatim.** The obvious design maps each source's mode term onto one shared enum, so that a
-caller can ask for "the autosomal dominant entity" and code can pick the matching record. The two sources that curate
-entities do not share a vocabulary: ClinGen publishes a two-letter code and GenCC an HPO term. A shared enum is a third
-vocabulary that belongs to neither, and every mapping onto it loses something or fails. GenCC distinguishes X-linked
-dominant from X-linked recessive, which SVCv4 routes apart, while ClinGen curates a single X-linked mode, so a shared
-enum either drops GenCC's distinction or invents one for ClinGen. A term outside the mapping has nowhere to go: GenCC
-files one digenic assertion (`HP:0010984`) against CLCNKB, and a mapping that refuses a term it does not know fails
-every lookup of that gene.
+**Why the sources' inheritance modes stay verbatim.** An obvious design maps each source's mode term onto one shared
+enum so a caller can ask for "the autosomal dominant entity" and let service code select the matching record. That
+mapping breaks because the two sources that curate entities do not share a vocabulary or granularity: ClinGen publishes
+a two-letter code and GenCC publishes an HPO term. GenCC distinguishes X-linked dominant from X-linked recessive (which
+SVCv4 routes to different rules), whereas ClinGen curates a single undifferentiated X-linked mode (`XL`), so a shared
+enum must either drop GenCC's distinction or invent one for ClinGen. Moreover, any term outside the enum has nowhere to
+go: GenCC files a digenic assertion (`HP:0010984`) against `CLCNKB`, and a strict mapping that rejects unknown terms
+would fail every lookup of that gene.
 
-Nothing needs the shared enum. The gate reads a `GateLevel`, which comes from the record the analyst matched to the
-entity. The library's frequency and observation rules route on the framework's own five modes, which the caller states
-in `themis.svcv4`'s vocabulary ([`curation-surface.md`](curation-surface.md#one-vocabulary-per-concept)). So each
-curated record carries its source's mode term as published. A record is keyed by its source, its disease term and that
-source's mode term, where a mode-keyed lookup keyed it by the shared mode. The request names a disease term only. For a
-disease that ClinGen curates as autosomal dominant and GenCC as autosomal recessive, a request naming its MONDO term
-gets two records back, `(ClinGen, MONDO:…, "AD")` and `(GenCC, MONDO:…, HP:0000007)`. The entity's mode comes with the
-question: a request that names the entity states it, and a run that has to choose the entity from a presentation chooses
-its mode with it (SM21). Matching a record to that entity, by reading each source's mode term against the entity's mode,
-is the model's.
+Downstream consumers do not need a shared mode enum on the RPC response. The GDV gate reads a `GateLevel` from the
+record the analyst matched to the MDE, while `themis.svcv4`'s frequency and clinical observation functions route on the
+framework's own five modes stated in the library's vocabulary
+([`curation-surface.md`](curation-surface.md#one-vocabulary-per-concept)). Each curated record therefore carries its
+source's mode term verbatim, keyed by `(source, disease_term, source_mode_term)`, and a request filters by disease term
+alone. For a disease curated by ClinGen as autosomal dominant and by GenCC as autosomal recessive, a request naming its
+MONDO term receives both `(ClinGen, MONDO:…, "AD")` and `(GenCC, MONDO:…, "HP:0000007")`, and the model matches the
+appropriate record against the MDE's mode (SM21).
 
-The cost is that code no longer checks the mode of the record the analyst chose. A run that classifies an autosomal
-recessive entity off the gate level of the same disease's autosomal dominant record now gets a valid answer, where a
-mode-keyed lookup would have refused it. The record's mode term sits beside its gate level in the response, and the run
-states the mode it classified under, so a reviewer can check the two against each other.
+The cost of leaving mode unharmonised is that service code no longer verifies that the record chosen by the analyst
+matches the MDE's mode of inheritance: a run classifying an autosomal recessive entity off the gate level of the same
+disease's autosomal dominant record receives a valid `GateLevel`. To keep that choice auditable, the record's verbatim
+mode term sits beside its `GateLevel` in the response and the run states the mode it classified under, so a reviewer can
+check the two against each other. (PanelApp asserts panel membership rather than MDE validity, so it contributes no
+entity record.)
 
-PanelApp asserts panel membership rather than validity, so it contributes no entity to any of this.
-
-**The mechanism signals sit in a gene-scoped block**, apart from the per-entity fields, because they are curated per
-gene: the dosage-sensitivity haploinsufficiency score and PanelApp's flags say something about the gene, not about the
-entity a caller chose. On a gene carrying both a loss-of-function and a gain-of-function entity (SM21), a gene-level
-score read as the chosen entity's is the error that would scale the multiplier on every LoF path. What those signals
-*mean* — that the mechanism level is a rubric an analyst scores, that Uncertain is a floor and never a default — is
+**Mechanism signals sit in a gene-scoped block**, separate from the per-entity records, because they are curated per
+gene: ClinGen's dosage-sensitivity haploinsufficiency score and PanelApp's flags describe the gene as a whole rather
+than a specific MDE. On a gene carrying both a loss-of-function and a gain-of-function entity (SM21), attaching a
+gene-level haploinsufficiency score to the chosen entity would falsely scale the multiplier on the gain-of-function
+path. How an analyst scores the mechanism rubric from those signals — and why `Uncertain` is a floor and never a default
+— is documented in
 [`svcv4-interpretations.md`](svcv4-interpretations.md#mechanism-a-rubric-an-analyst-scores-not-a-field-to-retrieve).
 
-**Worked example.** In the July 2026 ClinGen snapshot, 492 of 3,017 genes carry more than one curated entity, 315 of
-them at more than one classification; GenCC's submitters disagree on 5,319 of 15,464 entities; and 1,185 (gene, term)
-pairs are curated under more than one inheritance mode. A gene-wide maximum would have answered every one of those with
-the strongest classification on file. A lookup by term alone returns each of the 1,185 pairs' records under every mode,
-and the analyst reads which one describes the entity.
+**Worked example.** In the July 2026 ClinGen snapshot, 492 of 3,017 genes carry more than one curated entity (315 of
+them at more than one validity classification), GenCC's submitters disagree on 5,319 of 15,464 entities, and 1,185
+`(gene, disease_term)` pairs are curated under more than one inheritance mode. A gene-wide maximum would collapse every
+one of those to the strongest classification on file, whereas a lookup by disease term returns each pair's records under
+every mode so the analyst can select the record matching the MDE.
 
-**Moving off the upstreams.** The live MONDO closure could be replaced by a precomputed one shipped with the tables, at
-the cost of a fifth object the interface cannot start without ([Alternatives](#alternatives-considered)).
+**Moving off the upstreams.** The live MONDO closure call to EBI OLS4 could be replaced by a precomputed closure shipped
+with the GCS reference tables, at the cost of a fifth required startup object
+([Alternatives considered](#clinvar-and-gene-disease-scoping)).
 
 ### Goal: how relevant is the exon the variant lands in?
 
-The matrix's other axis is SM18's All / Most / Few exon-relevance tier. The design question is not how to fetch the
-inputs but what a retrieval may *conclude*: the tier scales every positive predictive path, and SM18 calibrates neither
-half of its own definition.
+The matrix's second axis is SM18's `All / Most / Few` exon-relevance tier. Here the design question is not how to fetch
+the inputs, but what a retrieval RPC may *conclude*: the tier scales every positive predictive path, and SM18 calibrates
+neither half of its own definition.
 
-**RPCs.** `Transcript.AssessExonRelevance`, over the exon table `Transcript.GetStructure` returns.
+**RPCs.** `Transcript.AssessExonRelevance`, built over the exon table returned by `Transcript.GetStructure`.
 
-**What the upstreams give, and what has to be remapped.** Four sources compose here: VariantValidator's per-transcript
-exon spans, GTEx isoform expression, gnomAD constraint and per-base pext, and ClinVar's pathogenic-variant density. The
-remapping is where they meet. pext is gnomAD's per-region values weighted over VariantValidator's exon spans, and the
-transcript inventory is an interval test run **natively in each annotation namespace**, so no accession crosswalk is
-needed to answer a structural question. gnomAD's MANE Select pair is the one RefSeq/Ensembl pairing any upstream here
-publishes, and it can differ from the release the exon table flags — which is why the pair is returned rather than
-assumed.
+**What the upstreams give, and what has to be remapped.** Four sources compose in this RPC: VariantValidator's
+per-transcript exon spans, GTEx isoform expression, gnomAD constraint and per-base pext, and ClinVar's
+pathogenic-variant density. Remapping happens where they meet: pext is computed by weighting gnomAD's per-region values
+over VariantValidator's exon spans, and the transcript inclusion inventory is an interval test run **natively in each
+annotation namespace** (RefSeq and Ensembl), so no accession crosswalk is needed to answer the structural inclusion
+question. gnomAD's MANE Select pair is the one RefSeq/Ensembl pairing published by an upstream here, and because it can
+differ from the release flagged by VariantValidator's exon table, the RPC returns the pair explicitly rather than
+assuming they match.
 
-**What it returns, and what it withholds.** MANE membership, a gene-wide transcript inventory against the assessed exon
-— per transcript, in both annotation sets, with a four-outcome verdict rather than a carries/omits boolean — GTEx
-expression, constraint, a per-exon **pext profile** rather than a scalar, ClinVar density, and **no All / Most / Few
-tier**. The membership test is a fact the rpc owes; the tier is the judgement it must not make
-([Alternatives](#exon-relevance) weighs the field it declines to carry). Why the tier is uncalibrated, why pext cannot
-establish *All*, and what an empty omitting set does and does not license are readings of SM18
-([`svcv4-interpretations.md`](svcv4-interpretations.md#exon-relevance-what-the-tiers-admit)).
+**What the RPC returns, and what it withholds.** `AssessExonRelevance` returns MANE membership, a gene-wide transcript
+inventory against the assessed exon (per transcript, in both RefSeq and Ensembl annotation sets, using a four-outcome
+inclusion verdict rather than a binary carries/omits boolean), GTEx expression, constraint, a per-exon **pext profile**
+rather than a single scalar, ClinVar P/LP density, and **no `All / Most / Few` tier**. Computing transcript inclusion is
+a structural fact the RPC owes; choosing the tier is the uncalibrated clinical judgement it must withhold
+([Alternatives considered](#exon-relevance)). Why SM18's tier boundary is uncalibrated, why pext alone cannot establish
+`All`, and what an empty omitting-transcript set does and does not license are detailed in
+[`svcv4-interpretations.md`](svcv4-interpretations.md#exon-relevance-what-the-tiers-admit).
 
-**A record the interface cannot read is named, not raised on and not dropped.** One unreadable annotation record would
-otherwise take pext, constraint, density and expression down with the inventory, while dropping it silently would let a
-record the interface could not read pass for one that lacks the exon.
+**Unreadable annotation records are named, neither raised on nor dropped.** Failing the whole RPC on one unreadable
+transcript annotation record would take pext, constraint, density, and expression down with the inventory, while
+silently dropping the record would let an unparsed transcript pass for one that lacks the exon.
 
-**Worked example.** The two gene-wide transcript payloads run to 1.26 MB on the largest measured gene, against a 60 s
-per-request upstream timeout, and are issued concurrently with the assessed transcript's own — so the inventory costs
-one extra round trip rather than three, which is what makes returning the whole census affordable.
+**Worked example.** On the largest measured gene, the two gene-wide transcript payloads run to 1.26 MB against a 60 s
+per-request upstream timeout; issuing them concurrently with the assessed transcript's own fetch keeps the inventory
+cost to one extra round trip rather than three, making it practical to return the full transcript census.
 
-**Caveats.** The density here is counted at a fixed review-status floor, a coarse burden count feeding no scored
-comparison — unlike the ClinVar pool's floor, which is the caller's
-([above](#goal-what-else-has-been-classified-at-this-codon-this-exon-and-across-the-gene)). GTEx samples no retina, no
-megakaryocyte or platelet and no trabecular meshwork, so for some entities SM18's abundance limb is unanswerable from
-these sources at all; the transcript-level data that exists ships as bulk files behind no query interface, so closing
-that gap is an ingest rather than a wrapper.
+**Caveats.** The ClinVar pathogenic density returned here is counted at a fixed review-status floor as a coarse burden
+signal feeding no scored comparison, unlike `ClinVar.DescribeVariant`'s pool whose floor is chosen by the caller
+([above](#goal-what-else-has-been-classified-at-this-codon-this-exon-and-across-the-gene)). In addition, GTEx samples no
+retina, no megakaryocyte or platelet, and no trabecular meshwork, so for diseases of those tissues SM18's abundance limb
+cannot be answered from GTEx at all; the tissue-specific transcript datasets that do exist ship as bulk files without a
+query API, so adding them requires an offline ingest.
 
 ### Goal: has a calibrated functional assay measured this variant?
 
-`*_FXN` reads a calibrated functional assay's OddsPath. MaveDB is the public deposit of MAVE score sets, and the whole
-design question is *which allele is asked*, because that decides what comes back.
+`*_FXN` (SM20) reads a calibrated functional assay's OddsPath. MaveDB is the public repository of MAVE score sets, and
+the central design question for `MaveDb.DescribeVariant` is *which allele identity is queried*, because that choice
+determines whether deposits are found.
 
-**RPCs.** `MaveDb.DescribeVariant`, keyed on the variant's **ClinGen allele, never on HGVS text**.
+**RPCs.** `MaveDb.DescribeVariant`, keyed on the variant's **ClinGen allele IDs and never on HGVS text**.
 
-**What the upstream gives, and what has to be remapped.** MaveDB stamps every mapped variant with a ClinGen allele id
-and answers a list of them in one request, so identity is the natural key. HGVS is not available even as a fallback: its
-only HGVS-bearing endpoint is a score set's whole dump, and MaveDB renders each variant's protein change against its own
-target sequence, so no expression a caller holds equals the stored string. Two remaps follow. **Both the canonical and
-the protein allele are registered and asked**, because one variant can be deposited at the nucleotide level in one score
-set and at the protein level in another and MaveDB's own bridge between the two is incomplete. And **the candidate order
-is derived** — match directness, then publication date descending, then identifier, and along it the first *calibrated*
-deposit, else the first *scored* one — rather than taken from the upstream's serialisation. Deriving it matters because
-every published score set of a gene typically sits at the same version, so an identifier tiebreak alone resolves to
-registration order and consults the newest scan last. Why that is the right evidential ordering, and why a depositor's
-primary calibration marker is honoured, is
-[`svcv4-interpretations.md`](svcv4-interpretations.md#functional-assays-which-deposit-speaks-and-about-what).
+**What the upstream gives, and what has to be remapped.** MaveDB stamps every mapped variant with a ClinGen allele ID
+and accepts a list of IDs in a single request, making allele identity the natural lookup key. HGVS text cannot serve
+even as a fallback: MaveDB's only HGVS-bearing endpoint is a full score-set dump, and MaveDB renders each variant's
+protein change against the assay's own target sequence rather than a standard transcript, so no caller HGVS string is
+guaranteed to match the stored string.
 
-**Worked example.** For one LDLR synonymous variant the canonical allele's protein-equivalence list is empty while its
-protein allele returns two deposits. A canonical-only question answers "no assay covers this variant" for a variant two
-deposits score — which is why both allele kinds are registered and asked, even though on most alleles sampled the
-canonical id alone would have sufficed.
+Two remapping rules follow:
 
-**Where it raises.** A deposit marking several calibrations primary has no ground for a choice, so it raises rather than
-guessing. A deviation from the documented response shape raises too, rather than yielding no candidates: the two would
-otherwise arrive as the same `NOT_FOUND`, and one renamed upstream field would report "no assay covers this variant" for
-every variant asked.
+- **Both the canonical nucleotide allele (`CA*`) and the protein allele (`PA*`) are registered and queried**, because
+  one MAVE score set may deposit variants at the nucleotide level while another deposits them at the protein level, and
+  MaveDB's own bridge between the two is incomplete.
+- **Candidate ordering is derived by the service** — sorted by match directness, then publication date descending, then
+  identifier, selecting the first *calibrated* deposit along that order or else the first *scored* deposit — rather than
+  trusting MaveDB's response order. Deriving the order is necessary because published score sets for a gene typically
+  sit at version 1, so an identifier tiebreak alone falls back to registration order and consults the newest scan last.
+  Why this ordering reflects evidential strength, and why a depositor's primary calibration marker is honoured, is
+  covered in
+  [`svcv4-interpretations.md`](svcv4-interpretations.md#functional-assays-which-deposit-speaks-and-about-what).
 
-**Caveats.** MaveDB holding no score set for the allele is a real answer: no MAVE assay exists, which removes a code
-rather than setting a value.
+**Worked example.** For an `LDLR` synonymous variant in our evaluation set, the canonical nucleotide allele's
+protein-equivalence list in the registry is empty, while its protein allele returns two MaveDB deposits. Querying only
+the canonical nucleotide ID would report "no assay covers this variant" for a variant that two deposits actually score.
+
+**Where the RPC raises.** A deposit that marks multiple calibrations as primary provides no basis for choosing one, so
+the RPC fails rather than guessing. Any deviation from MaveDB's documented response schema also raises an error
+(`UNKNOWN`) rather than returning zero candidates: otherwise, a renamed upstream JSON field would return `NOT_FOUND` and
+report "no assay covers this variant" for every lookup.
+
+**Caveats.** When MaveDB genuinely holds no score set for the allele, `NOT_FOUND` means no MAVE assay exists in MaveDB,
+which leaves `*_FXN` unscored from MaveDB rather than awarding benign or pathogenic points.
 
 ### Goal: does a VCEP publish its own criteria specification?
 
-SM3 ranks a curated VCEP or community threshold first among its DAFT methods, and several other codes defer to a panel's
-gene-specific wording. A run therefore has to be able to *read* a panel's specification and cite it; an ad-hoc page
-fetch yields text nothing downstream can re-check.
+SM3 ranks a curated VCEP or community frequency threshold first among its four DAFT methods, and several other codes
+defer to a panel's gene-specific wording. A curation run therefore needs a structured way to fetch and cite a panel's
+specification rather than scraping ad-hoc web pages that nothing downstream can verify.
 
 **RPCs.** `Cspec.ListSpecifications`, over the ClinGen CSpec Registry.
 
-**What the upstream gives, and what is deliberately not remapped.** The registry serves ACMG/AMP-2015 profiles, and
-there is no SVCv4 profile in it. So this rpc emits no SVCv4 code, point or DAFT: a panel's own points come back as a
-*string*, its criteria-combining rules stay untyped, and a threshold enters SM3's ordering at the rung its own
-derivation earns rather than at method 1 by virtue of who published it
-([`svcv4-interpretations.md`](svcv4-interpretations.md#criteria-specifications-a-vcep-profile-is-acmg-2015)). Typing a
-panel's ACMG-2015 vocabulary into SVCv4's would be a translation nobody sanctioned.
+**What the upstream gives, and what is deliberately not remapped.** Every specification currently in the CSpec Registry
+is written against the ACMG/AMP-2015 guidelines; no SVCv4 specification exists in the registry yet. Accordingly,
+`Cspec.ListSpecifications` emits no SVCv4 code, point value, or pre-approved DAFT: a panel's strength tiers come back as
+verbatim strings, its criteria-combining rules stay untyped, and a VCEP frequency threshold enters SM3's four-rung
+ordering at the rung its own mathematical derivation earns rather than at rung 1 merely by virtue of who published it
+([`svcv4-interpretations.md`](svcv4-interpretations.md#criteria-specifications-a-vcep-profile-is-acmg-2015)).
+Translating a panel's ACMG-2015 rules into SVCv4 points inside the service would invent an unsanctioned mapping.
 
-**Nothing is snapshotted server-side.** A paper's rendering stored in the literature corpus is the anchor a quote
-directive resolves against and a linter can re-check; Zenodo already holds each document version under its DOI, so a
-snapshot here would duplicate a permanent third-party artefact. The consequence, stated in the contract: a quote from a
-specification is verifiable against the DOI and not against a store a linter can re-read.
+**Specifications are not snapshotted server-side.** Whereas the `literature` corpus stores paper renderings so quote
+directives can be verified by a linter, Zenodo already archives each CSpec document version permanently under its DOI.
+The contract states the resulting consequence explicitly: a quote from a VCEP specification is verifiable by a human
+against its Zenodo DOI, not against a local corpus store that an automated linter re-reads.
 
-**Worked example.** Three cases forced the rpc. One gene reaches a specification marking the null-variant criterion not
-applicable, with the panel's reason beside it; another reaches a panel's phenotype tiers and frequency cut-offs; and a
-third reaches a panel's population-frequency threshold with **no derivation anywhere in the registry** — which is itself
-the finding the rpc has to let a run report.
+**Worked example.** Three evaluation cases motivated this RPC: one gene with a VCEP specification marking the
+null-variant criterion not applicable along with the panel's rationale; a second gene where the panel defines
+gene-specific phenotype tiers and frequency cutoffs; and a third gene where the panel states a population-frequency
+threshold with **no derivation anywhere in the registry** — an omission that the run must be able to inspect and report.
 
 ### The contracts are written against the upstreams' failure modes
 
-The hard part of wrapping a public database is not the happy path. Six cross-cutting rules follow, each fixing a way an
-upstream's answer, or its failure to answer, would reach the caller as something it is not. Per-rpc instances of each
-are in the protos.
+Public genomic APIs frequently return failure modes that look like scientific findings if passed through uninspected.
+Six cross-cutting contract rules govern how the nine interfaces map upstream responses onto gRPC status codes; per-RPC
+instances are documented in each `.proto` file.
 
 #### An upstream's "no record" is a finding, and gets its own status
 
-Absence from gnomAD *is* the `POP_FRQ` rarity input; MaveDB holding no score set means no MAVE assay exists; a splice
-predictor returning no score means the position is unscorable. These are settled answers, so they map to gRPC
-`NOT_FOUND`, leaving `UNKNOWN` to mean an uncharacterised fault. Collapsing the two would make a caller retry a question
-already answered, and would make "absent from gnomAD" unusable as evidence.
+Absence from gnomAD is the `POP_FRQ` rarity input; MaveDB holding no score set means no MAVE assay covers the variant; a
+splice predictor returning no score means the position is unscorable. Because these are settled negative answers from
+the upstream database, they map to gRPC `NOT_FOUND`, reserving `UNKNOWN` for uncharacterised faults. Collapsing absence
+into `UNKNOWN` would cause callers to retry settled questions and make database absence unusable as evidence.
 
-The status is also what a caller's retry helper keys on, so the taxonomy has to hold end to end. `NOT_FOUND` and
-`INVALID_ARGUMENT` are answers and are never retried. `RESOURCE_EXHAUSTED` joins them, because no rpc here rate-limits
-its caller — it means the response outgrew the transport, which re-fetching reproduces. A helper matching on message
-text instead would re-acquire the coupling the taxonomy exists to remove.
+The gRPC status taxonomy also drives the sandbox retry helper end to end: `NOT_FOUND` and `INVALID_ARGUMENT` are settled
+answers and are never retried. `RESOURCE_EXHAUSTED` is never retried either, because no RPC on this surface rate-limits
+its caller; it means the upstream response exceeded the transport size bound, which retrying will only reproduce. Keying
+retries on gRPC status codes avoids fragile substring matching on error message text.
 
 #### Where absence is scored, a shape precondition is required, not optional
 
-`Gnomad.DescribeVariant` and `Splice.PredictDeltas` are the two rpcs where an absence is *scored* — MaveDB's absence
-removes a code rather than setting a value — and both upstreams answer an id they cannot parse with a **200 carrying an
-absence** rather than an error.
+`Gnomad.DescribeVariant` and `Splice.PredictDeltas` are the two RPCs whose absence is *scored* as evidence (whereas
+MaveDB's absence simply leaves a code unapplied), and both upstreams answer a variant ID they cannot parse with **HTTP
+200 carrying an absence** rather than an HTTP error.
 
-> **Hazard.** Without a check, a caller's typo is scored as "absent from gnomAD": evidence manufactured from a mistyped
-> field, and never retried, because absence is settled.
+> **Hazard.** Without a precondition check, a caller's typo is scored as "absent from gnomAD" — manufacturing rarity
+> evidence from a mistyped field, and never retrying because `NOT_FOUND` is settled.
 
-Two mechanisms, and both are needed. Each rpc holds its positional id to the *stricter* of the two upstreams' spellings,
-since a check calibrated to the more permissive one would still pass the other an id it cannot score. But no syntactic
-check reaches the semantic cases — a nonexistent contig, a position past the end of a real one — so each adapter also
-reads its upstream's own message, the only reliable discriminator between "cannot parse" and "not held". The dataset is
-checked for the same reason but as policy rather than as a limit of the upstream: gnomAD resolves releases this rpc does
-not serve, and a third dataset would silently change the allele-frequency denominator under a caller reading the result
-as a v4 filtering allele frequency.
+Both RPCs therefore enforce two guards:
+
+1. **Syntactic precondition before the call.** Each RPC validates its positional ID against the *stricter* of the
+   upstreams' accepted spellings before issuing any HTTP request, rejecting malformed IDs with `INVALID_ARGUMENT`.
+1. **Semantic discriminator on the response.** Because no regex can catch semantic errors such as a nonexistent contig
+   or a coordinate past the end of a chromosome, each adapter also inspects the upstream's warning/error fields to
+   distinguish "cannot parse coordinate" (`INVALID_ARGUMENT`) from "variant not held in dataset" (`NOT_FOUND`).
+   `Gnomad.DescribeVariant` validates the requested dataset name for the same reason: gnomAD resolves older releases
+   that this RPC does not serve, which would otherwise silently change the allele-frequency denominator under a caller
+   expecting v4 filtering allele frequencies.
 
 #### An upstream 4xx is placed on that taxonomy, not passed through
 
-Where a 4xx is *about the request*, a non-429 4xx is the source judging the request as issued, so it becomes
-`INVALID_ARGUMENT` — or `NOT_FOUND` where the source spells "no record" that way, as NCBI's nucleotide fetch does for an
-accession it holds no sequence under. **429 and 5xx stay retryable**, and 429 is the reason the rule is not simply
-"4xx". Passing every status through unmapped makes a deterministic 400 cost four calls and a backoff before failing
-identically.
+When an upstream endpoint's HTTP 4xx is a judgement *about the caller's request*, a non-429 4xx maps to
+`INVALID_ARGUMENT` — or to `NOT_FOUND` when that specific endpoint uses 4xx to spell "no record" (as NCBI Nucleotide
+`efetch` does for an accession with no sequence). **HTTP 429 and 5xx remain retryable (`UNAVAILABLE`)**; mapping every
+4xx the same way or passing statuses through unmapped would either retry deterministic 400 errors four times with
+backoff or fail fatally on a transient 429 rate limit.
 
-Which reading applies is per **endpoint**, not per source: one endpoint of a source can spell "no such entity" as a 400
-while another answers 200-and-empty for the same question. ClinVar's archive fetch does both, which is what makes it the
-case where "no record" is not `NOT_FOUND` at all.
+This mapping is defined per **endpoint** rather than per source, because one endpoint of a source can spell "no such
+entity" as HTTP 400 while another endpoint of the same source returns HTTP 200 with an empty set (ClinVar's archive
+fetch does both, which is why "no record" there is handled under `FAILED_PRECONDITION` below rather than `NOT_FOUND`).
 
-The qualifier is load-bearing, and **three transports are exempt** under it — mapping their 4xx would be worse than the
-defect the rule fixes.
+Three upstream transports are **exempt** from mapping non-429 4xx responses to `INVALID_ARGUMENT`, because a 4xx from
+them is never a verdict on the caller's input field:
 
-- At **gnomAD** the caller's fields ride in GraphQL variables and a bad one comes back inside a 200, so no 4xx there is
-  a verdict on one: measured, its 429 is the rate limiter and its 400 is a malformed query document, which is ours to
-  fix.
-- The **Broad splice hosts** answer every variant-level problem with a 200 carrying an error string, so their 4xx is a
-  malformed request line or a moved endpoint — reporting one against the caller's variant would name an input that was
-  not the problem.
-- **EBI OLS4** is exempt on a different reading: the value reaching its URL is a curated term read off a reference
-  table, never a caller's field, so a 4xx there is a stale table or a retired MONDO term. It becomes an uncharacterised
-  fault rather than `INVALID_ARGUMENT`, which would blame a well-formed request for the reference data behind it.
+- **gnomAD GraphQL**: the caller's variant ID rides in GraphQL variables and an invalid ID comes back inside HTTP 200,
+  so an HTTP 400 from gnomAD means a malformed GraphQL query document (a bug in our service, mapped to `UNKNOWN`) and an
+  HTTP 429 is the rate limiter (`UNAVAILABLE`).
+- **Broad splice hosts**: both hosts report every variant-level problem inside HTTP 200 with an `"error"` string, so an
+  HTTP 4xx indicates a malformed request line or moved endpoint rather than a bad variant input (except when the request
+  line exceeds the length bound checked at the boundary).
+- **EBI OLS4**: the MONDO term reaching OLS4's URL is read from a curated reference table rather than supplied by the
+  caller, so an HTTP 4xx there reflects a stale reference table or retired MONDO term (`UNKNOWN`) rather than an
+  `INVALID_ARGUMENT` from the caller.
 
-The reference-table refresh job is outside the taxonomy for a fourth reason: it is not on the request path at all, so a
-4xx there names no request field and fails the run.
+(The weekly reference-table refresh job sits outside the gRPC status taxonomy altogether because it runs offline, where
+any 4xx fails the job run.)
 
-> **The test is not "does a caller-chosen value reach this URL".** It does at two of the three. The test is "would a 4xx
-> here be the source's verdict on that value". Where the answer is no, the exemption has to be paid for at the boundary
-> instead — which is why the two rpcs whose absence is scored carry shape preconditions.
+> **Rule of thumb.** The test for mapping an upstream 4xx to `INVALID_ARGUMENT` is not "does a caller-chosen value reach
+> this URL?" (it does at two of the three exempt transports), but "is an HTTP 4xx from this endpoint the upstream's
+> verdict on that caller value?" Where the answer is no, the service must enforce its own input shape precondition at
+> the boundary instead.
 
 #### An upstream that fails says which upstream it was
 
-A 429 or 5xx, a connect, read or write timeout, and a connection that failed or broke off reach the caller as
-`UNAVAILABLE`, stating the rpc, the upstream and what it returned: "PredictDeltas: SpliceAI returned 503 for …; a 5xx is
-usually transient". The message reports evidence rather than a verdict, because a 5xx is not always passing: gnomAD
-answers a dataset outside its enum with a 500 on every call, which is why `DescribeVariant` checks the dataset before
-the call. The distinction matters most where the caller is an agent: an upstream outage reported as `UNKNOWN` reads the
-same as a bug of ours, so the agent retries until its budget runs out and can only report that the call failed, with no
-cause to act on or pass on.
+An HTTP 429 or 5xx, a connect/read/write timeout, or a dropped connection reaches the caller as `UNAVAILABLE` with a
+message naming the RPC, the upstream, and what happened: for example,
+`PredictDeltas: SpliceAI returned 503 for …; a 5xx is usually transient`. The message states the observation rather than
+promising that a retry will succeed, because an upstream 500 can be deterministic (for instance, gnomAD returns HTTP 500
+for a dataset name outside its enum, which is why `DescribeVariant` validates the dataset name before calling). Naming
+the failing upstream on `UNAVAILABLE` lets the agent distinguish an external database outage from a bug in our service.
 
-`UNKNOWN` stays for faults of ours. That covers any other status and any other transport error, and two failures that
-look like the upstream's but are not. A pool timeout means this service's own connections were all in use, so no
-upstream was asked. A connection refused by TLS verification is either our trust store or the upstream's certificate,
-and in neither case does a reissue clear it.
+`UNKNOWN` is reserved for faults on our side of the boundary, including unexpected upstream response schemas and two
+transport failures that look like upstream outages but are not: an outbound connection-pool timeout (meaning our own
+service's concurrency pool was saturated before any upstream was contacted) and a TLS verification failure (which a
+retry will not clear).
 
-The upstream is named by its label or public host, never by URL. A URL repeats the whole query, including parameters the
-service adds to it (the dbNSFP column list on a VEP call, for one), and runs to kilobytes for a long indel's id on a
-splice call, while the message is a bounded trailer the sandbox agent reads.
+To keep error trailers bounded and safe for the sandbox guest to read, error messages follow four formatting rules:
 
-Where a message quotes an upstream's error body, an HTML page is named ("an HTML error page") rather than quoted. A page
-states nothing the caller can act on, and quoting it would spend the trailer's budget on markup.
-
-A quoted body can also carry our own egress address, or a credential. NCBI's E-utilities, refusing a keyless caller over
-its rate limit, names the caller's address under `api-key`, and would name the key itself if one were sent:
-
-```json
-{"error":"API rate limit exceeded","api-key":"203.0.113.7","count":"4","limit":"3"}
-```
-
-So an `api-key` field is withheld whole, and any other IPv4 or IPv6 address a body quotes is masked; the message quotes
-that body as `{"error":"API rate limit exceeded","api-key":"<withheld>",...}`.
-
-The hatch passes a status's text to the guest only where the servicer marked it as its own. Every status the evidence
-servicers write is marked, and what marked text may carry is stated in
-[`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary).
+1. **Name the upstream by label or public hostname, never by full URL.** Full URLs echo query parameters added by the
+   service (such as VEP's long dbNSFP column list) and can run to several kilobytes for large indels.
+1. **Summarise HTML error bodies as `"an HTML error page"` rather than quoting raw markup.**
+1. **Scrub credentials and mask IP addresses in quoted error bodies.** When NCBI's E-utilities rejects a keyless request
+   over its rate limit, its JSON error body echoes the caller's egress IP address inside the `"api-key"` field (and
+   would echo the secret key itself if one were configured):
+   ```json
+   {"error":"API rate limit exceeded","api-key":"203.0.113.7","count":"4","limit":"3"}
+   ```
+   The error formatter replaces any `"api-key"` value with `"<withheld>"` and masks any other IPv4 or IPv6 literal in
+   quoted bodies (`{"error":"API rate limit exceeded","api-key":"<withheld>",...}`).
+1. **Mark servicer-authored status messages explicitly for the hatch.** The sandbox gRPC hatch forwards a status's text
+   to the guest only when the servicer marked it as safe to expose
+   ([`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary)).
 
 #### Two sources disagreeing is neither an absence nor a bad request
 
-`NOT_FOUND` is the vocabulary absence is *scored* in, so it can only carry what a source actually said about a subject
-the caller chose. Where a lookup is keyed on an id that came from *another* source, "no record" says something else
-entirely. ClinVar's archive fetch is keyed on the accession the registry's crosswalk named for the allele, so ClinVar
-answering that it holds nothing under it — as a 400 stating the id resolved to nothing, or as a 200 carrying an empty
-result set — is one source contradicting the other about a record's existence. Reported as an absence it becomes the
-novelty finding, off an answer the crosswalk denies; reported as a bad request it sends an analyst hunting for a typo in
-a field the service filled in itself. The same shape reaches `SearchCodingSpan` through the gene symbol: the exon table
-names it, and where ClinVar indexes nothing under it every span is empty at any coordinates — which is precisely the
-finding "no informative variant at this codon" the rules ask for.
+Because `NOT_FOUND` is scored as evidence of absence, it must only represent what an upstream said about an identifier
+chosen by the caller. When a lookup is keyed on an identifier supplied by *another upstream*, "no record" means two
+sources disagree:
 
-So the sources disagreeing is `FAILED_PRECONDITION` — the status a well-formed request already gets where the sources
-cannot settle what it names, as `GeneDisease` gives it for a disease entity the caller has to restate. Both sources
-answered, and reconciling them is this service's own job rather than anything a reissue or a corrected field can change.
-The message names both sources and what each said, because that is where reconciling them starts.
+- `ClinVar.DescribeVariant` fetches its archive record using the `VCV*` accession named by the ClinGen Allele Registry's
+  crosswalk. If ClinVar answers that it holds nothing under that accession (via HTTP 400 or an empty 200 result set),
+  one source contradicts the other about whether the record exists. Reporting `NOT_FOUND` would turn that contradiction
+  into a novel-allele finding; reporting `INVALID_ARGUMENT` would blame the caller for a field the service populated.
+- `ClinVar.SearchCodingSpan` queries ClinVar using the gene symbol named by the exon table. If ClinVar indexes no
+  records under that symbol, every coding span returns empty — which would falsely score as "no informative variant at
+  this codon."
+
+Both cross-source disagreements therefore return `FAILED_PRECONDITION`, naming both upstreams and what each returned so
+the inconsistency is visible and never mis-scored.
 
 #### Every handler is bounded, and the bound is a status
 
-An unbounded handler does not produce a slow answer, it produces no answer: the caller waits on a call that cannot fail,
-so nothing downstream can retry it, route around it, or report it. Inside a sandbox the wait ends with the harness
-killing the whole snippet, taking the results of every call before it in the same script.
+An unbounded handler inside a sandboxed tool call does not merely respond slowly; if it hangs until the outer shell
+timeout kills the agent's script, it destroys the results of every earlier call in the same script.
 
-So there are three nested budgets, each strictly inside the one above: the harness's limit on one shell tool call, the
-guest's limit on a whole retried call, and the service's per-handler deadline. Expiry maps to `DEADLINE_EXCEEDED` naming
-the rpc, which also cancels the upstream work rather than leaving it holding the instance. The guest's budget exceeds
-the service's ceiling rather than matching it, deliberately: a service that can answer gets to, and the snippet keeps
-the rest of the tool budget to report what it did get. `DEADLINE_EXCEEDED` is therefore **not** retryable, unlike the
-other never-reached-an-answer statuses — the deadline is a budget the caller itself set, and reissuing spends it again
-on the same slow path.
+The system therefore enforces three nested timeout budgets, each strictly inside the one above it:
 
-> **Trade-off.** The handler deadline is a *cut*, not a ceiling above the worst case. The chained rpcs still sum higher
-> than it, because each awaits several per-upstream timeouts in turn. Bringing those into line is what would make the
-> handler bound generous rather than merely bounded.
+1. the sandbox harness's limit on a single shell tool invocation;
+1. the guest retry helper's limit on a whole retried RPC call; and
+1. the `evidence` service's per-handler deadline.
+
+When the per-handler deadline expires, the service cancels the in-flight upstream requests and returns
+`DEADLINE_EXCEEDED` naming the RPC. Because the guest's tool budget is larger than the handler ceiling, the agent's
+script survives to handle the error and keep prior results. Unlike `UNAVAILABLE`, `DEADLINE_EXCEEDED` is **not** retried
+automatically, because reissuing the same slow composite call would immediately consume the remainder of the caller's
+budget.
+
+> **Trade-off.** For chained composite RPCs that await several upstream calls in sequence, the sum of per-upstream
+> timeouts can exceed the overall handler deadline, making the handler deadline a hard cut rather than a generous
+> ceiling above the worst case. Bringing those per-upstream timeouts into line is what would make the handler bound
+> generous rather than merely bounded.
 
 ### Provenance: every fact carries the releases it rests on
 
-Every retrieval carries a provenance record — source, every release the fact rests on, the exact query, and the
-retrieval time (PRODUCT §6 verifiable provenance). A live value stamped as-of its query time is reproducible without a
-mirror, which is what makes the no-mirror stance viable at all.
+Every RPC response carries a repeated `Provenance` record — naming the source, every dataset release the answer rests
+on, the exact query issued, and the retrieval timestamp ([`../PRODUCT.md`](../PRODUCT.md) §6). Stamping live retrievals
+with their query timestamp and upstream versions makes every answer reproducible without operating local database
+mirrors.
 
-The release list is **neither optional nor partial**. Two rpcs whose answers get joined are the reason: a
-transcript-annotation release and an expression release name different transcript sets, so where neither is stated a
-version disagreement between them reads as a disagreement about the gene — a curator question manufactured out of an
-unstamped join. An upstream that publishes no version of its own is asked for one separately, and a release that cannot
-be established is a fault rather than a bare assembly name. A partial list is worse than none, because it reads as a
-complete one.
+The release list on `Provenance` is required and must be complete on every call. When a run joins answers from two RPCs
+(for example, a transcript-annotation release from VariantValidator and an expression release from GTEx), omitting the
+release stamps makes a version skew between the two sources look like a biological discrepancy on the gene. If an
+upstream does not include its version in the primary response payload, the adapter queries the upstream's version/info
+endpoint separately; if a release stamp cannot be established, the call fails rather than returning a bare assembly name
+or a partial release list.
 
-Provenance is a repeated field on **every** response, including single-source ones. A caller that iterates one shape
-everywhere cannot get it wrong, and a response that later composes does not change contract.
+`Provenance` is a `repeated` field on **every** response message, including single-source RPCs, so callers iterate a
+single uniform field shape everywhere and a single-source RPC that later composes a second upstream does not break its
+wire contract.
 
 ### The in-sandbox library: `themis.svcv4`
 
-The deterministic framework logic ships into the sandbox image as an at-rest domain library plus a skill doc, imported
-and run by the agent in code mode. **Not a service**: it needs no egress and no secret, and it iterates fast because the
-combining rules are what we tune, so an rpc would add a network hop per re-score and couple that iteration to the egress
-deploy for nothing. A library is also reusable by the eval harness and by any server-side Python.
+The deterministic SVCv4 framework logic ships into the sandbox image as an offline Python library (`themis.svcv4` under
+[`themis/svcv4/`](../../themis/svcv4/)) accompanied by a skill document, imported and run by the agent in code mode.
+Keeping `themis.svcv4` as an in-sandbox library rather than a gRPC service avoids a network round-trip on every
+re-score, decouples rule iteration from `evidence` service deployments, and lets both the evaluation harness and
+server-side Python import the exact same package.
 
-The model calls it with the evidence plus its own judgement inputs — the mechanism factor, the exon factor, the eligible
-informative variants, the DAFT parameters — and gets back the transparent point tally and class band, then authors the
-verdict reasoning over the claims. **The evidence reaches it as the response messages themselves**, since those are what
-the model is holding: a **door** per source reads each one at the paths its own contract documents and returns the code
-it feeds, so which path a figure is read at, which vocabulary a term resolves to and which tier a score bins to are the
-library's steps rather than ones the model writes out. The judgement arrives beside them, typed. The call goes through a
-**typed builder per variant type**, one for each of the framework's ten workflows: the caller supplies the judgement
-inputs and the builder holds that workflow's caps and path structure, and the routing consequence selects the builder so
-that naming one is not a step either.
+The agent calls `themis.svcv4` with the retrieved evidence messages plus its own typed judgement inputs (the mechanism
+level, the exon-relevance tier, the eligible informative variants, and the DAFT parameters), receives the transparent
+point tally, derivation lines, and class band (which are shown, not load-bearing), and then authors the verdict
+reasoning over the claims rather than the rolled-up score. **The library accepts the protobuf response messages
+directly**: a per-source **door** function reads each response message at the documented proto paths, resolves its
+vocabulary, and bins its scores into the corresponding SVCv4 code. That call flows into a **typed builder per variant
+type** — one for each of SVCv4's ten consequence workflows — selected automatically from the routing consequence so the
+caller supplies only the judgement inputs while the builder enforces that workflow's path structure and caps.
 
-It holds:
+`themis.svcv4` implements:
 
-- the scoring and combining engine — points to class, the matrix multiplier on positive predictive points,
-  informative-variant points added *after* the matrix, per-code caps and the concept and category caps above them, the
-  missense/splice max-path, the GDV-gate cap;
-- the splice-tier cells per flow and per colour, including the two-layer combine cap the reference states only as a
-  union across the three workflows that reach a splice tier;
-- DAFT computation with `POP_FRQ` binning, and `POP_HMZ`;
-- Grantham distance (the missense same-codon comparator) and the four summable missense informative-variant sub-rules;
-- the NMD/NSD determination from transcript structure;
-- OddsPath and animal-model calibration tables;
-- and the score-to-bin thresholds with the single-predictor-per-gene enforcement.
+- the scoring and combining engine: mapping points to pathogenicity classes, applying the 3×3 matrix multiplier to
+  positive predictive points, adding informative-variant points *after* the matrix, enforcing per-code, concept, and
+  category caps, taking the missense-vs-splice maximum path, and applying the GDV gate class cap;
+- the splice-tier cells per workflow and per splice colour, including the two-layer combination cap across the three
+  workflows that reach a splice tier;
+- DAFT computation across SM3's four rungs with `POP_FRQ` binning and `POP_HMZ`;
+- Grantham distance (as the missense same-codon comparator) and the four summable missense informative-variant
+  sub-rules;
+- NMD and NSD determination from transcript structure;
+- OddsPath and animal-model calibration tables; and
+- score-to-bin predictor thresholds with single-predictor-per-gene policy enforcement.
 
-Its data is the SVCv4 reference — typed value modules in the package — and the predictor policy beside them; the ten
-workflow-diagram transcriptions its per-variant-type structure is read from stay in the corpus, at the revision the
-reference's citation pin names. Where a transcription flags a diagram-versus-text numeric conflict, the ClinGen Pilot
-Calculator is the tie-breaking **oracle** (see
-[Eval](#eval-the-contract-runs-read-against-curations-then-the-calculator-oracle)).
+The package's data modules hold the transcribed SVCv4 reference tables and the frozen per-gene predictor policy, while
+the ten workflow-diagram transcriptions remain in the private SVCv4 corpus at the revision named by the reference's
+citation pin. Whenever a supplement diagram and main-text table disagree numerically, the ClinGen Pilot Calculator
+serves as the tie-breaking **oracle**
+([see Eval below](#eval-the-contract-runs-read-against-curations-then-the-calculator-oracle)).
 
-**Two of its numbers are explicit caller inputs rather than derivations**: the stop-lost NSD branch, routed through the
-null path, and the exon-duplication not-tandem cap. Neither has a worked case anywhere in the standard to check a
-derivation against; requiring the number keeps it the caller's and visible, where deriving it would fold an invented
-figure into the tally.
+**Two unscored edge-case numbers are required as explicit caller inputs rather than derived inside the library**: the
+stop-lost NSD branch (routed through the null path) and the exon-duplication not-tandem cap. Because the standard
+provides no worked example for either branch to verify a formula against, requiring the caller to pass the number keeps
+that choice visible in the call site rather than hiding an invented rule inside the tally.
 
 ### The library takes categorical judgements and returns derivations
 
-All seven `CLN_*` and `LOC_*` codes are **deterministic downstream of a categorical judgement**. What is irreducibly the
-analyst's is the reading that indexes the table — the phenotype tier, whether each of SM4's conjuncts is affirmed,
-parentage, each relative's genotype and affected status, the penetrance band, the in-trans class, which yield figure
-applies
+All seven clinical and locus codes (`CLN_*` and `LOC_*` in SM4 and SM5) are **deterministic downstream of a categorical
+judgement**. The analyst's irreducible job is reading the case evidence to index the table: choosing the phenotype tier,
+confirming whether each of SM4's conjuncts holds, checking parentage, recording each relative's genotype and affected
+status, selecting the penetrance band, classifying in-trans phase, and picking which diagnostic yield figure applies
 ([`svcv4-interpretations.md`](svcv4-interpretations.md#clinical-and-locus-observations-the-categorical-readings)). The
-library takes those categorical answers and returns the points, the cell it read, and the per-observation derivation,
-applying aggregation and caps. The judgement stays where the framework puts it; the arithmetic stops being a step script
-— the Python the agent writes and runs for one analysis step.
+library accepts those categorical inputs, applies the table lookup, aggregation, and caps, and returns both the awarded
+points and the per-observation derivation string.
 
-**Every helper returns its derivation with its total, or the move is net negative.** A sum written out in a step script
-is a number a reviewer checks against the printed table; a helper returning a bare total makes them reconstruct which
-cell it was. The worst case is confirmed-versus-assumed in-trans phase, where points turn on one word in a referral — so
-the derivation carries the phase *basis*, not the enum name.
+**Every scoring helper returns its human-readable derivation alongside its point total.** If a helper returned only a
+bare float, a reviewer could not tell which table cell or cap produced the number — especially for confirmed versus
+assumed in-trans phase (`CLN_CIS`), where the awarded points turn on a single word in a clinical referral. Each
+derivation therefore states the phase *basis* and cell coordinates explicitly.
 
-Three signatures follow from readings that a single value would bury: the SM4 affected-proband column takes **three
-booleans**, not one judgement; phenotype specificity takes the **numerator and denominator**, never a percentage; and
-the exon inventory is tabulated with the **admitted set passed in explicitly**, which keeps SM18's admission filter
-shown rather than buried. The splice colour splits for a different reason — everything but "does a score above the
-threshold have a certain consequence" is a threshold table plus a truth table. Two framework invariants fold in with the
-lookups: SM4's affected-proband code is unavailable outside two `POP_FRQ` values, and the library refuses a conditioned
-code awarding points outside that gate, with no `POP_FRQ` in the tally at all, or under one it did not determine.
+Three function signatures take unpacked inputs so a single summary argument cannot bury a required clinical reading:
 
-**Where a reading is unsettled, the library requires the value rather than deriving it.** A helper that resolved an open
-conflict would hide it: a boolean for SM18's waiver would silently permit a double count of the same pathogenic
-variants, and a `bool` for specific-versus-consistent phenotype reads the *absence* of an examination as False. The four
-readings held open this way are in
-[`svcv4-interpretations.md`](svcv4-interpretations.md#clinical-and-locus-observations-the-categorical-readings); the
-mechanism level is a fifth, and Uncertain must never arrive as its default. Transcribing SM5's per-co-segregation row
-table is the one external precondition on any of this; the rest is local.
+- SM4's affected-proband column takes **three separate booleans** corresponding to its three conjuncts rather than a
+  single pre-combined boolean;
+- phenotype specificity takes the **numerator and denominator** counts rather than a pre-divided percentage; and
+- the exon inclusion inventory takes the **admitted transcript set explicitly**, keeping SM18's admission filter visible
+  at the call site.
 
-The same argument reaches past the clinical and locus codes. Each of these is deterministic downstream of stated inputs,
-and belongs in the library on that ground:
+In addition, the library enforces SM4's gating invariant directly: because the affected-proband code is available only
+under two specific `POP_FRQ` outcomes, `themis.svcv4` rejects any tally that awards affected-proband points outside that
+gate, when `POP_FRQ` is missing from the tally, or when `POP_FRQ` was marked undetermined.
 
-- the NMD/NSD inputs — the exon structure from a transcript, the PTC position from a protein HGVS;
-- SM20's control-count-to-points tables;
+**Where a clinical reading is unsettled in the standard, the library requires an explicit caller argument rather than
+supplying a default.** Supplying a default boolean for SM18's waiver would silently permit double-counting the same
+pathogenic variants, and defaulting a specific-versus-consistent phenotype flag to `False` would treat the *absence* of
+a clinical examination as a negative examination. Those four open clinical readings are documented in
+[`svcv4-interpretations.md`](svcv4-interpretations.md#clinical-and-locus-observations-the-categorical-readings), and the
+fifth is the mechanism level, where `Uncertain` must never be supplied as a silent default. (Transcribing SM5's
+per-co-segregation row table is the single remaining reference transcription needed to complete this module.)
+
+The same rule — deterministic computation downstream of stated inputs belongs in `themis.svcv4` — also places six
+further helpers in the library:
+
+- the NMD/NSD structural inputs (exon structure from a transcript and PTC position from a protein HGVS);
+- SM20's control-count-to-points lookup tables;
 - splice-colour routing;
-- the exon-inventory tabulation with its pext comparison;
-- the coding-prediction protein-fraction tier;
-- and the missense informative-variant positional predicates (a list, never a boolean).
+- exon-inventory tabulation with its pext comparison;
+- the coding-prediction protein-fraction tier; and
+- the missense informative-variant positional predicates (returning the matching list rather than a bare boolean).
 
 ### The shipped package carries the rules, not the evidence for them
 
-`themis.svcv4` ships into the sandbox whole, so its docstrings *and its reference data* are text a classification run
-reads while classifying. They must carry the rule a caller needs to apply the framework correctly and not the evidence
-for it: a worked case naming a gene, its parameters and its resulting points hands a run being scored on that gene the
-answer, and the reference set is drawn from the same SVCv4 corpus these arguments were worked against. No image copies
-`docs/`, so the evidence lives in these docs — reachable by every human who needs it, and by no run.
+Because `themis.svcv4` ships inside the sandbox image, its docstrings and reference data tables are readable by the
+agent during an evaluation run. If a docstring or data comment included a worked example naming an evaluation gene, its
+parameters, and its resulting point score, an agent classifying that gene could read the answer directly out of the
+package — particularly since our reference evaluation set is drawn from the same SVCv4 practice corpus used to work out
+our interpretations. Because no sandbox image copies `docs/`, all worked gene examples and empirical evidence live in
+`docs/design/` (accessible to human developers and invisible to sandboxed runs).
 
-Two authoring rules follow, and **neither can be recorded in the shipped files themselves**: a note there saying an
-example was withheld tells a run it is being evaluated, and turns every gene still named into a signal that that gene is
-not a case.
+Two authoring rules prevent benchmark leakage into `themis/svcv4/` — and **neither rule may be mentioned in comments
+inside the shipped files**, because a comment noting that an example was withheld tells the model it is being evaluated
+and turns every remaining gene name into a negative signal:
 
-1. **The shipped scoring reference illustrates no rule with a gene.** Each scenario carries its whole policy in its own
-   scenario/action pair, so there is no asymmetry to reason from and no per-gene example to keep screening.
-1. **Elsewhere in the package, a worked example names a gene the reference set does not**, and states the inputs it is
-   worked from rather than a bare result.
+1. **The shipped scoring reference illustrates no rule with a specific gene.** Each scenario states its policy as a
+   general condition/action pair with no gene-specific examples.
+1. **Elsewhere in `themis.svcv4`, any worked docstring example must use a gene absent from the reference evaluation
+   set** and must show how the result is derived from the inputs rather than stating a bare classification answer.
 
-Nothing automatic stands behind either rule, because what leaks is an answer and not a string: a gene the reference set
-does not carry can still restate a case's result, so a check matching symbols would let through the text worth catching.
-The screen is a reading, made when the text is written.
+Because benchmark leakage is semantic (an example on a non-corpus gene can still leak a corpus case's answer if it
+mirrors the case's exact parameters), this screen is enforced during code review when authoring or updating
+`themis.svcv4`. Furthermore, when transcribing tables from the SVCv4 supplements into `themis.svcv4`, any worked
+examples in the supplement that name genes or exon ranges in the reference set must be stripped or replaced with
+non-corpus genes before transcription. General lookup grids that name no gene — such as SM3's DAFT grids for X-linked
+MDEs and SM20's control-count grids for small functional assays — are kept in full because classifications cannot be
+computed without them.
 
-The tests are the exception, and not one the screen can close: a test worth running names its subject and states the
-answer it expects. So the requirement falls on packaging rather than on authoring — an image carrying `themis.svcv4`
-leaves the test suites out.
+Unit test suites inevitably name specific test subjects and expected answers, so **sandbox container images must exclude
+all test directories when packaging `themis.svcv4`**.
 
-**Screen a supplement against the reference set's subjects before transcribing it.** The standard's own worked examples
-name specific genes and exon ranges, and thereby state an answer for whichever of them a case is graded on. Substituting
-a gene the set does not carry, or dropping the example, is a precondition on transcribing a supplement, not an
-afterthought. What stays, stays for a reason: SM3's DAFT grids and SM20's control-count grids are carried, because an
-X-linked MDE reaches no DAFT without the first and a small functional experiment reaches no points without the second,
-and neither names a gene or states a case's answer.
-
-> **The reference is deliberately quieter than the corpus it is transcribed from, and that silence is load-bearing.** It
-> omits several cells and rules that each keep a live case question open, and carries no marker saying so — the correct
-> state, by the rule above. The corpus holds complete transcriptions of the same tables, so re-reading one of them into
-> the reference is the likeliest way an omission gets helpfully closed. Guard it whenever a value is re-read.
+> **Guard deliberate omissions when re-reading from the SVCv4 corpus.** The shipped reference tables in `themis.svcv4`
+> deliberately omit several cells and rules that would otherwise give away live evaluation questions, and carry no
+> in-code marker saying so. Because the private SVCv4 corpus holds complete transcriptions of those tables, anyone
+> syncing values from the corpus into `themis.svcv4` must check that those deliberate omissions are not accidentally
+> filled in.
 
 ### Eval: the contract, runs read against curations, then the calculator oracle
 
-Three layers, each answering a different question.
+Evaluation of the interfaces and rule library is split across three layers, each testing a distinct boundary:
 
-- **Unit tests** per rpc against recorded upstream fixtures, so CI needs no live network, and per library function and
-  builder against worked micro-cases. Each door is driven from the service's own response message and `classify_variant`
-  from a variant's consequence, so the path from a wire message to a scored tally is exercised whole rather than only in
-  pieces.
+- **Unit tests against recorded upstream fixtures and micro-cases.** Every RPC adapter is tested in CI against recorded
+  upstream HTTP responses (requiring no live network access), and every `themis.svcv4` function, door, and workflow
+  builder is tested against worked micro-cases. Driving each door from the service's protobuf response message and
+  `classify_variant` from the variant's consequence exercises the full path from wire message to scored tally.
 
-- **Runs read against curated ground truth.** Whether a class is *right* for a real variant is not something the
-  library's own tests can settle: an expected class derived from the framework and applied to transcribed inputs is the
-  arithmetic under test, run twice. It has to come from a curation instead — which is the run-review loop reading runs
-  against the curation worksheet ([`run-review-loop.md`](run-review-loop.md)), not a test suite.
+- **Agent runs evaluated against expert curations.** Unit tests on `themis.svcv4` only prove that the library matches
+  our transcription of the rules. Whether a classification is *right* for a real variant is evaluated by the run-review
+  loop, which compares full agent runs against expert-curated worksheets on the reference set
+  ([`run-review-loop.md`](run-review-loop.md)). Where a curator's worksheet derives `MIS_PRD` using a different
+  predictor than our frozen per-gene policy selects, both choices are valid pre-selected predictors; the run-review
+  reader records that **predictor-attributable divergence** with both predictor names and scores rather than marking the
+  run wrong (whereas diverging on the policy's *own* predictor is scored as an error).
 
-- **The calculator oracle — the gold-standard diff.** The ClinGen Pilot Calculator computes classifications client-side,
-  so the oracle fetches the bundle at runtime and evaluates it in an isolated JavaScript context with no ambient
-  globals, diffing the cap tables, the banding across every class edge, the missense-versus-splice max path, and
-  clamping.
+- **The ClinGen Pilot Calculator oracle.** Because the
+  [ClinGen Pilot Calculator](https://calculator.clinicalgenome.org/v4/pilot/ui/classification) evaluates classifications
+  client-side in JavaScript, our oracle script fetches its bundle at runtime and executes it in an isolated JavaScript
+  context to diff cap tables, class-boundary banding, the missense-vs-splice maximum path, and score clamping against
+  `themis.svcv4`.
 
-  **It is a manual gate, not a CI job.** It needs a JavaScript runtime and network access, so a divergence surfaces only
-  when someone runs it, and then as a diff a reader can attribute to the wrong side. Each pinned divergence therefore
-  also carries a CI test asserting the pin's *our* side against the loaded reference: a library change that silently
-  converges on the calculator fails there rather than waiting for the next manual run. What the oracle cannot answer at
-  all: per-code point values, which the bundle does not carry — so scoring a case end to end, evidence in and class out,
-  is beyond its reach — and the GDV gate, which the calculator does not implement. Over what it does reach the combining
-  engine matches exactly, and the pinned divergences are readings of the standard rather than defects on either side
-  ([`svcv4-interpretations.md`](svcv4-interpretations.md#where-the-standard-contradicts-itself)).
+  Because the oracle requires a JavaScript runtime and live network fetch, it runs as a **manual verification gate
+  rather than a CI job**. To prevent silent regressions between manual runs, every intentional divergence between
+  `themis.svcv4` and the calculator
+  ([`svcv4-interpretations.md`](svcv4-interpretations.md#where-the-standard-contradicts-itself)) is backed by a CI test
+  pinning our side of the divergence against the loaded reference. The calculator oracle does not cover per-code point
+  lookups (its bundle takes pre-scored code points rather than raw evidence) or the GDV gate (which the calculator does
+  not implement); across everything the bundle does compute, `themis.svcv4`'s combining engine matches it outside the
+  pinned divergences.
 
-  > **The bundle (© Baylor College of Medicine) is read, not copied.** The oracle fetches it at runtime and evaluates it
-  > in memory; nothing from it is vendored, quoted or copied into a tracked file, apart from the calculator-side ranges
-  > the pinned divergences state.
-
-**Predictor-attributable divergence is recorded, not scored wrong.** Where a curator's worksheet derives `MIS_PRD` from
-a different predictor than the policy names, both choices are valid — each was pre-selected — so the run-review loop's
-reader records the divergence with both predictors and both scores rather than grading the run on it. Diverging on the
-policy's *own* predictor is an error.
+  > **Licensing of the calculator bundle (© Baylor College of Medicine).** The oracle script fetches the calculator
+  > bundle at runtime and evaluates it in memory; no code or tables from the bundle are vendored, quoted, or copied into
+  > tracked files, apart from noting the numeric ranges on the calculator side of our pinned divergences.
 
 ### Proto layout
 
-The contract is **one `.proto` per interface** under [`schema/proto/themis/rpc/`](../../schema/proto/themis/rpc), each
-in package `themis.rpc.<source>`, plus [`evidence.proto`](../../schema/proto/themis/evidence/models/evidence.proto) for
-the value types they exchange.
+The wire contract consists of **one `.proto` file per interface** under
+[`schema/proto/themis/rpc/`](../../schema/proto/themis/rpc), each in package `themis.rpc.<source>`, plus
+[`evidence.proto`](../../schema/proto/themis/evidence/models/evidence.proto) for the value types exchanged across
+multiple interfaces.
 
-**A type sits in the shared file only where more than one contract exchanges it.** Two kinds of type qualify. Provenance
-and a genomic span are exchanged by most of the interfaces — a ClinVar record and a transcript exon are placed by the
-same coordinates — so housing them in one source's file would make every other contract import that source's to name a
-coordinate. The routing vocabulary, molecular consequence, crosses a wider seam: an evidence interface answers it about
-a variant, a curator states it on a worksheet, and a run's answer and a curator's are comparable only as one enum
-([`curation-surface.md`](curation-surface.md) §One vocabulary per concept). The mode of inheritance is not in the shared
-file, because no interface answers it in the framework's terms; it is the framework's own enum, in `svcv4.proto`. The
-coding-coordinate types and the transcript-namespace enum have one exchanger each, so they live with it: the c.
-coordinate types in `clinvar.proto` and the namespace enum in `transcript.proto`. The shared file declares no service
-and imports no rpc file, so the dependency runs one way.
+**A message or enum lives in the shared `evidence.proto` file only when more than one interface exchanges it:**
 
-**Every response layers the same three things**: the typed load-bearing fields, then the upstream material, then the
-provenance list. Typing only the load-bearing fields and passing the rest through is the "external data" posture
-[`proto.md`](proto.md) already sets; the typing that *is* added is documentation, not translation. Within the upstream
-material, three cases are distinguished by what a caller does with it.
+- `Provenance` and genomic coordinate spans are exchanged by most interfaces (for example, both a ClinVar record and a
+  transcript exon are placed by the same genomic span), so defining them in `evidence.proto` avoids cross-importing one
+  source's RPC proto into another's.
+- The molecular consequence routing enum crosses an even wider boundary: an evidence interface returns it for a variant,
+  a curator records it on a worksheet, and the run-review loop compares the two using that single shared enum
+  ([`curation-surface.md`](curation-surface.md#one-vocabulary-per-concept)).
+- By contrast, the mode of inheritance is not in `evidence.proto` because no retrieval interface returns it in SVCv4's
+  vocabulary; it lives in `svcv4.proto`. Coding-coordinate (`c.`) types live in `clinvar.proto` and the transcript
+  namespace enum lives in `transcript.proto` because each has a single owning interface. `evidence.proto` declares no
+  gRPC service and imports no RPC proto, keeping the dependency graph acyclic.
 
-- **State a caller branches on is typed**, however raw its origin. The ClinVar pool census is the case that forced the
-  distinction: the search term issued, the total it matched and how much was fetched decide whether a pool is a census
-  or a prefix, and the term itself is decision-bearing, since the membership gate is a six-token disjunction.
-- **A payload nothing branches on stays a `Struct`, and where a response carries two upstreams' payloads they are named
-  apart** — a ClinVar span search returns the VariantValidator projection it ran on under its own field, not pooled into
-  one `raw`. A reader of a replay payload is a human or a re-run, and a field named for whose payload it is is one they
-  can attribute.
-- **A payload with a published schema is generated, not hand-modelled.** The queried allele's whole VCV record is the
-  richest thing on this surface — per-submission observations, assertion methods, citations — and NCBI publishes an XSD
-  for it, so the message is generated from that XSD rather than transcribed. The generating happens in its own repo,
-  which publishes the record type as a pinned wheel; the rules that come with consuming one are in
-  [`proto.md`](proto.md#generated-upstream-schemas). A `Struct` there would make every consumer re-derive a schema the
-  source already publishes.
+**Every RPC response layers three kinds of fields** following [`proto.md`](proto.md):
 
-An rpc becomes agent-callable by an option on its declaration, from which the hatch allowlist and forwarders are
-generated ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). That is why adding an rpc is not free: it costs a
-forwarder, an allowlist regeneration, a fixture table and a servicer method.
+1. **Typed decision-bearing fields.** Any state that downstream code or the caller branches on is strongly typed,
+   regardless of how raw its upstream origin is. For example, the ClinVar pool census (`search_term`, `total_count`,
+   `fetched_count`, truncation flag) is typed because it determines whether a pool is complete or a prefix.
+1. **Untyped upstream pass-throughs (`google.protobuf.Struct`).** Upstream payload fields that nothing in code branches
+   on remain in a `Struct` so the model can read them without brittle hand-written schemas. When an RPC composes two
+   upstreams, their pass-through payloads are stored in separate named fields (for example, `ClinVar.SearchCodingSpan`
+   returns the VariantValidator projection in its own field rather than merging it with ClinVar's payload into a single
+   `raw` field), so any field in a replay log can be attributed to its source.
+1. **Generated schemas where the upstream publishes a formal schema.** For `ClinVar.DescribeVariant`, the queried
+   allele's full VCV record carries rich per-submission observations, assertion methods, and citations governed by an
+   official NCBI XSD. Rather than hand-transcribing that schema or collapsing it to a `Struct`, the protobuf message is
+   generated from NCBI's XSD in a dedicated repository and consumed as a pinned wheel
+   ([`proto.md`](proto.md#generated-upstream-schemas)).
+
+Finally, every response ends with the repeated `Provenance` list. An RPC becomes callable from the sandbox when
+annotated with the `agent_exposed` method option in its `.proto` file, from which the hatch allowlist and guest
+forwarders are generated ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
 
 ## Alternatives considered
 
-Each option weighed, and the reason it was rejected, grouped by what it is an alternative to.
-
 ### Shape of the service surface
 
-- **One gRPC service carrying every source's rpcs.** Rejected on two counts, neither of them deployment shape — the
-  deployment is one either way. The **contract** is the first: one service puts twelve unrelated rpcs and their whole
-  message set in one file, so every consumer of a gnomAD id compiles ClinVar's submission model, breaking-change
-  detection reports one baseline for twelve independently evolving upstreams, and the file grows past what a reader — or
-  a model holding it as context — can hold. The **name** is the second: an rpc is named for what it does, and the
-  qualifier saying which source answered it is the service. Three interfaces each serve a `DescribeVariant` about their
-  own source, where one service would force the source names into the rpc names and they would read as sources rather
-  than operations. Per source, the file boundary and the naming boundary coincide with the boundary the upstream itself
-  moves along.
-- **One service per evidence tool, each its own deployment.** Rejected: under the bubblewrap boundary there is no
-  isolation to gain, since there are no per-service egress allowlists, while each deployment adds a cold start, an image
-  and a hatch-wiring step. Sharing one deployment costs nothing on failure isolation, which is already per rpc.
-- **The scoring engine as an rpc.** Rejected: it needs no egress and iterates fastest, so an rpc adds a network hop per
-  re-score and couples that iteration to the egress deploy.
-- **A separate transcript-inventory rpc.** Rejected for now: `Transcript.AssessExonRelevance` already takes the exact
-  key the inventory is scoped by and already joins its sources on genomic interval, while a new rpc costs the full
-  per-rpc price for a second consumer that does not exist. Revisit if something wants the inventory without an exon.
-- **Fully typing every upstream payload.** Rejected as needless massaging: the model parses raw JSON reliably, so only
-  the ACMG-load-bearing fields and the remaps are typed. The exception is a payload whose owner publishes a schema,
-  where the message is generated rather than authored and the massaging cost is a version pin
-  ([Proto layout](#proto-layout)).
-- **Letting the model do the point arithmetic too.** Rejected: the tally must be reproducible and auditable, and the
-  score is shown-not-load-bearing. Deterministic code yields the same points every run plus a trace the curator can
-  check; a model re-deriving arithmetic per run gives neither. The model's contribution is the judgement *inputs* and
-  the verdict, not the addition.
-- **Letting the model pick the predictor per variant** — "judgement everywhere", taken literally. Rejected: SM6 bans it
-  as multiple-testing over correlated metapredictors, so the expert judgement moves to policy time — a place where
-  "everywhere" would break the standard.
+- **A single gRPC service carrying all twelve RPCs.** Rejected on both contract maintainability and naming clarity.
+  Putting twelve RPCs and all of their message types into one `.proto` file forces every consumer of a gnomAD ID to
+  compile ClinVar's submission model, collapses breaking-change detection into a single baseline across twelve
+  independently evolving upstreams, and bloats the file beyond what a reader or model context window should hold. Naming
+  also degrades under a single service: three interfaces each define a `DescribeVariant` RPC qualified by their service
+  name (`Gnomad`, `ClinVar`, `MaveDb`), whereas a single service would have to bake the source names into the method
+  names. Splitting one service and `.proto` file per source aligns the contract boundary with the upstream that owns it
+  while still running all nine services in one deployment.
+- **Deploying each evidence interface as a separate Cloud Run service.** Rejected because the sandbox's bubblewrap guest
+  has no network egress of its own and reaches every tool through the same gRPC hatch; separate deployments would add
+  cold starts, container images, and hatch-routing configuration without adding security isolation or improving per-RPC
+  failure isolation.
+- **Exposing the `themis.svcv4` scoring engine as a gRPC service.** Rejected because rule arithmetic requires no network
+  egress or secrets and iterates frequently; wrapping it in an RPC would add a network hop on every re-score and couple
+  scoring changes to service deployments.
+- **Adding a standalone transcript-inventory RPC.** Rejected for now because `Transcript.AssessExonRelevance` already
+  takes the exact gene/exon key that scopes the inventory and already joins the transcript sources by genomic interval.
+  Adding a thirteenth RPC would pay the full forwarder, allowlist, fixture, and servicer cost for a second consumer that
+  does not exist yet.
+- **Fully typing every field of every upstream JSON payload in protobuf.** Rejected because the agent parses raw JSON in
+  `Struct` fields reliably; hand-maintaining protobuf schemas for non-load-bearing upstream fields adds churn whenever
+  an upstream adds a field. Where an upstream publishes an official schema (such as ClinVar's VCV XSD), we generate the
+  protobuf schema rather than hand-authoring it ([Proto layout](#proto-layout)).
+- **Letting the model perform the SVCv4 point arithmetic in prose.** In the gene-first assessment run, the model applied
+  SVCv4 formulas and tables in prose with no library check. Even though the point total is shown rather than
+  load-bearing, the shown tally and derivation lines must still be arithmetic that the curator can trust: a prose tally
+  silently drifts on rounding, caps (`NUL` + `SPL` cap, `*_INF` + `CMM` cap), and table boundaries
+  ([`../PRODUCT.md`](../PRODUCT.md) §6). Moving the published arithmetic into `themis.svcv4` makes the displayed tally
+  deterministic and auditable while leaving the categorical judgements and the verdict reasoning with the analyst.
+- **Letting the model choose which in-silico predictor to use per variant.** Rejected because SM6 prohibits choosing a
+  predictor after seeing the scores (which constitutes multiple testing across correlated metapredictors). Predictor
+  selection is therefore fixed once per gene in advance as frozen policy.
 
 ### Identifiers and keys
 
-- **Routing a positional variant id to Ensembl's region endpoint** rather than refusing it in `Vep.Annotate`. *Feasible*
-  — that endpoint carries the predictor scores the interface depends on — and rejected anyway, for two reasons. The
-  normalisation rpc hands the agent a GRCh37 positional id beside the GRCh38 one and nothing in either says which it is,
-  so the same silent-wrong-variant failure returns by another route. And a gnomAD-style indel id is VCF-style with a
-  padding base, making region derivation a second normaliser whose off-by-one is as silent.
-- **Accepting an Ensembl accession in the normalisation or exon-table rpcs** so the expression rows join directly.
-  Rejected: the RefSeq-only spine is load-bearing, since canonicalisation and the coding-coordinate arithmetic both
-  depend on it and VariantValidator has no Ensembl record. The problem it was meant to solve dissolves on coordinates
-  instead — the inventory reads each namespace natively and runs the interval test in it.
-- **`MaveDb.DescribeVariant` taking a ClinGen allele id directly**, which a caller already holds. Rejected for now: a
-  bare canonical id reaches only nucleotide-level deposits, and the protein-level ones — where a missense or synonymous
-  variant is usually assayed — are keyed on an id the caller has no typed field for. Accepting an id would save a round
-  trip but still needs the id expanded through the registry, so taking the expression keeps one path. Surfacing the
-  protein allele id on the normalisation response would remove the hop altogether, at the cost of a proto field and a
-  per-transcript choice the caller then has to make correctly.
-- **`MaveDb.DescribeVariant` accepting a genomic HGVS.** It would work — the registry resolves it to the same canonical
-  allele. Left out because nothing upstream produces one, and each accepted shape is a form whose rejection has to stay
-  legible.
-- **Ensembl's transcript-lookup endpoint for the exon table.** Rejected on three counts. It is keyed on an Ensembl
-  accession, so a RefSeq-first service must cross namespaces first. It returns genomic exon bounds only, leaving the
-  caller to sum CDS lengths to reach coding coordinates — the arithmetic the rpc exists to remove. And the Ensembl
-  alignment can differ from the RefSeq one, so the table would not describe the transcript the rest of these interfaces
-  resolve onto.
-- **Taking the PTC position as a caller input** — exon table only, no sequence. Rejected: the point of the rpc is to
-  remove the hand-derivation, and the caller cannot derive a PTC without the bases either. Fetching the transcript
-  sequence costs one cached upstream request and makes the product classification a read rather than an assumption.
-- **A sequence-length bound on the positional ids, as a shape rule.** Kept, but as a **transport** bound refused with
-  its own message. A per-allele character bound is neither: the normalisation rpc hands out a longer id for a kilobase
-  deletion, and both rpcs refused it with a *format* complaint about an id in exactly the right format, closing
-  frequency and splice prediction for every large indel. Measured against the live upstreams, gnomAD carries the id in a
-  POST body and parses it whatever its length, while the splice hosts carry it in a request line and fail past a size
-  limit. There is no second route for an allele past the bound: the splice predictors cannot be handed a sequence, and
-  an allele that size is in gnomAD's structural-variant release, which these rpcs do not serve.
+- **Accepting a positional variant ID on `Vep.Annotate` and routing it to Ensembl's region endpoint.** Although
+  Ensembl's region endpoint returns the required predictor scores, accepting positional IDs on `Vep.Annotate` was
+  rejected for two reasons: `Variant.Normalize` returns both GRCh37 and GRCh38 positional IDs whose strings do not
+  self-identify their assembly (risking silent wrong-build queries), and converting a VCF-style padded indel ID into an
+  Ensembl region span introduces a second coordinate normaliser prone to off-by-one errors.
+- **Accepting Ensembl `ENST*` accessions on `Variant.Normalize` or `Transcript.GetStructure`.** Rejected because
+  VariantValidator — which underpins both canonicalisation and coding-coordinate arithmetic — serves RefSeq coding
+  accessions and holds no Ensembl records. The cross-namespace join needed for exon relevance is solved on genomic
+  interval coordinates instead, testing inclusion natively inside each namespace.
+- **Taking a ClinGen allele ID (`CA*`) directly on `MaveDb.DescribeVariant`.** Rejected for now because a canonical
+  nucleotide `CA*` ID matches only nucleotide-level MaveDB deposits, whereas missense and synonymous variants are
+  frequently assayed in protein-level deposits keyed on a `PA*` protein allele ID that is not currently surfaced on
+  `Variant.Normalize`. Taking the variant expression lets `MaveDb.DescribeVariant` expand both the nucleotide and
+  protein allele IDs through the Allele Registry in one place. Surfacing the `PA*` protein allele ID on the
+  `Variant.Normalize` response would remove that extra hop, at the cost of a proto field and a per-transcript choice the
+  caller then has to make correctly.
+- **Accepting genomic HGVS (`NC_*:g.*`) on `MaveDb.DescribeVariant`.** Omitted because no upstream tool in the workflow
+  emits genomic HGVS as its primary key, and keeping the accepted input forms small keeps validation errors clear.
+- **Using Ensembl's transcript-lookup endpoint for `Transcript.GetStructure`.** Rejected on three counts: it is keyed on
+  Ensembl accessions rather than RefSeq, it returns genomic exon bounds without coding (`c.`) coordinates (forcing the
+  caller to sum CDS lengths by hand), and Ensembl's transcript alignment can differ from RefSeq's alignment used across
+  the rest of the surface.
+- **Requiring the caller to pass the premature termination codon (PTC) position into `Splice.PredictSkipOutcome`**
+  rather than fetching the transcript sequence. Rejected because the caller cannot determine where a frameshifted
+  reading frame hits a stop codon without the nucleotide sequence either; fetching the cached RefSeq sequence from NCBI
+  Nucleotide lets the RPC read the actual PTC off the spliced sequence.
+- **Enforcing a short character-length cap on positional variant IDs as a syntax rule.** Replaced with a separate
+  transport-length check (~8 kB) that returns a dedicated error message. A tight per-allele character limit rejected
+  valid 1 kb deletions returned by `Variant.Normalize` with a misleading "invalid format" error, blocking frequency and
+  splice calls on large indels. Against the live upstreams, gnomAD sends the ID in a `POST` body and accepts any length
+  within the small-variant release, whereas the Broad splice hosts place the ID in a `GET` request line that fails past
+  the HTTP server's URI length limit. There is no second route for an allele past that transport bound: the splice
+  predictors cannot be handed a sequence directly, and an allele of that size belongs to gnomAD's structural-variant
+  release, which these RPCs do not serve.
 
 ### ClinVar and gene-disease scoping
 
-- **A gene-wide all-classification ClinVar pool** instead of a span search. Rejected: wrong unit and unfetchable. The
-  informative-variant rules key on a codon or an exon, and on the genes where the benign and VUS arms matter the
-  gene-wide set cannot be fetched. Widening the existing pool with a classification filter has the same defect — still
-  gene-scoped, still truncated exactly where a codon census has to be complete.
-- **Sweeping a string search across transcript versions** to find an allele ClinVar indexes under another rendering.
-  Rejected as the primary route: the versions ClinVar indexes are not knowable in advance, so each guess is another
-  rate-limited round trip — and the motivating case is not a version problem at all, since the current version is
-  indexed under a repeat notation no version sweep would have produced.
-- **Keeping a string search as a recency check on the empty-crosswalk path**, so a variant classified since the last
-  crosswalk ingest is not reported as novel. Rejected for what it costs to buy a closing window: it reinstates the exact
-  lookup whose miss motivated identity keying, gives every absence two routes and therefore an outcome enum to say which
-  one answered, and re-exposes the NCBI tokenisation hazard — an unquoted HGVS string is tokenised and answered with a
-  *different* allele of the same codon. The staleness it addresses is bounded, stated in the provenance, and dissolved
-  by the dump.
-- **Staying on ClinVar's query API as the end state.** Rejected, for the root cause the goal section names: a
-  dump-backed index keyed on canonical SPDI dissolves five separate defects at once
-  ([above](#goal-what-else-has-been-classified-at-this-codon-this-exon-and-across-the-gene)). What it costs is
-  freshness, which the release list states, and the ingest itself; what it does not cost is any change to the rpc
-  surface, which is why living with the query API in the meantime is not a dead end.
-- **Scoping `GeneDisease.DescribeGene` by a free-text disease string** (substring containment, survivors reduced by
-  max). Rejected: it fails three ways, each silently. A caller's natural phrasing that is not a substring of the
-  curator's label drops the ClinGen curation, and lets the classification fall through to whichever submitter spelled it
-  the caller's way. A shorter phrasing matches several distinct entities and the max returns the strongest, removing the
-  cap SM21's multiple-disorder rule exists to impose. And proto3 cannot tell an unset string from an empty one, so the
-  default behaviour answers for the whole gene with nothing saying so. Scoping by MONDO id *alone* does not fix it
-  either, since curators curate a numbered subtype of the term a presentation names. What separates the cases is that
-  "which entity is this presentation's" is a judgement and "is this curated term a kind of the one I named" is a
-  question the ontology answers: the first goes to the model with the full entity list, the second to code with the
-  closure.
-- **Removing the entity parameter outright**, returning the list and nothing else. Rejected: it makes the three failures
-  impossible rather than correct, and it deletes the only code-side check on the entity's disease term — a missed lookup
-  yields an unset gate level the library raises on, where a wrongly-chosen entity off a returned list yields a *valid*
-  gate key and nothing raises.
-- **A finer harmonised mode enum**, one that splits X-linked dominant from recessive so GenCC's distinction survives. It
-  keeps a mode-keyed lookup and the check that lookup makes on the record the analyst chose. Rejected because it fixes
-  only the loss: ClinGen's single X-linked code still has no member to land on, a term outside the mapping still fails
-  the whole rpc, and nothing that consumes the response needs records selected by mode (§"The sources' modes stay
-  verbatim").
-- **A precomputed MONDO closure shipped with the reference tables.** It would remove the interface's one live
-  dependency, at the cost of a fifth reference object the interface cannot start without. Deferred until the latency or
-  the OLS4 dependency proves to matter.
-- **Live PanelApp on the request path.** Rejected: a per-request call makes the rpc's availability track PanelApp's and,
-  with scale-to-zero, re-hits the API on every cold start; a dump also lifts the cross-panel maximum off the hot path,
-  keys on the stable HGNC id, and spends no cold-start rate budget. The price is scope — the dump covers two panels, not
-  all Australian ones.
-- **A FUSE volume mount for the reference bucket** rather than the storage client library. Chose the library: it is the
-  repo convention, places no cap on reads, and adds no net-new infra mechanism, where a mount is a deploy-time volume
-  plus a lifecycle to reason about. The tables are small and read once at startup, so the in-process fetch costs nothing
-  a mount would save.
+- **Fetching a gene-wide all-classification ClinVar pool** instead of `ClinVar.SearchCodingSpan`. Rejected because
+  SM19's informative-variant rules key on a single codon or exon, and on large genes an all-classification gene-wide
+  pool exceeds the fetch bound and truncates before covering the target codon.
+- **Sweeping a ClinVar string search across transcript versions** (`.3`, `.4`, `.5`) to find an allele indexed under an
+  older RefSeq version. Rejected as the primary lookup route because each version guess costs a rate-limited E-utilities
+  round trip, and the motivating `HOXA13` failure is indexed under a repeat notation that no transcript-version sweep
+  would generate.
+- **Running a fallback string search when the Allele Registry's ClinVar crosswalk is empty**, to catch variants
+  classified since the last crosswalk sync. Rejected because it reintroduces the exact string-search hazards that
+  motivated identity keying (including NCBI E-utilities tokenising an unquoted HGVS string and matching a *different*
+  allele at the same codon) and forces every novelty result to carry an enum explaining which path answered. Crosswalk
+  lag is bounded, stamped in `Provenance`, and eliminated completely when moving to the weekly VCV dump.
+- **Keeping ClinVar on the live E-utilities query API permanently.** Rejected as an end state because a local index
+  built from ClinVar's weekly VCV release resolves truncation, search-term sensitivity, missing pool-wide submission
+  detail, unplaced repeat notation, and crosswalk lag simultaneously; what the query API does not cost is any change to
+  the RPC surface, which is why living with the query API in the meantime is not a dead end
+  ([above](#goal-what-else-has-been-classified-at-this-codon-this-exon-and-across-the-gene)).
+- **Scoping `GeneDisease.DescribeGene` by a free-text disease substring filter** and taking the maximum validity across
+  matching records. Rejected because substring matching fails silently in three ways: a natural clinical phrasing that
+  is not a substring of the curator's label drops the ClinGen curation; a short substring matches multiple distinct
+  disease entities and the maximum erases the class cap required by SM21's multiple-disorder rule; and in proto3 an
+  empty string is indistinguishable from an unset filter, silently returning the gene-wide maximum by default. Passing a
+  MONDO ID and checking OLS4's ontology subclass closure separates the two questions cleanly: whether one disease term
+  is a subtype of another is answered by the ontology in code, while choosing which entity fits a patient's presentation
+  is answered by the analyst from the full returned record list.
+- **Removing the disease-term parameter from `GeneDisease.DescribeGene` altogether** and always returning every record
+  on the gene. Rejected because keeping the optional MONDO term parameter preserves a code-side check when the caller
+  names a specific disease: an unmatched or ambiguous disease term raises `FAILED_PRECONDITION`, whereas picking the
+  wrong entity off an unfiltered list produces a valid `GateLevel` without raising.
+- **Defining a finer harmonised inheritance-mode enum** that splits X-linked dominant from X-linked recessive across
+  ClinGen and GenCC. Rejected because ClinGen's undifferentiated `XL` code still cannot map to either split member
+  without inventing a subtype, any GenCC mode outside the enum (such as digenic `HP:0010984` on `CLCNKB`) still fails
+  the lookup for the entire gene, and nothing downstream requires the service to filter records by mode
+  ([above](#goal-is-the-gene-disease-relationship-valid-and-by-what-mechanism)).
+- **Shipping a precomputed MONDO subclass closure in the GCS reference bucket.** Deferred: precomputing the closure in
+  the weekly refresh job would remove `GeneDisease.DescribeGene`'s one live call to EBI OLS4, at the cost of a fifth
+  mandatory startup object in GCS.
+- **Querying PanelApp Australia live on the request path.** Rejected because live calls tie `GeneDisease.DescribeGene`'s
+  availability to PanelApp's API and re-fetch large panel payloads on cold starts; pre-aggregating the Mendeliome and
+  Incidentalome panels in the weekly refresh job removes PanelApp from the hot path and keys records by stable HGNC ID.
+  The price of that choice is scope: the dump covers those two panels rather than all Australian panels.
+- **Mounting the GCS reference bucket via Cloud Run FUSE** instead of using the `google-cloud-storage` client library.
+  We chose the client library because it matches repository convention, adds no deploy-time volume mount lifecycle, and
+  reads the four small reference files once into memory at startup.
 
 ### Exon relevance
 
-- **An All / Most / Few tier on the response.** Rejected: two of SM18's three admission filters carry no test and no
-  threshold in the standard, and its one quoted pext figure is for an exon the MANE rule already disposes of — so the
-  All-versus-Most span is uncalibrated. A tier field would encode a threshold the standard declines to state, and would
-  be quoted back as the standard's answer.
-- **A "no transcript omits the exon" boolean** instead of the inventory. Rejected: it reads as the verdict, and the
-  condition it names licenses *All* only together with an abundance limb the rpc cannot supply. An empty spans-but-skips
-  grouping carries the same information and cannot be requoted as "the rpc said All".
-- **Rebuilding the inventory from the splice predictor's payload.** Rejected as a denominator: it does carry
-  per-transcript exon tables and a namespace pairing, but it is that predictor's own annotation snapshot and holds fewer
-  transcripts than the curated set — a good crosswalk source and a wrong census. It also arrives only when a splice call
-  was made, and a value that settles a matrix axis needs an advertised home.
-- **Renaming the eval module's measurement buckets to match the proto enum.** Deferred, not rejected: that module
-  partitions the same four outcomes under different names, and its keys are a corpus-schema version the reference
-  measurements are stored against. The two agree on semantics, so the split is a naming cost, and moving it belongs with
-  the next schema bump rather than inside a service change.
+- **Returning an `All / Most / Few` tier enum on `AssessExonRelevanceResponse`.** Rejected because two of SM18's three
+  admission filters state no numeric test or threshold in the standard, and its single quoted pext figure is for an exon
+  already settled by the MANE Select rule — leaving the `All`-versus-`Most` boundary uncalibrated. Emitting a tier enum
+  from the RPC would encode an invented cutoff as if it were the standard's verdict.
+- **Returning a `"no transcript omits the exon"` boolean** instead of the four-outcome transcript inventory. Rejected
+  because a boolean reads as a finished `All` verdict, whereas SM18 licenses `All` only together with an expression
+  abundance check that the boolean cannot establish. An empty `spans_but_skips` bucket carries the exact same structural
+  fact without reading as "the RPC concluded `All`."
+- **Building the transcript inclusion inventory from the splice predictor's response payload.** Rejected as a gene-wide
+  denominator because SpliceAI Lookup's payload reflects that predictor's internal annotation snapshot (which holds
+  fewer transcripts than VariantValidator's curated set) and is only fetched when a splice prediction call is made.
+- **Renaming the evaluation module's exon-inclusion bucket keys to match the proto enum names now.** Deferred to the
+  next evaluation-corpus schema bump: the evaluation module partitions the exact same four outcomes under key names
+  pinned by existing reference measurements in the corpus.
 
 ### Scale and framework encoding
 
-- **Local mirrors of gnomAD and the other per-variant sources.** Staged, not rejected — the at-scale form of this
-  design. Volume decides it: mirroring hundreds of gigabytes to answer a couple of dozen per-variant calls is the wrong
-  trade, a live value stamped with its retrieval time is reproducible without a mirror, and no egress-posture argument
-  applies, because a trusted service egresses freely. The triggers that flip it: a throughput at which per-variant
-  public calls become the bottleneck — where the per-IP rate limits also bind — or a hard offline, latency or
-  availability requirement. ClinVar is the one source with its own decided end state, above; the gene-disease reference
-  tables sit outside the question, having no per-variant live API.
-- **Staying on the frozen public Ensembl REST indefinitely.** A separate trigger on one upstream. Its final release has
-  shipped and it will receive no further updates; what the freeze pins is the Ensembl release, and therefore the
-  transcript set, the MANE version and the dbNSFP branch. Nothing breaks, but the answers drift from current annotation
-  silently, which is why the release stamps on the wire matter *more* under a freeze rather than less. The announced
-  successor is a GraphQL *lookup of pre-computed output for catalogued variants*, so a novel variant — the case a
-  classification exists to handle — is not in it; it is also scoped to gene and transcript consequence alone, and it
-  reports errors inside a 200 where REST returned a 404, so error handling does not port either. The end state for this
-  upstream is therefore a self-hosted `ensembl-vep`, which takes HGVS directly. Nothing forces the move while the frozen
-  endpoint serves.
-- **Leaving the clinical and locus codes out of the library** and requiring the classification document to show each
-  per-cell derivation instead, with a linter failing a code that shows none. Rejected: it named the symptom — a
-  hand-summed total nobody can check — and picked the wrong remedy. The check it produced is satisfiable by a tautology,
-  and tightening it does not survive contact with the tables. Only three of the seven codes have a source table that is
-  a grid; one is a computation; one ships as a bare value list with no keys; and the capped families admit no legal
-  derivation at all, since "terms name cells" and "terms sum to points" cannot both hold under a cap. Making the line
-  library output retires the check rather than patching it.
-- **Adopting an upstream encoding of the framework instead of transcribing it.** There is none to adopt.
-  [`clingen-data-model/svcv4-model`](https://github.com/clingen-data-model/svcv4-model) (MIT) draws the line itself: it
-  holds the *Classification Model* — what a classification is — while the *Method Model*, the rules that evaluate
-  evidence and produce workflow-specific scores, is stated to live in CSpec, outside that repo and outside GA4GH
-  VA-Spec. The data bears it out: its scores are bare floats with one numeric constraint in the whole model, its
-  classification enum is documented in-code as a placeholder with no VUS subclasses, its one worked example contradicts
-  its own threshold and invents a code that does not exist, and only the clinical workflows are modelled. VA-Spec ships
-  three community profiles and no SVCv4 one; CSpec's specifications are all ACMG-2015 vintage. The realistic upside is
-  different in kind: a VA-Spec SVCv4 profile would give a standard *output* format and a shared evidence-code
-  vocabulary, worth adopting at the seam where results are emitted and never inside the scoring engine. CSpec gaining
-  SVCv4 support is the one thing that could displace the transcription.
-- **Naming an interface for the evidence it yields** rather than for its source — `frequency` instead of `gnomad`,
-  `criteria` instead of `cspec`. Rejected: the source is what a caller has to know to read the answer — its identifier
-  forms, its absence semantics, the release its answers rest on — and it is what stays true when the framework renames a
-  code or moves a rule between supplements. Four interfaces carry a name that is not a vendor's, all for the same
-  reason: `variant`, `transcript`, `splice` and `gene_disease` each compose several upstreams, so any vendor name would
-  claim the whole answer for one of them. The deployment is `evidence` and covers papers too, which is why the
-  curated-database half is named per source rather than by one word for all of it.
+- **Operating local mirrors of gnomAD and the other per-variant databases now.** Staged behind explicit triggers rather
+  than rejected: mirroring hundreds of gigabytes of genomic data to answer a couple of dozen single-variant queries per
+  session is unnecessary when live retrievals stamped with `Provenance` are reproducible and the trusted `evidence`
+  service egresses normally. The triggers that move a per-variant source to a local mirror are multi-session throughput
+  binding against per-IP upstream rate limits, or a hard latency, availability, or offline requirement. ClinVar is the
+  one source with its own decided end state (the weekly VCV index above), while the gene-disease reference tables sit
+  outside the question because they have no per-variant live API.
+- **Remaining on the frozen public Ensembl VEP REST API indefinitely.** Because EMBL-EBI has shipped the final release
+  of the legacy Ensembl REST endpoint, its Ensembl release, MANE pairings, and dbNSFP snapshot are frozen and will
+  gradually drift from current annotations (making `Provenance`'s release stamps essential). The announced Ensembl
+  GraphQL successor is a lookup of pre-computed consequences for *catalogued* variants only — so it cannot annotate
+  novel variants — and is scoped to gene and transcript consequences while reporting errors inside HTTP 200 responses.
+  The end state for this upstream is therefore a self-hosted `ensembl-vep` deployment, which accepts HGVS directly.
+  Nothing forces the move while the frozen endpoint serves.
+- **Leaving the clinical and locus codes (`CLN_*`, `LOC_*`) out of `themis.svcv4`** and having a linter require the
+  classification document to show per-cell arithmetic in prose. Rejected because only three of the seven codes in SM4
+  and SM5 are 2D grids, one is a formula, one ships as an unkeyed value list, and capped code families cannot
+  simultaneously satisfy "terms name cells" and "terms sum to the capped total." Having `themis.svcv4` compute the score
+  and emit the derivation line retires the prose-math check altogether.
+- **Adopting an upstream machine-readable encoding of SVCv4 instead of writing `themis.svcv4`.** No upstream executable
+  encoding of the scoring rules exists:
+  [`clingen-data-model/svcv4-model`](https://github.com/clingen-data-model/svcv4-model) (MIT) models only the
+  *Classification* output structure while explicitly leaving the *Method* model (the rules and thresholds that evaluate
+  evidence and produce workflow scores) to CSpec outside that repository and outside GA4GH VA-Spec. In `svcv4-model`,
+  scores are bare floats with a single numeric constraint across the model, its classification enum is a placeholder
+  without VUS subclasses, its one worked example contradicts its own threshold and cites a nonexistent code, and only
+  the clinical workflows are sketched. Meanwhile, GA4GH VA-Spec ships no SVCv4 profile and CSpec's published
+  specifications are all ACMG-2015 vintage. When a VA-Spec SVCv4 profile matures, it should be adopted at the output
+  boundary where classifications are exported; only CSpec shipping machine-executable SVCv4 rule sets could replace
+  `themis.svcv4`'s scoring engine.
+- **Naming interfaces for the SVCv4 evidence category (`frequency`, `criteria`) rather than for the upstream source
+  (`gnomad`, `cspec`).** Rejected because a caller must know the source's identifier forms, absence semantics, and
+  release cadence to interpret the response, and source names remain stable when SVCv4 renames a code or moves a rule
+  between supplements. The four interfaces not named for a single vendor (`variant`, `transcript`, `splice`,
+  `gene_disease`) are the four that compose multiple upstreams behind one contract.
 
 ## Open questions
 
-Unresolved points in this design, each needing a decision or an input. The framework's own contradictions, and the
-readings applied to them, are [`svcv4-interpretations.md`](svcv4-interpretations.md)'s.
+Unresolved points in this design are listed below; the framework's own contradictions and the clinical readings applied
+to them live in [`svcv4-interpretations.md`](svcv4-interpretations.md).
 
-- **Absence carries no coverage distinction.** A caller reading `NOT_FOUND` cannot tell "not observed at a well-covered
-  position" from "position not covered", which is the distinction rarity evidence rests on. Whether absence becomes a
-  typed field on the responses whose absence is scored is undecided.
-- **Which ClinVar need pulls the dump forward first.** Whether the E-utilities serve both the classified-variant pool
-  behind informative variants and exon-level pathogenic density at usable query cost, or whether the density need — a
-  count that has to be complete to mean anything — is what fires the dump trigger ahead of the rate limits.
-- **Rate limits at multi-session scale.** gnomAD's and the splice hosts' limits are per-IP, so sessions sharing an
-  egress IP share the budget. How many concurrent curators that tolerates before a mirror trigger fires is unmeasured.
+- **Absence carries no coverage distinction.** A caller receiving `NOT_FOUND` from `Gnomad.DescribeVariant` cannot
+  distinguish "not observed at a well-covered position" from "position not covered in exomes or genomes," which is the
+  distinction rarity evidence (`POP_FRQ`) rests on. Whether absence becomes a typed coverage-annotated field on
+  responses whose absence is scored is undecided.
+- **Which ClinVar requirement pulls the weekly VCV dump forward first.** Whether NCBI E-utilities can sustain both the
+  classified-variant pool behind `*_INF` and SM18's exon-level pathogenic density at usable query cost, or whether exon
+  density — a count that must be complete across the gene to be meaningful — triggers the local VCV dump ingest ahead of
+  rate limits.
+- **Rate limits at multi-session scale.** Because gnomAD's and the Broad splice hosts' rate limits are enforced per IP
+  address, concurrent curation sessions sharing an egress IP share one budget. How many concurrent curators that budget
+  tolerates before firing the mirror or self-hosting trigger has not yet been measured.

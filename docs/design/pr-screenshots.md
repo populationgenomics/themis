@@ -1,131 +1,205 @@
 # Design: PR review screenshots
 
-**Status:** current **Related:** [`deployment.md`](deployment.md) (IaC, state, mirror-safety posture),
-[`../plans/screen-and-mirror-workflow.md`](../plans/screen-and-mirror-workflow.md) (the 1:1 public mirror this design
-routes around)
+**Related:** [`deployment.md`](deployment.md) (the Pulumi stacks and the capability grants this bucket is built from);
+[`../plans/screen-and-mirror-workflow.md`](../plans/screen-and-mirror-workflow.md) (the public mirror of every tracked
+commit, which rules out committing the images).
 
 ## Overview
 
-A public-read GCS bucket that agents upload review screenshots to and reference by URL in a PR body, so a
-rendered-surface change can ship its before/after images without a human attaching them by hand.
+A pull request that changes a rendered surface has to show the surface in its description, before and after. An agent
+can build the web app offline and capture those screenshots itself. What it cannot do is attach them, because GitHub
+offers no API for attaching an image to a PR. So the agent uploads each capture to a storage bucket of our own and puts
+a markdown image link in the PR body instead.
+
+GitHub does not let the reader's browser fetch that link. Its image proxy fetches the image on the reader's behalf,
+anonymously, so the bucket has to be readable with no credentials at all. That makes it the one public bucket in the
+project, and the rest of the design limits what public means. Anyone can fetch an object whose name they already hold,
+but nobody can list the bucket. Each object is named by the SHA-256 hash of its content, so a name cannot be guessed.
+Every image is of the app running on invented fixture data, so even a leaked name exposes no participant data.
+
+Objects are kept forever, because a PR is a permanent record and its images should outlive any cache. The developers who
+upload can also delete, so a capture that turns out to show something it should not can be withdrawn at once.
 
 ## Background
 
-`CLAUDE.md` requires a change to a rendered surface to ship with before/after screenshots in the PR description;
-`apps/web` renders offline against the fixture backend, so capturing them needs no cloud access. Capture is automatable;
-attachment is not. GitHub has no API to attach images — its `user-attachments` uploader is web-UI-only
-(`POST /upload/policies/assets`, authenticated by a `user_session` cookie, rejects tokens with 422). So an agent can
-produce the file but not attach it. This design closes that gap by hosting the image and linking it instead.
+The repo's working rules ask that a change to a rendered surface ship with screenshots in its PR description. A reviewer
+cannot see layout, spacing or state in a diff, and prose describing them cannot be checked. The web app runs against a
+fixture backend that serves invented data, so capturing a screenshot needs no cloud access: build the app, start it,
+drive it to the state under review, and take the picture. All of that is automatable, and agents do it.
 
-Two mechanics constrain any fix:
+Attaching the image is where automation stops. When a person drags an image into a PR description, the browser uploads
+it to a GitHub endpoint that serves only the web UI. That endpoint authenticates with the browser's login cookie and
+rejects API tokens with a 422. An agent working from the command line therefore has the file but no way to attach it.
 
-- **GitHub renders external markdown images through its Camo proxy** — the viewer's browser hits
-  `camo.githubusercontent.com`, which fetches the origin server-side, anonymously, once, and caches it. A self-hosted
-  image must therefore be readable with no credentials. Reads never come from arbitrary clients, so origin egress is one
-  fetch per distinct image.
-- **`main` mirrors 1:1 to the public `themis` repo.** Committing screenshots leaks them there; on a private branch they
-  don't render at all, because `raw.githubusercontent.com` requires auth that Camo cannot present. Repo-hosting is a
-  dead end either way (see Alternatives).
+Markdown can link an image that lives anywhere, so the gap closes if the image is hosted somewhere GitHub can reach. How
+GitHub reaches it decides most of this design. GitHub rewrites every external image in rendered markdown to go through
+its proxy, Camo:
 
-Every hosted image is fixture-backed UI (the rule excludes states reachable only against real data), so sensitivity is
-low. The design still keeps objects non-discoverable as defense-in-depth, not because a leak would expose data.
+```mermaid
+sequenceDiagram
+  participant A as Agent
+  participant B as Screenshot bucket
+  participant G as GitHub PR page
+  participant R as Reviewer's browser
+  participant C as Camo proxy
+  A->>A: capture after.png (fixture UI)
+  A->>B: upload as 3f9a…c21e.png
+  A->>G: PR body gains ![after](…/3f9a…c21e.png)
+  R->>G: open the PR
+  G-->>R: image src rewritten to camo.githubusercontent.com/…
+  R->>C: GET the rewritten URL
+  C->>B: GET 3f9a…c21e.png, no credentials (first view only)
+  B-->>C: PNG bytes
+  C-->>R: PNG bytes (cached copy on later views)
+```
+
+Camo presents no credentials when it fetches, so the image must be readable by anyone. And the bucket serves each
+distinct image roughly once, because Camo caches it and every later view reads the cached copy.
+
+The other constraint is the mirror. Every commit on `main` is copied, unchanged, to the public `themis` repository. Any
+file committed to the repo is therefore published, which rules out the most obvious place to keep an image (see
+Alternatives considered).
 
 ## Non-goals
 
-- **Not a store for real-data screenshots.** The `CLAUDE.md` rule already excludes states reachable only against real
-  data; everything here is fixture UI. A screenshot of production data must never be uploaded.
-- **Not a general asset host or CDN.** Scope is PR review screenshots. No other content type is uploaded, and the bucket
-  is not a dependency of any running service.
-- **Not a per-environment resource.** Screenshots are of the dev fixture UI for review, so only a stack that opts in
-  gets a bucket. Unlike state or app buckets, there is no prod counterpart to keep in step.
-- **Reads are not restricted to GitHub.** Camo's egress IPs are neither published nor stable, so a network ACL is not an
-  option. Confidentiality is object-name unguessability plus non-listability, not a firewall.
+The bucket holds screenshots of the fixture UI and nothing else. A screenshot of real data must never be uploaded to it.
+The screenshot rule already treats a state reachable only against real data as not capturable, so that case never
+produces an image to host.
+
+The bucket is not a general asset host. No running service reads it, and no other kind of content goes into it. Keeping
+it to one purpose keeps its one exception to the project's private-storage posture narrow and easy to audit.
 
 ## Design
 
-A single bucket `cpg-themis-dev-pr-screenshots`, public-read-by-URL but not listable, provisioned in the `dev` stack by
-[`../../infra/themis_infra/screenshots.py`](../../infra/themis_infra/screenshots.py): uniform bucket-level access,
-Autoclass tiering cold objects to Archive, no lifecycle rules, and the one `public_access_prevention='inherited'` in a
-project where every other bucket enforces it. The bucket depends on neither `constraints/storage.publicAccessPrevention`
-nor `constraints/iam.allowedPolicyMemberDomains` (domain-restricted sharing) being enforced above the project; should
-either ever be, `pulumi up` fails loud on the `allUsers` binding, so nothing needs to pre-flight them.
+### Public read by URL, without listing
 
-A stack opts in through `themis:enablePrScreenshotBucket`, which the program reads with `require_bool`. The flag is not
-a convenience: it is what confines the project's only public bucket to an environment that has a reason for one, and
-requiring it means a new stack decides rather than inheriting a public bucket by omission.
+The question is who may read the bucket. The obvious answer for a sensitive-sounding store is to keep it private and
+hand out access per object. Google Cloud Storage does this with signed URLs, which embed a credential and need no change
+to the bucket's permissions. A signed URL expires after at most seven days, though. Camo eventually evicts its cached
+copy, refetches from the bucket, and finds the link dead, so a PR from last month would show a broken image.
 
-**IAM.** Two `BucketIAMMember` bindings:
+Restricting reads by network does not work either. Camo's egress addresses are neither published nor stable, so there is
+no allow-list that admits GitHub and refuses everyone else.
 
-- `allUsers` → `roles/storage.legacyObjectReader`, whose whole permission set is `storage.objects.get`. The stock public
-  recipe `allUsers → roles/storage.objectViewer` also grants `storage.objects.list`, which would make the bucket
-  publicly *listable*. Get without list gives read-by-URL with no way to enumerate.
-- `group:themis-dev-access@populationgenomics.org.au` → `roles/storage.objectAdmin`, which covers browsing the bucket,
-  uploading, and deleting. `objectAdmin` rather than `objectCreator` because retraction is the safety valve this bucket
-  uniquely needs: a capture that turns out to expose something is world-readable at a permanent URL, and the population
-  that can publish has to be able to withdraw without escalating to a project owner. Soft delete is off
-  (`retention_duration_seconds=0`) so that withdrawal takes effect at once — GCS's default 7-day window cannot be
-  overridden, and would keep a retracted object retrievable throughout. Camo may go on serving a cached copy for a while
-  after the object is gone, so a takedown is delete, edit the PR body, and accept that tail.
-
-The writer is the developer's own `gcloud` ADC — a member of `themis-dev-access` — so the local agent uploads with the
-credentials it already has; no service account is minted for this.
-
-Reads are anonymous and uncapped: anyone holding a URL can fetch it at the project's expense, and no budget alert
-watches it. Accepted unmonitored — the objects are small, Camo fetches each distinct image once, and Autoclass charges
-no retrieval fee on a tiered-down object.
-
-**Object model.** Content-addressed: the object name is `<sha256-hex>.png`. This dedupes identical captures, makes
-objects immutable (the name is the content), and makes them unguessable (256-bit name) so get-only public access
-discloses nothing to someone without the URL. No PR or branch prefixing — the PR body carries the links; the bucket is a
-flat content store.
-
-Uploads set `Content-Type: image/png` (so Camo and browsers render inline rather than download) and
-`Cache-Control: public, max-age=31536000, immutable` (safe because the name is a content hash). Objects are kept
-forever: PRs are permanent records, a TTL would rot their images once Camo's cache evicts, and the data is tiny.
-
-**Upload path.** [`../../tools/screenshot/upload.py`](../../tools/screenshot/upload.py) hashes each file, uploads it
-with that content-type and cache-control conditional on the object not existing, and prints the markdown link — so the
-agent's step stays a one-liner and the hashing convention lives in one place:
+That leaves anonymous reads, and the remaining decision is what anonymous readers may do. The stock recipe for a public
+bucket grants everyone the object-viewer role. That role carries two permissions: `storage.objects.get`, which fetches
+an object by name, and `storage.objects.list`, which enumerates the bucket. With both, anyone could list every
+screenshot ever uploaded. The bucket instead grants everyone a predefined legacy role whose only permission is `get`. A
+request for a known object name succeeds, and a request to list the bucket is refused:
 
 ```
-$ uv run --group screenshot python -m tools.screenshot.upload after.png
-![after](https://storage.googleapis.com/cpg-themis-dev-pr-screenshots/<sha256>.png)
+GET  https://storage.googleapis.com/<bucket>/3f9a…c21e.png   →  200, the PNG
+GET  https://storage.googleapis.com/<bucket>                 →  403, no listing
 ```
 
-Stdout carries only the `![…](…)` lines, one per argument in order, so all of it pastes into the PR body; notes go to
-stderr. A file that is not a PNG is refused rather than stored under a content-type that would break its rendering.
-Uploading identical bytes twice is a no-op — the conditional write's 412 means that hash is already stored, which is the
-dedupe, not a conflict.
+The grant is the `PublicObjectReader` capability in [`grants.py`](../../infra/themis_infra/grants.py), and the bucket is
+built in [`screenshots.py`](../../infra/themis_infra/screenshots.py).
 
-**`CLAUDE.md` rule.** The screenshot rule's attachment clause is this upload path. Its one escape hatch is the
-not-capturable state the rule already calls out — a surface reachable only against real data — where there is no offline
-capture to host in the first place.
+Every other bucket in the project enforces public-access prevention, and this one has to opt out of it. The bucket also
+needs two organisation policies to stay unenforced above the project: public-access prevention, and the domain
+restriction on who can be granted a role. If either were ever enforced, `pulumi up` would fail on the grant to everyone,
+so nothing has to check for them in advance. The cost is that reads are uncapped and unmonitored. Anyone holding a URL
+can fetch it at the project's expense. That is accepted, because the objects are small and Camo fetches each one roughly
+once.
 
-This doc, like [`deployment.md`](deployment.md), is mirror-safe: it names identifiers (project, bucket, group, public
-URLs), never credentials or participant data.
+### Content-addressed object names
+
+Without listing, a reader can only fetch a name they already know, so the names carry the confidentiality. Each object
+is named by the SHA-256 of its bytes. A name is 256 bits of hash, so nobody can reach an object without having been
+given its link.
+
+The same choice settles two other questions. Uploading identical bytes twice produces the same name, so a repeated
+capture is stored once and its link is unchanged. And an object can never change under its name, since different bytes
+would hash to a different name. Uploads are therefore marked immutable and cacheable for a year, and Camo and browsers
+never need to revalidate them.
+
+The names carry no PR number or branch. The PR body already records which images belong to which PR, so the bucket is a
+flat store of content.
+
+### Kept forever
+
+The obvious lifecycle for review artefacts is a TTL: delete screenshots after the PR merges, or after some months. A PR
+stays readable forever, though, and its images are part of what it records. Once Camo's cache evicts an image, a deleted
+object becomes a broken image in a merged PR that someone later reads to understand a change.
+
+So nothing expires. The bucket uses Autoclass, which moves objects nobody reads down to colder storage classes, ending
+at Archive. Autoclass charges no retrieval fee when a cold object is read again, so an old PR's image costs nothing
+extra to view.
+
+### Uploaders can retract
+
+Uploads use the developer's own `gcloud` credentials, through the same Google group that admits developers to the dev
+app. No service account exists for this, so the agent uploads with credentials it already has.
+
+Least privilege suggests giving that group only the right to create objects. But a capture that turns out to show
+something it should not is world-readable at a permanent URL. Whoever can publish to the bucket has to be able to
+withdraw from it without first finding a project owner. So the group holds object admin, which covers browsing,
+uploading and deleting. The cost is that any member of the group can delete any screenshot, including another
+developer's.
+
+Withdrawal also has to take effect at once. By default Cloud Storage keeps a deleted object recoverable for seven days,
+and during that window it can still be retrieved. Soft delete is turned off on this bucket, so a delete is final.
+
+One copy remains outside our control. Camo may go on serving its cached copy for a while after the object is gone. A
+takedown is therefore: delete the object, remove the link from the PR body, and accept that tail.
+
+### A stack opts in
+
+Only the dev stack has a bucket. Screenshots are of the fixture UI, which is a development artefact, so no other
+environment has a reason to expose a public bucket.
+
+Each stack must state whether it hosts the bucket; the setting has no default. A default of "no" would be safe on its
+own, but the risk lies elsewhere. A new stack is usually made by copying the dev stack's configuration, and a copied
+"yes" creates a world-readable bucket in that environment without any error. Making the setting required means it
+appears in every stack's configuration as a line someone has to read and decide on.
+
+### The upload helper
+
+[`tools/screenshot/upload.py`](../../tools/screenshot/upload.py) turns one or more PNG files into the lines to paste
+into a PR body. It hashes each file, uploads it under its hash, and prints one markdown image link per file, in the
+order given:
+
+```
+$ uv run --group screenshot python -m tools.screenshot.upload before.png after.png
+![before](https://storage.googleapis.com/<bucket>/a17e…09bd.png)
+![after](https://storage.googleapis.com/<bucket>/3f9a…c21e.png)
+```
+
+The hashing convention lives in this one place, so an agent's step stays a single command. Standard output carries only
+the link lines, and any notes go to standard error, so the whole of the output can be pasted. Each upload is conditional
+on the object not existing yet. When that condition fails, the hash is already stored, so the helper reports it and
+still prints the link.
+
+The helper fails as a whole. It reads and checks every file before uploading any, and prints no link until every upload
+has succeeded. A run that fails partway therefore leaves nothing half-pasted into a PR body. It also refuses any file
+that is not a PNG, because every object is served as a PNG image and anything else would arrive broken in the browser.
 
 ## Alternatives considered
 
-- **GitHub-native attachment via browser automation** (gh-attach / Playwright / the `claude-in-chrome` MCP). GitHub
-  hosts the image and, since the 2023 "more secure private attachments" change, access-controls it to repo members —
-  better confidentiality and zero infrastructure. Rejected as primary: it drives an undocumented web-UI endpoint that
-  takes a `user_session` cookie and no token, so it needs a maintained logged-in browser session, is local-only, and
-  breaks silently when GitHub changes the form. The repo's posture favors robust, boring infrastructure — it already
-  shed MCP for code mode to drop exactly this kind of fragile coupling. A content-addressed object write does not rot.
-  Kept as the fallback should the public bucket ever have to go, an org-policy change being the likeliest cause.
-- **Commit screenshots to the repo (plain, git-LFS, or an orphan branch).** Rejected: on `main` they mirror to the
-  public repo (leak); on a private branch they don't render, because `raw.githubusercontent.com` needs auth Camo cannot
-  present. Also permanent history/repo bloat.
-- **Third-party image host (Imgur and similar).** Rejected: sends fixture UI to an uncontrolled third party under its
-  terms and retention, with no access control and eventual link rot.
-- **A project custom role holding `storage.objects.get`** instead of `roles/storage.legacyObjectReader`. Identical
-  permission set, so no security difference, and rejected on lifecycle: creating one needs `iam.roles.create`, which no
-  role the CI deploy SA holds carries, so it would fail the deploy while `pulumi preview` — run as an identity with
-  `roles/viewer`, which can read roles — still rendered a clean plan. Custom-role deletion is also soft, reserving the
-  id for 7 to 37 days, which would wedge a destroy-then-recreate of the stack.
-- **Keep the human in the loop.** Rejected: an agent can capture but not attach, so every rendered-surface PR stalls on
-  a manual step. Survives only for the not-capturable state.
+**Attach through GitHub's own uploader, driven by browser automation.** A logged-in browser session, driven by a script
+or by a browser-control tool, can perform the drag-and-drop upload a person would. GitHub then hosts the image and
+restricts it to people who can see the repository. That is better confidentiality than a public bucket, with no
+infrastructure of our own. It lost because the endpoint is undocumented and accepts only a login cookie. Every developer
+would need a maintained, logged-in browser session for their agent, and the automation would break without warning
+whenever GitHub changed the form. A write to a bucket does not decay that way. Browser automation remains the fallback
+if the public bucket ever has to go, and a change of organisation policy is the likeliest reason it would.
 
-## Implementation state
+**Commit the images to the repository**, plainly, through git LFS, or on an orphan branch. This needs no new
+infrastructure, and the images would be versioned beside the change. On `main`, though, the mirror would publish them.
+On a branch that is never mirrored, they would not render, because GitHub serves raw files from a private repository
+only to authenticated users, and Camo presents no credentials. Every image would also stay in the repository's history
+for good.
 
-Shipped (#296): the bucket and its two bindings; the upload helper; the `CLAUDE.md` rule pointing at it.
+**A third-party image host**, such as Imgur. This needs no infrastructure and works today. It lost because it sends our
+UI to a service whose terms and retention we do not control, with no access control, and its links rot when the host
+deletes old uploads.
+
+**A custom role holding only `storage.objects.get`**, instead of the predefined legacy role. Its permission set would be
+identical, and its name would say what it grants, which the legacy role's name does not. It lost on lifecycle. Creating
+a role needs `iam.roles.create`, which the CI deploy identity does not hold, so the deploy would fail. The preview would
+not catch that in advance, because the preview identity can read roles and renders a clean plan. Deleting a custom role
+also reserves its id for 7 to 37 days, so tearing down and recreating the stack would fail in that window.
+
+**Keep a person in the loop**, with the agent producing the images and a developer attaching them by hand. This needs
+nothing built. But every rendered-surface PR would then stall on a manual step, which is the gap this design exists to
+close. A person remains in the loop only where there is nothing to capture offline.
