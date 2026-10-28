@@ -56,17 +56,17 @@ radio option, a numeric counter, or a grid cell—is a *cell* with a stable key 
 
 For population frequency (`POP_FRQ`), Supplementary Material 3 (SM3) compares two allele frequencies:
 
-- The *disease allele frequency threshold* (DAFT), which is the highest allele frequency in a reference population
-  compatible with the disease's prevalence, penetrance, and genetic heterogeneity under its mode of inheritance. SM3
-  provides equations and pre-computed lookup tables for deriving a DAFT.
-- The *filtering allele frequency* (FAF), which is the variant's observed allele frequency in a population database such
-  as gnomAD after statistical filtering.
+- The *disease allele frequency threshold* (DAFT) is the highest allele frequency in a reference population compatible
+  with the condition's prevalence, penetrance, and genetic heterogeneity under its mode of inheritance.
+- The *filtering allele frequency* (FAF) is the variant's observed allele frequency in a population database such as
+  gnomAD after statistical filtering.
 
-The ratio `FAF / DAFT` places the variant into one of five relative-frequency bins (`<0.05×`, `<0.2×`, `≥1×`, `≥5×`, or
-`≥15× DAFT`). When a variant falls into either of the two highest bins (`≥5×` or `≥15× DAFT`), it is too common in the
-general population to cause a rare Mendelian condition on its own. Under the calculator's *rarity gate*, scoring
-`POP_FRQ` in either of those two bins automatically bars four clinical and locus codes (`CLN_AFF`, `CLN_DNV`, `LOC_PHE`,
-and `LOC_SEG`) from contributing pathogenic evidence.
+The ratio `FAF / DAFT` places the variant into one of four contiguous relative-frequency bins: `<1.5×`, `1.5×–<5×`,
+`5×–<15×`, or `≥15× DAFT` (scoring 0, −1, −3, and −6 points). Because a variant at `≥5× DAFT` is too common in the
+general population to cause a rare Mendelian condition on its own, the calculator's *rarity gate* bars `CLN_AFF`,
+`CLN_DNV`, `LOC_PHE`, and `LOC_SEG` whenever `POP_FRQ` scores below `−1.0` at `≥5× DAFT` or above (see
+[`svcv4-interpretations.md`](svcv4-interpretations.md#frequency-which-figure-and-what-disqualifies-one) and
+[`evidence-interfaces.md`](evidence-interfaces.md#the-in-sandbox-library-themissvcv4)).
 
 Separately from the web worksheet, [`themis/svcv4/`](../../themis/svcv4/) encodes the same framework in Python for
 automated and agent-assisted classification ([evidence-interfaces.md](evidence-interfaces.md),

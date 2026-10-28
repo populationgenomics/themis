@@ -39,16 +39,8 @@ ruler as further needles, so a curator sees at a glance what would move the vari
 
 ## Background
 
-This section introduces the parts of SVCv4 that the widget has to show. A reader who knows the framework can skip to
-§Non-goals.
-
-SVCv4, the ClinGen pilot of ACMG V4, classifies one variant against one monogenic disease entity. In SM21, a monogenic
-disease entity (MDE) is a gene, a disease, and a mode of inheritance, where an allelic disorder that arises by a
-different mechanism counts as a different disease. The framework's rules live in numbered Supplementary Materials, cited
-here as SM*n*. Its unit of evidence is the **code**, named by a family and a concept: `POP_FRQ` is the population
-family's frequency code, `CLN_DNV` is the clinical family's de novo code, and `MIS_PRD` is the missense family's
-predictor code. Each code carries points, positive towards pathogenic and negative towards benign, and the points sum to
-a total. The total falls in one of the framework's class bands:
+SVCv4 (the ClinGen pilot of ACMG V4) classifies a variant against a monogenic disease entity (MDE: gene, disease, and
+mode of inheritance) by summing signed evidence code points into class bands:
 
 ```
   total  ≤ -4      -4 < t ≤ -1    -1 < t < 2    2 ≤ t < 4    4 ≤ t < 6    6 ≤ t < 10    ≥ 10
@@ -59,35 +51,36 @@ Two families of codes reach the total differently. The **independent** codes bel
 (`CLN_`), and locus (`LOC_`) families; the framework clamps each independent code to its own range and adds them. The
 **variant-type** codes are scored on a **path** through the decision tree that the variant's molecular consequence
 selects: a missense variant's amino-acid path sums `MIS_PRD`, `MIS_FXN`, and `MIS_INF`, while a nonsense variant's null
-path sums the `NUL_` codes. Inside a tree, the questions that the variant answers on the way down select an **arm**, and
-the arm fixes which cells its codes are priced from and what caps them. The splice tree names its arms by colour: yellow
-where a splice effect is likely and the resulting frameshift predicts nonsense-mediated decay (NMD), orange where a
-splice effect is likely and NMD is not predicted, blue where the impact is uncertain, and violet where a splice effect
-is unlikely. Two arms can give a code the same points for different reasons: a predicted splice effect enters both
-yellow and orange at +3, but on yellow the +3 rests on the transcript being degraded, and on orange on a product that
-escapes decay.
+path sums the `NUL_` codes on the null arm. Inside a decision tree, the questions that the variant answers on the way
+down select a **decision-tree arm**, which fixes which cells its codes are priced from and what caps them. The splice
+tree names its four arms by colour: **yellow** where a splice effect is likely and the resulting frameshift predicts
+nonsense-mediated decay (NMD), **orange** where a splice effect is likely and NMD is not predicted, **blue** where the
+impact is uncertain, and **violet** where a splice effect is unlikely. Two arms can give a code the same points for
+different reasons: a predicted splice effect enters both yellow and orange at +3, because on yellow the transcript is
+degraded and on orange the altered product escapes decay.
 
-A path scales its positive predictive points by a **matrix multiplier** built from two judgement inputs, the mechanism
-level and the exon relevance, and caps its subtotal. The missense amino-acid path is the exception and scales by exon
-relevance alone. A missense variant has two paths, amino-acid and splice, and the **max-path rule** counts the more
-positive one. Finally, the gene-disease validity of the entity **gates** the class. Moderate validity caps the class at
-LP and Limited caps it at VUS, while below Limited the gate replaces the class outright with "Variant in Gene of
-Uncertain Significance" or "Do not report" for a disputed relationship.
+A path scales its positive predictive points by a **matrix multiplier** built from the mechanism level and the exon
+relevance (or exon relevance alone on the missense amino-acid path) and caps its subtotal. When a variant has more than
+one candidate path (such as a missense variant with both amino-acid and splice paths), the **max-path rule** counts the
+more positive one, so only one path is counted in the tally. Finally, the entity's **gene-disease validity (GDV) gate**
+caps the classification by the strength of the gene-disease relationship: Moderate validity caps the outcome at LP,
+Limited caps it at VUS, and weaker or disputed validity replaces the class with "Variant in Gene of Uncertain
+Significance" or "Do not report". For the full scoring rules and interpretations, see
+[`svcv4-interpretations.md`](svcv4-interpretations.md),
+[`svcv4-worksheet-transcription.md`](svcv4-worksheet-transcription.md), [`curation-surface.md`](curation-surface.md),
+and [`evidence-interfaces.md`](evidence-interfaces.md#the-in-sandbox-library-themissvcv4).
 
-The independent codes are priced per observation. `CLN_DNV` scores each de novo proband by the row of a table it falls
-in: a proband with a specific phenotype and confirmed parentage scores +7, and one with unconfirmed parentage scores +2.
-The library names each row with a stable **cell id**, such as `CLN_DNV.specific.unconfirmed`, and the curator's
-worksheet stores the same ids ([`curation-surface.md`](curation-surface.md)). A path's codes are priced differently,
-from the tier that the agent read off the decision tree, and the library names no cell for them.
+Three concepts from [`themis/svcv4/`](../../themis/svcv4) shape what the widget displays:
 
-The library that performs all of this arithmetic is `themis.svcv4` ([`themis/svcv4/`](../../themis/svcv4)). The agent
-calls the library in code mode with its judgement inputs: the tier it read off each decision tree, the mechanism level,
-the exon relevance, the points at which it priced each clinical observation, and the entity's gate level. The library
-returns a `Classification` containing an audit trail of lines whose points sum to the total, the paths it scored, the
-band, the VUS sub-band, and the gated class. A run has two further outcomes beyond one total. A judgement input is
-**open** when the evidence leaves more than one value standing, and the agent then reports the tally under each
-surviving value. A **sensitivity** table varies each judgement input across its plausible range and reports what each
-value yields.
+- **Per-observation cell ids vs. tree-tier path codes:** Independent codes (such as `CLN_DNV`) price each observation by
+  a table row with a stable cell id (`CLN_DNV.specific.unconfirmed`) shared with the curator's worksheet
+  ([`curation-surface.md`](curation-surface.md)), whereas variant-type path codes are priced from the decision-tree tier
+  and arm selected by the variant.
+- **Audit trail and gated classification:** `themis.svcv4` returns a `Classification` containing the audit trail of
+  scored lines, the candidate paths, the point total, the class band and VUS sub-band, and the GDV-gated classification.
+- **Open judgement inputs and sensitivity tables:** When evidence leaves more than one value standing for a judgement
+  input (such as mechanism level or exon relevance), the input is **open** and the run reports the tally under each
+  surviving value alongside a **sensitivity** table varying each input across its plausible range.
 
 The working document follows an outline that the kickoff fixes. Its "Evidence assessment" section carries each code's
 evidence, cell, and reasoning, and its "Point tally" section carries the audit trail, the total, the class, and the

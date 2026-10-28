@@ -267,12 +267,9 @@ test harness.
 
 ### Managed Agents runtime and execution sandbox
 
-Building and operating our own agent orchestration loop, session state store, and event streaming layer would slow down
-the Spike before we can evaluate curation quality. As decided in [`agent-runtime.md`](agent-runtime.md), Anthropic
-Managed Agents runs the agent loop and emits the per-session event stream, while `themis-web` acts as the session
-client. Adopting Managed Agents does not lock in our core architecture: the internal data-plane services and the web
-application's session client are runtime-independent, so replacing Managed Agents with a custom loop later would swap
-only the session orchestration layer while keeping the tools and data plane intact.
+As decided in [`agent-runtime.md`](agent-runtime.md) and [`managed-agents.md`](managed-agents.md), Anthropic Managed
+Agents runs the agent loop and emits the per-session event stream while `themis-web` acts as the thin session client,
+keeping our internal data-plane services runtime-independent.
 
 Where the agent's tools execute determines who enforces network egress and data access boundaries. We stage the sandbox
 across two phases:
@@ -281,36 +278,21 @@ across two phases:
    end-to-end version comes online quickly, gated so that the self-hosted sandbox lands before any non-synthetic data
    enters the system. Because the web application, agent YAML, CI workflows, and internal data plane are
    sandbox-agnostic, moving from the cloud sandbox to self-hosted is additive rather than a rewrite.
-1. **Self-hosted sandbox (`config: type=self_hosted`):** Tool execution (shell commands and public-endpoint lookups)
-   moves into a container inside our GCP project ([`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md)).
-   A lightweight dispatcher wakes on a signed `session.status_run_started` webhook, and the worker claims work and
-   returns results via outbound polling against Anthropic so the worker scales to zero when idle. While deny-by-default
-   egress and public-endpoint allowlists exist in both phases, self-hosting moves that policy enforcement from
+1. **Self-hosted sandbox (`config: type=self_hosted`):** Tool execution moves into a container inside our GCP project
+   ([`managed-agents.md`](managed-agents.md), [`sandbox-worker.md`](sandbox-worker.md),
+   [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md)), moving deny-by-default egress enforcement from
    Anthropic's boundary to our own VPC firewall.
 
-Inside the self-hosted boundary, four controls govern what the agent can run and write:
-
-- **Hardened container image:** We build and maintain the self-hosted sandbox container from a minimal base image with a
-  curated binary allowlist under maintainer and security review, omitting network/egress utilities and runtime package
-  managers.
-- **Credential and network isolation:** The sandbox container holds no GCP credentials, cannot reach the instance
-  metadata server, and runs under deny-by-default VPC egress. The sandbox worker calls our internal gRPC services
-  directly in code mode over the internal network, and a sandbox-local credential proxy injects the per-session token on
-  outbound requests so the agent process never sees the token
-  ([`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) §6, §7).
-- **Write boundary by service identity:** Rather than splitting identities by read versus write, we split them by which
-  actor authored the data. The internal gRPC services are the sole writer of agent-authored content (such as the working
-  document and, later, typed claims), binding every write to its Analysis via the proxy-injected session token. The web
-  application writes only the control-plane and session rows it owns (Analyses, Project membership, per-session grants,
-  and the session-end trace and source projections), reads display rows, and writes curator-initiated uploads (such as
-  uploaded PDFs) directly to GCS. Deciding whether an uploaded paper, web search result, or corpus record is trusted
-  inside an agent's context is a separate retrieval-trust question from which service identity wrote the bytes.
-- **Deploy-time agent configuration:** The agent's system prompt, toolset, and model ID live on the Anthropic Agent
-  object and are pushed at deploy time via `ant` rather than bootstrapped on each worker poll. The agent configuration
-  contains no internal service URLs or credentials, which the sandbox-local proxy supplies per session, and the concrete
-  per-agent model ID is treated as encrypted confidential configuration ([`deployment.md`](deployment.md)). Generated
-  analysis code executes through the toolset's `bash` and file tools inside the self-hosted worker under our VPC egress
-  policy.
+Inside the self-hosted boundary, container hardening, credential isolation, and the host-side credential proxy are
+specified in [`sandbox-worker.md`](sandbox-worker.md) and [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), while
+deploy-time agent configuration and encrypted model-ID handling are specified in
+[`managed-agents.md`](managed-agents.md) and [`deployment.md`](deployment.md). At the infrastructure IAM boundary, write
+permissions are split by which actor authored the data rather than read versus write: the internal gRPC services are the
+sole writer of agent-authored content (binding every write to its Analysis via the proxy-injected session token), while
+`themis-web` writes only the control-plane and session rows it owns (Analyses, Project membership, per-session grants,
+and session-end trace projections) and curator-initiated GCS uploads. Admitting an uploaded paper, web search result, or
+corpus record into an agent's context is a separate retrieval-trust question, orthogonal to which service identity wrote
+the blob.
 
 ## Open questions
 

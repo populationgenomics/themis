@@ -55,23 +55,18 @@ presents to an agent as delimited data rather than as instructions.
 
 ### What the store holds for a paper
 
-A paper's citable form is a markdown *rendering* of it. An agent reads the rendering, and a quote is located in it. A
-paper can hold several renderings over its life, made by different routes. The paper's *manifest*
-([`litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto),
-[`themis/litcache/writer.py`](../../themis/litcache/writer.py)), one object in its directory, records all of them and
-names the one that readers are served ([`litcache-manifest.md`](litcache-manifest.md),
-[`literature-evidence-layer.md`](literature-evidence-layer.md)). The *full-text store* is the Google Cloud Storage (GCS)
-bucket that holds these directories. The literature interface
-([`themis/services/evidence/literature/`](../../themis/services/evidence/literature/)) reads the store; this doc covers
-how the store gets written.
+A paper's citable form is a markdown *rendering* stored in its directory in the full-text Google Cloud Storage (GCS)
+bucket. The literature interface ([`themis/services/evidence/literature/`](../../themis/services/evidence/literature/))
+reads this store ([`literature-evidence-layer.md`](literature-evidence-layer.md)); this doc covers how the store gets
+written.
 
-The manifest records each artifact derived from a paper as a *record*, keyed by the SHA-256 of its bytes. A record also
-names the hashes of the records it was made from, its *deps*, and how it was made. Separately, a *ref* names the record
-of each kind that readers should use. The ref for renderings is called `markdown`. A record is *current* when each of
-its deps is the record that its kind's ref currently names.
-
-That rule lets the manifest show on its own when a derived artifact needs redoing. Suppose a variant set `v1` was
-extracted from rendering `m1`. Later a better rendering `m2` arrives and the `markdown` ref moves to `m2`:
+Each paper's *manifest* ([`litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto),
+[`themis/litcache/writer.py`](../../themis/litcache/writer.py)) records each artifact derived from the paper as a
+*record*, keyed by the SHA-256 of its bytes
+([`litcache-manifest.md`](litcache-manifest.md#derived-artifacts-are-content-addressed-records)). A record also names
+the hashes of the inputs it was made from, its *deps*, and how it was made. Separately, a *ref* names the record of each
+kind that readers should use; the ref for renderings is called `markdown`. A record is *current* when each of its deps
+is the record that its kind's ref currently names:
 
 ```
 markdown ref ──▶ m2   (converted from XML)
@@ -79,7 +74,8 @@ markdown ref ──▶ m2   (converted from XML)
                  v1   variant set, deps: [m1]   ← m1 is no longer what the ref names, so v1 is not current
 ```
 
-Because `v1` depends on `m1` while `markdown` now points to `m2`, the manifest shows directly that `v1` is stale.
+Because `v1` depends on `m1` while `markdown` now points to `m2`, the manifest shows on its own when a derived artifact
+is stale and needs redoing.
 
 ### Three ways to get a paper's text
 
@@ -91,22 +87,17 @@ Because `v1` depends on `m1` while `markdown` now points to `m2`, the manifest s
 
 The first-party `litfetch` library (maintained outside this repo) finds the XML by walking a ladder of open-access
 sources for the paper's identifiers. Docling is a layout tool whose conversion arrives with every paper in the bulk seed
-corpus.
-
-The routes are ranked. A rendering converted from XML outranks a transcription, and a transcription outranks a seed's
-Docling conversion. When a paper has more than one rendering, the ranking decides which one the `markdown` ref names.
+corpus. When a paper has more than one rendering, the converter ranking in
+[`litcache-manifest.md`](litcache-manifest.md#a-ref-names-the-record-a-reader-should-use) (XML above PDF transcription,
+and PDF transcription above Docling) decides which one the `markdown` ref names.
 
 The PDF that a transcription reads ([`themis/litcache/ocr.py`](../../themis/litcache/ocr.py),
 [`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py)) is either one the paper already holds or,
-for a paper that holds none, the copy at the best open-access location that Unpaywall lists. Older open-access papers
-outside PubMed Central's open-access subset often have only such a copy. The PDF also serves curators checking a quote
-against the paper as published, so the worker fetches it even when the paper's text came from XML. The worker takes a
-PDF only when Unpaywall reports the paper as open. A located PDF is a captured source file rather than a worker-derived
-record. Because PDF bytes carry no embedded licence, the revision carries the licence terms that Unpaywall states for
-that location, and the writer commits it as a revision of the paper's `pdf` lineage
-([Captured files are lineages of revisions](litcache-manifest.md#captured-files-are-lineages-of-revisions)). Publishers'
-own sites mostly refuse clients other than browsers, so in practice the worker takes copies hosted by repositories and
-preprint servers.
+for a paper that holds none, the copy at the best open-access location that Unpaywall lists (typically hosted by a
+repository or preprint server, since publisher sites mostly refuse non-browser clients). Because the PDF also serves
+curators checking a quote against the published page, the worker fetches it even when the paper's text came from XML,
+committing it with Unpaywall's stated licence terms as a revision of the paper's `pdf` source lineage
+([`litcache-manifest.md`](litcache-manifest.md#captured-files-are-lineages-of-revisions)).
 
 ### How papers arrive
 
@@ -519,12 +510,10 @@ spending step along the path to them, and leaves unrelated spending steps untouc
   no work left and cost nothing the second time.
 
 Because naming a target authorizes spend, spend control rests on restricting which code may name a target.
-`MaybeIngestPapers` authorizes the caller up front from the call's credentials
-([`rpc-authorization.md`](rpc-authorization.md),
-[`themis/services/evidence/literature/`](../../themis/services/evidence/literature/)). It admits a call scoped to an
-Analysis, and it admits the developer CLI identity used to exercise a deployed environment by hand. An unadmitted caller
-is refused before any crosswalk lookup, readiness read, or task enqueue takes place. Funded bulk runs are started only
-by an operator.
+`MaybeIngestPapers` authorizes the caller up front before any crosswalk lookup, readiness read, or task enqueue takes
+place ([`rpc-authorization.md`](rpc-authorization.md#applying-the-model-to-the-literature-and-sheaf-services),
+[`themis/services/evidence/literature/`](../../themis/services/evidence/literature/)), and funded bulk runs are started
+only by an operator.
 
 The worker itself checks nothing. A queue has no per-task permission, so any principal allowed to create tasks on it can
 name any target, and anyone allowed to invoke the Cloud Run worker service directly can send it any targets. The
@@ -947,18 +936,9 @@ Failures in `MaybeIngestPapers` follow the same rule as the worker
 
 Every new rendering or source must be recorded in the paper's manifest before readers can find it
 ([`themis/litcache/writer.py`](../../themis/litcache/writer.py)). Because multiple writers can touch a paper's manifest
-concurrently, updating the manifest uses a compare-and-swap loop on the GCS object's generation number:
-
-1. Note the manifest object's current generation.
-1. Read the manifest at that generation.
-1. Add the new entry in memory.
-1. Write the updated manifest, conditioned on the object's generation still matching.
-
-If another writer committed in between, the precondition fails and the writer repeats the entire sequence from step 1 up
-to a fixed number of attempts, failing loudly if contention persists beyond the retry bound. Keeping the read inside the
-retried loop ensures that a concurrent commit between noting the generation and reading at that generation is retried
-cleanly rather than escaping as an error. GCS object generations provide per-paper atomic updates without an external
-lock service or database table.
+concurrently, `writer.commit` updates `manifest.pb` using the bounded generation-matched compare-and-swap loop over GCS
+object generations defined in [`litcache-manifest.md`](litcache-manifest.md#path-layout), providing per-paper atomic
+updates without an external lock service or database table.
 
 ### Redelivery, overlap and failed enqueues
 

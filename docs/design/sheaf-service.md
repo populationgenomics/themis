@@ -24,11 +24,9 @@ pack stream can decide on their own, while keeping the service stateless across 
 
 ## Background
 
-In sheaf's storage model ([`sheaf.md`](sheaf.md)), a repository under `<analysis_id>/` in the workspace bucket consists
-of content-addressed packfiles at `<analysis_id>/packs/<sha256>.pack` and a single protobuf ref document at
-`<analysis_id>/refs.pb`. Readers hydrate a local git repository by reading `refs.pb` and fetching any packfiles listed
-in its manifest that they do not already have. Writers publish by uploading new self-contained packfiles and replacing
-`refs.pb` in a single conditional write (`ifGenerationMatch`) against the bucket generation they read.
+Sheaf's bucket layout (`<analysis_id>/packs/<sha256>.pack` and `<analysis_id>/refs.pb`), hydration protocol, and
+single-object `ifGenerationMatch` compare-and-swap write protocol are defined in
+[`sheaf.md`](sheaf.md#repository-layout-and-the-ref-document).
 
 Two callers drive this protocol for an Analysis's workspace:
 

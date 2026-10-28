@@ -1096,16 +1096,17 @@ multiple interfaces.
   namespace enum lives in `transcript.proto` because each has a single owning interface. `evidence.proto` declares no
   gRPC service and imports no RPC proto, keeping the dependency graph acyclic.
 
-**Every RPC response layers three kinds of fields** following [`proto.md`](proto.md):
+**Every RPC response layers three kinds of fields** following the protobuf conventions in
+[`proto.md`](proto.md#external-json-and-upstream-schemas):
 
 1. **Typed decision-bearing fields.** Any state that downstream code or the caller branches on is strongly typed,
    regardless of how raw its upstream origin is. For example, the ClinVar pool census (`search_term`, `total_count`,
    `fetched_count`, truncation flag) is typed because it determines whether a pool is complete or a prefix.
-1. **Untyped upstream pass-throughs (`google.protobuf.Struct`).** Upstream payload fields that nothing in code branches
-   on remain in a `Struct` so the model can read them without brittle hand-written schemas. When an RPC composes two
-   upstreams, their pass-through payloads are stored in separate named fields (for example, `ClinVar.SearchCodingSpan`
-   returns the VariantValidator projection in its own field rather than merging it with ClinVar's payload into a single
-   `raw` field), so any field in a replay log can be attributed to its source.
+1. **Untyped upstream pass-throughs (`google.protobuf.Struct`).** Single-source upstream payload fields that Themis does
+   not interpret or branch on remain in a `Struct` so the model can read them without brittle hand-written schemas. When
+   an RPC composes multiple upstreams, their pass-through payloads stay in separate named fields per upstream (for
+   example, `ClinVar.SearchCodingSpan` returns the VariantValidator projection in its own field rather than merging it
+   with ClinVar's payload into a single `raw` field), so any field in a replay log can be attributed to its source.
 1. **Generated schemas where the upstream publishes a formal schema.** For `ClinVar.DescribeVariant`, the queried
    allele's full VCV record carries rich per-submission observations, assertion methods, and citations governed by an
    official NCBI XSD. Rather than hand-transcribing that schema or collapsing it to a `Struct`, the protobuf message is

@@ -126,15 +126,9 @@ ranked PMID lists that a caller turns into bibliographies through `FetchPubmedAr
 search key for finding papers alongside keyword queries, and splitting them into a separate interface would divide
 literature discovery across two services for no consumer benefit.
 
-The full-text store applies the same source-fidelity rule at rest in a paper's `metadata.pb`
-([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)): it stores PubMed's record using
-the proto generated from NLM's DTD (`FetchPubmedArticles` and `metadata.pb` share the exact same schema converter) and
-stores Crossref and OpenAlex records verbatim as raw JSON strings. Beside those verbatim source records, `metadata.pb`
-populates Themis's own normalised fields — plain-text titles, abstracts, journals, and identifiers in one named scheme
-(ORCID iDs and NLM MeSH) — which leave the verbatim records intact and can be recomputed whenever the normalisation rule
-changes. Those normalised fields make two deliberate cross-source choices that only the store can make because it holds
-all sources for one `doc_id`: author attribution is taken from OpenAlex whenever an OpenAlex work record is present, and
-Crossref and OpenAlex publication types are mapped approximately onto NLM's vocabulary via a fixed lookup table.
+The full-text store applies the same source-fidelity rule at rest in a paper's `metadata.pb`: it keeps the verbatim
+PubMed DTD proto alongside raw Crossref and OpenAlex JSON strings and derives Themis's normalised bibliographic fields
+from them ([`litcache-manifest.md`](litcache-manifest.md#the-bibliographic-record-metadatapb)).
 
 ```mermaid
 flowchart TD
@@ -261,21 +255,16 @@ never pollute the crosswalk:
 1. **Read-only lookup first.** A pure lookup never mints a `doc_id`. If a lookup minted a UUID without writing a paper
    manifest, it would return a `doc_id` that points to nothing in object storage and would permanently claim that
    external identifier in the crosswalk.
-1. **Verified ingest on a miss.** When an external identifier misses in the crosswalk, `MaybeIngestPapers` queries
-   upstream metadata indexes (PubMed, Crossref, OpenAlex) to verify that the identifier resolves to a real work
-   ([`evidence-fulltext.md`](evidence-fulltext.md)). Only when an upstream index answers does the service mint a
-   `doc_id` — claiming all of the work's known identifiers in a single crosswalk transaction or adopting an existing
-   `doc_id` if a concurrent worker already claimed one — and commit the paper's initial `metadata.pb` and
-   `manifest.json` to the store. If two separately ingested works later turn out to share an identifier, their `doc_id`s
-   form an equivalence class in the manifests that resolves deterministically to one canonical `doc_id`
-   ([`litcache-manifest.md`](litcache-manifest.md)). The crosswalk table is an idempotent mint lock rather than the
-   system of record: it can be rebuilt from the store's manifests, and a crosswalk row whose manifest write failed
-   simply reads back as `UNKNOWN_PAPER`.
-1. **Enqueueing conversion without waiting.** If the resolved paper's full-text readiness is `PENDING` (no markdown
-   rendering exists yet and conversion has not terminally failed), `MaybeIngestPapers` enqueues a background conversion
-   job and returns `READINESS_PENDING` immediately ([`evidence-fulltext.md`](evidence-fulltext.md)). The `Maybe` in the
-   RPC's name reflects that a call may match an already-ready paper, start a background ingest, or report that no
-   upstream index recognises the identifier (`UNKNOWN_PAPER`), all without blocking on full-text production.
+1. **Verified ingest on a miss.** When an external identifier misses in the crosswalk, `MaybeIngestPapers` verifies the
+   work against upstream metadata indexes, claims its identifiers in the crosswalk (or adopts an existing claim), and
+   commits the paper's initial metadata and manifest to the store
+   ([`evidence-fulltext.md`](evidence-fulltext.md#an-id-the-corpus-does-not-hold-is-brought-into-the-store),
+   [`litcache-manifest.md`](litcache-manifest.md#identity-and-equivalence)).
+1. **Enqueueing conversion without waiting.** If the resolved paper's full-text readiness is `PENDING`,
+   `MaybeIngestPapers` enqueues a background conversion request and returns `READINESS_PENDING` immediately
+   ([`evidence-fulltext.md`](evidence-fulltext.md#the-worker-runs-one-paper-to-a-fixed-point)). The `Maybe` in the RPC's
+   name reflects that a call may match an already-ready paper, start a background ingest, or report that no upstream
+   index recognises the identifier (`UNKNOWN_PAPER`), all without blocking on full-text production.
 
 `MaybeIngestPapers` is the only RPC on the literature interface that writes to storage or touches the relational
 crosswalk database. Its permissions reflect its two-step write: the service holds `INSERT`-only privileges on the
@@ -296,12 +285,10 @@ author manuscript PDF followed later by a direct conversion from publisher JATS 
 upgrade. If the agent, the quote validator, and the workbench document pane each chose among renderings independently, a
 quote validated during a run could fail to locate when opened in the browser.
 
-To guarantee that every consumer sees the same text for a paper, the store defines a single **canonical rendering** at
-write time ([`litcache-manifest.md`](litcache-manifest.md#a-ref-names-the-record-a-reader-should-use)). Whenever an
-ingestion or conversion worker writes a new markdown rendering, it compares the new rendering against the paper's
-current `markdown` ref in `manifest.json`: a rendering converted from structured XML (`jats_xml`, `elsevier_xml`)
-outranks one transcribed from a PDF, and a newer rendering wins on a tie. Every read RPC simply follows the manifest's
-`markdown` ref.
+To guarantee that every consumer sees the same text for a paper, the store maintains a single **canonical rendering** in
+the manifest's `markdown` ref, selected at write time by the converter ranking in
+[`litcache-manifest.md`](litcache-manifest.md#a-ref-names-the-record-a-reader-should-use), and every read RPC follows
+that ref.
 
 Alongside the canonical rendering, the store RPCs return two per-paper enums that are derived on each read from the
 manifest rather than stored in a separate status database:

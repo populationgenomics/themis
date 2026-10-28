@@ -39,10 +39,9 @@ commits them and a push lands.
 
 ## Background
 
-The storage format is sheaf ([`sheaf.md`](sheaf.md)). A git repository is a set of objects (file contents, directory
-listings, and commits) plus a few named pointers to commits, called refs. Sheaf stores the objects in packfiles, each
-under a key derived from its own bytes. It stores every ref, together with the list of packfiles, in one small **ref
-document**. Here is a workspace after two pushes from the agent:
+The workspace repository is stored in sheaf ([`sheaf.md`](sheaf.md)). Sheaf keeps git objects in content-addressed
+packfiles and stores every ref, together with the pack manifest, in one small protobuf **ref document** (`refs.pb`; see
+[`sheaf.md`](sheaf.md#repository-layout-and-the-ref-document)). Here is a workspace after two pushes from the agent:
 
 ```
 the Analysis's repository in sheaf's bucket
@@ -54,31 +53,19 @@ the Analysis's repository in sheaf's bucket
   pack a817…   14 KB    objects of its second push
 ```
 
-A write uploads its new pack, then replaces the ref document on the condition that the document is still at the
-generation the writer read. That conditional write is all the concurrency control the store uses. Writers only move refs
-forward and never delete packs or refs. Every revision that was ever a tip stays readable, and the reflog ref records
-when each tip was current.
-
-A publish can lose a race in two ways, and the storage protocol distinguishes them. `ABORTED` means another writer
-published first but moved none of the branches this publish moves. Among the refs this publish touches, only sheaf's
-reflog ref has changed, so rebuilding the same change against the new document lands it. `FAILED_PRECONDITION` means a
-ref this publish moves has itself moved. That is git's non-fast-forward rejection, and the writer must redo its change
-on the new tip.
+A write uploads its new pack and then replaces `refs.pb` with an `ifGenerationMatch` compare-and-swap against the
+generation the writer read. When a conditional write loses a race, sheaf distinguishes the two outcomes
+([`sheaf.md`](sheaf.md#distinguishing-a-lost-race-from-a-ref-conflict)). `ABORTED` means another writer published first
+without moving any branch this publish moves, so only the reflog ref changed and the caller can retry against the new
+ref document. `FAILED_PRECONDITION` means a target branch moved (a non-fast-forward conflict), so the caller must rebase
+its change onto the new tip.
 
 The sheaf service ([`sheaf-service.md`](sheaf-service.md), implemented in
-[`themis/services/sheaf/`](../../themis/services/sheaf/)) holds the sole credential with access to the bucket. The
-sandbox worker uses three of its RPCs: read the ref document, fetch a pack, and publish. Because the service holds no
-git objects and parses none, it checks only what the ref document and pack stream show: that ref names are well formed,
-that no ref is deleted, and that the reflog ref advances with every publish. Checks that require git objects belong to
-the writer. The writer must move refs forward only, write a valid reflog entry, and upload every object reachable from
-the new tips.
-
-The agent's side shows the pattern this design follows. The sandbox holds two copies of the repository. The guest's
-clone belongs to the agent, and untrusted model code controls it completely. The sandbox worker keeps a second, bare
-copy on the host inside the trusted worker process ([`sandbox-worker.md`](sandbox-worker.md)). The worker builds that
-bare copy through the first two RPCs. A pre-receive hook in the mirror checks every push the agent makes and publishes
-it through the third RPC. The worker's copy is where the host checks the untrusted writer's pushes, out of that writer's
-reach.
+[`themis/services/sheaf/`](../../themis/services/sheaf/)) holds the sole credential with access to the bucket. It
+enforces the ref-level invariants on `refs.pb`, while writers are responsible for git object validity and fast-forward
+ancestry. On the agent side, the sandbox worker maintains a trusted host-side bare mirror that hydrates from and
+publishes to the sheaf service on behalf of the untrusted guest clone
+([`sandbox-worker.md`](sandbox-worker.md#the-workspace-is-a-repository-and-the-agents-git-is-the-only-git-in-it)).
 
 The curator's side has no such split because it rests on a different trust model. Curators are members of their Project
 who act in good faith. The browser is a trusted writer like the host worker: it meets the writer's contract by its own

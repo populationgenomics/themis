@@ -41,71 +41,55 @@ and its rendering to the paper in a single manifest write, and the paper becomes
 ### How a paper is named and claimed
 
 Every paper in the store is named by a **`doc_id`**, a random identifier that the store mints
-([`literature-evidence-layer.md`](literature-evidence-layer.md)). External identifiers such as a DOI, a PMID, or a PMCID
-map onto that `doc_id` through the **crosswalk**, a table in Postgres. Adding a row to the crosswalk is a **claim**: it
-declares that the external identifier names that paper for every subsequent reader. The store never retracts a claim,
-because retracting one would orphan every citation already made against the `doc_id` it named.
+([`literature-evidence-layer.md`](literature-evidence-layer.md#entering-the-full-text-store-through-maybeingestpapers)).
+External identifiers (`doi:`, `pmid:`, `pmcid:`) map onto that `doc_id` through the Postgres **crosswalk**. Adding a row
+to the crosswalk is a **claim**: it declares that the external identifier names that paper for every subsequent reader.
+The store never retracts a claim, because retracting one would orphan every citation already made against the `doc_id`
+it named.
 
-Each paper's files live in a directory named by its `doc_id` inside the full-text bucket
-([`litcache-manifest.md`](litcache-manifest.md),
-[`schema/proto/themis/litcache/models/litcache.proto`](../../schema/proto/themis/litcache/models/litcache.proto)). The
-directory's **manifest** (`manifest.pb`) is the commit point. It lists the paper's claimed identifiers, its source
-files, and its renderings, and a paper exists for readers as soon as its manifest is written. Beside the manifest sits
-the paper's **bibliographic record** (`metadata.pb`), which holds the title, authors, journal, and abstract as PubMed or
-Crossref published them. Because every identifier in a manifest is one the crosswalk claimed, an operator can rebuild
-the crosswalk from the manifests alone ([`themis/litcache/`](../../themis/litcache)).
-
-The manifest groups a paper's source files by kind: its PDFs form one **lineage**, and its publisher XML forms another.
-Each fetch or upload of a source file adds a **revision** to that lineage, and the lineage records the licence and
-access terms under which the file arrived. A paper can also hold several renderings at once, such as an early
-transcription from a PDF and a later conversion from publisher XML. The manifest names the rendering that readers
-receive, choosing the highest-fidelity one available. Because a rendering converted from XML outranks a PDF
-transcription, a better rendering arriving later replaces a worse one for new reads without deleting the older file, and
-citations made against the older rendering keep resolving.
+Each paper's directory in the full-text bucket holds its **bibliographic record** (`metadata.pb`) and its **manifest**
+(`manifest.pb`) ([`litcache-manifest.md`](litcache-manifest.md)). The manifest is the commit point: it lists the paper's
+claimed identifiers, its source-file lineages and their licence terms, and its markdown renderings, and a paper exists
+for readers as soon as its manifest is written. When a paper holds more than one rendering, the manifest names the
+highest-fidelity one for readers to use. Because a rendering converted from XML outranks a PDF transcription, a better
+rendering arriving later supersedes a worse one for new reads without deleting the older file, so citations made against
+the older rendering keep resolving.
 
 ### How a paper ends up with no text
 
-The agent requests a paper by an external identifier through `MaybeIngestPapers` on the literature service
-([`schema/proto/themis/rpc/literature.proto`](../../schema/proto/themis/rpc/literature.proto),
-[`themis/services/evidence/literature/`](../../themis/services/evidence/literature)). If the store does not hold the
-paper, the evidence service checks the identifier against PubMed or Crossref, claims it in the crosswalk, and writes an
-initial manifest that holds only the paper's identifiers ([`evidence-fulltext.md`](evidence-fulltext.md)). A conversion
-lane then tries to produce the paper's text by fetching open-access XML or transcribing a PDF that the paper already
-holds. When neither source is available, the conversion lane writes a terminal **`NO_FULL_TEXT`** marker beside the
-manifest, and the paper's readiness reads `NO_FULL_TEXT` from then on. A conversion that fails permanently writes
-**`FAILED`** instead.
-
-When a paper settles with no text, the agent can note the missing paper in its working document, but the curator who has
-institutional access to the PDF has no way to hand it over.
+When an agent requests an external identifier via `MaybeIngestPapers`
+([`schema/proto/themis/rpc/literature.proto`](../../schema/proto/themis/rpc/literature.proto)), the store resolves and
+claims the paper if needed and schedules background conversion ([`evidence-fulltext.md`](evidence-fulltext.md)). If
+neither open-access XML nor an open PDF is available, the worker writes a terminal **`NO_FULL_TEXT`** marker beside the
+manifest (or **`FAILED`** on permanent conversion failure;
+[`evidence-fulltext.md`](evidence-fulltext.md#readiness-is-read-off-the-store)). When a paper settles with no text, a
+curator who holds institutional access to the PDF has no way to supply it unless an upload door exists.
 
 ### What a rendering costs
 
-A **rendering** is the markdown file that a reader quotes from. The conversion lane turns open-access XML into markdown
-in a few seconds at negligible cost. Transcribing a PDF requires a vision model, which takes a minute or two and spends
-model tokens on every attempt. Once a paper's manifest lists a rendering, its readiness reads **`READY`** regardless of
-any terminal marker sitting beside the manifest.
+A **rendering** is the markdown file that a reader quotes from
+([`evidence-fulltext.md`](evidence-fulltext.md#three-ways-to-get-a-papers-text)). Turning open-access XML into markdown
+takes seconds at negligible cost. Transcribing a PDF with a vision model takes a minute or two and spends model tokens
+on every attempt. Once a paper's manifest lists a rendering, its readiness reads **`READY`** regardless of any terminal
+marker beside the manifest.
 
 ### How the agent's calls reach the store
 
-The agent runs code inside an untrusted sandbox called the **guest**, where the model drives execution. The guest's only
-way out is an RPC channel to a **hatch** that the trusted **sandbox worker** runs on the host
-([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), [`sandbox-worker.md`](sandbox-worker.md),
-[`themis/services/sandbox_worker/`](../../themis/services/sandbox_worker)). The sandbox worker forwards each permitted
-call to its target service and attaches the Analysis's session token. Inside the guest, the agent's literature calls go
-through a generated client stub to the hatch and on to the evidence service. A client interceptor in the guest sees
-every call and response on that stub, though code in the untrusted guest can bypass the interceptor by opening its own
-channel to the hatch.
-
-The browser reaches the backend services through the workbench's **BFF** (backend-for-frontend)
-([`schema/proto/themis/workbench/rpc/workbench.proto`](../../schema/proto/themis/workbench/rpc/workbench.proto)). The
-BFF authenticates as the web caller and attaches the session of the Analysis that the browser has open.
+The agent runs code inside an untrusted sandbox called the **guest**. The guest reaches the literature service through
+its generated stub over the host **sandbox worker**'s gRPC **hatch**, which checks the method allowlist and attaches the
+Analysis's session token ([`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary),
+[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). A guest-side client interceptor observes calls on the default
+stub, though untrusted guest code can bypass it by opening a raw channel to the hatch. On the browser side, requests
+pass through the workbench **BFF**
+([`schema/proto/themis/workbench/rpc/workbench.proto`](../../schema/proto/themis/workbench/rpc/workbench.proto)), which
+authenticates as the web caller and attaches the open Analysis's session.
 
 ### The Analysis repository
 
-Each Analysis has a git repository that holds its working document and the companion files the agent writes beside it
-([`workbench-workspace.md`](workbench-workspace.md)). The agent works in a clone of this repository inside the sandbox
-and pushes its commits back to the host. The workbench reads the repository to render the Analysis, and a pre-receive
-hook checks each push on its way in so that malformed files are rejected before they land.
+Each Analysis has a sheaf git repository that holds `working_document.md` and the companion files beside it
+([`sheaf.md`](sheaf.md), [`workbench-workspace.md`](workbench-workspace.md)). The agent clones this repository inside
+the sandbox and pushes its commits back to the host, where a `pre-receive` hook validates each push before it lands. The
+workbench reads and updates the repository to render the Analysis.
 
 ## Non-goals
 

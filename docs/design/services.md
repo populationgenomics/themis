@@ -273,15 +273,11 @@ interface before any web or operator method is added to it. Services in [`themis
 serve two distinct caller populations:
 
 1. **The sandbox agent in code mode:** Most analysis services (such as `evidence`) are called by Python scripts the
-   agent writes and runs inside the sandbox (see [`sandbox-worker.md`](sandbox-worker.md)). The sandbox guest holds no
-   cloud credentials and no service URLs. Its only network exit is a method-allowlisted gRPC hatch run by the trusted
-   worker process outside the sandbox. The hatch checks that the called RPC is allowlisted, attaches the session token
-   in the `x-themis-session-token` metadata header, and forwards the request over a channel carrying the worker service
-   account's OIDC ID token. Making a service callable from the sandbox requires four explicit steps: marking each
-   permitted RPC with `option (themis.rpc.agent_exposed) = true` in the `.proto` file (see
-   [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)), registering a forwarder on the worker hatch, shipping the
-   generated stub in the guest rootfs, and granting `roles/run.invoker` to the worker service account on the target
-   Cloud Run service.
+   agent writes and runs inside the sandbox through the worker's method-allowlisted gRPC hatch, which attaches the
+   session token and forwards the call under the worker service account's OIDC ID token
+   ([`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary)). How RPCs are annotated with
+   `option (themis.rpc.agent_exposed) = true` and wired through the hatch allowlist, guest rootfs, and Cloud Run IAM is
+   specified in [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md#the-rpc-is-the-unit-of-exposure).
 1. **Trusted platform services:** Services such as `auth` (called by other services to resolve session tokens) and
    `sheaf` (called by `apps/web` and the sandbox worker's file mirror; see [`sheaf-service.md`](sheaf-service.md)) are
    called service-to-service and never carry `agent_exposed` options.

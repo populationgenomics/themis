@@ -59,8 +59,8 @@ results to the session log.
           │  dispatches tool calls (self-hosted environment)
           ▼
   Execution sandbox (CPG network)
-     runs shell & Python in code mode (no GCP identity);
-     local proxy injects per-session credential
+     guest runs shell & Python in code mode (no GCP identity);
+     worker's host-side forwarder (hatch) injects per-session credential
           │
           │  gRPC over internal network
           ▼
@@ -71,22 +71,17 @@ results to the session log.
 
 Three components on our side participate in a run:
 
-- **Tools in code mode.** Rather than issuing long chains of discrete tool calls through the model loop, the agent
-  reaches our internal gRPC services in **code mode** by writing Python scripts against generated protobuf stubs inside
-  the sandbox ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). The internal services hold the GCP identity needed
-  to read and write Cloud SQL and GCS. The sandbox itself holds no cloud credentials; a sandbox-local proxy injects a
-  per-session credential on outbound calls so the agent never touches backing stores directly
-  ([`spike-infrastructure.md`](spike-infrastructure.md) §8).
-- **Execution sandbox.** The self-hosted worker
-  ([`../../themis/services/sandbox_worker/`](../../themis/services/sandbox_worker)) executes the agent's shell commands
-  and file operations inside our network and egress boundary.
-- **Session client.** The web backend
-  ([`../../apps/web/src/server/adapters/live/`](../../apps/web/src/server/adapters/live)) creates a session for each
-  submitted Analysis, sends the scenario kickoff message, and reads the session's event stream to drive the workbench UI
-  and emit traces ([`managed-agents.md`](managed-agents.md)). It is a thin client that starts and observes the session;
-  it does not sequence agents or conduct workflows. Where [`spike-infrastructure.md`](spike-infrastructure.md) §8 refers
-  to the web app as the "orchestrator/session-client", it means this thin session client, while data-plane mediation
-  lives in the services tier.
+- **Tools in code mode** ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)): the agent writes Python scripts against
+  generated protobuf stubs inside the sandbox, and a host-side proxy injects the per-session credential on outbound
+  calls to our internal gRPC services so the sandbox holds no cloud credentials
+  ([`sandbox-worker.md`](sandbox-worker.md)).
+- **Execution sandbox** ([`sandbox-worker.md`](sandbox-worker.md),
+  [`../../themis/services/sandbox_worker/`](../../themis/services/sandbox_worker)): the self-hosted worker executes the
+  agent's shell commands and file operations inside our network and egress boundary.
+- **Session client** ([`managed-agents.md`](managed-agents.md),
+  [`../../apps/web/src/server/adapters/live/`](../../apps/web/src/server/adapters/live)): the web backend starts each
+  Analysis session, sends the kickoff message, and reads the session's event stream to drive the UI and emit traces
+  without sequencing agents itself.
 
 ## Design
 
@@ -205,8 +200,9 @@ is brittle and divorces validation from the moment the agent makes the claim.
 
 Instead, the agent emits structured output by calling our tightly-typed internal gRPC services — such as `record_claim`,
 `record_gap`, `record_verdict`, or working-document write calls — directly from the sandbox in code mode. The agent
-writes Python against the generated protobuf stubs ([`proto.md`](proto.md)); the call passes through the sandbox-local
-proxy, which attaches the per-session credential, and the receiving internal service:
+writes Python against the generated protobuf stubs ([`proto.md`](proto.md)); the call passes through the sandbox
+worker's host-side forwarder (the hatch, [`sandbox-worker.md`](sandbox-worker.md)), which attaches the per-session
+credential, and the receiving internal service:
 
 1. validates the payload against the protobuf schema ([`proto.md`](proto.md));
 1. persists the record to Cloud SQL or GCS using the service's own GCP identity; and

@@ -33,18 +33,16 @@ and any RPC called by both the agent and the BFF answers both callers identicall
 
 ## Background
 
-The agent's code runs inside the *guest*, a sandboxed process with no network interface and no credentials
-([`sandbox-worker.md`](sandbox-worker.md)). Its one exit is the *hatch*, a gRPC server listening on a Unix domain socket
-inside the sandbox and run by the trusted *worker* process outside it in
-[`themis/services/sandbox_worker/`](../../themis/services/sandbox_worker/). The hatch checks each incoming method path
-against a generated allowlist and returns `PERMISSION_DENIED` for any unlisted method. For allowlisted methods, the
-worker registers one *forwarder* per exposed service. The forwarder attaches the session's token as request metadata and
-forwards the call over a channel authenticated with the worker's own service identity. Because the guest has no network,
-an exposed RPC that queries an external system is the only path by which text composed inside the sandbox can leave the
-perimeter. Whether such an RPC can act as an exfiltration channel depends on its implementation: as defined in
-[`security.md`](security.md) (§What counts as an exfiltration channel), an outbound request is safe only when its
-destination is fixed by constants in code and caller-supplied text is passed as an encoded parameter that selects a
-response without naming a host, a route, or content the upstream stores.
+The agent's code runs inside the *guest*, an isolated container process with no network interface and no credentials
+([`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary)). Its one exit is the *hatch*, a
+Unix-socket gRPC server on the host run by the trusted *worker* process in
+[`themis/services/sandbox_worker/`](../../themis/services/sandbox_worker/) that checks each incoming method path against
+a generated allowlist and returns `PERMISSION_DENIED` otherwise. For allowlisted methods, the worker's per-service
+*forwarder* relays admitted calls to internal services over an ID-token-authenticated channel with the session
+credential attached as request metadata. Because the guest has no network, a tool that queries an external system is
+exfiltration-safe only when its destination is fixed by code constants and agent-supplied text travels only as an
+encoded parameter that selects a response without naming a host, a route, or content the upstream stores
+([`security.md`](security.md#what-counts-as-an-exfiltration-channel)).
 
 Two callers reach Themis's data-plane services, and they sit on opposite sides of the trust boundary:
 
