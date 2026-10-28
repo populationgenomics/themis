@@ -603,7 +603,7 @@ Resolution via evidence service Locate / Validate (per representation):
   │                               runs anchorite.locate_quote_span(markdown, quote)
   │                               ──► TextOffsets { start: 14208, end: 14253 }
   └── REPRESENTATION_PDF      ──► reads current PDF revision ("19b0...")
-                                  ──► PdfHighlight { page: 4, rects: [...] }
+                                  ──► PdfRegion { page: 4, rects: [...] }
 ```
 
 The manifest side is settled: whenever a rendering is addressed directly (as in the offsets cache and licence-safe

@@ -164,8 +164,8 @@ once per process:
   `literature`'s RPCs use the session resolver according to their caller: the eight agent-called RPCs resolve a session
   to enforce the analysis data cutoff, and `MaybeIngestPapers` also uses the session to attribute paper-fetching and
   conversion spend (see [`evidence-fulltext.md`](evidence-fulltext.md)), whereas the three browser-called RPCs
-  (`DescribePaper`, `GetPaperContentLocation`, and `LocateQuote`) resolve no session because the paper corpus is shared
-  across analyses.
+  (`DescribePaper`, `ResolveContent`, and `Locate`) resolve no session because the paper corpus is shared across
+  analyses.
 - **Shared HTTP client (`httpx2.AsyncClient`):** provides a single connection pool across interfaces that query external
   HTTP endpoints.
 - **Process lifetime stack (`contextlib.AsyncExitStack`):** owns long-lived read-only handles opened by interface

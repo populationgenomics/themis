@@ -331,13 +331,13 @@ at `AuthContext` construction until the approval flow and licence-scoped corpus 
 #### Literature interface
 
 The literature service ([`schema/proto/themis/rpc/literature.proto`](../../schema/proto/themis/rpc/literature.proto))
-applies the admission model across three groups of RPCs:
+applies the admission model across three groups of RPCs (11 methods total):
 
-| RPC group                   | Methods                                                                                                                        | Declared admission                                                  | Session & context usage                                                                                     |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Agent-facing reads          | `SearchPapers`, `ReadPaperFulltext`, `ValidateQuote`, `GetEvidenceStatus`, `GetCandidateSummaries`, `GetPaperMetadata`         | `agent_exposed = true` (`CALLER_AGENT`, plus implicit `CALLER_CLU`) | Requires resolved session for `CALLER_AGENT`; passes `AuthContext` to `LiteratureBackend.view_for`.         |
-| Browser paper-content reads | `GetPaperContent`, `GetPaperParagraphs`, `GetSupplements`, `GetSupplementContent`, `GetFigures`, `GetFigureImage`, `GetTables` | `admits_caller = CALLER_WEB` (plus implicit `CALLER_CLU`)           | Admits the web tier with its ID token and no session; passes `AuthContext` to `LiteratureBackend.view_for`. |
-| Producer / acquisition      | `MaybeIngestPapers`                                                                                                            | `agent_exposed = true`, `admits_caller = CALLER_CLU`                | Authorizes up front at the interceptor before inspecting the batch or enqueuing conversion work.            |
+| RPC group                   | Methods                                                                                                                     | Declared admission                                          | Session & context usage                                                                                     |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Agent-facing reads          | `SearchEuropePmc`, `FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `PollFullTexts`, `ReadMarkdown`, `Validate` | `admits_caller = CALLER_AGENT` (plus implicit `CALLER_CLU`) | Requires resolved session for `CALLER_AGENT`; passes `AuthContext` to `LiteratureBackend.view_for`.         |
+| Browser paper-content reads | `DescribePaper`, `ResolveContent`, `Locate`                                                                                 | `admits_caller = CALLER_WEB` (plus implicit `CALLER_CLU`)   | Admits the web tier with its ID token and no session; passes `AuthContext` to `LiteratureBackend.view_for`. |
+| Producer / acquisition      | `MaybeIngestPapers`                                                                                                         | `admits_caller = CALLER_AGENT` (plus implicit `CALLER_CLU`) | Authorizes up front at the interceptor before inspecting the batch or enqueuing conversion work.            |
 
 Previously, `MaybeIngestPapers` resolved a session token inside the handler only when it reached the step of enqueuing a
 PDF-to-markdown conversion task, and then discarded the binding; batches whose papers were already ingested succeeded

@@ -108,12 +108,12 @@ records from different indexes as interchangeable.
 
 Instead, each discovery RPC queries one named external index and returns that source's own record shape:
 
-| RPC                   | External source | What it does                                                                                                                                                                            |
-| --------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SearchEuropePmc`     | Europe PMC      | Runs a keyword query against the live index and returns ranked `EuropePmcArticle` records (with inline abstracts) plus the upstream match count (`total_found`).                        |
-| `FetchPubmedArticles` | PubMed `efetch` | Fetches PubMed's complete record (`PubmedArticle` for journal articles, `PubmedBookArticle` for book chapters such as GeneReviews) for a batch of PMIDs, plus `pmids_without_record`.   |
-| `SearchLitVar`        | NCBI LitVar2    | Resolves variant identifiers to candidate `LitVarVariantEntity` records, returning each entity's labels, per-identifier agreement verdict, total matched PMID count, and top PMIDs.     |
-| `ListLitVarEntities`  | NCBI LitVar2    | Lists every `LitVarVariantEntity` indexed under a gene symbol, ordered from most-published to least-published, to surface entities indexed under legacy or non-standard change strings. |
+| RPC                   | External source | What it does                                                                                                                                                                                    |
+| --------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SearchEuropePmc`     | Europe PMC      | Runs a keyword query against the live index and returns ranked `EuropePmcRecord` records (with inline abstracts) plus the upstream match count (`total_matched`).                               |
+| `FetchPubmedArticles` | PubMed `efetch` | Fetches PubMed's complete record (`PubmedArticle` for journal articles, `PubmedBookArticle` for book chapters such as GeneReviews) for a batch of PMIDs, plus `pmids_without_record`.           |
+| `SearchLitVar`        | NCBI LitVar2    | Resolves variant identifiers to candidate `VariantEntity` records, returning each entity's labels, per-identifier agreement verdict, total matched PMID count (`total_records`), and top PMIDs. |
+| `ListLitVarEntities`  | NCBI LitVar2    | Lists every `ListedEntity` indexed under a gene symbol, ordered from most-published to least-published, to surface entities indexed under legacy or non-standard change strings.                |
 
 Every RPC and response message names the specific source or payload it handles (`SearchEuropePmc`,
 `FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `ReadMarkdown`) rather than using generic verbs. When a new
@@ -135,8 +135,8 @@ flowchart TD
     subgraph discovery["Discovery — one RPC per named external index"]
         Q["Query: 'SCN1A p.Arg1648His' or variant IDs"] --> S["SearchEuropePmc(query='SCN1A Arg1648His')"]
         Q --> V["SearchLitVar · ListLitVarEntities"]
-        S --> E["EuropePmcArticle (pmid='12345678', abstract inline)"]
-        V --> PMIDS["LitVarVariantEntity (rsid='rs121918625', pmids=['12345678', ...])"]
+        S --> E["EuropePmcRecord (pmid='12345678', abstract inline)"]
+        V --> PMIDS["VariantEntity (rsid='rs121918625', pmids=['12345678', ...])"]
         PMIDS --> F["FetchPubmedArticles(pmids=['12345678'])"]
         H["External PMID from reference list or clinical note"] --> F
         F --> E2["PubmedArticle / PubmedBookArticle (NLM DTD proto, abstract inline)"]
@@ -146,7 +146,7 @@ flowchart TD
     end
     E --> DOOR{"MaybeIngestPapers(external_ids=['pmid:12345678'])"}
     E2 --> DOOR
-    DOOR -->|"doc_id='018f...', READINESS_READY"| M
+    DOOR -->|"doc_id='018f...', FULL_TEXT_STATE_READY"| M
     DOOR -->|"PENDING / NO_FULL_TEXT / FAILED"| N["Reported as a fact; serving path never waits for text"]
     E -.->|"Abstract is readable for triage, not quotable"| P["Summarized in plain prose (no citation directive)"]
     E2 -.-> P
@@ -158,20 +158,21 @@ None of the three search RPCs (`SearchEuropePmc`, `SearchLitVar`, `ListLitVarEnt
 Instead, each response pairs its bounded list of results with the census count of everything that matched before the
 budget cut:
 
-- `SearchEuropePmc` returns up to `max_results` articles (default 10, ceiling 25) alongside `total_found` from Europe
+- `SearchEuropePmc` returns up to `max_results` records (default 10, ceiling 25) alongside `total_matched` from Europe
   PMC.
 - `SearchLitVar` returns matched entities alongside `total_entities` (the count before the entity fan-out ceiling of 8),
-  and each `LitVarVariantEntity` carries up to `max_results` PMIDs (default 25, ceiling 50) alongside that entity's
-  `total_found` PMID count in LitVar2.
-- `ListLitVarEntities` returns up to `max_entities` entities (default 50, ceiling 200) alongside `total_entities` (the
-  count of entities on the gene after any `contains` substring filter, before the `max_entities` cut).
+  and each `VariantEntity` carries up to `max_pmids_per_entity` PMIDs (default 30, ceiling 50) alongside that entity's
+  `total_records` PMID count in LitVar2.
+- `ListLitVarEntities` returns up to `max_results` `ListedEntity` entries (default 50, ceiling 200) alongside
+  `total_in_gene` (every entity on the gene before any `contains` filter) and `total_matched` (the count after the
+  `contains` substring filter, before the `max_results` cut).
 
-For example, if `SearchEuropePmc(query="SCN1A", max_results=10)` returns 10 articles and `total_found: 412`, the caller
+For example, if `SearchEuropePmc(query="SCN1A", max_results=10)` returns 10 records and `total_matched: 412`, the caller
 immediately sees that it is looking at the top 10 of 412 matches. If the caller needs different results, it refines the
 query, raises the budget up to the ceiling, or — when `SearchLitVar` reports `total_entities: 11` beside 8 returned
-entities — queries a specific dropped entity by passing its `litvar_id` (`litvar@rs121918625##`) back to `SearchLitVar`.
-The response does not echo the requested `max_results` or the server's ceiling, since the caller already knows what it
-asked for and can see the length of the returned slice.
+entities — lists the gene's entities via `ListLitVarEntities` and queries a specific dropped entity by passing its `id`
+(`litvar@rs121918625##`) back to `SearchLitVar(entity_id=...)`. The response does not echo the requested `max_results`
+or the server's ceiling, since the caller already knows what it asked for and can see the length of the returned slice.
 
 Omitting pagination cursors trades away exhaustive walkability, which an analysis reading loop does not use: a run reads
 the top-ranked papers and narrows its query rather than paging through a thousand hits. In return, the service avoids
@@ -180,7 +181,7 @@ truncated and by how much.
 
 ### Returning candidate entities from LitVar2
 
-When a caller searches LitVar2 for a variant (for example, supplying `gene: "SCN1A"`, `hgvs_p: "p.Arg1648His"`,
+When a caller searches LitVar2 for a variant (for example, supplying `gene: "SCN1A"`, `protein_change: "p.Arg1648His"`,
 `rsid: "rs121918625"`, and `caid: "CA123456"`), the obvious design would be for the service to resolve those strings,
 keep only the LitVar2 entity that matches the variant, and return one merged list of PMIDs. That design fails because
 LitVar2 keys entities on the raw identifier strings its text recogniser extracted from papers, and the service has no
@@ -194,14 +195,14 @@ way to tell whether a label mismatch comes from an alias in the paper or from a 
 Silently filtering out entities with differing labels risks dropping the only entity that holds a key paper, while
 silently unioning them mixes papers about different alleles. `SearchLitVar` therefore returns every entity reached by
 any supplied identifier, unmerged, and attaches an `IdentifierAgreement` verdict to each entity for each identifier kind
-(`rsid`, `caid`, `gene`, `hgvs_p`, `hgvs_c`):
+(`gene`, `rsid`, `caid`, `change`):
 
 ```
-SearchLitVar(gene="SCN1A", hgvs_p="p.Arg1648His", rsid="rs121918625")
-  ├─ Entity 1: litvar@rs121918625## (total_found=18, pmids=["12345678", ...])
-  │    agreement: rsid=AGREES, gene=AGREES, hgvs_p=AGREES, caid=UNCOMPARED
-  └─ Entity 2: litvar@CA999999##    (total_found=3,  pmids=["87654321", ...])
-       agreement: rsid=DIFFERS, gene=AGREES, hgvs_p=UNSTATED, caid=UNCOMPARED
+SearchLitVar(gene="SCN1A", protein_change="p.Arg1648His", rsid="rs121918625")
+  ├─ Entity 1: litvar@rs121918625## (total_records=18, pmids=["12345678", ...])
+  │    agreement: rsid=AGREES, gene=AGREES, change=AGREES, caid=UNCOMPARED
+  └─ Entity 2: litvar@CA999999##    (total_records=3,  pmids=["87654321", ...])
+       agreement: rsid=DIFFERS, gene=AGREES, change=UNSTATED, caid=UNCOMPARED
 ```
 
 Each field takes one of four values: `AGREES` (the entity's label matches the request), `DIFFERS` (the entity states a
@@ -214,7 +215,7 @@ This candidate-entity contract has three explicit consequences for callers:
 
 1. **Entity PMID sets overlap and must be deduplicated by the caller.** Records under a ClinGen allele entity are often
    a subset of the records under an rsID entity for the same variant. A single PMID can appear under multiple returned
-   entities, so neither the `pmids` lists nor the `total_found` counts can be summed directly.
+   entities, so neither the `pmids` lists nor the `total_records` counts can be summed directly.
 1. **Entities carry PMIDs rather than inline bibliographies.** Returning full article records inside `SearchLitVar`
    would force a shared record budget across candidate entities and complicate truncation accounting. Returning PMIDs
    keeps the budget per entity, and the caller spends a `FetchPubmedArticles` call only on the PMIDs from the entities
@@ -234,10 +235,11 @@ different times. The store therefore keys every paper on an internally minted UU
 paper's directory (`papers/{doc_id}/`) and is the only identifier accepted by store read RPCs and citation directives.
 
 `MaybeIngestPapers` is the single RPC that translates external identifiers into `doc_id`s. It accepts a batch of up to
-10 scheme-qualified external identifiers (`pmid:12345678`, `doi:10.1038/s41588-023-01521-x`, `pmcid:PMC7654321`) and
-maps them through the **crosswalk** table (`external_id -> doc_id`). Qualifying every identifier with its scheme
-(`pmid:`, `doi:`, `pmcid:`) keeps the RPC independent of which discovery source produced the hit and prevents ambiguous
-parsing between bare numbers and publisher strings.
+100 scheme-qualified external identifiers (`pmid:12345678`, `doi:10.1038/s41588-023-01521-x`, `pmcid:PMC7654321`, with
+at most 10 uncached ingestable identifiers per call) and maps them through the **crosswalk** table
+(`external_id -> doc_id`). Qualifying every identifier with its scheme (`pmid:`, `doi:`, `pmcid:`) keeps the RPC
+independent of which discovery source produced the hit and prevents ambiguous parsing between bare numbers and publisher
+strings.
 
 Each identifier kind is normalised at the boundary that owns it:
 
@@ -261,10 +263,10 @@ never pollute the crosswalk:
    ([`evidence-fulltext.md`](evidence-fulltext.md#an-id-the-corpus-does-not-hold-is-brought-into-the-store),
    [`litcache-manifest.md`](litcache-manifest.md#identity-and-equivalence)).
 1. **Enqueueing conversion without waiting.** If the resolved paper's full-text readiness is `PENDING`,
-   `MaybeIngestPapers` enqueues a background conversion request and returns `READINESS_PENDING` immediately
+   `MaybeIngestPapers` enqueues a background conversion request and returns `FULL_TEXT_STATE_PENDING` immediately
    ([`evidence-fulltext.md`](evidence-fulltext.md#the-worker-runs-one-paper-to-a-fixed-point)). The `Maybe` in the RPC's
    name reflects that a call may match an already-ready paper, start a background ingest, or report that no upstream
-   index recognises the identifier (`UNKNOWN_PAPER`), all without blocking on full-text production.
+   index recognises the identifier (`FULL_TEXT_STATE_UNKNOWN_PAPER`), all without blocking on full-text production.
 
 `MaybeIngestPapers` is the only RPC on the literature interface that writes to storage or touches the relational
 crosswalk database. Its permissions reflect its two-step write: the service holds `INSERT`-only privileges on the
@@ -293,11 +295,11 @@ that ref.
 Alongside the canonical rendering, the store RPCs return two per-paper enums that are derived on each read from the
 manifest rather than stored in a separate status database:
 
-- **`Readiness`** reports whether full text can be served: `READY` (the `markdown` ref points to a rendering), `PENDING`
-  (conversion is still in progress or queued), `NO_FULL_TEXT` (no open-access or supplied source could be obtained),
-  `FAILED` (conversion failed terminally across available sources), or `UNKNOWN_PAPER` (the store holds no manifest for
-  that `doc_id` or external ID). [`evidence-fulltext.md`](evidence-fulltext.md) defines the exact derivation rules over
-  manifest lineages.
+- **`FullTextState`** reports whether full text can be served: `FULL_TEXT_STATE_READY` (the `markdown` ref points to a
+  rendering), `FULL_TEXT_STATE_PENDING` (conversion is still in progress or queued), `FULL_TEXT_STATE_NO_FULL_TEXT` (no
+  open-access or supplied source could be obtained), `FULL_TEXT_STATE_FAILED` (conversion failed terminally across
+  available sources), or `FULL_TEXT_STATE_UNKNOWN_PAPER` (the store holds no manifest for that `doc_id` or external ID).
+  [`evidence-fulltext.md`](evidence-fulltext.md) defines the exact derivation rules over manifest lineages.
 - **`TextProvenance`** reports the access terms of the source lineage behind the canonical rendering: `OPEN_ACCESS` when
   the lineage's recorded access disposition is free to read (including an uploaded PDF whose licence is open access),
   `SUPPLIED` when the lineage came from an institutionally captured source or a user-uploaded PDF without an open-access
@@ -313,23 +315,24 @@ version produced a structured fact.
 
 Once `MaybeIngestPapers` has returned a `doc_id`, six read-only RPCs serve the paper to the agent and the workbench BFF:
 
-| RPC              | Caller | What it does                                                                                                                                                              |
-| ---------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PollFullTexts`  | Agent  | Returns current `Readiness` for a batch of up to 100 `doc_id`s from their manifests, without minting identifiers or enqueuing conversions.                                |
-| `ReadMarkdown`   | Agent  | Server-streaming RPC that yields a `RenderingHeader` (`rendering_key`, `size_bytes`, `provenance`) followed by raw UTF-8 byte chunks, or a single `FullTextUnavailable`.  |
-| `Validate`       | Agent  | Checks whether a verbatim quote locates inside a paper's canonical markdown rendering, returning `VALID`, `INVALID`, or `UNCHECKED` for each entry in a batch (up to 50). |
-| `DescribePaper`  | BFF    | Returns a paper's title, available representations (`has_markdown`, `markdown_from_xml`, `has_pdf`), `default_representation`, and extracted figures/supplementary files. |
-| `ResolveContent` | BFF    | Resolves a representation (`MARKDOWN` or `PDF`) or associated `file_path` to its bucket/object coordinates and MIME type so the BFF can stream or presign the bytes.      |
-| `Locate`         | BFF    | Locates a verbatim quote inside a chosen representation (`MARKDOWN` or `PDF`) and returns highlight coordinates (`MarkdownLocation` or `PdfLocation`) or `not_located`.   |
+| RPC              | Caller | What it does                                                                                                                                                                |
+| ---------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PollFullTexts`  | Agent  | Returns current `FullTextState` for a batch of up to 100 `doc_id`s from their manifests, without minting identifiers or enqueuing conversions.                              |
+| `ReadMarkdown`   | Agent  | Server-streaming RPC that yields a `RenderingHeader` (`rendering_key`, `size_bytes`, `provenance`) followed by raw UTF-8 byte chunks, or a single `FullTextUnavailable`.    |
+| `Validate`       | Agent  | Checks whether a verbatim quote locates inside a paper's canonical markdown rendering, returning `ok`, `located_in` (`REPRESENTATION_MARKDOWN`), and a diagnostic `reason`. |
+| `DescribePaper`  | BFF    | Returns a paper's title, available representations (`has_markdown`, `markdown_from_xml`, `has_pdf`), `default_representation`, and extracted figures/supplementary files.   |
+| `ResolveContent` | BFF    | Resolves a representation (`MARKDOWN` or `PDF`) or associated `file_path` to its bucket/object coordinates and MIME type so the BFF can stream or presign the bytes.        |
+| `Locate`         | BFF    | Locates a verbatim quote inside a chosen representation (`MARKDOWN` or `PDF`) and returns highlight coordinates (`TextOffsets` or `PdfRegion`) or `not_located`.            |
 
 Four design choices shape how these six RPCs work together:
 
 1. **Separating batch readiness from single-paper content.** Checking which of fifty candidate papers have servable text
    is a cheap manifest check (`MaybeIngestPapers` or `PollFullTexts`), whereas returning fifty full-text renderings in
    one batch response would exceed gRPC message limits and flood the caller with unread text. Readiness is therefore
-   queried in batches (capped at 10 external IDs for `MaybeIngestPapers` and 100 `doc_id`s for `PollFullTexts`), while
-   `ReadMarkdown` reads one paper at a time. No batch RPC blocks server-side waiting for a pending conversion to finish;
-   a caller that wants to wait sleeps in its own process and calls `PollFullTexts` again.
+   queried in batches (capped at 100 external IDs — at most 10 newly ingested — for `MaybeIngestPapers` and 100
+   `doc_id`s for `PollFullTexts`), while `ReadMarkdown` reads one paper at a time. No batch RPC blocks server-side
+   waiting for a pending conversion to finish; a caller that wants to wait sleeps in its own process and calls
+   `PollFullTexts` again.
 1. **Streaming the complete rendering to a sandbox file.** Paper renderings range from tens of kilobytes to over a
    megabyte, and truncating a paper to a token budget makes tables or methods sections at the end of a long paper
    unreachable. `ReadMarkdown` instead streams the entire canonical rendering: the first frame is a `RenderingHeader`
@@ -348,11 +351,12 @@ Four design choices shape how these six RPCs work together:
    markdown rendering's bytes ([`document-pane.md`](document-pane.md#highlight-resolution-server-side-one-matcher)).
    Consequently, any quote that passes `Validate` against a given rendering will highlight cleanly in the document
    pane's markdown view. Because live quote matching against PDF page coordinates is not yet implemented, `Locate`
-   against a live PDF representation returns gRPC `UNIMPLEMENTED` and `Validate` on a PDF-only paper returns
-   `VALIDATION_OUTCOME_UNCHECKED` with `REASON_NO_USABLE_TEXT`. Returning `not_located` or `INVALID` for a PDF-only
-   paper would falsely claim that the quote is absent from the paper when the service simply cannot check the PDF yet.
-   The offline fixture backend seeds pre-computed `PdfLocation` bounding boxes so the document pane's PDF highlight UI
-   can be developed and tested ahead of a live PDF matcher.
+   against a live PDF representation returns gRPC `UNIMPLEMENTED` and `Validate` on a PDF-only paper returns `ok=false`
+   with a `reason` stating the paper has no markdown rendering to check against (see `ValidateResponse` in
+   [`literature.proto`](../../schema/proto/themis/rpc/literature.proto)) so the caller can distinguish an unchecked
+   PDF-only paper from a quote that failed to locate in a markdown rendering. The offline fixture backend seeds
+   pre-computed `PdfRegion` bounding boxes so the document pane's PDF highlight UI can be developed and tested ahead of
+   a live PDF matcher.
 
 ### Separating expected absences from faults
 
@@ -363,11 +367,14 @@ On the store RPCs:
 
 - **Single-paper lookup for an unknown `doc_id`** (`DescribePaper`, `ResolveContent`, `Locate`, `ReadMarkdown`) fails
   with gRPC `NOT_FOUND`, because the caller passed a `doc_id` that does not exist in the store.
-- **Batch readiness or validation for an unknown paper** (`MaybeIngestPapers`, `PollFullTexts`, `Validate`) returns a
-  per-entry outcome (`READINESS_UNKNOWN_PAPER` or `REASON_UNKNOWN_PAPER`) rather than aborting the batch with
-  `NOT_FOUND`, so one unrecognised identifier never discards the results for the remaining entries in the batch.
+- **Batch readiness for an unknown paper, or validating a quote against one** (`MaybeIngestPapers`, `PollFullTexts`,
+  `Validate`) returns a modelled outcome rather than failing with `NOT_FOUND`. On the batch readiness RPCs, an
+  unrecognised identifier yields `FULL_TEXT_STATE_UNKNOWN_PAPER` on that entry without discarding the remaining entries
+  in the batch. On `Validate`, which checks a single paper, an unknown `doc_id` returns `ok=false` with a `reason` so
+  the agent receives a modelled answer it can act on.
 - **A known paper whose full text is not servable** returns a modelled `FullTextUnavailable` outcome in `ReadMarkdown`
-  carrying its `Readiness` (`PENDING`, `NO_FULL_TEXT`, or `FAILED`) rather than a gRPC error.
+  carrying its `FullTextState` (`FULL_TEXT_STATE_PENDING`, `FULL_TEXT_STATE_NO_FULL_TEXT`, or `FULL_TEXT_STATE_FAILED`)
+  rather than a gRPC error.
 - **A broken manifest invariant** — where `manifest.json` names a canonical `markdown` rendering key whose object is
   missing from the bucket — fails with gRPC `INTERNAL`. Returning `NOT_FOUND` (which the shared retry policy treats as
   terminal) would misreport data corruption as a normal missing paper. By contrast, requesting a representation or
@@ -425,7 +432,7 @@ In practice, the agent's literature loop follows five steps:
 1. Discover PMIDs/DOIs via SearchEuropePmc, SearchLitVar, or ListLitVarEntities
    (or start from a PMID in a clinical note or reference list)
 2. Triage candidate papers via FetchPubmedArticles or inline Europe PMC abstracts
-3. Resolve chosen external IDs via MaybeIngestPapers(["pmid:12345678", ...]) -> doc_id + Readiness
+3. Resolve chosen external IDs via MaybeIngestPapers(["pmid:12345678", ...]) -> doc_id + FullTextState
 4. For READY papers, stream ReadMarkdown(doc_id) into a verified scratch file and read/search locally
 5. Draft citations (:quote[doc_id, ...], :paper[doc_id]) and verify quotes with Validate
 ```
@@ -520,9 +527,9 @@ for any paper.
   boolean disjunction query), and the full-text store embeds PubMed's `PubmedArticle` proto in `metadata.pb`. Keeping
   PubMed `efetch` avoids maintaining two different bibliographic schemas for the same PMID across discovery and storage.
 - **Returning inline bibliographic records inside `SearchLitVar`.** Embedding article records directly in each
-  `LitVarVariantEntity` would save the caller a follow-up `FetchPubmedArticles` call. However, because one variant fans
-  out to up to 8 overlapping entities, inline records would require a shared record budget across entities and complex
-  per-entity truncation reporting. Returning ranked PMID lists keeps truncation per entity (`pmids` vs `total_found`)
+  `VariantEntity` would save the caller a follow-up `FetchPubmedArticles` call. However, because one variant fans out to
+  up to 8 overlapping entities, inline records would require a shared record budget across entities and complex
+  per-entity truncation reporting. Returning ranked PMID lists keeps truncation per entity (`pmids` vs `total_records`)
   and lets the caller fetch full records only for the entities it accepts.
 - **Accepting external identifiers directly on store read RPCs.** Letting `ReadMarkdown`, `DescribePaper`, or `Validate`
   accept either a `doc_id` or a `pmid:`/`doi:` string would save one RPC call when opening a paper. We rejected this
