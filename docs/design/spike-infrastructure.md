@@ -2,10 +2,10 @@
 
 **Related:** [`deployment.md`](deployment.md) (IaC tool, deploy authentication, state, and secrets management),
 [`agent-runtime.md`](agent-runtime.md) (Managed Agents loop, sub-agents, and event stream), [`security.md`](security.md)
-(public ingress rules, IAP boundary, and webhook authentication),
-[`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) (self-hosted sandbox worker, credential proxy, and
-per-session tokens), [`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md) (bringing up a new
-environment), [`../runbooks/iap-access.md`](../runbooks/iap-access.md) (IAP group membership and programmatic access).
+(public ingress rules, IAP boundary, and webhook authentication), [`sandbox-worker.md`](sandbox-worker.md) (self-hosted
+sandbox worker, Unix-socket hatches, and per-session tokens),
+[`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md) (bringing up a new environment),
+[`../runbooks/iap-access.md`](../runbooks/iap-access.md) (IAP group membership and programmatic access).
 
 ## Overview
 
@@ -183,7 +183,9 @@ account identity in [`infra/__main__.py`](../../infra/__main__.py):
   client identity and its own Cloud SQL IAM login.
 - **Internal gRPC services:** The agent's data plane, holding the GCP and Cloud SQL identities that mediate data access.
 - **Dispatcher (`themis-dispatcher`) and sandbox job (`themis-sandbox`):** In the self-hosted phase, the dispatcher
-  receives Anthropic's wake webhook and starts the sandbox worker alongside its credential-proxy sidecar.
+  receives Anthropic's wake webhook and starts the single-container Cloud Run Gen2 sandbox worker job
+  (`themis-sandbox`), which runs untrusted agent commands inside a network-isolated `postern` (`bubblewrap`) guest
+  bridged to internal services over Unix-socket hatches ([`sandbox-worker.md`](sandbox-worker.md)).
 
 Every public route to a Cloud Run service sits behind one external HTTPS load balancer, and every such route except the
 dispatcher webhook passes through IAP. Curators reach `themis-web` through IAP in a browser. The internal data-plane
@@ -204,7 +206,7 @@ flowchart TB
   subgraph gcp["GCP project · cpg-themis-dev"]
     web["web app · Cloud Run (themis-web)<br/>BFF<br/>id: Anthropic WIF Path B + Cloud SQL (control-plane + display)"]
     disp["dispatcher · Cloud Run<br/>HMAC webhook front"]
-    sandbox["sandbox job + credential proxy<br/>agent code execution"]
+    sandbox["sandbox job (themis-sandbox)<br/>postern guest + Unix-socket hatches"]
     svc["internal services · Cloud Run (Python, gRPC)<br/>id: Cloud SQL write · agent data plane"]
     sql[("Cloud SQL")]
   end
@@ -212,7 +214,7 @@ flowchart TB
   web -->|"WIF Path B · sessions, events"| ma
   ma -->|"HTTPS LB · Anthropic's range · HMAC · run started"| disp
   disp -->|"run job"| sandbox
-  sandbox -->|"code mode · session token injected by the proxy"| svc
+  sandbox -->|"code mode · session token injected by hatch"| svc
   web -->|"services VPC · own ID token"| svc
   operator -->|"HTTPS LB · IAP · ID token"| svc
   web -->|"Cloud SQL IAM"| sql
@@ -268,8 +270,10 @@ test harness.
 ### Managed Agents runtime and execution sandbox
 
 As decided in [`agent-runtime.md`](agent-runtime.md) and [`managed-agents.md`](managed-agents.md), Anthropic Managed
-Agents runs the agent loop and emits the per-session event stream while `themis-web` acts as the thin session client,
-keeping our internal data-plane services runtime-independent.
+Agents runs the agent loop and emits the per-session event stream while `themis-web` acts as the thin session client.
+The internal data-plane services do not depend on the agent runtime. Moving to a custom loop later would replace
+`themis-web`'s session client and the dispatcher's webhook handling while leaving the data plane and the sandbox's gRPC
+surface untouched. The remaining runtime dependency is Anthropic's Managed Agents API, which is in beta.
 
 Where the agent's tools execute determines who enforces network egress and data access boundaries. We stage the sandbox
 across two phases:
@@ -278,21 +282,21 @@ across two phases:
    end-to-end version comes online quickly, gated so that the self-hosted sandbox lands before any non-synthetic data
    enters the system. Because the web application, agent YAML, CI workflows, and internal data plane are
    sandbox-agnostic, moving from the cloud sandbox to self-hosted is additive rather than a rewrite.
-1. **Self-hosted sandbox (`config: type=self_hosted`):** Tool execution moves into a container inside our GCP project
-   ([`managed-agents.md`](managed-agents.md), [`sandbox-worker.md`](sandbox-worker.md),
-   [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md)), moving deny-by-default egress enforcement from
-   Anthropic's boundary to our own VPC firewall.
+1. **Self-hosted sandbox (`config: type=self_hosted`):** Tool execution moves into a Cloud Run Gen2 job container
+   (`themis-sandbox`) inside our GCP project ([`managed-agents.md`](managed-agents.md),
+   [`sandbox-worker.md`](sandbox-worker.md)), moving deny-by-default egress enforcement from Anthropic's boundary to our
+   network-isolated `postern` guest and Unix-socket hatches.
 
-Inside the self-hosted boundary, container hardening, credential isolation, and the host-side credential proxy are
-specified in [`sandbox-worker.md`](sandbox-worker.md) and [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), while
-deploy-time agent configuration and encrypted model-ID handling are specified in
-[`managed-agents.md`](managed-agents.md) and [`deployment.md`](deployment.md). At the infrastructure IAM boundary, write
-permissions are split by which actor authored the data rather than read versus write: the internal gRPC services are the
-sole writer of agent-authored content (binding every write to its Analysis via the proxy-injected session token), while
-`themis-web` writes only the control-plane and session rows it owns (Analyses, Project membership, per-session grants,
-and session-end trace projections) and curator-initiated GCS uploads. Admitting an uploaded paper, web search result, or
-corpus record into an agent's context is a separate retrieval-trust question, orthogonal to which service identity wrote
-the blob.
+Inside the self-hosted boundary, container hardening, credential isolation, and the host-side Unix-socket hatches
+([`sandbox-worker.md`](sandbox-worker.md)) are specified alongside RPC exposure in
+[`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md), while deploy-time agent configuration and encrypted model-ID
+handling are specified in [`managed-agents.md`](managed-agents.md) and [`deployment.md`](deployment.md). At the
+infrastructure IAM boundary, write permissions are split by which actor authored the data rather than read versus write:
+the internal gRPC services are the sole writer of agent-authored content (binding every write to its Analysis via the
+hatch-injected session token), while `themis-web` writes only the control-plane and session rows it owns (Analyses,
+Project membership, per-session grants, and session-end trace projections) and curator-initiated GCS uploads. Admitting
+an uploaded paper, web search result, or corpus record into an agent's context is a separate retrieval-trust question,
+orthogonal to which service identity wrote the blob.
 
 ## Open questions
 

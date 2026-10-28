@@ -65,14 +65,14 @@ key can **derive** a bearer token for any session ID. The web tier derives sessi
 dispatcher derives one when launching a sandbox, and the maintainer automation account (`themis-clu`) can be configured
 to derive them in development stacks.
 
-The **sandbox agent** (untrusted model-driven code running inside a network-isolated gVisor guest) reaches internal gRPC
-services only through the sandbox worker's **hatch** ([`sandbox-worker.md`](sandbox-worker.md)). The hatch dials backend
-services using the sandbox-job service account (`themis-sandbox-job`) and injects the session token from the worker's
-environment into outgoing gRPC metadata. The guest holds no credentials of its own, cannot mint tokens, and cannot pass
-its own gRPC metadata across the hatch. One worker serves one session and holds one session token, which bounds what a
-compromised worker can reach in the workspace; the corpus is shared, and one token reads it as any other does.
-Consequently, **the agent can neither see nor choose whom a call speaks for**: every credential on an agent call is
-injected outside the guest.
+The **sandbox agent** (untrusted model-driven code running inside a network-isolated `bubblewrap` guest managed by
+`postern`) reaches internal gRPC services only through the sandbox worker's **hatch**
+([`sandbox-worker.md`](sandbox-worker.md)). The hatch dials backend services using the sandbox-job service account
+(`themis-sandbox-job`) and injects the session token from the worker's environment into outgoing gRPC metadata. The
+guest holds no credentials of its own, cannot mint tokens, and cannot pass its own gRPC metadata across the hatch. One
+worker serves one session and holds one session token, which bounds what a compromised worker can reach in the
+workspace; the corpus is shared, and one token reads it as any other does. Consequently, **the agent can neither see nor
+choose whom a call speaks for**: every credential on an agent call is injected outside the guest.
 
 Internal service-to-service calls authenticate through Cloud Run IAM. The caller sends a Google-signed OIDC ID token in
 the `Authorization` header, and Cloud Run rejects the request unless the caller holds `roles/run.invoker`. After

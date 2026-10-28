@@ -3,12 +3,11 @@
 **Related:** [`agent-runtime.md`](agent-runtime.md) (runtime semantics for coordinator, sub-agents, structured output,
 and trace), [`frontend-framework.md`](frontend-framework.md) (web tier, poll-through observation, durable trace, and
 authentication), [`workspace-model.md`](workspace-model.md) (Projects, Analyses, working documents, and authorization
-boundary), [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) (execution sandbox, credential proxy,
-and session tokens), [`spike-infrastructure.md`](spike-infrastructure.md) (deployables, service identities, and write
-boundaries), [`security.md`](security.md) (chokepoint rule and webhook verification),
-[`conversation-view.md`](conversation-view.md) (curator steering and conversation thread),
-[`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md) (Workload Identity Federation for Anthropic API
-access).
+boundary), [`sandbox-worker.md`](sandbox-worker.md) (execution sandbox, Unix-socket hatches, and session tokens),
+[`spike-infrastructure.md`](spike-infrastructure.md) (deployables, service identities, and write boundaries),
+[`security.md`](security.md) (chokepoint rule and webhook verification), [`conversation-view.md`](conversation-view.md)
+(curator steering and conversation thread), [`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md) (Workload
+Identity Federation for Anthropic API access).
 
 ## Overview
 
@@ -59,7 +58,7 @@ sequenceDiagram
     BFF->>MA: events.list(session_id)
     Browser->>BFF: 5. Steer: Steer(analysis_id, text)
     BFF->>MA: events.send(user.message)
-    MA->>Disp: 6. Session end: POST /webhook (HMAC-signed)
+    MA-->>Disp: 6. Session end (planned): POST /webhook (HMAC-signed)
 ```
 
 1. **Authenticate the curator.** The curator's browser reaches the web application
@@ -70,11 +69,15 @@ sequenceDiagram
    writes the `analyses` row in Cloud SQL, and creates the Managed Agents session against Anthropic's API using Workload
    Identity Federation (WIF Path B). See [`workspace-model.md`](workspace-model.md) and
    [`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md).
-1. **Execute tools in the sandbox.** When the session starts a run, tool calls execute inside our self-hosted sandbox
-   ([`agents/selfhosted.environment.yaml`](../../agents/selfhosted.environment.yaml)). The agent investigates the case
-   in code mode and writes `/workspace/working_document.md`. The sandbox container itself holds no credentials; the
-   credential proxy attaches a per-session token to outbound calls. See
-   [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) (§6–§9) and
+1. **Execute tools in the sandbox.** When the session starts a run, Anthropic delivers an HMAC-signed
+   `session.status_run_started` webhook to the dispatcher
+   ([`themis/services/dispatcher/`](../../themis/services/dispatcher/); see
+   [`security.md`](security.md#the-sandbox-dispatchers-webhook)), which launches our self-hosted sandbox worker
+   ([`themis/services/sandbox_worker/`](../../themis/services/sandbox_worker/),
+   [`agents/selfhosted.environment.yaml`](../../agents/selfhosted.environment.yaml)). The agent investigates the case in
+   code mode and writes `/workspace/working_document.md` while the sandbox worker emits live tool spans during
+   execution. The `postern` (`bubblewrap`) guest holds no credentials; the host-side Unix-socket hatches attach the
+   per-session token to outbound calls. See [`sandbox-worker.md`](sandbox-worker.md) and
    [`agent-runtime.md`](agent-runtime.md).
 1. **Observe the live session.** While the session is active, the browser polls the BFF. On each poll, the BFF
    authorizes the curator against the Analysis's Project membership, reads the session's event log from Anthropic
@@ -83,12 +86,9 @@ sequenceDiagram
 1. **Steer the running agent.** When a curator interjects in the conversation thread, the browser calls the BFF's
    `Steer` RPC, which appends a `user.message` event to the same Managed Agents session. See
    [`conversation-view.md`](conversation-view.md).
-1. **Materialize the durable trace at session end.** Anthropic delivers session lifecycle webhooks to the dispatcher
-   ([`themis/services/dispatcher/`](../../themis/services/dispatcher/)), which is the only internet-reachable service
-   without IAP in front of it and authenticates deliveries via HMAC signature verification
-   ([`security.md`](security.md#the-sandbox-dispatchers-webhook)). When a session ends, the durable trace is
-   materialized in Cloud SQL from a single `events.list` read. See [`frontend-framework.md`](frontend-framework.md)
-   (§Durable trace).
+1. **Archive the durable trace (planned).** When the session ends, Anthropic will deliver a session-end webhook to the
+   dispatcher, and the durable trace will be built in Cloud SQL from one `events.list` read (see
+   [`agent-runtime.md`](agent-runtime.md) and [`frontend-framework.md`](frontend-framework.md) §Durable trace).
 
 ### Identity split across components
 
@@ -101,13 +101,13 @@ the lifecycle:
 - **The web BFF** holds the WIF identity used to call Anthropic's API and a display-scoped Cloud SQL identity for
   reading and creating Analyses.
 - **Internal services** hold the Cloud SQL and storage write identities for persisting agent-authored content.
-- **The sandbox** holds no credentials of its own; the credential proxy injects the short-lived per-session token on
-  outbound requests from the sandbox.
+- **The sandbox guest** holds no credentials of its own; the worker's host-side Unix-socket hatches inject the
+  short-lived per-session token on outbound requests from the guest.
 
-This separation costs an extra network hop through the credential proxy and internal gRPC services whenever the agent
-reads evidence or writes outputs, but it ensures that arbitrary Python executed by the agent cannot extract a database
-or GCP credential from its environment. The complete service-account and identity table lives in
-[`spike-infrastructure.md`](spike-infrastructure.md) (§8).
+This separation costs an extra local hop across the Unix-socket hatch and through internal gRPC services whenever the
+agent reads evidence or writes outputs, but it ensures that arbitrary Python executed by the agent cannot extract a
+database or GCP credential from its environment. The complete service-account and identity table lives in
+[`spike-infrastructure.md`](spike-infrastructure.md).
 
 ## Alternatives considered
 
@@ -119,13 +119,13 @@ sandbox container per active session and gives the model structured tool schemas
 We rejected this approach because reaching internal services from Anthropic's cloud requires either an Anthropic beta
 tunnel we do not control or an internet-facing endpoint on our side, and because an LLM executes long chains of discrete
 tool calls less reliably than it writes Python against generated gRPC stubs in code mode (see
-[`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md)).
+[`sandbox-worker.md`](sandbox-worker.md)).
 
 ### A webhook receiver on the BFF
 
-When a session finishes, the system needs an authenticated webhook trigger to materialize the durable trace into Cloud
-SQL. Putting the webhook receiver on the BFF would keep durable-trace materialization inside the same service that
-already calls `events.list` during live polling and already connects to Cloud SQL. We rejected a BFF webhook route
-because Anthropic cannot present an IAP credential; accepting webhooks on the web tier would require carving an
-unauthenticated path through the IAP-gated surface and duplicating the HMAC verification endpoint that the sandbox
-dispatcher already operates.
+When a session finishes, a planned extension to the webhook pipeline will materialize the durable trace into Cloud SQL.
+Putting a webhook receiver on the BFF would keep durable-trace materialization inside the same service that already
+calls `events.list` during live polling and already connects to Cloud SQL. We rejected a BFF webhook route because
+Anthropic cannot present an IAP credential; accepting webhooks on the web tier would require carving an unauthenticated
+path through the IAP-gated surface and duplicating the HMAC verification endpoint that `themis-dispatcher` already
+operates.
