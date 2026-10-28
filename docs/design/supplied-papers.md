@@ -280,8 +280,9 @@ lifecycle rule deletes each `staging/{upload_id}/` directory a few weeks after i
 abandoned uploads need no manual cleanup.
 
 The cost of staging outside `papers/` is a second bucket prefix with its own lifecycle rule, a conversion producer
-parameterised by directory path rather than `doc_id`, and an attach step that copies staged objects into
-`papers/{doc_id}/` (§"Accepting attaches the staged PDF and rendering in one write").
+parameterised by directory path rather than `doc_id`
+([`work.proto`](../../schema/proto/themis/litcache/models/work.proto)), and an attach step that copies staged objects
+into `papers/{doc_id}/` (§"Accepting attaches the staged PDF and rendering in one write").
 
 ### A batch is matched cheaply first, and transcribed only where that cannot decide
 
@@ -332,16 +333,17 @@ Once the curator chooses an index record, the evidence service ingests it as if 
 resolves the record, claims its identifiers in the crosswalk, and mints a `doc_id` (or locates the `doc_id` that already
 claims it). That paper becomes the upload's sole candidate, and matching proceeds as usual.
 
-The browser does not call `MaybeIngestPapers` directly to do this. `MaybeIngestPapers` admits only the agent caller, and
-each call can make a permanent crosswalk claim and trigger a paid conversion. Opening `MaybeIngestPapers` to the web
-caller would give the browser an unrestricted endpoint for claiming arbitrary identifiers. Instead, the literature
-service exposes two dedicated upload RPCs for searching and claiming, and both operate on an existing `upload_id` rather
-than on arbitrary strings from the browser. The search RPC queries PubMed and Crossref using only the evidence extracted
-from that staged upload, so the browser does not gain a general search endpoint. The claim RPC accepts only an index
-record that the search RPC returned for that `upload_id`, checked under the same person and Analysis binding as every
-other upload call (§"An upload is bound to the person and the Analysis that began it"). Behind that guard, the evidence
-service runs the same ingest path as `MaybeIngestPapers`, so a paper brought in through an upload is claimed and
-converted identically to one the agent requested.
+The browser does not call `MaybeIngestPapers` directly to do this. `MaybeIngestPapers` admits only the agent caller, not
+the web caller (see [`rpc-authorization.md`](rpc-authorization.md)), and each call can make a permanent crosswalk claim
+and trigger a paid conversion. Opening `MaybeIngestPapers` to the web caller would give the browser an unrestricted
+endpoint for claiming arbitrary identifiers. Instead, the literature service exposes two dedicated upload RPCs for
+searching and claiming, and both operate on an existing `upload_id` rather than on arbitrary strings from the browser.
+The search RPC queries PubMed and Crossref using only the evidence extracted from that staged upload, so the browser
+does not gain a general search endpoint. The claim RPC accepts only an index record that the search RPC returned for
+that `upload_id`, checked under the same person and Analysis binding as every other upload call (§"An upload is bound to
+the person and the Analysis that began it"). Behind that guard, the evidence service runs the same ingest path as
+`MaybeIngestPapers`, so a paper brought in through an upload is claimed and converted identically to one the agent
+requested.
 
 A newly claimed paper starts in `PENDING` while the conversion lane checks for open-access text. The staged upload waits
 for that conversion attempt to settle, because the outcome decides whether the uploaded PDF is needed. If the paper
@@ -525,10 +527,10 @@ corpus must preserve uploaded papers rather than wiping and re-seeding their dir
 
 - **A paper no index holds.** A thesis, conference abstract, or older technical report may have neither a DOI nor a
   PMID, leaving no external index record to claim from. Under the rule that every claim comes from an index record, the
-  store cannot ingest such a document. The store could instead claim the work solely by the SHA-256 hash of its PDF
-  bytes—as the seed pipeline already does for PDFs without recognisable identifiers—using the curator's entered citation
-  details in place of an index record. Whether a curator's attestation is sufficient to mint a paper with no index
-  record remains open.
+  store cannot ingest such a document. The store could instead claim the work solely by the hash of its PDF bytes—which
+  the seed pipeline truncates to 64 bits via Docling for PDFs without recognisable identifiers—using the curator's
+  entered citation details in place of an index record. Whether a curator's attestation is sufficient to mint a paper
+  with no index record remains open.
 - **Licence and access metadata.** An uploaded PDF's `Source` lineage is recorded with its `access` oneof set to
   `institution_captured`, but a `Source` in `manifest.pb` also records a `licence` string and its `licence_basis`,
   neither of which has an honest default for an ad-hoc upload. Whether the curator states the licence at drop time or

@@ -375,7 +375,7 @@ On the store RPCs:
 - **A known paper whose full text is not servable** returns a modelled `FullTextUnavailable` outcome in `ReadMarkdown`
   carrying its `FullTextState` (`FULL_TEXT_STATE_PENDING`, `FULL_TEXT_STATE_NO_FULL_TEXT`, or `FULL_TEXT_STATE_FAILED`)
   rather than a gRPC error.
-- **A broken manifest invariant** — where `manifest.json` names a canonical `markdown` rendering key whose object is
+- **A broken manifest invariant** — where `manifest.pb` names a canonical `markdown` rendering key whose object is
   missing from the bucket — fails with gRPC `INTERNAL`. Returning `NOT_FOUND` (which the shared retry policy treats as
   terminal) would misreport data corruption as a normal missing paper. By contrast, requesting a representation or
   associated file that the paper genuinely does not have in `ResolveContent` or `Locate` returns `NOT_FOUND`.

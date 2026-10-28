@@ -316,22 +316,24 @@ Papers carry two kinds of associated blobs alongside their main text: figures (`
 supplementary materials (`ASSOCIATED_FILE_ROLE_SUPPLEMENTARY`). Rather than maintaining separate protobuf messages with
 identical fields, `Manifest.files` stores both as
 [`AssociatedFile`](../../schema/proto/themis/litcache/models/litcache.proto) entries distinguished by `role`. Each entry
-records the original filename (`name`, such as `"Fig1.jpg"` or `"mmc1.xlsx"`), its `role`, an optional `caption` and
-`source_url`, and—once its bytes are stored in GCS—its relative `path` (`figures/{hash}.{ext}` or
-`supplementary/{hash}.{ext}`), `media_type`, `size_bytes`, `hash`, and `captured_at`.
+records its `role`, the original filename (`name`, such as `"Fig1.jpg"` or `"mmc1.xlsx"`), an optional `source_url`,
+and—once its bytes are stored in GCS—its relative `path` (`figures/{hash}.{ext}` or `supplementary/{hash}.{ext}`),
+`hash`, and `captured_at`.
 
-Figures and supplementary files differ in how they are fetched:
+Figures and supplementary files differ in how they are produced:
 
-- **Figures are stored eagerly during conversion.** Figure images are small, bounded in format, and rendered inline when
-  a curator opens the paper in the workbench.
-- **Supplementary files are cataloged in `Manifest.files` at conversion time and fetched lazily on demand.** A single
-  genomics paper can attach gigabytes of Excel tables, BAM alignments, or archive bundles that no analysis ever opens.
-  At conversion time, the JATS XML parser extracts each `<supplementary-material>` element's filename, download
-  `source_url`, and prose `caption` into an `AssociatedFile` entry with an empty `path`. In a survey of 1,680 PMC XML
-  papers in our corpus (see [Appendix](#appendix)), 98.5% of supplementary files were explicitly referenced in the body
-  text and carried descriptive captions averaging 320 characters (~80 tokens) per paper. Storing those captions on
-  `Manifest.files` lets the agent see every supplementary file's name and description before deciding whether to fetch
-  its bytes.
+- **Figures are extracted during conversion and stored eagerly.** Figure images are small, bounded in format, and
+  written alongside the markdown so they render inline when a curator opens the paper in the workbench.
+- **Supplementary files are listed from the package and can be registered before their bytes are stored.**
+  `AssociatedFile.path` is optional so a manifest can catalogue a supplement's filename and `source_url` before its blob
+  is fetched. Today, the conversion worker's free `supplements` step
+  ([`themis/litcache/produce.py`](../../themis/litcache/produce.py)) extracts supplementary files from the PMC OA
+  archive eagerly because the archive is already downloaded for the XML step, while `ResolveContent` in the literature
+  service ([`themis/services/evidence/literature/servicer.py`](../../themis/services/evidence/literature/servicer.py))
+  returns `NOT_FOUND` for any entry whose `path` is still unset. `AssociatedFile` omits a `caption` field because in a
+  survey of 1,680 PMC XML papers in our corpus (see [Appendix](#appendix)), 98.5% of supplementary files were explicitly
+  referenced in the body text (with captions or surrounding descriptions already present in the markdown rendering), so
+  storing a separate caption on `Manifest.files` would duplicate text the rendering already carries.
 
 ### Retraction and correction
 
@@ -679,11 +681,14 @@ message OffsetsCacheEntry {
   cited. Content-addressing renderings in `Manifest.records` and advancing `Manifest.refs["markdown"]` gives readers a
   single current rendering while keeping prior renderings addressable by hash.
 - **Separate protobuf messages for figures and supplementary files.** Rejected because both share the exact same
-  attributes (`name`, `path`, `media_type`, `size_bytes`, `hash`, `source_url`, `captured_at`, `caption`) and differ
-  only in `AssociatedFileRole` and whether their bytes are fetched eagerly or lazily.
-- **Eagerly downloading all supplementary files during ingestion.** Rejected because supplementary archives can be
-  hundreds of megabytes per paper while most are never opened; recording their filenames, captions, and `source_url`s in
-  `Manifest.files` and fetching bytes on demand captures their discovery value at near-zero storage cost.
+  attributes (`role`, `name`, `source_url`, `path`, `hash`, `captured_at`) and differ only in `AssociatedFileRole` and
+  how their bytes are populated.
+- **Eagerly downloading all supplementary files into the cache alongside the figures.** Rejected as a universal rule
+  because supplementary archives from non-OA sources can be hundreds of megabytes or require a separate fetch before the
+  manifest can list them. Instead, `path` is optional on `AssociatedFile` so a manifest entry can record `name` and
+  `source_url` before its blob is written ([`themis/litcache/writer.py`](../../themis/litcache/writer.py)), while the
+  conversion worker's `supplements` step populates PMC OA supplements eagerly because the source archive is already
+  downloaded.
 - **Hand-maintained protobuf mirror schemas for Crossref and OpenAlex.** Rejected after production experience showed
   that unannounced upstream additions (such as OpenAlex's `has_content`) or type variations on unread fields broke
   protobuf JSON parsing across batches. Storing `crossref_json` and `openalex_json` as validated JSON text keeps the
@@ -706,8 +711,9 @@ message OffsetsCacheEntry {
   blobs under `papers/{doc_id}/`. Because blob sizes are modest, periodic mark-and-sweep against `manifest.pb` and
   active citations is deferred.
 - **On-demand supplementary file fetch and transcription.** While `Manifest.files` supports unpopulated `AssociatedFile`
-  entries (`path` unset) and `writer.fill_file` can populate them later, `ResolveContent` currently raises
-  `MissingContentError` rather than fetching and transcribing deferred supplementary files on demand.
+  entries (`path` unset) that the writer ([`themis/litcache/writer.py`](../../themis/litcache/writer.py)) can populate
+  later, `ResolveContent` currently returns `NOT_FOUND` rather than fetching and transcribing deferred supplementary
+  files on demand.
 - **Automated retraction polling cadence.** `Manifest.retraction` defines how retraction notices are recorded on a
   paper, but the scheduled refresh cadence for polling PubMed and Crossref retraction updates across the committed
   corpus is not yet fixed.

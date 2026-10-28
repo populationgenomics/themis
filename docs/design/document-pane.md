@@ -42,9 +42,9 @@ this runtime loop. The `id` in both directives is the canonical litcache documen
 In litcache on Google Cloud Storage (GCS), each paper is stored as a `Manifest`
 ([`litcache-manifest.md`](litcache-manifest.md)) with one or more markdown `Rendering`s derived from publisher XML or
 PDF OCR, PDF revisions with an optional text layer, and `Manifest.files` entries (`AssociatedFile` records for figures
-and supplementary attachments, distinguished by `role` and fetched lazily). Resolving a `:quote[id, text]` directive to
-a visual highlight depends on which representation the curator is viewing: in markdown, a quote resolves to code-point
-offsets, whereas in a PDF it resolves to page bounding boxes via anchorite inside the Python evidence service
+and supplementary attachments, distinguished by `role`). Resolving a `:quote[id, text]` directive to a visual highlight
+depends on which representation the curator is viewing: in markdown, a quote resolves to code-point offsets, whereas in
+a PDF it resolves to page bounding boxes via anchorite inside the Python evidence service
 ([`literature-evidence-layer.md`](literature-evidence-layer.md)).
 
 An earlier workbench layout organized the screen into two identical tab groups, placed the conversation inside one of
@@ -335,15 +335,15 @@ Every layout and tab operation has a keyboard-operable path (`pane.tsx`, `tab-ar
 
 ### Backend seam: structured over Connect, bytes over presigned redirects
 
-Litcache manifest resolution — choosing a rendering hash for a `doc_id`, mapping a figure filename to its
-`AssociatedFile` entry and content-addressed GCS object path, and lazily fetching unfetched files — already lives in the
-Python evidence service (`themis/services/evidence/literature/`). Reimplementing manifest parsing in the TypeScript BFF
-would duplicate that logic across two languages. Instead, the evidence service exposes `DescribePaper`,
-`ResolveContent`, `Locate`, and `Validate` (`schema/proto/themis/rpc/literature.proto`), and the BFF calls it through a
-TypeScript `LiteraturePort` (`apps/web/src/server/ports.ts`), backed either by the live gRPC adapter (sending an IAM ID
-token for the evidence service audience) or by an offline fixture adapter serving a seeded local corpus. (Currently,
-resolving an `AssociatedFile` listed in `Manifest.files` without a cached `path` raises `MissingContentError` until
-on-demand fetch and manifest write-back are wired in the evidence service.)
+Litcache manifest resolution — choosing a rendering hash for a `doc_id` and mapping a figure or supplementary filename
+to its `AssociatedFile` entry and content-addressed GCS object path — already lives in the Python evidence service
+(`themis/services/evidence/literature/`). Reimplementing manifest parsing in the TypeScript BFF would duplicate that
+logic across two languages. Instead, the evidence service exposes `DescribePaper`, `ResolveContent`, `Locate`, and
+`Validate` (`schema/proto/themis/rpc/literature.proto`), and the BFF calls it through a TypeScript `LiteraturePort`
+(`apps/web/src/server/ports.ts`), backed either by the live gRPC adapter (sending an IAM ID token for the evidence
+service audience) or by an offline fixture adapter serving a seeded local corpus. (Currently, resolving an
+`AssociatedFile` listed in `Manifest.files` without a cached `path` raises `MissingContentError` until on-demand fetch
+and manifest write-back are wired in the evidence service.)
 
 Between the browser and the BFF, requests split across two seams according to payload shape:
 

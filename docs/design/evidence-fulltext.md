@@ -126,7 +126,7 @@ how a caller waits is part of the design.
   ([`literature-evidence-layer.md`](literature-evidence-layer.md)). This design starts from an identified paper and
   produces what it is missing.
 - **A door for uploading documents.** The manifest can describe an uploaded source and the writer can store one, while
-  the user-facing path for submitting a document is out of scope (see [Open questions](#open-questions)).
+  the user-facing path for submitting and staging a document is specified in [`supplied-papers.md`](supplied-papers.md).
 - **The internal logic of supplementary and extraction steps.** This doc decides how steps are declared, ordered,
   triggered, and paid for, and specifies the steps that produce the main text. Fetching and rendering supplementary
   files, and extracting variants, are steps specified in docs of their own.
@@ -656,8 +656,10 @@ full text" directly from the manifest would mislabel every newly ingested paper 
 run. Keeping route-eligibility rules in the worker also avoids duplicating step input conditions on the read path, where
 a second copy would mislabel papers whenever a new route was added.
 
-One outcome requires no terminal marker: a paper's text can exist while its source is access-gated under an enforced
-licence. Because licence terms live on the source in the manifest, readiness derives `GATED` directly from the manifest.
+One planned outcome is not a marker at all: a paper's text can exist while its source is access-gated under an enforced
+licence. That is a property of what the manifest records about the source, so readiness will derive "gated" (`GATED`)
+from the manifest, not from anything the worker tried, once licence enforcement is wired
+([`themis/litcache/outcome.py`](../../themis/litcache/outcome.py)).
 
 ### The job log records what the worker has tried
 
@@ -812,13 +814,13 @@ sequenceDiagram
     participant C as caller
     participant E as evidence service
     participant X as crosswalk
-    participant U as PubMed or Crossref
+    participant U as PubMed / Crossref + OpenAlex
     participant B as full-text bucket
     C->>E: MaybeIngestPapers(ids)
     E->>X: lookup
     Note right of X: unreachable: whole call, UNAVAILABLE
     loop each id the lookup missed, up to the per-call bound
-        E->>U: resolve the id's record
+        E->>U: resolve the id's record (PubMed or Crossref, then OpenAlex)
         Note right of U: no such paper: this id, UNKNOWN_PAPER<br/>a record the store cannot keep: this id, UNKNOWN_PAPER<br/>did not answer: whole call, UNAVAILABLE
         E->>X: mint: claim the ids, or adopt an orphaned claim
         Note right of X: no INSERT grant: whole call, FAILED_PRECONDITION
@@ -842,12 +844,13 @@ are permanent, the service resolves each missing identifier against its upstream
 ([`themis/litcache/resolve.py`](../../themis/litcache/resolve.py)).
 
 Upstream resolution uses the *metadata ladder*, which queries PubMed `efetch` for a PMID or Crossref for a DOI to fetch
-a single bibliographic record without full text. Whereas a bare identifier resolver reports an upstream outage and a
-nonexistent paper identically as "not found", the metadata ladder separates the two: a paper nobody published returns a
-typed absence (`UNKNOWN_PAPER`), while an upstream that failed to answer aborts the call with `UNAVAILABLE`. Fetching
-the bibliographic record also pays for itself twice: the record becomes the paper's stored metadata, and any secondary
-identifiers listed in the record are minted alongside the requested identifier so later lookups by DOI or PMID resolve
-to the same `doc_id`.
+a single bibliographic record without full text, and then queries OpenAlex (`openalex.find`) alongside it so the stored
+`metadata.pb` carries OpenAlex's OA location and licence metadata from the start. Whereas a bare identifier resolver
+reports an upstream outage and a nonexistent paper identically as "not found", the metadata ladder separates the two: a
+paper nobody published returns a typed absence (`UNKNOWN_PAPER`), while an upstream (PubMed, Crossref, or OpenAlex) that
+failed to answer aborts the call with `UNAVAILABLE`. Fetching the bibliographic record also pays for itself twice: the
+record becomes the paper's stored metadata, and any secondary identifiers listed in the record are minted alongside the
+requested identifier so later lookups by DOI or PMID resolve to the same `doc_id`.
 
 Because the metadata ladder keys on a PMID or a DOI, a bare PMCID that misses in the crosswalk reaches neither rung and
 returns `UNKNOWN_PAPER`.
@@ -909,12 +912,12 @@ offline sweep to repair:
 #### How much one call may bring in
 
 Resolving a known identifier costs a crosswalk query and a GCS read, whereas ingesting an unknown identifier makes paced
-upstream HTTP calls to PubMed or Crossref one after another. Because the costs differ, a tighter per-call limit on how
-many missing identifiers may be ingested sits inside the overall batch size limit. A call that exceeds the ingestion
-limit is refused outright with `INVALID_ARGUMENT` rather than ingesting a prefix: ingesting the first few would require
-answering the remaining misses with `UNKNOWN_PAPER`, which callers interpret as permanent upstream absence. Because a
-caller cannot tell from its request alone how many identifiers the store already holds, a caller whose batch is refused
-splits the batch and retries.
+upstream HTTP calls to PubMed or Crossref and OpenAlex one after another. Because the costs differ, a tighter per-call
+limit on how many missing identifiers may be ingested sits inside the overall batch size limit. A call that exceeds the
+ingestion limit is refused outright with `INVALID_ARGUMENT` rather than ingesting a prefix: ingesting the first few
+would require answering the remaining misses with `UNKNOWN_PAPER`, which callers interpret as permanent upstream
+absence. Because a caller cannot tell from its request alone how many identifiers the store already holds, a caller
+whose batch is refused splits the batch and retries.
 
 #### Failures in this path
 
@@ -1136,8 +1139,6 @@ outer request timeout, leaving the server waiting on a caller that had already b
   a single step on a pathological input (such as a very long PDF) can still exceed the 30-minute dispatch deadline and
   settle as `FAILED` after three attempts. Whether to build a Cloud Run Job execution path for oversized inputs now or
   wait until one appears in practice is undecided.
-- **A door for uploading documents.** The user-facing path for handing the system a document it could not otherwise
-  reach, and what that path does about identity, licence, and duplicate detection, is undecided.
 - **Per-caller ingest bounds.** The per-call ingest limit bounds a single `MaybeIngestPapers` request, while nothing
   bounds a caller that loops across many requests: each call may bring in as many papers as the per-call bound allows,
   and each becomes a permanent corpus entry. The agent choosing those identifiers can itself be steered by the evidence
