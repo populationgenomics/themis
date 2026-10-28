@@ -4390,7 +4390,7 @@ curation = [
 ]
 dataflow = [
     { name = "anthropic" },
-    { name = "apache-beam", extras = ["gcp"] },
+    { name = "apache-beam", extras = ["gcp"], specifier = "==2.77.0" },
     { name = "cloud-sql-python-connector" },
     { name = "docling-core" },
     { name = "google-cloud-secret-manager" },
@@ -4463,7 +4463,7 @@ lint = [
     { name = "anchorite", specifier = "==0.5.1" },
     { name = "anthropic" },
     { name = "anyio" },
-    { name = "apache-beam", extras = ["gcp"] },
+    { name = "apache-beam", extras = ["gcp"], specifier = "==2.77.0" },
     { name = "clinvar-proto", specifier = "==0.2.0" },
     { name = "cloud-sql-python-connector" },
     { name = "defusedxml" },
@@ -4621,7 +4621,7 @@ test = [
     { name = "anchorite", specifier = "==0.5.1" },
     { name = "anthropic" },
     { name = "anyio" },
-    { name = "apache-beam", extras = ["gcp"] },
+    { name = "apache-beam", extras = ["gcp"], specifier = "==2.77.0" },
     { name = "clinvar-proto", specifier = "==0.2.0" },
     { name = "cloud-sql-python-connector" },
     { name = "defusedxml" },

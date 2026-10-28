@@ -212,11 +212,10 @@ docker build --platform linux/amd64 -f tools/litcache/Dockerfile -t "$IMAGE" .
 docker push "$IMAGE"
 ```
 
-The build fails, rather than the worker, if the pipeline's imports are unsatisfiable. One thing it cannot check: the
-Beam SDK the Dockerfile grafts its bootloader from must be the version the launcher submits with. Compare the
-`FROM apache/beam_python3.13_sdk:<version>` line against
-`uv run --group dataflow python -c 'import apache_beam; print(apache_beam.__version__)'` — a mismatch surfaces only as
-workers failing to start.
+The build fails, rather than the worker, if the pipeline's imports are unsatisfiable. The Beam SDK the Dockerfile grafts
+its bootloader from must also be the version the launcher submits with, because a mismatch surfaces only as workers
+failing to start; [`test_dataflow_image.py`](../../tests/litcache/test_dataflow_image.py) holds the
+`FROM apache/beam_python3.13_sdk:<version>` tag to the `dataflow` group's `apache-beam` pin, so bump the two together.
 
 Tag with the commit, as here, so a job's image says which pipeline code it ran.
 
@@ -357,7 +356,7 @@ Permission failures, and which grant each points at:
 | `permission denied for schema litcache` / `relation litcache.crosswalk` in worker logs | Migration `0007` not applied — run a deploy                              |
 | Cloud SQL connect refused for `themis-ingest@…iam`                                     | Pulumi (`ingest.py` connect roles + IAM DB user)                         |
 | Report step `403` writing `diagnostics/dead_letters/<run>.jsonl` on a direct run       | You: write on `$FULLTEXT`                                                |
-| SDK harness version mismatch at worker start                                           | Dockerfile's `beam_python3.13_sdk` tag vs the locked `apache-beam`       |
+| SDK harness version mismatch at worker start                                           | Dockerfile's `beam_python3.13_sdk` tag vs the pinned `apache-beam`       |
 
 A job that fails in `ResolveMetadata` (NCBI unreachable past the retry budget, or the single resolve worker running out
 of memory) has written nothing to `papers/` — the identity stage's results are discarded with the job, and a re-run

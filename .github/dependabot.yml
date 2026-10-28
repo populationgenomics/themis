@@ -13,6 +13,19 @@ updates:
       uv:
         patterns: ["*"]
 
+  - package-ecosystem: bun
+    directory: /apps/web
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      # Must match the oven/bun image and setup-web's bun-version; bumped together with them.
+      - dependency-name: "@types/bun"
+    groups:
+      bun:
+        patterns: ["*"]
+
   - package-ecosystem: docker
     directories:
       - /apps/web
@@ -27,7 +40,7 @@ updates:
       # A Python minor moves with requires-python, uv.lock and the Beam SDK image.
       - dependency-name: python
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      # Must match the apache-beam version in uv.lock; bumped together with it.
+      # Must match the apache-beam pin in pyproject.toml; bumped together with it.
       - dependency-name: apache/beam_python3.13_sdk
       # Must match setup-web's bun-version and @types/bun; bumped together with them.
       - dependency-name: oven/bun

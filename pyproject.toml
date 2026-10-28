@@ -61,8 +61,10 @@ protoc = ["grpcio-tools"]
 codegen = ["mypy-protobuf", "clinvar_proto==0.2.0", "pubmed_proto==0.5.0", { include-group = "protoc" }]
 # Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
-# gcsio requires (co-resolves with litcache in the worker).
-dataflow = ["apache-beam[gcp]", { include-group = "litcache" }]
+# gcsio requires (co-resolves with litcache in the worker). Exact pin: it must equal the SDK
+# image tag in tools/litcache/Dockerfile, and it stops a re-lock from downgrading beam to escape
+# one of its upper bounds (pillow, protobuf).
+dataflow = ["apache-beam[gcp]==2.77.0", { include-group = "litcache" }]
 # Cloud SQL client: the connector + pg8000 (IAM auth, no stored password, mirroring
 # infra/sql.py), shared by the auth service's cloudsql backend and the migrate runner.
 cloudsql = ["cloud-sql-python-connector", "pg8000"]
