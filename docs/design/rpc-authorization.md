@@ -363,20 +363,20 @@ the Anthropic workspace level rather than attributed to an Analysis or Project
 
 #### Sheaf service
 
-The Sheaf service ([`sheaf-service.md`](sheaf-service.md),
-[`schema/proto/themis/rpc/sheaf.proto`](../../schema/proto/themis/rpc/sheaf.proto)) uses the same interceptor to gate
-its unary (`ReadRefDoc`, `SignPackUrls`) and streaming (`FetchPack` server-streaming, `Publish` client-streaming) RPCs:
+The Sheaf service ([`sheaf-service.md`](sheaf-service.md), [`sheaf.proto`](../../schema/proto/themis/rpc/sheaf.proto))
+uses the same interceptor to gate its unary and streaming repository RPCs:
 
-- **Sandbox worker (`CALLER_SANDBOX_WORKER`)**: admitted on `ReadRefDoc`, `FetchPack`, `Publish`, and `SignPackUrls`.
-  Because `CALLER_AGENT` is not admitted on any Sheaf RPC, calls forwarded from the sandbox guest across the hatch
-  cannot reach the repository directly; only the worker's own synchronization mirror (`CALLING_AS_WORKER_SESSION`) can
-  read or publish packs.
-- **Web tier (`CALLER_WEB`) and developer CLI (`CALLER_CLU`)**: `CALLER_WEB` is admitted on `ReadRefDoc`, `FetchPack`,
-  and `Publish` to relay browser reads and curator edits ([`workbench-workspace.md`](workbench-workspace.md)). Both
-  `CALLER_WEB` and `CALLER_CLU` attach a `CALLING_AS_SELF` claim carrying the target session token; although
-  `CALLING_AS_SELF` does not require a session for admission, the interceptor resolves the attached session token so the
-  Sheaf servicer ([`themis/services/sheaf/servicer.py`](../../themis/services/sheaf/servicer.py)) can read the target
-  Analysis from `AuthContext.session` without containing any session-resolution code of its own.
+- **Sandbox worker (`CALLER_SANDBOX_WORKER`)**: the worker's synchronization mirror (`CALLING_AS_WORKER_SESSION`) reads
+  and publishes packs, whereas `CALLER_AGENT` is admitted nowhere on `SheafService` so guest calls forwarded across the
+  hatch cannot reach the repository.
+- **Web tier (`CALLER_WEB`) and developer CLI (`CALLER_CLU`)**: the web tier relays browser reads and publishes curator
+  edits ([`workbench-workspace.md`](workbench-workspace.md)), and only `CALLER_WEB` signs asset download URLs;
+  `CALLER_CLU` is admitted implicitly as everywhere else without being declared in
+  [`sheaf.proto`](../../schema/proto/themis/rpc/sheaf.proto). Both `CALLER_WEB` and `CALLER_CLU` attach a
+  `CALLING_AS_SELF` claim carrying the target session token; although `CALLING_AS_SELF` does not require a session for
+  admission, the interceptor resolves the attached session token so the Sheaf servicer
+  ([`servicer.py`](../../themis/services/sheaf/servicer.py)) can read the target Analysis from `AuthContext.session`
+  without containing any session-resolution code of its own.
 
 ## Alternatives considered
 
