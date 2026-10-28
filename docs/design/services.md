@@ -157,15 +157,19 @@ the image.
 Instead, [`themis/services/evidence/deps.py`](../../themis/services/evidence/deps.py) builds a single `Deps` container
 once per process:
 
-- **Session resolver:** configured by image-wide environment variables naming the resolver backend, the `auth` service
-  URL, and the fixture seed JSON. Using image-wide variables avoids repeating identical auth settings across ten
-  interface prefixes. When seeding fixture sessions, each image reads its own seed variable and passes that variable's
-  name to the shared parser so validation errors cite the exact environment variable that failed. Within `evidence`,
-  `literature`'s RPCs use the session resolver according to their caller: the eight agent-called RPCs resolve a session
-  to enforce the analysis data cutoff, and `MaybeIngestPapers` also uses the session to attribute paper-fetching and
-  conversion spend (see [`evidence-fulltext.md`](evidence-fulltext.md)), whereas the three browser-called RPCs
-  (`DescribePaper`, `ResolveContent`, and `Locate`) resolve no session because the paper corpus is shared across
-  analyses.
+- **Authorizer (`Deps.authorizer`):** selected by the image-wide `THEMIS_AUTHORIZER_BACKEND` environment variable in
+  [`deps.py`](../../themis/services/evidence/deps.py) and configured with the `auth` service URL, the GCP project and
+  audience URL, and the fixture seed JSON. Using image-wide variables avoids repeating identical auth settings across
+  the hosted interface prefixes. When seeding fixture sessions or callers, each image reads its own seed variables and
+  passes those variable names to the shared parser so validation errors cite the exact environment variable that failed.
+  The `evidence` and `sheaf` data-plane servers are constructed through a process-wide `AuthInterceptor` backed by the
+  configured authorizer ([`__main__.py`](../../themis/services/evidence/__main__.py),
+  [`deps.py`](../../themis/services/evidence/deps.py)), so caller verification, session resolution, and `admits_caller`
+  admission are enforced across every hosted interface before any handler runs (see
+  [`rpc-authorization.md`](rpc-authorization.md); the `hello` smoke-test service instead checks its session in-handler
+  via `require_session`). Within `evidence`, the agent-called RPCs (`admits_caller = CALLER_AGENT`) require a resolved
+  session, whereas `literature`'s three browser-called RPCs (`DescribePaper`, `ResolveContent`, and `Locate`, marked
+  `admits_caller = CALLER_WEB`) admit the web tier on its service-account ID token without requiring a session.
 - **Shared HTTP client (`httpx2.AsyncClient`):** provides a single connection pool across interfaces that query external
   HTTP endpoints.
 - **Process lifetime stack (`contextlib.AsyncExitStack`):** owns long-lived read-only handles opened by interface
@@ -252,17 +256,18 @@ probe.
 └─────────────┬─────────────┘        └────────────┬─────────────┘
               │ unix socket / loopback            │ HTTPS / HTTP/2
               ▼                                   │ + SA ID token
-┌───────────────────────────┐                     │
+┌───────────────────────────┐                     │ (+ optional CallerClaim)
 │ Sandbox worker hatch      │                     │
-│  checks agent_exposed     │                     │
-│  injects session token    │                     │
+│  checks admits_caller     │                     │
+│  injects CallerClaim      │                     │
 │  attaches worker ID token │                     │
 └─────────────┬─────────────┘                     │
               │ HTTPS / HTTP/2                    │
               ▼                                   ▼
 ┌───────────────────────────────────────────────────────────────┐
-│ Target gRPC service (e.g. evidence, sheaf, hello)             │
-│  resolves x-themis-session-token via themis.clients.auth ─────┼──► auth service
+│ Target gRPC service (e.g. evidence, sheaf)                    │
+│  AuthInterceptor verifies ID token + CallerClaim              │
+│  and resolves session via themis.clients.auth ────────────────┼──► auth service
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -273,14 +278,18 @@ interface before any web or operator method is added to it. Services in [`themis
 serve two distinct caller populations:
 
 1. **The sandbox agent in code mode:** Most analysis services (such as `evidence`) are called by Python scripts the
-   agent writes and runs inside the sandbox through the worker's method-allowlisted gRPC hatch, which attaches the
-   session token and forwards the call under the worker service account's OIDC ID token
-   ([`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary)). How RPCs are annotated with
-   `option (themis.rpc.agent_exposed) = true` and wired through the hatch allowlist, guest rootfs, and Cloud Run IAM is
-   specified in [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md#the-rpc-is-the-unit-of-exposure).
+   agent writes and runs inside the sandbox through the worker's method-allowlisted gRPC hatch, which attaches a
+   `CallerClaim` (`CALLING_AS_AGENT_SESSION` plus the session token) and forwards the call under the worker service
+   account's OIDC ID token ([`sandbox-worker.md`](sandbox-worker.md#the-hatch-is-the-capability-boundary)). How RPCs are
+   annotated with `option (themis.rpc.admits_caller) = CALLER_AGENT` and wired through the hatch allowlist, guest
+   rootfs, and Cloud Run IAM is specified in
+   [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md#the-rpc-is-the-unit-of-exposure). An RPC that does not name
+   `CALLER_AGENT` is left out of the generated hatch allowlist
+   ([`agent_exposed.py`](../../tools/schema/agent_exposed.py)), and the interceptor admits only the callers an RPC
+   names. Adding a method to a `.proto` file therefore never exposes it by accident.
 1. **Trusted platform services:** Services such as `auth` (called by other services to resolve session tokens) and
-   `sheaf` (called by `apps/web` and the sandbox worker's file mirror; see [`sheaf-service.md`](sheaf-service.md)) are
-   called service-to-service and never carry `agent_exposed` options.
+   `sheaf` (called by `apps/web` as `CALLER_WEB` and by the sandbox worker's file mirror as `CALLER_SANDBOX_WORKER`; see
+   [`sheaf-service.md`](sheaf-service.md)) are called service-to-service and never admit `CALLER_AGENT`.
 
 #### Outbound service-to-service calls
 
@@ -292,38 +301,24 @@ metadata server for `audience=callee_url` and refreshed automatically before exp
 provides a typed, one-call-per-RPC interface that raises `grpc.RpcError` on failure, callers use the stub directly
 rather than wrapping it in a custom client class.
 
-#### Session resolution via `themis.clients.auth`
+#### Authorization and session resolution via `themis.clients.auth`
 
-When an RPC's behavior depends on the active session — to scope data to a Project, apply an Analysis data cutoff, or
-attribute spend to an Analysis — the servicer resolves the caller's `x-themis-session-token` metadata through
-[`themis/clients/auth/`](../../themis/clients/auth/) (`session.py`). RPCs whose answers do not depend on a session do
-not request one.
+The `evidence` and `sheaf` data-plane servers are constructed through a process-wide `AuthInterceptor`
+([`interceptor.py`](../../themis/clients/auth/interceptor.py)) backed by the configured authorizer
+(`THEMIS_AUTHORIZER_BACKEND` in [`deps.py`](../../themis/services/evidence/deps.py)), so admission on those services is
+enforced before any handler runs (see [`rpc-authorization.md`](rpc-authorization.md); the `hello` smoke-test service
+instead checks its session in-handler via `require_session`). On every inbound RPC, `AuthInterceptor` verifies the
+caller's Google OIDC ID token, decodes the caller's claim, resolves any attached session token through the `auth`
+service, checks the resulting `AuthContext` against the method's `admits_caller` protobuf option, and binds
+`AuthContext` in `contextvars` for the handler's lifetime.
 
-[`themis/services/hello/`](../../themis/services/hello/) shows the per-method resolution pattern:
-
-```python
-self._session_resolver = session_resolver(
-    auth_url
-)  # or a fixture SessionResolver in tests
-
-
-async def SayHello(self, request, context):
-  session = await require_session(context, self._session_resolver)
-  return hello_pb2.SayHelloResponse(
-      greeting=f'hello from analysis {session.analysis_id}: {request.note}'
-  )
-```
-
-- **`session_resolver(auth_url)`** wraps the generated `AuthServiceStub` over an `id_token` channel. When `auth` reports
-  that a token is unknown or expired, the resolver raises `UnresolvedSessionError`; if `auth` fails for any other reason
-  (such as a network timeout, service outage, or IAM misconfiguration), the underlying `grpc.RpcError` propagates so
-  infrastructure faults are never mistaken for invalid caller tokens.
-- **`require_session(context, resolver)`** extracts `x-themis-session-token` from the incoming invocation metadata,
-  calls the resolver, and aborts the RPC with `UNAUTHENTICATED` when the header is missing or `PERMISSION_DENIED` when
-  `UnresolvedSessionError` is raised. It always returns a populated `SessionContext` or aborts the call.
-- **Offline and test runs** inject a fixture `SessionResolver` (seeded from an environment variable in offline
-  deployments or constructed with fixture constants in unit tests) that returns a `SessionContext` on a match or raises
-  `UnresolvedSessionError` on a miss.
+- **Session resolution** calls the `auth` service over an ID-token-authenticated channel. When `auth` reports that a
+  token is unknown or expired, the resolver raises an unresolved-session error that the interceptor turns into
+  `PERMISSION_DENIED`; if `auth` fails for any other reason (such as a network timeout, service outage, or IAM
+  misconfiguration), the underlying `grpc.RpcError` propagates so infrastructure faults are never mistaken for invalid
+  caller tokens.
+- **Offline and test runs** select the fixture authorizer via `THEMIS_AUTHORIZER_BACKEND=fixture` (seeded from
+  environment variables in offline deployments or constructed with fixture constants in unit tests).
 
 ### Repository wiring and deployment boundaries
 

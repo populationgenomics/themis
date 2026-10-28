@@ -376,12 +376,15 @@ Each boundary in the system applies the rules above through a concrete mechanism
   method. The `/healthz` endpoint (reached directly by Cloud Run's liveness probe rather than through the load balancer)
   is the sole allowlisted exemption.
 - **Data-plane RPC authorization** ([`rpc-authorization.md`](rpc-authorization.md)) runs a server-wide gRPC interceptor
-  that builds a verified authorization context per call (recording the calling service, the scoped Analysis session if
-  present, and the approving user if present) and checks it against the admission options declared on the protobuf
-  method descriptor (`agent_exposed`, `admits_session`, and `admits_caller`). Any RPC method that declares no admission
-  option is denied at runtime, leaving the gRPC health check as the only exemption. On the evidence service, the
-  interceptor was built for the literature interface first and also gates the remaining evidence interfaces (whose RPCs
-  are all `agent_exposed`), making their older in-body session checks redundant until they are removed.
+  (`AuthInterceptor`) that builds a verified authorization context per call (recording the calling service account, its
+  `CallingAs` claim, the scoped Analysis session if present, and the approving user if present) and checks it against
+  the `admits_caller` option declared on the protobuf method descriptor. Any RPC method that declares no admitted caller
+  is denied at runtime (except to `CALLER_CLU`), leaving the gRPC health check as the only unauthenticated exemption.
+  The `evidence` and `sheaf` data-plane servers are constructed through `AuthInterceptor`
+  ([`interceptor.py`](../../themis/clients/auth/interceptor.py),
+  [`__main__.py`](../../themis/services/evidence/__main__.py)), so admission on those services never depends on a
+  handler remembering to check (the `hello` smoke-test service is the sole exception, checking its session in-handler
+  via `require_session`).
 - **Sandbox egress** ([`sandbox-worker.md`](sandbox-worker.md), [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)
   §Security) runs the untrusted guest process inside an empty network namespace with no network interfaces. Its only
   exit is the local UNIX socket hatch, whose method allowlist is generated directly from protobuf annotations. Because a

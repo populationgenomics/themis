@@ -3,7 +3,8 @@
 **Related:** [`sandbox-worker.md`](sandbox-worker.md) (the hatch the guest reaches services through, and the worker that
 forwards for it), [`services.md`](services.md) (the service pattern whose RPCs are exposed),
 [`security.md`](security.md) (the trust boundary and the exfiltration criterion for outbound calls),
-[`proto.md`](proto.md) (the proto-first codegen pipeline this extends),
+[`rpc-authorization.md`](rpc-authorization.md) (server-side caller and session enforcement via `admits_caller` and
+`AuthInterceptor`), [`proto.md`](proto.md) (the proto-first codegen pipeline this extends),
 [`literature-evidence-layer.md`](literature-evidence-layer.md) (the first service called by both the agent and the web
 tier).
 
@@ -15,21 +16,22 @@ admits a fixed allowlist of RPCs and rejects everything else. This document deci
 what security properties an exposed RPC must uphold, and what a session token means when a call reaches a data-plane
 service.
 
-An RPC becomes callable from the sandbox when its protobuf declaration carries the `agent_exposed` method option. From
-that single option, `regen` derives the hatch allowlist, a pruned copy of the `.proto` sources for the model to read,
-the Python stubs compiled from those pruned sources, and the service accessors the agent imports. What cannot be
-generated — the worker's per-service forwarder and the agent's prompt instructions — is held to the allowlist by
-automated checks. Leaving the option off leaves the RPC unreachable, so the surface is fail-closed by default. Marking
-an RPC asserts that its implementation is written for a hostile caller: no single call or stream of calls can trigger
-unbounded work, and every outbound request carrying caller-supplied text goes to a fixed destination as a query-only
-parameter.
+An RPC becomes callable from the sandbox when its protobuf declaration carries
+`option (themis.rpc.admits_caller) = CALLER_AGENT`. From that single option, `regen` derives the hatch allowlist, a
+pruned copy of the `.proto` sources for the model to read, the Python stubs compiled from those pruned sources, and the
+service accessors the agent imports (while `AuthInterceptor` enforces caller admission server-side; see
+[`rpc-authorization.md`](rpc-authorization.md)). What cannot be generated — the worker's per-service forwarder and the
+agent's prompt instructions — is held to the allowlist by automated checks. Leaving `CALLER_AGENT` off `admits_caller`
+leaves the RPC unreachable from the guest, so the surface is fail-closed by default. Marking an RPC for `CALLER_AGENT`
+asserts that its implementation is written for a hostile caller: no single call or stream of calls can trigger unbounded
+work, and every outbound request carrying caller-supplied text goes to a fixed destination as a query-only parameter.
 
 Every call the worker forwards from the sandbox carries the session token of the running Analysis, whereas the web
-tier's backend (the BFF) calls data-plane services directly on its own service identity. Rather than treating the
-session token as an access ticket that every RPC verifies and discards, an RPC resolves the caller's session only when
-its answer depends on the session's Project scope, planned evaluation data-cutoff masking, or spend attribution, and
-fails loudly when a required session is absent. An RPC whose answer does not depend on the session does not ask for one,
-and any RPC called by both the agent and the BFF answers both callers identically.
+tier's backend (the BFF) calls data-plane services directly on its own service identity. Data-plane services split
+session handling between per-principal **admission** and handler **use**: at the interceptor, every `CALLER_AGENT` call
+requires a resolving session for admission (whereas `CALLER_WEB` and `CALLER_CLU` do not), while only RPCs whose answer
+or side effects depend on the session read the resolved context for Project scope, planned evaluation data-cutoff
+masking, or spend attribution. Any RPC called by both the agent and the BFF answers both callers identically.
 
 ## Background
 
@@ -103,9 +105,8 @@ offsets or PDF coordinates of a quote for the browser highlighter. Marking the w
 eleven methods, offering the agent a storage URI it cannot follow and has no reason to see; avoiding that under a
 file-level mark would force splitting one coherent service into two files solely by who calls it.
 
-Exposure is therefore declared on each RPC using the `agent_exposed` method option defined in
-[`sandbox_options.proto`](../../schema/proto/themis/rpc/sandbox_options.proto), which every service proto that exposes
-an RPC imports:
+Exposure is therefore declared on each RPC using the `admits_caller` repeated method option defined in
+[`sandbox_options.proto`](../../schema/proto/themis/rpc/sandbox_options.proto), which every service proto imports:
 
 ```proto
 import "themis/rpc/sandbox_options.proto";
@@ -113,20 +114,23 @@ import "themis/rpc/sandbox_options.proto";
 service Literature {
   // Whether a quote locates in the paper, for the agent to check while authoring.
   rpc Validate(ValidateRequest) returns (ValidateResponse) {
-    option (themis.rpc.agent_exposed) = true;
+    option (themis.rpc.admits_caller) = CALLER_AGENT;
   }
-  // The storage object a rendering lives in, for the BFF to serve. Not exposed: nothing in the
-  // guest can follow a location.
-  rpc ResolveContent(ResolveContentRequest) returns (ContentLocation);
+  // The storage object a rendering lives in, for the BFF to serve. Not exposed to the guest:
+  // nothing in the guest can follow a location.
+  rpc ResolveContent(ResolveContentRequest) returns (ContentLocation) {
+    option (themis.rpc.admits_caller) = CALLER_WEB;
+  }
 }
 ```
 
 Putting the mark on the RPC matches where the security argument lives. An RPC's cost bounds and outbound destinations
-belong to that method's implementation, so the change that marks an RPC argues those properties for that specific RPC.
+belong to that method's implementation, so the change that adds `CALLER_AGENT` to `admits_caller` argues those
+properties for that specific RPC.
 
 Because the option is compiled into the protobuf descriptor set, `regen` ([`tools/schema/`](../../tools/schema/)) reads
-it at build time. Omitting the option defaults to false, so a file, service, or method without it contributes nothing to
-the agent's callable surface. From the marked RPCs, `regen` derives four committed artifacts that CI holds fresh:
+it at build time. Omitting `CALLER_AGENT` leaves a method out of the agent's callable surface. From the RPCs that admit
+`CALLER_AGENT`, `regen` derives four committed artifacts that CI holds fresh:
 
 | Artifact            | What `regen` derives                                                                                                                                            |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -159,15 +163,15 @@ contract as the guest should see it and runs `protoc` over that pruned tree:
 
 `regen` makes its cuts in the `.proto` source text using the line and column spans that `protoc` records in the
 descriptor's `SourceCodeInfo` — each declaration's span, its leading and trailing comments, and each option's span —
-rather than parsing the protobuf grammar itself. Beyond deleting unmarked RPCs, unreachable types, unused imports, and
-the `agent_exposed` option lines, the only text transformation collapses an RPC body `{}` that removing the option left
-empty; copies of upstream record schemas from third-party wheels stay intact. `regen` then recompiles the cut sources
-with `protoc` and checks that every kept declaration and its attached comments match the full contract, failing the
-build if a cut dropped a needed type or left an orphaned comment beside the wrong declaration.
+rather than parsing the protobuf grammar itself. Beyond deleting RPCs that do not admit `CALLER_AGENT`, unreachable
+types, unused imports, and the `admits_caller` option lines, the only text transformation collapses an RPC body `{}`
+that removing the option left empty; copies of upstream record schemas from third-party wheels stay intact. `regen` then
+recompiles the cut sources with `protoc` and checks that every kept declaration and its attached comments match the full
+contract, failing the build if a cut dropped a needed type or left an orphaned comment beside the wrong declaration.
 
 The resulting guest contract tree gives the sandbox one consistent surface with two readers: the model reads the pruned
 `.proto` files at a fixed path in the guest rootfs to see method and field comments, and the Python code the model
-writes imports the stubs compiled from those exact files. Inside the sandbox, no trace of the `agent_exposed` option or
+writes imports the stubs compiled from those exact files. Inside the sandbox, no trace of the `admits_caller` option or
 `sandbox_options.proto` remains. Because unreachable types are removed, a file imported only for its messages ships only
 the messages a kept RPC reaches, and no internal-only service stub ever enters the rootfs. Every message type that a
 kept RPC *does* reach ships with all of its fields intact — cuts remove whole declarations, never fields inside a
@@ -179,13 +183,14 @@ gRPC call to an unlisted method path, the hatch rejects it with `PERMISSION_DENI
 
 Four rules ensure that marking an RPC is a deliberate security review rather than an accidental one-line schema edit:
 
-- **Fail-closed default.** Omitting `agent_exposed` leaves the RPC off the allowlist and out of the guest contract tree.
-- **Two-edit ceremony across schema and service.** Marking an RPC in `.proto` expands the generated allowlist and guest
-  contract tree, which causes the sandbox worker's test suite in
-  [`themis/services/sandbox_worker/`](../../themis/services/sandbox_worker/) to fail until a forwarder covers the
-  service and the guest Dockerfile copies its stub. Exposing a service therefore requires a second edit outside
-  `schema/`. The intended form of that second edit on the backend is a co-signature decorator (`@agent_exposed`) on the
-  hand-written servicer method that implements the RPC's hardening, cross-checked against the proto descriptor in CI so
+- **Fail-closed default.** Omitting `CALLER_AGENT` from `admits_caller` leaves the RPC off the allowlist and out of the
+  guest contract tree.
+- **Two-edit ceremony across schema and service.** A schema-only edit cannot land an exposure: CI holds the hatch
+  allowlist equal to the services that have forwarders and guest accessors, and the guest rootfs equal to the guest
+  contract tree ([`themis/services/sandbox_worker/tests/`](../../themis/services/sandbox_worker/tests/)). On the
+  backend, handler admission is governed by `CALLER_AGENT` in `admits_caller`
+  ([`rpc-authorization.md`](rpc-authorization.md)), and the intended servicer counterpart is a co-signature mark on the
+  hand-written handler method that implements the RPC's hardening, cross-checked against the proto descriptor in CI so
   the security assertion sits directly on the code that upholds it.
 - **Visible allowlist diff.** Because the generated allowlist is committed to the repository, widening the sandbox's
   reach always appears in code review as an explicit diff of `/package.Service/Method` strings.
@@ -218,48 +223,41 @@ rather than on the hatch forwarder because the forwarder only sees gRPC messages
 constructs an outbound HTTP request. Whether an outbound URL is built from constants in code or from data fetched during
 the call is a property of the servicer's code. Any RPC that builds a URL from fetched data — reading a host out of a
 database record, following a link from a search result, or chasing an HTTP redirect — fails the exfiltration criterion
-in [`security.md`](security.md) and cannot be marked `agent_exposed`.
+in [`security.md`](security.md) and cannot admit `CALLER_AGENT`.
 
-Two internal services fail these conditions outright and carry no marks: `auth` and `sheaf` are infrastructure services
-that are not written for a hostile caller.
+Two internal services fail these conditions outright and never admit `CALLER_AGENT`: `auth` and `sheaf` are
+infrastructure services that are not written for a hostile caller.
 
 ### A session is context
 
-The obvious rule for authorizing calls to a data-plane service is to require a valid session token on every exposed RPC.
-Consider what a blanket session check actually guards. The guest cannot present a token that the worker did not inject,
-so the check cannot catch a forged or borrowed session from the sandbox. Cloud Run IAM already restricts which service
-identities can reach the server, so the check cannot stop an outside caller. A check that verifies the session token and
-immediately discards the resolved binding protects nothing, and reads to the next maintainer as an incomplete guard.
-Worse, stating the check as a blanket property of the RPC forces trusted callers that share the RPC to mint and carry
-session tokens that the RPC never uses — which is how the BFF came to derive session tokens for browser reads of the
-shared literature corpus.
+Making a session check a blanket property of an RPC forces every caller of that RPC — including the web tier's BFF
+(`CALLER_WEB`) and developer tooling (`CALLER_CLU`) — to mint and carry a session token even when reading a shared
+corpus. Instead, data-plane services separate **admission** (which is per principal) from **use** (which depends on what
+the RPC does):
 
-An RPC therefore resolves the caller's session token only when its answer depends on the session, and fails loudly
-without one. An RPC whose answer does not depend on the session does not ask for one. An RPC's answer can depend on a
-session in three ways:
-
-- **Scope.** When reading Project-bound data — case genomes, patient phenotypes, or anything inside a Project's access
-  boundary ([`PRODUCT.md`](../PRODUCT.md) §7) — the RPC derives the Project scope from the resolved session token
-  server-side, never from a Project identifier chosen by the caller.
-- **Cutoff.** When querying a time-varying source or running a versioned computational tool, the RPC answers as of the
-  session's evaluation data cutoff, described below.
-- **Attribution.** When starting paid work — such as a full-text PDF conversion or a fan-out to a metered upstream — the
-  RPC records which Analysis initiated the work so spend can be attributed per Analysis.
+- **Admission is per principal.** Each RPC declares its admitted principals in `.proto` via `admits_caller`
+  ([`rpc-authorization.md`](rpc-authorization.md)). Because the sandbox-job service account has no self-calling
+  principal, every `CALLER_AGENT` call requires a session token that resolves through the auth service (at
+  `AuthInterceptor` on `evidence` and `sheaf`, and via `require_session` on the `Hello` smoke-test service) before the
+  RPC runs. By contrast, `CALLER_WEB` and `CALLER_CLU` are admitted on their service-account identity without requiring
+  a session for admission.
+- **Use is per RPC.** Once a call is admitted, only RPCs whose answer or side effects depend on the session read the
+  resolved session context, and they fail loudly if no session is present. An RPC's behaviour can depend on a session in
+  three ways:
+  - **Scope.** When reading Project-bound data — case genomes, patient phenotypes, or anything inside a Project's access
+    boundary ([`PRODUCT.md`](../PRODUCT.md) §7) — the RPC derives the Project scope from the resolved session token
+    server-side, never from a Project identifier chosen by the caller.
+  - **Cutoff.** When querying a time-varying source or running a versioned computational tool, the RPC answers as of the
+    session's evaluation data cutoff, described below.
+  - **Attribution.** When starting paid work — such as a full-text PDF conversion or a fan-out to a metered upstream —
+    the RPC records which Analysis initiated the work so spend can be attributed per Analysis.
 
 Failing loudly when a required session is missing is load-bearing. An answer that should have been scoped to a Project,
 masked to a cutoff date, or attributed to an Analysis — and instead ran unscoped or unmasked — is a wrong answer that
-looks right ([`docs/style/general.md`](../style/general.md)). Accordingly, an RPC that uses session context aborts any
-call that carries no session token with an error status rather than falling back to a default.
-
-Each RPC declares its session requirement in its `.proto` comment, stating for callers what the session is used for and
-that a call without one is refused. This requirement is not a proto option today. A proto option enforces nothing by
-itself; its one benefit is letting a descriptor-driven test detect a missing session check, which only pays off once a
-single service has RPCs that resolve a session alongside RPCs that do not. The `Literature` service reaches that split
-when its data cutoff lands — the eight RPCs the agent calls will resolve the session for the cutoff, while the three
-browser-only RPCs will not — so an option belongs with that cutoff change rather than with `agent_exposed`. Until the
-cutoff lands, `Literature` resolves a session only where it enqueues a conversion, and the other nine evidence services
-keep their existing session gates on every RPC rather than removing a gate only to re-add it when the cutoff gives it a
-use.
+looks right ([`docs/style/general.md`](../style/general.md)). Accordingly, any RPC whose behaviour depends on session
+context aborts a call that carries no session token with an error status rather than falling back to a default. In
+`Literature`, the eight RPCs the agent calls admit `CALLER_AGENT` (requiring a resolved session at the interceptor),
+while the three browser-only RPCs admit `CALLER_WEB` without requiring a session.
 
 #### Masking is the first use
 
@@ -281,8 +279,8 @@ Computational tools (`Variant`, `Vep`, `Transcript`, and `Splice`) are pinned to
 date even though their output is a deterministic function of their input. A splice model trained on variants deposited
 after the cutoff carries the knowledge the cutoff exists to withhold, and a later release of an annotation tool can
 change what it reports for the same variant. Normalisation, effect and splice prediction, and transcript structure
-therefore resolve session context just as the database services do; the only exposed RPC that takes no session context
-is the `Hello` smoke test.
+therefore apply the session cutoff just as the database services do, while `SayHello` on `Hello` requires a resolving
+session via `require_session` without using the session in its reply.
 
 When a record or paper falls after the session's cutoff date, the RPC reports it as absent or unknown rather than
 refusing the call. A ClinVar submission evaluated after the cutoff, or a paper published after it, is indistinguishable
@@ -303,7 +301,8 @@ is chosen by the harness that creates the session.
 ### Callers
 
 The worker injects the session token into every call forwarded from the guest, and the guest has no other path out of
-the sandbox. Whether the receiving RPC resolves that token or ignores it is the RPC's decision under the rule above, and
+the sandbox. `AuthInterceptor` resolves that token on every `CALLER_AGENT` call for admission, and whether the handler
+subsequently reads the resolved `SessionContext` depends on whether the RPC uses session context under the rule above;
 the guest's code sees no difference either way.
 
 The BFF presents a session token only when calling an RPC that uses session context, deriving the token for the Analysis
@@ -325,17 +324,17 @@ BFF is which RPCs each caller invokes and what credentials each carries, never h
 The `Literature` service ([`literature.proto`](../../schema/proto/themis/rpc/literature.proto)) illustrates how per-RPC
 exposure, guest contract pruning, and session context fit together across one service's eleven RPCs:
 
-| RPC group                  | Methods                                                                                                                     | `agent_exposed` | In guest contract tree? | Session context used for          |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------- | ----------------------- | --------------------------------- |
-| Agent discovery and store  | `SearchEuropePmc`, `FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `PollFullTexts`, `ReadMarkdown`, `Validate` | Yes             | Yes                     | Data cutoff masking               |
-| Agent ingestion            | `MaybeIngestPapers`                                                                                                         | Yes             | Yes                     | Data cutoff masking + attribution |
-| Browser document pane only | `DescribePaper`, `ResolveContent`, `Locate`                                                                                 | No              | Cut (with their types)  | None (BFF IAM identity only)      |
+| RPC group                  | Methods                                                                                                                     | `admits_caller` | In guest contract tree? | Session context used for                    |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------- | ----------------------- | ------------------------------------------- |
+| Agent discovery and store  | `SearchEuropePmc`, `FetchPubmedArticles`, `SearchLitVar`, `ListLitVarEntities`, `PollFullTexts`, `ReadMarkdown`, `Validate` | `CALLER_AGENT`  | Yes                     | Data cutoff masking *(intended)*            |
+| Agent ingestion            | `MaybeIngestPapers`                                                                                                         | `CALLER_AGENT`  | Yes                     | Data cutoff + attribution *(both intended)* |
+| Browser document pane only | `DescribePaper`, `ResolveContent`, `Locate`                                                                                 | `CALLER_WEB`    | Cut (with their types)  | None (BFF IAM identity only)                |
 
-Each of the eight agent-callable RPCs carries `agent_exposed = true`, and the change that marks them states the per-call
-cap, cross-call pacing, and fixed outbound destination for each. Because `DescribePaper`, `ResolveContent`, and `Locate`
-are unmarked, the guest's `.proto` catalog and generated stubs never list them, and the message types used only by their
-replies — such as `PaperInfo`, `ContentLocation`, `LocateResponse`, `TextOffsets`, and `PdfRegion` — are cut from the
-guest contract tree.
+Each of the eight agent-callable RPCs carries `option (themis.rpc.admits_caller) = CALLER_AGENT`, and the change that
+marks them states the per-call cap, cross-call pacing, and fixed outbound destination for each. Because `DescribePaper`,
+`ResolveContent`, and `Locate` admit only `CALLER_WEB`, the guest's `.proto` catalog and generated stubs never list
+them, and the message types used only by their replies — such as `PaperInfo`, `ContentLocation`, `LocateResponse`,
+`TextOffsets`, and `PdfRegion` — are cut from the guest contract tree.
 
 On the session side, `MaybeIngestPapers` starts paid full-text production and passes `AuthContext` into
 `LiteratureBackend.view_for` as the seam to attribute conversion and ingestion spend to the Analysis that requested it
@@ -365,11 +364,12 @@ pre-training buys it nothing. Meanwhile, the three document-pane reads made by t
   declaration's comments onto its neighbour unless every path index is remapped, and a binary descriptor still cannot
   directly produce the `.proto` text files the model reads. The same `SourceCodeInfo` spans that a descriptor remap
   would need are enough to cut the `.proto` text directly.
-- **A blanket session gate on every exposed RPC.** Requiring every `agent_exposed` RPC to verify a session token is
-  uniform across all services. It was rejected because the guest cannot forge a token that the worker did not inject,
-  IAM already restricts which callers can reach the service, and verifying a token only to discard the binding guards
-  nothing. Stated as a property of the RPC, a blanket session gate also forced trusted callers sharing the RPC to derive
-  session tokens for reads of a shared corpus.
+- **A session gate as a property of the RPC rather than of the caller principal.** Requiring a session token on every
+  call to an RPC regardless of which principal invokes it is uniform across callers. It was rejected because session
+  requirements belong to the session-bound principals (`CALLER_AGENT` and `CALLER_SANDBOX_WORKER`, whose service account
+  has no self-calling principal; see [`rpc-authorization.md`](rpc-authorization.md)): making the session gate a property
+  of the RPC itself would force `CALLER_WEB` and `CALLER_CLU` to mint and carry a session token on every agent-callable
+  or shared method even when reading a shared corpus.
 - **No session tokens at the data plane at all.** Relying solely on Cloud Run IAM and the hatch allowlist eliminates
   session resolution in data-plane services. It was rejected because Project scoping, evaluation data-cutoff masking,
   and spend attribution all require knowing which Analysis a call belongs to, and resolving the session where the answer
@@ -414,6 +414,6 @@ pre-training buys it nothing. Meanwhile, the three document-pane reads made by t
 - **User entitlement on the browser leg.** How the BFF and the literature service check a curator's institutional
   licensing before opening a subscription paper in the browser is outside this document's scope and remains to be
   designed in the literature layer.
-- **Servicer co-signature decorator wiring.** Which module defines the `@agent_exposed` decorator placed on hand-written
-  servicer methods, and how the CI check imports the servicer implementations to cross-check them against the proto
-  descriptors, remains undecided.
+- **Servicer co-signature mark wiring.** Which module defines the `CALLER_AGENT` co-signature mark placed on
+  hand-written servicer methods, and how the CI check imports the servicer implementations to cross-check them against
+  the proto descriptors, remains undecided.

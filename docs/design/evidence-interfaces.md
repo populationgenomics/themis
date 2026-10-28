@@ -208,9 +208,10 @@ nine interfaces share one deployment, container image, session resolver, and out
 Sharing a deployment has two operational consequences on this surface ([`services.md`](services.md)):
 
 - **The sandbox agent reaches these RPCs through a narrower gate than other callers.** Cloud Run IAM is granted per
-  deployment, so an authenticated backend service can call all twelve RPCs. The sandbox agent instead reaches only the
-  methods listed on the hatch's allowlist, controlled per RPC by the `agent_exposed` option on its proto declaration
-  ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
+  deployment, so an authenticated backend service can reach the container, while `AuthInterceptor` enforces per-RPC
+  caller admission (`admits_caller`; see [`rpc-authorization.md`](rpc-authorization.md)). The sandbox agent reaches only
+  the methods listed on the hatch's allowlist, derived per RPC from `option (themis.rpc.admits_caller) = CALLER_AGENT`
+  on its proto declaration ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
 - **`gene_disease` is a startup dependency of the entire process.** Request failures isolate per RPC, but startup is
   shared. `GeneDisease.DescribeGene` loads four reference tables from GCS before serving; if that bucket cannot be read,
   the container refuses to start — which is the intended behaviour, not a defect in the startup probe. Starting with an
@@ -1114,8 +1115,8 @@ multiple interfaces.
    ([`proto.md`](proto.md#generated-upstream-schemas)).
 
 Finally, every response ends with the repeated `Provenance` list. An RPC becomes callable from the sandbox when
-annotated with the `agent_exposed` method option in its `.proto` file, from which the hatch allowlist and guest
-forwarders are generated ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
+annotated with `option (themis.rpc.admits_caller) = CALLER_AGENT` in its `.proto` file, from which the hatch allowlist
+and guest stubs are generated ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
 
 ## Alternatives considered
 

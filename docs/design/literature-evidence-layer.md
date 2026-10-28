@@ -315,14 +315,14 @@ version produced a structured fact.
 
 Once `MaybeIngestPapers` has returned a `doc_id`, six read-only RPCs serve the paper to the agent and the workbench BFF:
 
-| RPC              | Caller | What it does                                                                                                                                                                |
-| ---------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PollFullTexts`  | Agent  | Returns current `FullTextState` for a batch of up to 100 `doc_id`s from their manifests, without minting identifiers or enqueuing conversions.                              |
-| `ReadMarkdown`   | Agent  | Server-streaming RPC that yields a `RenderingHeader` (`rendering_key`, `size_bytes`, `provenance`) followed by raw UTF-8 byte chunks, or a single `FullTextUnavailable`.    |
-| `Validate`       | Agent  | Checks whether a verbatim quote locates inside a paper's canonical markdown rendering, returning `ok`, `located_in` (`REPRESENTATION_MARKDOWN`), and a diagnostic `reason`. |
-| `DescribePaper`  | BFF    | Returns a paper's title, available representations (`has_markdown`, `markdown_from_xml`, `has_pdf`), `default_representation`, and extracted figures/supplementary files.   |
-| `ResolveContent` | BFF    | Resolves a representation (`MARKDOWN` or `PDF`) or associated `file_path` to its bucket/object coordinates and MIME type so the BFF can stream or presign the bytes.        |
-| `Locate`         | BFF    | Locates a verbatim quote inside a chosen representation (`MARKDOWN` or `PDF`) and returns highlight coordinates (`TextOffsets` or `PdfRegion`) or `not_located`.            |
+| RPC              | Caller                                                   | What it does                                                                                                                                                                |
+| ---------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PollFullTexts`  | Agent (`CALLER_AGENT`; `CALLER_WEB` planned for uploads) | Returns current `FullTextState` for a batch of up to 100 `doc_id`s from their manifests, without minting identifiers or enqueuing conversions.                              |
+| `ReadMarkdown`   | Agent (`CALLER_AGENT`)                                   | Server-streaming RPC that yields a `RenderingHeader` (`rendering_key`, `size_bytes`, `provenance`) followed by raw UTF-8 byte chunks, or a single `FullTextUnavailable`.    |
+| `Validate`       | Agent (`CALLER_AGENT`)                                   | Checks whether a verbatim quote locates inside a paper's canonical markdown rendering, returning `ok`, `located_in` (`REPRESENTATION_MARKDOWN`), and a diagnostic `reason`. |
+| `DescribePaper`  | BFF (`CALLER_WEB`)                                       | Returns a paper's title, available representations (`has_markdown`, `markdown_from_xml`, `has_pdf`), `default_representation`, and extracted figures/supplementary files.   |
+| `ResolveContent` | BFF (`CALLER_WEB`)                                       | Resolves a representation (`MARKDOWN` or `PDF`) or associated `file_path` to its bucket/object coordinates and MIME type so the BFF can stream or presign the bytes.        |
+| `Locate`         | BFF (`CALLER_WEB`)                                       | Locates a verbatim quote inside a chosen representation (`MARKDOWN` or `PDF`) and returns highlight coordinates (`TextOffsets` or `PdfRegion`) or `not_located`.            |
 
 Four design choices shape how these six RPCs work together:
 
@@ -397,12 +397,13 @@ retry and backoff to the caller's gRPC retry helper.
 
 ### Exposing literature RPCs to the sandboxed agent
 
-Each RPC in [`literature.proto`](../../schema/proto/themis/rpc/literature.proto) declares individually whether it is
-exposed across the sandbox hatch via the `(themis.rpc.agent_exposed)` method option
-([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). Eight RPCs are exposed to the agent: `SearchEuropePmc`,
-`SearchLitVar`, `ListLitVarEntities`, `FetchPubmedArticles`, `MaybeIngestPapers`, `PollFullTexts`, `ReadMarkdown`, and
-`Validate`. The remaining three RPCs (`DescribePaper`, `ResolveContent`, and `Locate`) serve only the workbench BFF and
-are omitted from the sandbox hatch catalog.
+Each RPC in [`literature.proto`](../../schema/proto/themis/rpc/literature.proto) declares the callers it admits with the
+`(themis.rpc.admits_caller)` method option ([`rpc-authorization.md`](rpc-authorization.md)). Admitting `CALLER_AGENT`
+exposes the RPC across the sandbox hatch and asserts that it has bounded cost and that its outbound requests are
+destination-fixed and query-only ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)). Eight RPCs admit
+`CALLER_AGENT`: `SearchEuropePmc`, `SearchLitVar`, `ListLitVarEntities`, `FetchPubmedArticles`, `MaybeIngestPapers`,
+`PollFullTexts`, `ReadMarkdown`, and `Validate`. The remaining three RPCs (`DescribePaper`, `ResolveContent`, and
+`Locate`) admit only `CALLER_WEB` and are omitted from the sandbox hatch catalog.
 
 Even though `ResolveContent` already returns a paper's storage coordinates, the agent reads papers exclusively through
 `ReadMarkdown` for three reasons:
