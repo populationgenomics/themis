@@ -18,7 +18,8 @@ knowledge across studies without pooling institutionally licensed publisher PDFs
 
 The workspace model organizes work around four entities:
 
-- A **Project** is the access and data boundary that binds an explicit set of users to an explicit set of datasets.
+- A **Project** is the access and data boundary that binds an explicit set of users to one dataset. Its id is the
+  dataset's name.
 - An **Analysis** is a collaborative session within a single Project, structured as an append-only tree of immutable
   conversation turns.
 - A **working document** is the single evolving, versioned artifact produced inside an Analysis, backed by the commit
@@ -36,11 +37,12 @@ to non-members, matching the Project scoping enforced on agent sessions.
 ## Background
 
 Genomic medicine studies operate under ethics and governance agreements that restrict which researchers and clinicians
-may inspect which patient samples. A cohort dataset such as CaRDinal may serve several distinct research initiatives at
-once, while a single study may combine samples from multiple datasets. For example, an autism spectrum disorder (ASD)
-research group may work within an ASD Project restricted to an ASD-specific subset of cases and the clinicians assigned
-to that study. Because datasets and studies overlap without nesting cleanly, the relationship between datasets and
-**Projects** is many-to-many.
+may inspect which patient samples. Sites approve that access per dataset, so a **Project** is one dataset together with
+the people approved to work on it. For example, an autism spectrum disorder (ASD) research group may work within an ASD
+Project whose dataset is an ASD-specific selection of cases, with the clinicians assigned to that study as its members.
+A study that combines samples from several cohorts needs a dataset assembled for it, or separate Projects that share
+only what the cross-Project rules below allow ([`access-control.md`](access-control.md) explains why a Project does not
+span several datasets).
 
 Within a Project, curators work alongside an agent coordinator and its delegated sub-agents to investigate variants,
 cases, and cohorts. Vocabulary mirrors Claude.ai's deliberately (familiar to users and to Anthropic; see
@@ -54,9 +56,9 @@ step promotes a revision of that working document into a Project-level **Report*
 ### Entity hierarchy and lifecycle
 
 ```
-  Datasets (e.g. CaRDinal)                Users (curators, clinicians)
+  Dataset (one of CaRDinal's, say)        Users (curators, clinicians)
              \                                       /
-              \ M:N                             M:N /
+              \ 1:1                             M:N /
                v                                   v
         ┌─────────────────────────────────────────────────┐
         │ Project (access & data boundary)                │
@@ -88,7 +90,7 @@ an Analysis focuses on depends on the curation scenario ([`analysis-scenarios.md
 - **Variant-led**: investigating a specific genetic variant against a disease and inheritance mode.
 - **Case-led (proband-led)**: investigating a clinical case comprising one or more focus samples and their relatives. An
   Analysis is often triggered by an unsolved case, though a focus sample is not required.
-- **Discovery (cohort query)**: querying across the Project's associated datasets for candidate variants or cases.
+- **Discovery (cohort query)**: querying the Project's dataset for candidate variants or cases.
 
 During an Analysis, a curator often wants to test an alternative hypothesis or revise an earlier instruction without
 destroying the existing line of investigation. An Analysis models its conversation as a **tree of immutable turns**.
@@ -139,7 +141,7 @@ accepted versions retained for auditability.
 
 ### Cross-Project sharing is default-deny
 
-A Project is a strict data boundary: by default, users and agent sessions in one Project can see only the datasets,
+A Project is a strict data boundary: by default, users and agent sessions in one Project can see only the dataset,
 Analyses, and Reports belonging to that Project.
 
 Complete isolation between Projects, however, would prevent rare-disease teams from discovering that a rare variant or
@@ -214,7 +216,7 @@ sequenceDiagram
     participant Handler as RPC / Route Handler
     participant Ctx as userContext()
     participant AB as AuthorizedBackend
-    participant PM as ProjectMembership (project_members)
+    participant PM as ProjectMembership (from GetAccess)
     participant DP as AnalysisDataPlane / WorkspaceRepository
 
     Handler->>Ctx: userContext(headers)
@@ -260,12 +262,13 @@ The chokepoint relies on two collaborating abstractions in
     performs no post-hoc check; instead, it queries `projectsOf(userEmail)` and fetches Analyses only within that set.
     Its safety rests on being authorized by construction, which means code review must reject any parameter that would
     narrow or widen its Project scope.
-- **`ProjectMembership`** represents the mapping between users and Projects, backed in production by the
-  `project_members(project_id, user_email)` table
-  ([`themis/migrate/migrations/0005_project_members.sql`](../../themis/migrate/migrations/0005_project_members.sql)) and
-  offline by a seeded fixture map. Membership is binary: there is no role column, because no access decision consults
-  one. An empty membership set grants access to nothing, so a freshly deployed environment fails closed until
-  `project_members` rows are seeded.
+- **`ProjectMembership`** represents the mapping between users and Projects. `userContext` fills it from the auth
+  service, which it asks through `GetAccess` which Projects the verified user belongs to. The auth service answers from
+  the ACL, the document in which the deploying site registers every Project and the roles its members hold
+  ([`access-control.md`](access-control.md)). Offline, the fixture backend seeds the ACL. A member holds one or both of
+  two roles, manager and curator, which decide what they may do on the Project's curation
+  ([`curation-surface.md`](curation-surface.md)). For Analyses either role counts as plain membership, because no
+  Analysis access decision consults a role. A user who holds no role on any Project in the ACL reaches nothing.
 
 Answering every non-member check with `ResourceNotFoundError` (mapped to `not_found` / HTTP 404) rather than a
 permission-denied error guarantees that an unauthorized caller receives the exact same response for another Project's ID
@@ -278,8 +281,9 @@ The user-plane check in `AuthorizedBackend` mirrors the session-plane check used
 a grant row into `session_context(token_hash, project_id, analysis_id)`
 ([`themis/migrate/migrations/0001_session_context.sql`](../../themis/migrate/migrations/0001_session_context.sql)).
 Backend data-plane services resolve the agent's bearer token through the auth service to that `session_context` row to
-scope the agent's data access to `project_id`, just as the BFF resolves the human caller through `project_members` to
-scope the browser's access to `project_id`.
+scope the agent's data access to `project_id`, which is also the name of the one dataset the agent may read. The BFF
+resolves the human caller through the same auth service, with `GetAccess`, to scope the browser's access. Both answers
+come from one copy of the ACL, so a change to it reaches people and agents at the same moment.
 
 ### Interaction model (the workbench it grows into)
 

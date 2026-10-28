@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 870" width="1400" height="870" xml:space="preserve" role="img" aria-label="Themis access model: one Project per dataset, with managers and curators from the dataset's lists">
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11.5px; fill: #1f2937; }
+    .title { font-size: 20px; font-weight: 700; fill: #111827; }
+    .sub { font-size: 13px; fill: #4b5563; }
+    .t { font-size: 13px; font-weight: 600; }
+    .h { font-size: 13px; font-weight: 600; fill: #374151; }
+    .m { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; fill: #111827; white-space: pre; }
+    .c { font-size: 11px; fill: #4b5563; font-style: italic; }
+    .lbl { font-size: 10.5px; fill: #4b5563; }
+    .site   { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 1.4; filter: url(#sh); }
+    .writer { fill: #ede9fe; stroke: #6d28d9; stroke-width: 1.4; filter: url(#sh); }
+    .gcp    { fill: #eff6ff; stroke: #2563eb; stroke-width: 1.4; filter: url(#sh); }
+    .themis { fill: #f0fdfa; stroke: #0d9488; stroke-width: 1.4; filter: url(#sh); }
+    .person { fill: #ffffff; stroke: #64748b; stroke-width: 1.4; filter: url(#sh); }
+    .arrow-gcp { stroke: #2563eb; stroke-width: 1.6; fill: none; }
+    .lbl-gcp { font-size: 10.5px; fill: #1d4ed8; }
+    .lbl { font-size: 10.5px; fill: #475569; }
+    .band-site   { fill: #ede9fe; }
+    .band-writer { fill: #ddd6fe; }
+    .band-gcp    { fill: #dbeafe; }
+    .band-themis { fill: #ccfbf1; }
+    .h-site   { font-size: 13px; font-weight: 600; fill: #5b21b6; }
+    .h-gcp    { font-size: 13px; font-weight: 600; fill: #1e40af; }
+    .h-themis { font-size: 13px; font-weight: 600; fill: #115e59; }
+    .arrow  { stroke: #475569; stroke-width: 1.5; fill: none; }
+    .arrow-site   { stroke: #7c3aed; stroke-width: 1.6; fill: none; }
+    .arrow-themis { stroke: #0d9488; stroke-width: 1.6; fill: none; }
+    .dash   { stroke: #7c3aed; stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
+    .lbl-site   { font-size: 10.5px; fill: #6d28d9; }
+    .lbl-themis { font-size: 10.5px; fill: #0f766e; }
+  </style>
+  <defs>
+    <filter id="sh" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="1" stdDeviation="1.2" flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="ah-site" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7c3aed"/>
+    </marker>
+    <marker id="ah-gcp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="ah-themis" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0d9488"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1400" height="870" fill="#ffffff"/>
+
+  <text class="title" x="20" y="34">How CPG writes Themis's ACL: one Project per dataset, roles from its lists</text>
+  <text class="sub" x="20" y="56">IAP authenticates; the auth service authorizes, as the only Themis service that reads the ACL. People, datasets ds-a to ds-c and the project asd are made up; cpg-open-datasets and the cloud resources are CPG's.</text><!-- screen-ignore: public, non-sensitive CPG names, kept as the worked example -->
+
+  <g transform="translate(0,66)">
+    <!-- column headers -->
+    <rect class="band-site" x="20"  y="12" width="300" height="32" rx="6"/>
+    <rect class="band-writer" x="340" y="12" width="180" height="32" rx="6"/>
+    <rect class="band-gcp" x="540" y="12" width="280" height="32" rx="6"/>
+    <rect class="band-themis" x="840" y="12" width="540" height="32" rx="6"/>
+    <text class="h-site" x="170"  y="33" text-anchor="middle">CPG config (YAML, reviewed by PR)</text>
+    <text class="h-site" x="430"  y="33" text-anchor="middle">cpg-infrastructure</text>
+    <text class="h-gcp" x="680"  y="33" text-anchor="middle">Google / GCP</text>
+    <text class="h-themis" x="1110" y="33" text-anchor="middle">Themis</text>
+
+    <!-- column 1: config -->
+    <rect class="site" x="20" y="60" width="300" height="112" rx="8"/>
+    <text class="t" x="32" y="82">users.yaml</text>
+    <text class="c" x="32" y="100">short key → Google account</text>
+    <text class="m" x="32" y="122">john.doe:</text>
+    <text class="m" x="32" y="138">  gcp: {id: john.doe@example.org}</text>
+    <text class="m" x="32" y="154">jane.roe:          # external</text>
+    <text class="m" x="32" y="168">  gcp: {id: jane.roe@example.com}</text>
+
+    <rect class="site" x="20" y="190" width="300" height="130" rx="8"/>
+    <text class="t" x="32" y="212">projects.yaml</text>
+    <text class="c" x="32" y="230">project management's approvals: who is</text>
+    <text class="c" x="32" y="246">eligible for which datasets</text>
+    <text class="m" x="32" y="270">asd:</text>
+    <text class="m" x="32" y="286">  datasets: [ds-a, ds-b]</text>
+    <text class="m" x="32" y="302">  members: [john.doe, jane.roe]</text>
+
+    <rect class="site" x="20" y="338" width="300" height="200" rx="8"/>
+    <text class="t" x="32" y="360">datasets/&lt;ds&gt;/members.yaml</text>
+    <text class="c" x="32" y="378">lists beside web-access: who holds</text>
+    <text class="c" x="32" y="394">which Themis role on the dataset</text>
+    <text class="m" x="32" y="418"># ds-a</text>
+    <text class="m" x="32" y="434">web-access: [john.doe]</text>
+    <text class="m" x="32" y="450">themis-manager: [john.doe]</text>
+    <text class="m" x="32" y="466">themis-curator: [john.doe]</text>
+    <text class="m" x="32" y="488"># ds-b</text>
+    <text class="m" x="32" y="504">themis-curator: [jane.roe]</text>
+    <text class="m" x="32" y="526"># ds-c: no Themis lists, no Project</text>
+
+    <rect class="site" x="20" y="546" width="300" height="216" rx="8"/>
+    <text class="t" x="32" y="568">config-infrastructure.yaml</text>
+    <text class="c" x="32" y="586">per deployment: which projects' datasets</text>
+    <text class="c" x="32" y="602">it may hold, and in which namespace</text>
+    <text class="m" x="32" y="624">themis:</text>
+    <text class="m" x="32" y="640">  dev:</text>
+    <text class="m" x="32" y="656">    project_allowlist: [cpg-open-datasets]</text>
+    <text class="m" x="32" y="672">    namespace: test</text>
+    <text class="m" x="32" y="688">  prod:</text>
+    <text class="m" x="32" y="704">    project_allowlist:</text>
+    <text class="m" x="32" y="720">      [cpg-open-datasets, asd]</text>
+    <text class="m" x="32" y="736">    namespace: main</text>
+    <text class="m" x="32" y="752">  # and each one's service accounts</text>
+
+    <!-- CI check -->
+    <path class="dash" d="M320 255 H332 V433 H322"/>
+
+    <!-- column 2: pulumi -->
+    <rect class="writer" x="345" y="60" width="175" height="702" rx="8"/>
+    <text class="t" x="357" y="82">pulumi up</text>
+    <text x="357" y="100">on merge, ~15–20 min</text>
+    <text class="t" x="357" y="150">Eligibility (CI)</text>
+    <text x="357" y="170">everyone on a dataset's</text>
+    <text x="357" y="188">lists, Themis roles too,</text>
+    <text x="357" y="206">is on a project holding</text>
+    <text x="357" y="224">that dataset</text>
+        <text class="t" x="357" y="310">Resolve the ACL</text>
+    <text x="357" y="330">per deployment: datasets</text>
+    <text x="357" y="348">of its allowlisted projects</text>
+    <text x="357" y="366">that have a Themis role</text>
+    <text x="357" y="384">list, each one Project with</text>
+    <text x="357" y="402">its managers and curators;</text>
+    <text x="357" y="420">the allowlist is required</text>
+    <text x="357" y="438">in every deployment</text>
+    <text class="t" x="357" y="490">Derive data grant</text>
+    <text x="357" y="510">the sandbox SA reads just</text>
+    <text x="357" y="528">the ACL's datasets, in the</text>
+    <text x="357" y="546">deployment's namespace:</text>
+    <text x="357" y="564">dev test, prod main</text>
+    <text class="t" x="357" y="600">Write</text>
+    <text x="357" y="620">a new ACL version, and</text>
+    <text x="357" y="638">the dataset read grants</text>
+
+    <!-- col1 -> col2 -->
+    <path class="arrow-site" marker-end="url(#ah-site)" d="M320 440 H343"/>
+    <path class="arrow-site" marker-end="url(#ah-site)" d="M320 640 H343"/>
+
+    <!-- column 3: Google / GCP -->
+    <rect class="gcp" x="540" y="60" width="280" height="160" rx="8"/>
+    <text class="t" x="552" y="82">Identity-Aware Proxy (IAP)</text>
+    <text class="c" x="552" y="100">authentication, in front of the web service</text>
+    <text x="552" y="122">admits any Google account:</text>
+    <text class="m" x="552" y="140">allAuthenticatedUsers</text>
+    <text x="552" y="162">CPG's OAuth client, External audience,</text>
+    <text x="552" y="180">so external accounts pass; made by hand</text>
+    <text x="552" y="202">signs the account's email into a header</text>
+
+    <rect class="gcp" x="540" y="250" width="280" height="270" rx="8"/>
+    <text class="t" x="552" y="272">ACL secret, in Themis's project</text>
+    <text class="m" x="552" y="292">projects/cpg-themis-prod/secrets/acl</text>
+    <text class="c" x="552" y="310">one per deployment; Themis's format</text>
+    <text class="m" x="552" y="334">{</text>
+    <text class="m" x="552" y="350">  "format": 1,</text>
+    <text class="m" x="552" y="366">  "projects": {</text>
+    <text class="m" x="552" y="382">    "ds-a": {"managers": ["john.doe@…"],</text>
+    <text class="m" x="552" y="398">             "curators": ["john.doe@…"]},</text>
+    <text class="m" x="552" y="414">    "ds-b": {"managers": [],</text>
+    <text class="m" x="552" y="430">             "curators": ["jane.roe@…"]}</text>
+    <text class="m" x="552" y="446">  }</text>
+    <text class="m" x="552" y="462">}</text>
+    <text class="c" x="552" y="488">a role on any Project = admitted</text>
+    <text class="c" x="552" y="506">CPG writes versions; auth reads the latest</text>
+
+    <rect class="gcp" x="540" y="560" width="280" height="148" rx="8"/>
+    <text class="t" x="552" y="582">Datasets ds-a, ds-b, ds-c</text>
+    <text x="552" y="602">two namespaces each:</text>
+    <text class="m" x="552" y="622">main  cpg-&lt;ds&gt;-main, Metamist &lt;ds&gt;</text>
+    <text class="m" x="552" y="640">test  cpg-&lt;ds&gt;-test, Metamist &lt;ds&gt;-test</text>
+    <text x="552" y="662">Themis sandbox SA reads ds-a and ds-b</text>
+    <text x="552" y="680">only, in the deployment's namespace</text>
+
+    <!-- col2 -> col3 -->
+    <path class="arrow-site" marker-end="url(#ah-site)" d="M520 385 H538"/>
+    <path class="arrow-site" marker-end="url(#ah-site)" d="M520 615 H538"/>
+
+    <!-- column 4a: auth service -->
+    <rect class="themis" x="840" y="230" width="200" height="250" rx="8"/>
+    <text class="t" x="852" y="252">Auth service: authorization</text>
+    <text class="c" x="852" y="270">one ACL snapshot, refreshed</text>
+    <text class="c" x="852" y="286">≤60 s; stale past the limit → deny</text>
+    <text class="m" x="852" y="310">GetAccess(email)</text>
+    <text x="852" y="328">→ Project grants with roles</text>
+    <text x="852" y="346">none → refused; web only</text>
+    <text x="852" y="364">themis-clu, Themis's own</text>
+    <text x="852" y="382">operator: both roles everywhere</text>
+    <text class="m" x="852" y="406">ResolveSession(token)</text>
+    <text x="852" y="424">→ the Analysis's Project</text>
+    <text x="852" y="442">Project gone → no binding</text>
+    <text class="c" x="852" y="466">curation takes the same roles</text>
+
+    <path class="arrow" marker-end="url(#ah)" d="M820 340 H838"/>
+
+    <!-- column 4b: Themis request path -->
+    <rect class="person" x="1140" y="60" width="240" height="50" rx="8"/>
+    <text class="t" x="1152" y="80">Curator's browser</text>
+    <text x="1152" y="98">internal or external account</text>
+
+    <rect class="themis" x="1140" y="135" width="240" height="140" rx="8"/>
+    <text class="t" x="1152" y="157">Web perimeter: proxy.ts</text>
+    <text class="c" x="1152" y="175">checks what IAP signed</text>
+    <text x="1152" y="195">verifies IAP's assertion → email</text>
+    <text x="1152" y="213">no valid assertion → refused</text>
+    <text x="1152" y="231">only the health check is exempt</text>
+    <text x="1152" y="249">not admitted (GetAccess) → refused</text>
+    <text x="1152" y="267">default-deny on every route</text>
+
+    <rect class="themis" x="1140" y="295" width="240" height="122" rx="8"/>
+    <text class="t" x="1152" y="317">Web: data seam</text>
+    <text x="1152" y="337">verifies the assertion again and</text>
+    <text x="1152" y="355">asks GetAccess itself; the request</text>
+    <text x="1152" y="373">sees only its Projects' Analyses;</text>
+    <text x="1152" y="391">creating an Analysis stores its</text>
+    <text x="1152" y="409">token's hash for the auth service</text>
+
+    <rect class="themis" x="1140" y="430" width="240" height="90" rx="8"/>
+    <text class="t" x="1152" y="452">Analysis → agent</text>
+    <text x="1152" y="472">agent and sandbox calls carry</text>
+    <text x="1152" y="490">the session token, never the</text>
+    <text x="1152" y="508">person's identity</text>
+
+    <rect class="themis" x="1140" y="550" width="240" height="90" rx="8"/>
+    <text class="t" x="1152" y="572">Sandbox worker</text>
+    <text x="1152" y="592">Project from the auth service;</text>
+    <text x="1152" y="610">mounts ds-b's sample files</text>
+    <text x="1152" y="628">(dev: cpg-ds-b-test) read-only</text>
+
+    <!-- arrows: Themis -->
+    <path class="arrow" marker-end="url(#ah)" d="M1140 85 H822"/>
+    <text class="lbl" x="980" y="78" text-anchor="middle">every request; Google sign-in if needed</text>
+    <path class="arrow-gcp" marker-end="url(#ah-gcp)" d="M820 190 H1138"/>
+    <text class="lbl-gcp" x="980" y="183" text-anchor="middle">request + signed assertion</text>
+    <path class="arrow-themis" marker-end="url(#ah-themis)" d="M1140 255 H1042"/>
+    <text class="lbl-themis" x="1090" y="249" text-anchor="middle">GetAccess</text>
+    <path class="arrow-themis" marker-end="url(#ah-themis)" d="M1140 345 H1042"/>
+    <text class="lbl-themis" x="1090" y="339" text-anchor="middle">GetAccess</text>
+    <path class="arrow-themis" marker-end="url(#ah-themis)" d="M1140 570 H950 V482"/>
+    <text class="lbl-themis" x="1045" y="563" text-anchor="middle">ResolveSession</text>
+    <path class="arrow-themis" marker-end="url(#ah-themis)" d="M1260 275 V293"/>
+    <path class="arrow-themis" marker-end="url(#ah-themis)" d="M1260 417 V428"/>
+    <path class="arrow-themis" marker-end="url(#ah-themis)" d="M1260 520 V548"/>
+    <text class="lbl-themis" x="1268" y="538">token</text>
+    <path class="arrow-themis" marker-end="url(#ah-themis)" d="M1140 615 H822"/>
+    <text class="lbl-themis" x="955" y="608" text-anchor="middle">reads ds-b only</text>
+
+  </g>
+  <g transform="translate(20,846)">
+    <text class="c" x="0" y="0">Colour shows who runs each part:</text>
+    <rect class="site" x="190" y="-11" width="14" height="14" rx="3"/><text x="210" y="0">CPG</text>
+    <rect class="gcp" x="252" y="-11" width="14" height="14" rx="3"/><text x="272" y="0">Google Cloud</text>
+    <rect class="themis" x="362" y="-11" width="14" height="14" rx="3"/><text x="382" y="0">Themis</text>
+  </g>
+</svg>

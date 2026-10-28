@@ -208,10 +208,9 @@ balancer, where the single internet route passes through IAP.
 IAP admits a request only if the caller holds the IAP accessor role on the fronted resource, and we configure different
 accessors for the web tier and the data plane:
 
-- **Web tier (`themis-web`).** IAP admits the application's users. This binding can be as wide as any signed-in Google
-  account (`allAuthenticatedUsers`), with Themis's own database access lists deciding what Projects each account may
-  see. On this path, IAP turns an anonymous attacker into one who must hold a Google account, but it does not narrow the
-  attacker to our users.
+- **Web tier (`themis-web`).** IAP admits any signed-in Google account (`allAuthenticatedUsers`), and the ACL decides
+  which Projects each account may see ([`access-control.md`](access-control.md)). On this path, IAP turns an anonymous
+  attacker into one who must hold a Google account, but it does not narrow the attacker to our users.
 - **Data-plane services (`themis-evidence`, `themis-sheaf`).** No human user calls data-plane services during normal
   operation; the web tier and sandbox workers call them internally over the VPC. The only external callers are
   maintainers driving a service by hand
@@ -372,9 +371,10 @@ bindings created manually in the GCP console remain outside its reach.
 Each boundary in the system applies the rules above through a concrete mechanism owned by its area design doc:
 
 - **Web request authentication** ([`frontend-framework.md`](frontend-framework.md) §Auth) combines a default-deny proxy
-  perimeter with a shared, request-scoped data-access interceptor that re-verifies the IAP assertion on every RPC router
-  method. The `/healthz` endpoint (reached directly by Cloud Run's liveness probe rather than through the load balancer)
-  is the sole allowlisted exemption.
+  perimeter with a shared, request-scoped data-access interceptor that re-verifies the caller's IAP assertion on every
+  RPC router method and asks the auth service again whether the caller is admitted
+  ([`access-control.md`](access-control.md)). The `/healthz` endpoint (reached directly by Cloud Run's liveness probe
+  rather than through the load balancer) is the sole allowlisted exemption.
 - **Data-plane RPC authorization** ([`rpc-authorization.md`](rpc-authorization.md)) runs a server-wide gRPC interceptor
   (`AuthInterceptor`) that builds a verified authorization context per call (recording the calling service account, its
   `CallingAs` claim, the scoped Analysis session if present, and the approving user if present) and checks it against

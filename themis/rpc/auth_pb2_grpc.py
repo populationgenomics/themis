@@ -47,8 +47,10 @@ class AuthServicer:
     """
 
     def ResolveSession(self, request, context):
-        """Resolve a session token to its binding. An invalid, revoked, or expired token is a
-        PERMISSION_DENIED the server adds — a transport-level rejection, not a modelled body.
+        """Resolve a session token to its binding. An invalid, revoked, or expired token, or one whose Project
+        is no longer in the ACL, is a PERMISSION_DENIED the server adds — a transport-level rejection,
+        not a modelled body. While the auth service's copy of the ACL is older than its staleness
+        limit, every call is UNAVAILABLE rather than answered from that copy.
 
         No `admits_caller`, and not an omission: this is the rpc an admission is derived through, so it
         cannot itself be gated on one. Its callers are the data-plane service accounts, which no

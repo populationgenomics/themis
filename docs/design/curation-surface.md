@@ -7,9 +7,10 @@ clinical readings of the framework); [`svcv4-classification-widget.md`](svcv4-cl
 working document renders the same workflows with points and derivations);
 [`evidence-interfaces.md`](evidence-interfaces.md) (the structured evidence RPCs and the shared consequence vocabulary);
 [`analysis-scenarios.md`](analysis-scenarios.md) (the variant-classification scenario inputs a registration feeds);
-[`workspace-model.md`](workspace-model.md) (the Project and Analysis model this surface stays separate from);
-[`frontend-framework.md`](frontend-framework.md) (the Next.js web tier and IAP perimeter);
-[`workbench-navigation.md`](workbench-navigation.md) (the landing page that embeds the curation panel);
+[`workspace-model.md`](workspace-model.md) (the Projects curation is bound to, and the Analyses it stays separate from);
+[`frontend-framework.md`](frontend-framework.md) (the Next.js web tier); [`access-control.md`](access-control.md) (the
+login in front of the web tier, and the ACL that curation's Project roles come from);
+[`workbench-navigation.md`](workbench-navigation.md) (the Project page, which links to its curation);
 [`proto.md`](proto.md) (protobuf schema and serialization rules); [`migrations.md`](migrations.md) (forward-only SQL
 migration rules).
 
@@ -35,10 +36,13 @@ then complete worksheets for that registration independently and blind to one an
 curators diverge establishes the human concordance floor per workflow, allowing the evaluation loop to separate genuine
 agent defects from open clinical calls.
 
-Because a worksheet is static reference data rather than an interactive agent session, the surface lives as a
-self-contained module on the Next.js web tier with its own routes (`/curation/*`), role table, and `curation` database
-schema. It shares only Identity-Aware Proxy (IAP) request verification, the Cloud SQL connection pool, and the protobuf
-vocabularies used to compare a curator's answers against an agent run.
+Curation is bound to Projects. Every registered variant belongs to one Project, and the people who may manage or curate
+it are the ones who hold the manager or curator role on that Project in the deployment's ACL
+([`access-control.md`](access-control.md)). Because a worksheet is static reference data rather than an interactive
+agent session, the surface lives as a self-contained module on the Next.js web tier, with its own routes under each
+Project (`/project/[projectId]/curation/*`) and its own `curation` database schema. Beyond the Project and its roles, it
+shares only request authentication, the Cloud SQL connection pool, and the protobuf vocabularies used to compare a
+curator's answers against an agent run.
 
 ## Background
 
@@ -106,8 +110,9 @@ workflow open, the evaluation loop knows that workflow is an open clinical call.
   verdicts. `themis.svcv4` owns all point values, multipliers, and class thresholds.
 - **Consensus adjudication.** When two curators disagree on a variant, the comparison view displays their answers side
   by side for a manager and the evaluation loop to read. Nothing merges or reconciles them into a third record.
-- **Not a Themis Analysis.** A curation is not a session, has no working document, spawns no agent, and appears in no
-  Project ([`workspace-model.md`](workspace-model.md)). It shares the deployment and the IAP boundary and nothing else.
+- **Not a Themis Analysis.** A curation is not a session, has no working document, and spawns no agent. It belongs to a
+  Project, as an Analysis does ([`workspace-model.md`](workspace-model.md)), and shares with the workbench the
+  deployment, the Project and the roles its people hold, and nothing else.
 - **Gene-specific VCEP specifications.** The first version transcribes the base SVCv4 pilot rules; VCEP-specific rule
   modifications are deferred until the base evaluation loop settles.
 - **Workflow transcription mechanics.** Which calculator panels become which components, how workflow IDs are named, and
@@ -120,25 +125,26 @@ workflow open, the evaluation loop knows that workflow is an open clinical call.
 
 The obvious way to host curation in the web app would be to model each worksheet as an `Analysis` inside a `Project` and
 reuse the workbench's data plane ([`workspace-model.md`](workspace-model.md)). That model does not fit what a curation
-does. An `Analysis` owns an Anthropic Managed Agents session, a conversation event log, a git-backed working document,
-and a Project dataset boundary. A curation worksheet has no agent session, no conversation, and no patient dataset, and
-its access rules must enforce inter-curator blindness rather than shared Project visibility.
+does. An `Analysis` owns an Anthropic Managed Agents session, a conversation event log, and a git-backed working
+document. A curation worksheet has none of them, and its access rules must enforce inter-curator blindness rather than
+shared Project visibility. What the two share is the Project: a variant under curation belongs to one, as an Analysis
+does.
 
 The curation surface is therefore isolated in [`apps/web/src/curation/`](../../apps/web/src/curation), with page routes
-under [`apps/web/src/app/curation/`](../../apps/web/src/app/curation), JSON API routes under
-[`apps/web/src/app/api/curation/`](../../apps/web/src/app/api/curation), and its own `curation` schema in Cloud SQL
-([`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql)). On the default landing page (`/`), a
-self-contained server component ([`panel.tsx`](../../apps/web/src/curation/ui/panel.tsx)) resolves the caller's curation
-role and renders a link panel beside the Projects grid for callers who hold a role, while rendering nothing—and catching
-and logging any database errors—so that an unapplied curation migration cannot break the Projects page for other users.
+under `apps/web/src/app/project/[projectId]/curation/`, JSON API routes under
+`apps/web/src/app/api/projects/[projectId]/curation/`, and its own `curation` schema in Cloud SQL
+([`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql)). The pages and the API both sit under the
+Project they belong to, and a Project's page links to its curation.
 
-The module shares three seams with the rest of the web tier and nothing else:
+Beyond the Project and its roles, the module shares three seams with the rest of the web tier and nothing else:
 
 1. **Identity verification and request isolation.** Every curation page and API route authenticates the caller through
    [`http.ts`](../../apps/web/src/curation/http.ts), which verifies the signed `X-Goog-IAP-JWT-Assertion` header via
-   `getUserIdentity().assertedEmail` ([`frontend-framework.md`](frontend-framework.md)). Because the curation API uses
-   plain JSON `fetch` routes rather than the workbench's Connect RPC mount, `curationContext` also calls
-   `enforceResourceIsolation` directly to reject cross-site requests via Fetch Metadata headers before checking roles.
+   `getUserIdentity().assertedEmail` ([`frontend-framework.md`](frontend-framework.md)), and takes the caller's roles on
+   the page's Project from the auth service's `GetAccess` answer ([`access-control.md`](access-control.md)). Because the
+   curation API uses plain JSON `fetch` routes rather than the workbench's Connect RPC mount, `curationContext` also
+   calls `enforceResourceIsolation` directly to reject cross-site requests via Fetch Metadata headers before checking
+   roles.
 1. **Database pool and backend selector.** [`index.ts`](../../apps/web/src/curation/index.ts) selects between the live
    PostgreSQL store ([`sql.ts`](../../apps/web/src/curation/sql.ts), using the shared pool in `server/pg.ts`) and an
    in-memory fixture store ([`fixture.ts`](../../apps/web/src/curation/fixture.ts)) using `THEMIS_BACKEND`, memoizing
@@ -151,9 +157,9 @@ The module shares three seams with the rest of the web tier and nothing else:
 
 Isolating the module in this way costs a small amount of parallel plumbing—its own authorization wrapper
 ([`access.ts`](../../apps/web/src/curation/access.ts)) and error mapper
-([`http.ts`](../../apps/web/src/curation/http.ts)) beside the Connect router—in exchange for keeping blindness rules
-independent of Project membership and making the entire surface removable by deleting one directory and one database
-schema.
+([`http.ts`](../../apps/web/src/curation/http.ts)) beside the Connect router—in exchange for keeping blindness rules out
+of the workbench's `AuthorizedBackend` and making the entire surface removable by deleting one directory and one
+database schema.
 
 ### Roles and blindness enforcement
 
@@ -161,19 +167,25 @@ All access decisions pass through `CurationAccess` in [`access.ts`](../../apps/w
 the raw `CurationStore` ([`store.ts`](../../apps/web/src/curation/store.ts)) for a verified caller email. No page or API
 route holds an unscoped store.
 
-The `curation.roles` table grants two roles: `curator` and `manager`. Initial managers are seeded out of band in the
-database just as `project_members` rows are. Managers can grant and revoke roles for other people through the surface,
-and also hold every `curator` capability so that a lead scientist in a small team can both administer variants and
-curate them. A manager cannot remove their own role (`removePerson` refuses when the target email matches the caller),
-preventing accidental lock-out. A verified IAP user with no row in `curation.roles` receives `403 Forbidden` with a
-message explaining that a manager must grant access; the surface's existence inside IAP is not secret.
+A caller holds one or both of two roles on a Project, `manager` and `curator`. The auth service reports them from the
+ACL ([`access-control.md`](access-control.md) §Two roles on a Project), and the surface keeps no record of its own of
+who holds which role. It therefore has no page for managing people: who curates a Project changes when the deploying
+site changes that Project's lists in the ACL. Binding curation to Projects is what makes that possible, and it leaves
+one record of who may do what. A person who should both administer variants and curate them, such as a lead scientist in
+a small team, is listed in both roles.
 
-Once a caller holds a role, `CurationAccess` enforces two rules to keep curations blind:
+A caller who holds no role on the Project receives the masked `404`, as for any Project they are not on
+([`workspace-model.md`](workspace-model.md) §Authorization). A caller on the Project who lacks the role a page needs
+receives `403 Forbidden` instead, with a message naming the role: they already know the Project exists, and telling them
+which role they need is more useful than a masked not-found. A manager can assign a variant only to a person who holds
+the curator role on the variant's Project.
+
+Once a caller holds a role on the Project, `CurationAccess` enforces two rules to keep curations blind:
 
 - **Curators only see their own worksheets.** Looking up, saving a draft on, or submitting a worksheet verifies that
   `worksheet.curatorEmail` matches the caller. An unknown worksheet ID and a worksheet assigned to someone else return
   the exact same masked `404` (`resource not found`), so a curator cannot probe whether another worksheet exists. Even a
-  manager cannot open another curator's worksheet on the editing route (`/curation/[worksheetId]`).
+  manager cannot open another curator's worksheet on the editing route (`/project/[projectId]/curation/[worksheetId]`).
 - **Assigned managers are blinded on their own variants.** On the management view, a manager can see per-curator
   progress counts and submission timestamps (`progress`), with `submission.note` stripped so no prose leaks. However,
   the side-by-side comparison endpoint (`comparison`) refuses with `403` if the calling manager is assigned as a curator
@@ -364,8 +376,8 @@ categorical value a curator records uses the same protobuf enum that the evidenc
 
 Typing `gene`, `transcript`, and `hgvs_c` by hand when registering a variant invites transcription typos that would
 persist across every worksheet assigned to that variant. When a manager has a ClinGen Allele Registry ID (such as
-`CA123456`), the registration form on `/curation/manage` can resolve it via `POST /api/curation/alleles/resolve`
-([`resolver.ts`](../../apps/web/src/curation/resolver.ts),
+`CA123456`), the registration form on `/project/[projectId]/curation/manage` can resolve it via
+`GET /api/projects/[projectId]/curation/alleles/[caid]` ([`resolver.ts`](../../apps/web/src/curation/resolver.ts),
 [`registry-resolver.ts`](../../apps/web/src/curation/registry-resolver.ts)).
 
 The resolver fetches `https://reg.clinicalgenome.org/allele/CA...` with a 10-second timeout, finds the
@@ -393,13 +405,12 @@ Three boundaries keep this lookup safe and honest:
 
 The curation surface mounts five routes:
 
-| Route                           | Audience             | Purpose                                                                                              |
-| ------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------- |
-| `/`                             | Any curation role    | Renders `CurationPanel` below the Projects grid, linking to `/curation` (`app/page.tsx`).            |
-| `/curation`                     | Any curation role    | Lists the caller's own assigned worksheets and their status (`Pending`, `In progress`, `Submitted`). |
-| `/curation/[worksheetId]`       | Assigned curator     | The worksheet editing surface for one variant assignment.                                            |
-| `/curation/manage`              | `manager`            | Variant registration, curator role administration, worksheet assignment, and progress tracking.      |
-| `/curation/compare/[variantId]` | Unassigned `manager` | Side-by-side read-only comparison of two or more submitted worksheets on a variant.                  |
+| Route                                               | Audience                              | Purpose                                                                                              |
+| --------------------------------------------------- | ------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `/project/[projectId]/curation`                     | `manager` or `curator` on the Project | Lists the caller's own assigned worksheets and their status (`Pending`, `In progress`, `Submitted`). |
+| `/project/[projectId]/curation/[worksheetId]`       | Assigned curator                      | The worksheet editing surface for one variant assignment.                                            |
+| `/project/[projectId]/curation/manage`              | `manager` on the Project              | Variant registration, worksheet assignment, and progress tracking.                                   |
+| `/project/[projectId]/curation/compare/[variantId]` | Unassigned `manager` on the Project   | Side-by-side read-only comparison of two or more submitted worksheets on a variant.                  |
 
 On the worksheet and comparison routes, typography separates the two voices on the page
 ([`layout.tsx`](../../apps/web/src/app/curation/layout.tsx),
@@ -409,12 +420,13 @@ curator types or selects—their prose notes, evidence citations, rationales, an
 face (`Newsreader`, bound to `--font-curator-serif`). A reader scanning the page can immediately tell the standard's
 words from the curator's judgement.
 
-A curator opening `/curation/[worksheetId]` ([`worksheet.tsx`](../../apps/web/src/curation/ui/worksheet.tsx)) sees a
-sticky header with the registered variant, entity, and clinical context above a two-column grid
-(`grid-cols-[11rem_minmax(0,1fr)]`) pairing a sticky left-hand ledger sidebar (`<Ledger>`) with the vertical stack of
-cards. The sidebar lists each visible workflow code (`● POP_FRQ`, `○ CLN_UAF`, `○ CLN_CCS`, …) with a filled dot when
-its `Assessment.status !== UNSPECIFIED` and a count of `N / M` under `Recorded`, deliberately framed as a ledger rather
-than a progress bar so *no data* answers do not read as unrecorded gaps:
+A curator opening `/project/[projectId]/curation/[worksheetId]`
+([`worksheet.tsx`](../../apps/web/src/curation/ui/worksheet.tsx)) sees a sticky header with the registered variant,
+entity, and clinical context above a two-column grid (`grid-cols-[11rem_minmax(0,1fr)]`) pairing a sticky left-hand
+ledger sidebar (`<Ledger>`) with the vertical stack of cards. The sidebar lists each visible workflow code (`● POP_FRQ`,
+`○ CLN_UAF`, `○ CLN_CCS`, …) with a filled dot when its `Assessment.status !== UNSPECIFIED` and a count of `N / M` under
+`Recorded`, deliberately framed as a ledger rather than a progress bar so *no data* answers do not read as unrecorded
+gaps:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -454,18 +466,18 @@ than a progress bar so *no data* answers do not read as unrecorded gaps:
 because its rows are derived from the two numeric inputs rather than chosen as radio options.)
 
 As the curator works, `Autosave` ([`autosave.ts`](../../apps/web/src/curation/ui/autosave.ts)) persists each section via
-`PUT /api/curation/worksheets/[worksheetId]/draft` with `{ workflowId, assessment }` in the request JSON body. Text
-edits debounce for a short idle window; radio changes and field blurs flush immediately. Writes for a given section are
-serialized in a per-section promise queue so an earlier network request can never overwrite a newer edit, and any write
-whose serialized proto-JSON matches what the server last accepted is skipped. If a write fails, the header indicator
-switches to `Failed` and retries on a timer.
+`PUT /api/projects/[projectId]/curation/worksheets/[worksheetId]/draft` with `{ workflowId, assessment }` in the request
+JSON body. Text edits debounce for a short idle window; radio changes and field blurs flush immediately. Writes for a
+given section are serialized in a per-section promise queue so an earlier network request can never overwrite a newer
+edit, and any write whose serialized proto-JSON matches what the server last accepted is skipped. If a write fails, the
+header indicator switches to `Failed` and retries on a timer.
 
 When the curator clicks `Submit`, the client first calls `autosave.settle()` to flush all pending timers and wait for
 in-flight writes; if any section is still failing, submission stops in the browser before calling the server. Once all
-drafts are saved, `POST /api/curation/worksheets/[worksheetId]/submit` passes the optional submission note and the list
-of currently visible workflow IDs (`shownWorkflowIds`). `CurationAccess.submit` verifies that every visible workflow
-marked `SCORED` carries a non-empty `rationale`, and `CurationStore.submit` copies those visible workflow drafts plus
-`routing` and `verdict` into `curation.assessments` inside a single PostgreSQL transaction
+drafts are saved, `POST /api/projects/[projectId]/curation/worksheets/[worksheetId]/submit` passes the optional
+submission note and the list of currently visible workflow IDs (`shownWorkflowIds`). `CurationAccess.submit` verifies
+that every visible workflow marked `SCORED` carries a non-empty `rationale`, and `CurationStore.submit` copies those
+visible workflow drafts plus `routing` and `verdict` into `curation.assessments` inside a single PostgreSQL transaction
 (`INSERT INTO curation.assessments ... SELECT ... FROM curation.drafts`). Any draft belonging to a workflow that was
 hidden when the curator changed the routing consequence stays in `curation.drafts` and is excluded from the submission
 snapshot, so a curator never submits an answer that was not on their screen. Submitting does not lock the worksheet; a
@@ -473,8 +485,8 @@ curator who spots an error can edit their drafts and submit again, creating a ne
 `submitted_at` timestamp supersedes the earlier submission.
 
 Once at least two curators assigned to a variant have submitted, an unassigned manager can open
-`/curation/compare/[variantId]` ([`comparison.tsx`](../../apps/web/src/curation/ui/comparison.tsx)) to inspect their
-latest submissions side by side:
+`/project/[projectId]/curation/compare/[variantId]` ([`comparison.tsx`](../../apps/web/src/curation/ui/comparison.tsx))
+to inspect their latest submissions side by side:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -516,12 +528,11 @@ flowchart LR
 
 #### Tables and permissions
 
-Migration [`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql) creates six tables inside the
-`curation` schema:
+The `curation` schema, created by migration [`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql),
+holds five tables. It holds no table of roles, because a caller's roles on a Project come from the ACL.
 
-- **`curation.roles`** (`email`, `role`, `added_by`, `added_at`).
-- **`curation.variants`** (`id`, `gene`, `transcript`, `hgvs_c`, `clingen_allele_id`, `disease_label`, `mondo_id`,
-  `mode_of_inheritance`, `clinical_context`, `created_by`, `created_at`).
+- **`curation.variants`** (`id`, `project_id`, `gene`, `transcript`, `hgvs_c`, `clingen_allele_id`, `disease_label`,
+  `mondo_id`, `mode_of_inheritance`, `clinical_context`, `created_by`, `created_at`).
 - **`curation.worksheets`** (`id`, `variant_id`, `curator_email`, `workflows_version`, `assigned_by`, `assigned_at`),
   with a `UNIQUE (variant_id, curator_email)` constraint so a curator cannot be assigned twice to the same registration.
   `workflows_version` pins the constant `WORKFLOWS_VERSION` from [`version.ts`](../../apps/web/src/curation/version.ts)
@@ -534,9 +545,14 @@ Migration [`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sq
 - **`curation.assessments`** (`submission_id`, `workflow_id`, `assessment`), holding the binary `Assessment` rows copied
   from `curation.drafts` when the submission was created.
 
+Only a variant names its Project. Every row beneath it, from a worksheet down to an assessment, reaches the Project
+through its foreign keys, so no row can name a Project that disagrees with its variant's. Variants registered on the
+development deployment before curation was bound to Projects are backfilled to one Project over public data, which the
+migration that adds `project_id` names.
+
 Database grants enforce the mutability boundary at the schema level. The web service account receives `SELECT, INSERT`
-on all six tables, `UPDATE` on `curation.drafts` alone, and `DELETE` on `curation.roles` and `curation.worksheets`
-alone. Because `curation.submissions` and `curation.assessments` have no `UPDATE` or `DELETE` grants, and
+on all five tables, `UPDATE` on `curation.drafts` alone, and `DELETE` on `curation.worksheets` alone. Because
+`curation.submissions` and `curation.assessments` have no `UPDATE` or `DELETE` grants, and
 `curation.submissions.worksheet_id` has no `ON DELETE CASCADE` (unlike `curation.drafts.worksheet_id`), a manager can
 withdraw an unsubmitted worksheet cleanly, while any worksheet that has been submitted cannot be withdrawn or altered
 out from under an evaluation round that has read it.
@@ -633,14 +649,18 @@ schema-evolution rules accepted under [`migrations.md`](migrations.md)'s dev-onl
   anchors the reference to the agent's own retrieval and reasoning, turning authorship into verification.
 - **A CSV worksheet of open calls.** Recording only a spreadsheet of disputed or borderline variants cannot express a
   complete cell-by-cell curation of a variant no reference has seen.
-- **A separate app and Cloud Run service.** Deploying curation as a standalone service would duplicate the IAP gate,
-  Cloud Run deployment pipeline, and request identity verification for no isolation gain beyond what a separate module
-  directory and database schema provide.
-- **Reuse `Project` membership for curator identity, or model curations as `Analysis` rows inside a `Project`.** Reusing
-  `project_members`, `analyses`, and `AuthorizedBackend` ([`workspace-model.md`](workspace-model.md)) ties who may
-  curate to the workbench's Project model, and every `Analysis` concept—an agent session, a conversation log, a
-  git-backed working document, and Project-wide visibility to all members—either does not apply to an unaided worksheet
-  or actively breaks inter-curator blindness.
+- **A separate app and Cloud Run service.** Deploying curation as a standalone service would duplicate the login, the
+  admission check, and the Cloud Run deployment pipeline for no isolation gain beyond what a separate module directory
+  and database schema provide.
+- **A roles table of the surface's own, with managers adding curators as they assign them.** Assignment is the workflow,
+  and a manager could add a curator in the middle of it without waiting for the site. It lost because the table would be
+  a second record of who may do what beside the ACL, kept by different people, with nothing to keep the two in step
+  ([`access-control.md`](access-control.md) §Two roles on a Project). The cost of the chosen design is that a new
+  curator waits for the site's next version of the ACL.
+- **Model curations as `Analysis` rows inside a `Project`.** Reusing `analyses` and `AuthorizedBackend`
+  ([`workspace-model.md`](workspace-model.md)) would bring every `Analysis` concept along: an agent session, a
+  conversation log, a git-backed working document, and Project-wide visibility to all members. None of them applies to
+  an unaided worksheet, and the last actively breaks inter-curator blindness.
 - **Assessments carrying their own revision number, with no submission parent.** Versioning individual workflow rows
   without a parent `curation.submissions` record makes a partial resubmission indistinguishable from a full
   re-affirmation of the worksheet as a coherent snapshot.

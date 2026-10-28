@@ -199,10 +199,11 @@ activity belongs in a deployment curators use for real cases.
 
 `themis-clu` is the account a person impersonates to drive a deployed service by hand
 ([`../runbooks/hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md)). It reaches the web app through IAP
-with a token it signs itself, and the app authorizes it on its email like any user. The round therefore runs in a
-Project whose membership includes `themis-clu`, seeded out of band as every membership is. Because `themis-clu` has no
-Anthropic identity, the harness reads the event log from Anthropic with the operator's own credential for the dev
-deployment's Anthropic workspace.
+with a short-lived token that it signs through IAM. The auth service admits it to every Project of the deployment with
+both roles, whether or not the ACL lists it ([`access-control.md`](access-control.md) §Programmatic callers). The round
+can therefore run in any Project, and the account needs no entry in the ACL. Because `themis-clu` has no Anthropic
+identity, the harness reads the event log from Anthropic with the operator's own credential for the dev deployment's
+Anthropic workspace.
 
 Consequently, a round measures dev as it stood that day. A fix the round motivates ships through the ordinary deploy,
 and the next round measures it there.

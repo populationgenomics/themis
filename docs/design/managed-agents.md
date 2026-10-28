@@ -63,8 +63,9 @@ sequenceDiagram
 
 1. **Authenticate the curator.** The curator's browser reaches the web application
    ([`apps/web/src/server/`](../../apps/web/src/server/)) through IAP. The BFF verifies the `x-goog-iap-jwt-assertion`
-   header at its server entry chokepoint before constructing a request context. See
-   [`frontend-framework.md`](frontend-framework.md) (§Auth) and [`security.md`](security.md).
+   header at its server entry chokepoint, then asks the auth service whether the ACL admits the curator, before it
+   constructs a request context. See [`frontend-framework.md`](frontend-framework.md) (§Auth),
+   [`access-control.md`](access-control.md) and [`security.md`](security.md).
 1. **Create the Analysis and session.** The BFF checks that the authenticated curator belongs to the target Project,
    writes the `analyses` row in Cloud SQL, and creates the Managed Agents session against Anthropic's API using Workload
    Identity Federation (WIF Path B). See [`workspace-model.md`](workspace-model.md) and

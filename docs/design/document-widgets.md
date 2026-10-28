@@ -671,17 +671,18 @@ indefinitely and remains readable by anyone in the Project, whereas access to pa
 against the reader at the time of each read. Embedding a slice of patient reads inside a committed widget asset would
 freeze that access check at commit time and apply it to the wrong principal.
 
-The genomic data such a widget reads is part of the Analysis's input datasets. Whether those input datasets are pinned
-or can change beneath an Analysis is a workspace-level question ([`workspace-model.md`](workspace-model.md) §"Open
-questions"), so the widget payload carries no checksum or dataset version of its own.
+The genomic data such a widget reads is part of the Analysis's inputs, drawn from its Project's one dataset. Whether
+those inputs are pinned or can change beneath an Analysis is a workspace-level question
+([`workspace-model.md`](workspace-model.md) §"Open questions"), so the widget payload carries no checksum or dataset
+version of its own.
 
 An aligned-reads view is the prototype for this class of widget: its asset names the genomic span, the sample IDs, and
 the tracks, and the browser fetches BAM/CRAM ranges through the authorising route alongside the reference genome and
 shared annotation tracks. Building that widget depends on pieces outside this doc's scope: per-sample alignment files in
-the case datasets, and a Project-membership check on sample IDs in the browser route. Inside the sandbox, a sample ID
-can only reach the sample registry configured for the session, so checking the session is sufficient; a browser route
-can be asked for any sample ID and must verify that the requested sample belongs to the curator's Project before signing
-a read URL ([`workspace-model.md`](workspace-model.md)).
+each Project's dataset, and a Project-membership check on sample IDs in the browser route. Inside the sandbox, a sample
+ID can only reach the sample registry configured for the session, so checking the session is sufficient; a browser route
+can be asked for any sample ID and must verify that the requested sample belongs to the dataset of the curator's Project
+before signing a read URL ([`workspace-model.md`](workspace-model.md)).
 
 Ranged reads across a redirecting route rely on standard Fetch behaviour: when following an HTTP redirect on a `GET`,
 the browser re-issues the request with the original `Range` header and drops only `Authorization` when crossing origins

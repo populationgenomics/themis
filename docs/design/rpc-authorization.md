@@ -52,10 +52,10 @@ masking are implemented.
 
 ## Background
 
-A **Project** is the access boundary containing the datasets and users associated with a body of work. An **Analysis**
-is a collaborative investigation bound to one Project. Authorization scopes data-plane calls at the Analysis level
-because the workspace behind an Analysis is shared among every member of the Project, so any finer-grained boundary
-would leak through the shared workspace.
+A **Project** is the access boundary: one dataset and the users who work on it. An **Analysis** is a collaborative
+investigation bound to one Project. Authorization scopes data-plane calls at the Analysis level because the workspace
+behind an Analysis is shared among every member of the Project, so any finer-grained boundary would leak through the
+shared workspace.
 
 A **session** is a short-lived bearer token issued by the auth service that resolves to a Project ID and an Analysis ID
 ([`security.md`](security.md); session client at

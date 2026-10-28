@@ -2,23 +2,24 @@
 
 **Related:** [`deployment.md`](deployment.md) (IaC tool, deploy authentication, state, and secrets management),
 [`agent-runtime.md`](agent-runtime.md) (Managed Agents loop, sub-agents, and event stream), [`security.md`](security.md)
-(public ingress rules, IAP boundary, and webhook authentication), [`sandbox-worker.md`](sandbox-worker.md) (self-hosted
-sandbox worker, Unix-socket hatches, and per-session tokens),
-[`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md) (bringing up a new environment),
-[`../runbooks/iap-access.md`](../runbooks/iap-access.md) (IAP group membership and programmatic access).
+(public ingress rules, IAP boundary, and webhook authentication), [`access-control.md`](access-control.md) (who may
+reach the app and what they may see), [`sandbox-worker.md`](sandbox-worker.md) (self-hosted sandbox worker, Unix-socket
+hatches, and per-session tokens), [`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md) (bringing up a
+new environment), [`../runbooks/iap-access.md`](../runbooks/iap-access.md) (programmatic access through IAP).
 
 ## Overview
 
 The Spike runs as a Cloud Run web application backed by Cloud SQL and Google Cloud Storage (GCS) behind Identity-Aware
-Proxy (IAP), serving Centre for Population Genomics (CPG) curators from day one. Even though the Spike evaluates only
-synthetic cases against public evidence sources, dog-fooding with real curators requires cloud infrastructure that is
-reproducible from scratch, cost-observable, and isolated from CPG's production data estate.
+Proxy (IAP), serving curators from day one. Even though the Spike evaluates only synthetic cases against public evidence
+sources, dog-fooding with real curators requires cloud infrastructure that is reproducible from scratch,
+cost-observable, and isolated from CPG's production data estate.
 
 Each environment (`dev` now, `prod` later) lives in its own dedicated GCP project inside the CPG GCP organization,
-managed by one Pulumi stack per environment in [`infra/`](../../infra/). Curators authenticate through IAP against a
-per-environment Google Group whose roster lives outside this repository, while workloads authenticate to GCP, Cloud SQL,
-and Anthropic through Workload Identity Federation (WIF) and IAM so that only credentials without a WIF path live in
-Secret Manager. Continuous integration validates pull requests without cloud access and posts a read-only
+managed by one Pulumi stack per environment in [`infra/`](../../infra/). Curators authenticate through IAP, which admits
+any Google account, and the auth service decides what they may reach from the deployment's ACL, which the deploying site
+writes into a secret in that environment's project ([`access-control.md`](access-control.md)). Workloads authenticate to
+GCP, Cloud SQL, and Anthropic through Workload Identity Federation (WIF) and IAM so that only credentials without a WIF
+path live in Secret Manager. Continuous integration validates pull requests without cloud access and posts a read-only
 `pulumi preview`, while deployments build and push container images to a per-project Artifact Registry from deployable
 refs. Anthropic Managed Agents runs the agent loop while tool calls execute in a self-hosted sandbox inside our project,
 where internal gRPC services hold the GCP and Cloud SQL identities and mediate every write of agent-authored content.
@@ -44,8 +45,8 @@ provider. Finally, per-project budgets must bound infrastructure spend so runawa
   [`frontend-framework.md`](frontend-framework.md) and [`agent-runtime.md`](agent-runtime.md).
 - Integration with internal CPG systems (Talos, Metamist, and seqr), because the Spike queries public endpoints only.
 - Multi-tenant isolation or external-customer billing and onboarding.
-- Per-report authorization, curator roles, and Project membership, which are enforced inside the application rather than
-  at the infrastructure perimeter.
+- Authorization, curator roles, and Project membership, which [`access-control.md`](access-control.md) and the
+  application own rather than the infrastructure perimeter.
 
 ## Design
 
@@ -57,28 +58,25 @@ datasets, making it harder to reason about what the prototype can reach.
 
 Instead, each environment runs in a dedicated GCP project inside the CPG organization: `cpg-themis-dev` (project number
 `698160839187`) now, and `cpg-themis-prod` later. One Pulumi stack per environment in [`infra/`](../../infra/) targets
-its own project, so dev and prod share no GCP resources: each environment has its own project, access group, Pulumi
-state bucket, Cloud KMS key, Secret Manager secrets, Cloud Run services, Artifact Registry repository, and budget.
-Because both projects sit inside the CPG GCP organization, they still inherit organization-level IAM policies, central
-billing, aggregated audit sinks, and Google Workspace single sign-on. The cost is a one-time project-creation and
-bootstrap step per environment.
+its own project, so dev and prod share no GCP resources: each environment has its own project, ACL, Pulumi state bucket,
+Cloud KMS key, Secret Manager secrets, Cloud Run services, Artifact Registry repository, and budget. Because both
+projects sit inside the CPG GCP organization, they still inherit organization-level IAM policies, central billing,
+aggregated audit sinks, and Google Workspace single sign-on. The cost is a one-time project-creation and bootstrap step
+per environment.
 
-### IAP access gate and Google Group membership
+### Access
 
 Curators need browser access to the web application (`themis-web` in
 [`infra/themis_infra/web.py`](../../infra/themis_infra/web.py)), and medium-term testers include external collaborators
-whose Google accounts sit outside the `populationgenomics.org.au` domain. Gating IAP on the CPG Workspace domain would
-block external curators, while listing individual user emails in this repository's Pulumi configuration would leak
-personal identifiers onto the public mirror.
+whose Google accounts sit outside the `populationgenomics.org.au` domain. [`access-control.md`](access-control.md)
+decides who may reach the application and what they may see. IAP authenticates every request in front of the web
+application and admits any Google account. The auth service then authorizes each request from the ACL, the document in
+which the deploying site lists each Project and who holds which role on it.
 
-IAP therefore grants `roles/iap.httpsResourceAccessor` to a single per-environment Google Group
-(`themis-dev-access@populationgenomics.org.au` in dev). This binding acts as a coarse gate that decides who may reach
-the web application at the network edge; fine-grained roles, Project membership, and per-report authorization stay in
-the application. The group and its membership are managed by pull request through CPG's Cloud Identity Pulumi setup in
-[`cpg-infrastructure`](https://github.com/populationgenomics/cpg-infrastructure) (`gcp.cloudidentity.Group`), with the
-member rosters held privately outside this repository. This repository records only the group email address in
-`Pulumi.<stack>.yaml`, which is a non-PII principal safe for the public mirror. Because the group can hold external
-Google accounts, access is governed by group membership rather than organization domain.
+This doc adds only the infrastructure around those two: the secret of the OAuth client that IAP signs people in with
+(§Keyless authentication and secret inventory), and the Secret Manager secret that the site writes the ACL into, which
+each environment's stack creates in its own project. Neither this repository nor its Pulumi configuration names a
+person, so nothing personal reaches the public mirror.
 
 Curators without any Google identity would require Google Cloud Identity Platform (GCIP). We defer GCIP because all
 initial Spike testers have Google accounts.
@@ -92,11 +90,11 @@ the enclosing `asia` multi-region, which places database backups offshore.
 Dev and prod therefore use the same audit and backup configuration from the start:
 
 - Data Access audit logs are enabled in both environments for Secret Manager, Cloud KMS, Cloud SQL, and GCS alongside
-  IAP and Cloud Run request logs. Logs route to a dedicated regional Cloud Logging bucket in `australia-southeast1` with
-  Log Analytics enabled and a 90-day retention window, allowing operators to run SQL queries in place over secret and
-  object access. Because Cloud Logging cost is dominated by ingestion (roughly $0.50/GiB) rather than storage retention
-  past 30 days (roughly $0.01/GiB-month), we control cost by scoping or excluding high-volume `DATA_READ` entries rather
-  than shortening the 90-day retention window.
+  Cloud Run request logs. Logs route to a dedicated regional Cloud Logging bucket in `australia-southeast1` with Log
+  Analytics enabled and a 90-day retention window, allowing operators to run SQL queries in place over secret and object
+  access. Because Cloud Logging cost is dominated by ingestion (roughly $0.50/GiB) rather than storage retention past 30
+  days (roughly $0.01/GiB-month), we control cost by scoping or excluding high-volume `DATA_READ` entries rather than
+  shortening the 90-day retention window.
 - Reports are append-only for the life of the Spike. GCS buckets enable object versioning with a 30-day soft-delete
   window and no automatic deletion policy.
 - Cloud SQL ([`infra/themis_infra/sql.py`](../../infra/themis_infra/sql.py)) runs daily automated backups retained for
@@ -118,15 +116,19 @@ secrets ([`deployment.md`](deployment.md)):
 - Services connect to Cloud SQL using IAM database authentication (`CLOUD_IAM_SERVICE_ACCOUNT`), eliminating database
   passwords.
 - Workloads access GCP resources using their dedicated Cloud Run service accounts.
-- The web application verifies the per-request IAP JWT assertion directly and keeps no session-signing key of its own,
-  while IAP's browser flow uses a Google-managed OAuth client.
+- The web application verifies the per-request IAP JWT assertion directly and keeps no session-signing key of its own.
+  Signing people in needs one stored secret per environment: the secret of the OAuth client that IAP uses so that
+  accounts from outside the organisation can sign in. The site creates that client by hand for its deployment, and the
+  secret reaches IAP's settings from encrypted stack config; the web application never holds it
+  ([`access-control.md`](access-control.md) §Authentication in front of the web tier).
 - Developers and scripts reaching the application without a browser impersonate the `themis-clu` service account and
-  mint a short-lived JWT ([`../runbooks/iap-access.md`](../runbooks/iap-access.md)), gated by Google Group membership
-  rather than a shared key.
+  present a short-lived token that the account signs through IAM
+  ([`../runbooks/iap-access.md`](../runbooks/iap-access.md)). IAP forwards the request with its signed assertion, as for
+  a person, and the auth service admits the account to every Project, so what gates it is IAM's answer to who may
+  impersonate it rather than a shared key ([`access-control.md`](access-control.md) §Programmatic callers).
 
 Secret Manager ([`infra/themis_infra/secrets.py`](../../infra/themis_infra/secrets.py) and
-[`infra/themis_infra/sandbox.py`](../../infra/themis_infra/sandbox.py)) holds only the four credentials that have no WIF
-path:
+[`infra/themis_infra/sandbox.py`](../../infra/themis_infra/sandbox.py)) holds four credentials that have no WIF path:
 
 | Secret                                    | Consumer                                  | Why stored                                                                                                                  |
 | ----------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
@@ -138,6 +140,10 @@ path:
 Because self-hosted sandboxes do not support Anthropic environment-variable vault credentials, internal services read
 any third-party API keys host-side from Secret Manager rather than injecting them into the sandbox. All stored secrets
 are scoped to a single environment and rotated on compromise or exposure according to provider policy.
+
+Secret Manager also holds the `acl` secret, which is not a credential. Each environment's stack creates it, the site's
+writer adds each new ACL as a version of it, and the auth service is the only Themis service that reads it
+([`access-control.md`](access-control.md) §The site writes the ACL into a secret Themis owns).
 
 ### Cost budgets and token usage tracking
 
@@ -210,7 +216,7 @@ flowchart TB
     svc["internal services · Cloud Run (Python, gRPC)<br/>id: Cloud SQL write · agent data plane"]
     sql[("Cloud SQL")]
   end
-  browser -->|"IAP / HTTPS LB"| web
+  browser -->|"HTTPS LB · IAP"| web
   web -->|"WIF Path B · sessions, events"| ma
   ma -->|"HTTPS LB · Anthropic's range · HMAC · run started"| disp
   disp -->|"run job"| sandbox
@@ -250,10 +256,10 @@ harness:
   configured development user identity when a flow needs one.
 - **Hermetic tests:** Pull-request CI and local tests run with no cloud access. Every service has an in-memory or
   local-filesystem adapter (`FixtureBackend`, `LocalBackend`) that runs as an ordinary host process without requiring
-  Docker, so the local development and unit-test loop works inside the Docker-free Claude Code sandbox. The sandbox
-  constraint is **Docker-free** (to avoid nested container issues in dev sandboxes), not emulator-free: a service
-  emulator is fine where a test needs one. For adapter and migration tests that exercise real PostgreSQL and GCS wire
-  semantics ([`conftest.py`](../../conftest.py),
+  Docker, and the fixture backend seeds the ACL as it seeds the rest of its data, so the local development and unit-test
+  loop works inside the Docker-free Claude Code sandbox. The sandbox constraint is **Docker-free** (to avoid nested
+  container issues in dev sandboxes), not emulator-free: a service emulator is fine where a test needs one. For adapter
+  and migration tests that exercise real PostgreSQL and GCS wire semantics ([`conftest.py`](../../conftest.py),
   [`themis/testing/litcache_db.py`](../../themis/testing/litcache_db.py)), the test suite runs standard PostgreSQL
   (`postgres:16` via `testcontainers`, since Cloud SQL is managed PostgreSQL with no separate emulator) and
   `fake-gcs-server`, gated on a reachable Docker daemon (`docker_daemon`) so they run in CI and skip cleanly inside a
@@ -294,13 +300,11 @@ handling are specified in [`managed-agents.md`](managed-agents.md) and [`deploym
 infrastructure IAM boundary, write permissions are split by which actor authored the data rather than read versus write:
 the internal gRPC services are the sole writer of agent-authored content (binding every write to its Analysis via the
 hatch-injected session token), while `themis-web` writes only the control-plane and session rows it owns (Analyses,
-Project membership, per-session grants, and session-end trace projections) and curator-initiated GCS uploads. Admitting
-an uploaded paper, web search result, or corpus record into an agent's context is a separate retrieval-trust question,
-orthogonal to which service identity wrote the blob.
+per-session grants, and session-end trace projections) and curator-initiated GCS uploads. Admitting an uploaded paper,
+web search result, or corpus record into an agent's context is a separate retrieval-trust question, orthogonal to which
+service identity wrote the blob.
 
-## Open questions
-
-- **External group members and organization policy:** Confirm with CPG central infrastructure that external Google
-  accounts can be added to `themis-<env>-access@populationgenomics.org.au` in Google Workspace, and verify that any
-  `iam.allowedPolicyMemberDomains` organization policy permits external members inside an in-domain Google Group granted
-  `roles/iap.httpsResourceAccessor`.
+The guest that runs the agent's code never holds a credential for private data. The internal services and the trusted
+sandbox worker hold the GCP identity and read private data on the agent's behalf. The worker mounts a Project's dataset
+storage read-only and binds the files of a sample the agent asks for into the guest
+([`access-control.md`](access-control.md) §The agent reads its Project's dataset as files).

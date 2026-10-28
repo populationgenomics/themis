@@ -365,8 +365,8 @@ Browser                           Next.js BFF                           Python E
 **Structured metadata and quote locations ride Connect.** `Workbench.DescribePaper` and `Workbench.Locate`
 (`schema/proto/themis/workbench/rpc/workbench.proto`) are unary methods on the browser-to-BFF `Workbench` Connect
 service, reusing `PaperInfo` and `LocateResponse` from `literature.proto`. Riding the Connect service gives both calls
-`protovalidate` request validation, one error model, and default-on IAP identity verification (`proxy.ts` and
-`context.ts`) rather than bespoke validation and error handling on custom REST routes.
+`protovalidate` request validation, one error model, and default-on caller authentication (`proxy.ts` and `context.ts`)
+rather than bespoke validation and error handling on custom REST routes.
 
 **Paper content bytes ride HTTP GET routes that redirect to presigned GCS URLs.** Sending multi-megabyte PDFs, markdown
 bodies, and figure images through Connect RPC responses would base64-inflate and buffer them in Node/Bun memory, and
@@ -412,10 +412,11 @@ markdown string — which would shift every subsequent code-point offset and mis
 resolves image URLs at render time to `/api/papers/[id]/files/[name]`. Both `Locate` and the browser DOM therefore see
 identical markdown text.
 
-**Authorization requires IAP identity only.** Litcache is a shared corpus and paper-level entitlement is a deferred
+**Authorization requires admission only.** Litcache is a shared corpus and paper-level entitlement is a deferred
 non-goal of the current evidence layer ([`literature-evidence-layer.md`](literature-evidence-layer.md)), so both the
-Connect RPCs and the `/api/papers/...` routes verify the caller's IAP identity without checking Project membership. A
-real entitlement model lands at the evidence service later.
+Connect RPCs and the `/api/papers/...` routes admit any caller whom the ACL admits to the deployment, without checking
+which Projects they belong to ([`access-control.md`](access-control.md)). A real entitlement model lands at the evidence
+service later.
 
 ## Alternatives considered
 

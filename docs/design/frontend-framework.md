@@ -1,6 +1,7 @@
 # Design: frontend framework and web tier
 
 **Related:** [`spike-infrastructure.md`](spike-infrastructure.md) (IAP, Cloud Run, and secret infrastructure),
+[`access-control.md`](access-control.md) (who may reach the app, and what they may see),
 [`workspace-model.md`](workspace-model.md) (Project, Analysis, working document, and Report entities),
 [`agent-runtime.md`](agent-runtime.md) (Managed Agents coordinator and trace writers),
 [`conversation-view.md`](conversation-view.md) (conversation thread rendering and curator turns),
@@ -9,11 +10,11 @@
 
 ## Overview
 
-Themis serves an internal web application for CPG variant curators on Cloud Run behind Identity-Aware Proxy (IAP). The
-initial Spike surface is small — a live conversation thread showing the coordinator and its sub-agents working, paired
-with a report and result viewer — but it must grow into the full co-scientist workbench ([`PRODUCT.md`](../PRODUCT.md)
-§7) without a framework rewrite. That workbench adds an editable working document, an interactive trace tree drilled in
-place, and margin comments anchored to text spans and ACMG evidence cells.
+Themis serves a web application for variant curators on Cloud Run behind Identity-Aware Proxy (IAP). The initial Spike
+surface is small — a live conversation thread showing the coordinator and its sub-agents working, paired with a report
+and result viewer — but it must grow into the full co-scientist workbench ([`PRODUCT.md`](../PRODUCT.md) §7) without a
+framework rewrite. That workbench adds an editable working document, an interactive trace tree drilled in place, and
+margin comments anchored to text spans and ACMG evidence cells.
 
 Because the genomics tool tier is written in Python, the obvious choice is a Python web stack or a thin Python
 backend-for-frontend (BFF). A Python full-stack framework breaks down once the UI takes on high-frequency client state;
@@ -40,8 +41,8 @@ When a curator opens an Analysis in the workbench, three runtime tiers participa
    [`spike-infrastructure.md`](spike-infrastructure.md) §8). Only the sandbox reaches these Python services; the browser
    never calls them directly.
 1. **The web tier** ([`apps/web/`](../../apps/web)) serves the curator UI and its BFF behind Google Cloud IAP. The BFF
-   authenticates the curator's IAP assertion, checks authorization against Cloud SQL, reads and writes stored entities,
-   and relays live session state between the browser and Anthropic.
+   verifies the curator's IAP assertion, asks the auth service which Projects the curator may reach, reads and writes
+   stored entities, and relays live session state between the browser and Anthropic.
 
 ```
                         IAP JWT cookie / assertion
@@ -123,7 +124,7 @@ Because Anthropic Managed Agents runs the agent loop and persists every turn and
 - **Kickoff:** The BFF creates the Managed Agents session and sends the case input as a `user.message` in a standard
   request/response call.
 - **Live conversation thread:** While a session is active, the browser polls the BFF every 2 to 3 seconds via the `Poll`
-  RPC. On each tick, the BFF reads Anthropic's persisted event log (`events.list`), checks the caller's IAP identity
+  RPC. On each tick, the BFF reads Anthropic's persisted event log (`events.list`), checks the caller that IAP asserted
   against Project membership, projects the raw events into the workbench display model, and returns the entire projected
   stream. The browser replaces its local stream state by item ID rather than appending deltas. The BFF holds the
   Anthropic API key and acts as the authorization and projection boundary; the browser never contacts Anthropic
@@ -169,21 +170,29 @@ calls → emitted claims and gaps), with claims and verdicts cross-linked to the
 
 ### Auth
 
-Google Cloud IAP fronts the Cloud Run service ([`spike-infrastructure.md`](spike-infrastructure.md) §2), but relying on
-perimeter network configuration alone leaves the application vulnerable if a route is misconfigured or called without a
-verified identity. Following the repository's single-chokepoint rule ([`security.md`](security.md)), the web tier
-verifies IAP's signed `X-Goog-IAP-JWT-Assertion` header on every request at two layers:
+[`access-control.md`](access-control.md) decides the access model. Google Cloud IAP fronts the Cloud Run service
+([`spike-infrastructure.md`](spike-infrastructure.md) §2) and authenticates the caller, admitting any signed-in Google
+account. The auth service then decides what that caller may reach, from the deployment's ACL. Every request IAP forwards
+carries its signed assertion of the caller's email, whether the caller is a person signed in through a browser or a
+programmatic caller with a token signed by a service account.
+
+Relying on perimeter network configuration alone would leave the application vulnerable if a route were misconfigured or
+called without a verified identity. Following the repository's single-chokepoint rule ([`security.md`](security.md)),
+the web tier verifies IAP's signed `X-Goog-IAP-JWT-Assertion` header, and asks the auth service's `GetAccess` whether
+the caller is admitted, on every request at two layers:
 
 1. **Request perimeter ([`apps/web/src/proxy.ts`](../../apps/web/src/proxy.ts)):** A default-deny proxy intercepts every
-   incoming request and verifies the IAP JWT before routing. If verification fails, the proxy returns a
-   Connect-formatted `unauthenticated` JSON body with HTTP 401 so generated Connect clients parse a structured error
-   code rather than failing on an empty response body.
+   incoming request, verifies the IAP JWT and checks that the auth service admits the caller before routing. If
+   verification fails, the proxy returns a Connect-formatted `unauthenticated` JSON body with HTTP 401 so generated
+   Connect clients parse a structured error code rather than failing on an empty response body.
 1. **Data seam ([`apps/web/src/server/context.ts`](../../apps/web/src/server/context.ts) and
    [`authorized-backend.ts`](../../apps/web/src/server/authorized-backend.ts)):** Server components and RPC handlers
    obtain their [`AuthorizedBackend`](../../apps/web/src/server/authorized-backend.ts) handle through
-   `userContext(headers)`, a shared request-scoped accessor that re-verifies the request assertion and scopes
-   analysis-plane access to the authenticated curator's Projects. Literature reads go through `literatureContext` in the
-   same module, which checks caller identity only (not Project-scoped) because a paper is a shared-corpus resource.
+   `userContext(headers)`, a shared request-scoped accessor that re-verifies the request assertion, asks `GetAccess`
+   again, and scopes analysis-plane access to the Projects in that answer. The two layers do not share an answer,
+   because the data seam's check exists to hold when the perimeter has been bypassed. Literature reads go through
+   `literatureContext` in the same module, which checks admission only (not Project-scoped) because a paper is a
+   shared-corpus resource.
 
 The proxy allowlists only the container liveness probe route (`/api/healthz` in
 [`apps/web/src/app/api/healthz/`](../../apps/web/src/app/api/healthz)). Cloud Run's startup probe connects directly to
@@ -191,10 +200,10 @@ the container, bypassing the load balancer and IAP, so it carries no JWT asserti
 proxy does not expose it to the internet: Cloud Run ingress is locked to the load balancer, and only the IAP service
 agent holds `roles/run.invoker`. The web tier has no unauthenticated public surface.
 
-Once authenticated, the asserted email from the IAP JWT identifies the curator for comment attribution and audit logs,
-while roles, Project membership, and per-report access checks live in the application database and are enforced by the
-BFF. Because the browser automatically sends the IAP session cookie on same-origin requests, both page navigations and
-Connect RPC calls carry the curator's identity.
+Once authenticated, the verified email from the IAP JWT identifies the curator for comment attribution and audit logs.
+Project membership and the roles a curator holds on each Project come from the auth service's answer, and the BFF
+enforces them. Because the browser automatically sends IAP's session cookie on same-origin requests, both page
+navigations and Connect RPC calls carry the curator's identity.
 
 ### Data fetching
 
@@ -303,7 +312,7 @@ To keep the Python tool tier and the browser aligned on a single coordinate syst
 `(doc_id, start, end)` always use **Unicode code-point offsets** (Python `str` indices), and the browser converts
 code-point offsets to and from UTF-16 indices at render time. This matches the anchoring convention used in
 [`populationgenomics/flowa`](https://github.com/populationgenomics/flowa). Comment records in Cloud SQL have the shape
-`{doc_id, start, end, author, body, thread}`, where `author` is the curator's IAP-asserted email; whether prose comments
+`{doc_id, start, end, author, body, thread}`, where `author` is the curator's verified email; whether prose comments
 stay in Cloud SQL or live in the workspace Git repository is an open question in
 [`workbench-workspace.md`](workbench-workspace.md).
 

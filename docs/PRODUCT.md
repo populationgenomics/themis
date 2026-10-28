@@ -104,8 +104,8 @@ curator.
 
 Workspace vocabulary mirrors Claude.ai's, deliberately (familiar to users and to Anthropic):
 
-- **Project** — the **data boundary**: restricted to the datasets and users explicitly associated with it (e.g. an
-  ASD-specific selection of cases); hosts the Analyses and a Project overview. Datasets ↔ Projects is M:N.
+- **Project** — the **data boundary**: one dataset (e.g. an ASD-specific selection of cases) and the users who work on
+  it; hosts the Analyses and a Project overview.
 - **Analysis** — a Claude.ai **"Chat"** (subagents and all): a collaborative working session bound to a Project, with
   Claude.ai-style **branching** to explore alternatives. Its **focus** is scenario-dependent (a variant; a case = focus
   sample + relatives; a cohort query).
@@ -183,8 +183,8 @@ ops over Themis's _own_ store are expected.
 
 - **Talos** — CPG's older, in-production heuristic reanalysis tool (no AI). Thematic name only, no coupling.
 - **PanelApp** (Australia; forked from the Genomics England instance) — a gene-curation platform that feeds Talos.
-- **CaRDinal** — a CPG-managed, consented research cohort; the founding dataset Themis's Projects draw from (others may
-  follow) (§3, §7).
+- **CaRDinal** — a CPG-managed, consented research cohort spanning several rare-disease datasets; the first whose
+  datasets become Themis Projects (others may follow) (§3, §7).
 - **seqr / Metamist / Analysis Runner** — existing CPG infrastructure; possible later integration.
 
 ## 11. Bets & open questions

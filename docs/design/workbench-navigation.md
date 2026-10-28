@@ -5,7 +5,7 @@
 [`workspace-model.md`](workspace-model.md) (Projects, Analyses, and the working document);
 [`analysis-scenarios.md`](analysis-scenarios.md) (scenario inputs and derived Analysis identity);
 [`conversation-view.md`](conversation-view.md) (the conversation stream and steer composer);
-[`curation-surface.md`](curation-surface.md) (the curation panel composed on `/`).
+[`curation-surface.md`](curation-surface.md) (the curation pages under each Project).
 
 ## Overview
 
@@ -63,7 +63,7 @@ Each level of the workspace hierarchy maps to its own route under [`apps/web/src
 
 | Route                    | Renders                                                                             |
 | ------------------------ | ----------------------------------------------------------------------------------- |
-| `/`                      | The landing page: the Projects panel followed by the curation panel.                |
+| `/`                      | The landing page: the Projects panel.                                               |
 | `/project/[projectId]`   | One Project: a "New analysis" composer above that Project's Analyses, newest first. |
 | `/analysis/[analysisId]` | The workbench for one Analysis.                                                     |
 | `/pane`                  | A mirror window's tab area ([`document-pane.md`](document-pane.md)).                |
@@ -71,43 +71,45 @@ Each level of the workspace hierarchy maps to its own route under [`apps/web/src
 ```
 / (LandingPage)
 ├── AppBar: [Logo "Themis"] ─────────────────────────────────────── [user@example.org]
-├── ProjectsPanel (apps/web/src/workbench/projects-panel.tsx)
-│   └── ProjectCard ──links to──► /project/[projectId]
-└── CurationPanel (docs/design/curation-surface.md)
+└── ProjectsPanel (apps/web/src/workbench/projects-panel.tsx)
+    └── ProjectCard ──links to──► /project/[projectId]
 
 /project/[projectId] (ProjectPage)
-├── AppBar: [Logo "Themis" | ← Projects  ● Project Name] ────────── [user@example.org]
+├── AppBar: [Logo "Themis" | ← Projects  ● Project ID] ──────────── [user@example.org]
+├── Curation ("Open curation", for a role holder) ──links to──► /project/[projectId]/curation
 ├── Composer ("New analysis") ──on create──► router.refresh() + router.push("/analysis/<id>")
 └── AnalysisCard grid (newest first) ──links to──► /analysis/[analysisId]
 
 /analysis/[analysisId] (AnalysisPage -> Workbench key={analysis.id})
-├── AppBar: [Logo "Themis" | ← Project Name  Scenario · Time / Title] ─ [Dock | user@example.org]
+├── AppBar: [Logo "Themis" | ← Project ID  Scenario · Time / Title] ─── [Dock | user@example.org]
 └── ConversationSplit: ConversationPane (+ SteerComposer)  |  TabArea (+ /pane mirror windows)
 ```
 
 A Project ID never appears in an Analysis URL. Because every `Analysis` record carries its owning `project_id`,
 `/analysis/<analysisId>` is self-contained and the cross-parameter pairing rules disappear with the flat URL.
 
-Routes under `/curation` belong to the curation surface ([`curation-surface.md`](curation-surface.md)). The landing page
-([`apps/web/src/app/page.tsx`](../../apps/web/src/app/page.tsx)) composes the Projects panel
-([`apps/web/src/workbench/projects-panel.tsx`](../../apps/web/src/workbench/projects-panel.tsx)) above the curation
-panel without owning either domain: each panel resolves its own caller context and fetches its own data independently.
+Routes under `/project/[projectId]/curation` belong to the curation surface
+([`curation-surface.md`](curation-surface.md)), and the Project page links to them. The landing page
+([`apps/web/src/app/page.tsx`](../../apps/web/src/app/page.tsx)) renders the Projects panel
+([`apps/web/src/workbench/projects-panel.tsx`](../../apps/web/src/workbench/projects-panel.tsx)), which resolves its own
+caller context and fetches its own data.
 
 ### Projects page (`/`)
 
 The Projects panel renders one card per Project the caller belongs to, linking to `/project/<projectId>`. Each card
-shows the Project's name and ID, how many Analyses it holds, and when the most recent Analysis was created — without the
-count and latest timestamp, a Project card would be as opaque as a bare identifier. A caller who belongs to no Projects
-sees an explicit default-deny notice (`"You are not a member of any Project."`) rather than an empty grid.
+shows the Project's ID, how many Analyses it holds, and when the most recent Analysis was created — without the count
+and latest timestamp, a Project card would be as opaque as a bare identifier. A caller who belongs to no Projects sees
+an explicit default-deny notice (`"You are not a member of any Project."`) rather than an empty grid. A Project's ID is
+the name of its dataset, and datasets have no display names, so every page shows a Project by its ID
+([`access-control.md`](access-control.md)).
 
 To populate the counts and latest timestamps without issuing $N$ queries for $N$ Projects, the panel calls
 `listAllAnalyses()` on [`AuthorizedBackend`](../../apps/web/src/server/authorized-backend.ts), which delegates to
 `listAnalysesIn(projectsOf(caller))` on [`AnalysisDataPlane`](../../apps/web/src/server/ports.ts). Even though the panel
-also calls `listProjects()` to get the Project names and IDs, it does not pass that Project list into
-`listAllAnalyses()`. Accepting a caller-supplied scope parameter on `listAllAnalyses()` would weaken the chokepoint rule
-that every method on `AuthorizedBackend` derives its own scope from `ProjectMembership`
-([`workspace-model.md`](workspace-model.md)). Keeping `listAllAnalyses()` parameterless costs one extra indexed
-membership lookup per render of `/`.
+also calls `listProjects()` to get the Project IDs, it does not pass that Project list into `listAllAnalyses()`.
+Accepting a caller-supplied scope parameter on `listAllAnalyses()` would weaken the chokepoint rule that every method on
+`AuthorizedBackend` derives its own scope from `ProjectMembership` ([`workspace-model.md`](workspace-model.md)). Keeping
+`listAllAnalyses()` parameterless costs one extra indexed membership lookup per render of `/`.
 
 `listAllAnalyses()` also fetches full `Analysis` rows — including scenario inputs of up to 10,000 characters of clinical
 context or prompt prose — only for `/` to count them and take `max(created_at)`. Pushing that aggregation into SQL will
@@ -116,8 +118,8 @@ the `Analysis` rows it returns.
 
 ### Project page (`/project/[projectId]`)
 
-The Project page (under [`apps/web/src/app/project/`](../../apps/web/src/app/project)) renders the Project name in the
-app bar, the "New analysis" composer, and the Project's Analyses as a grid of cards ordered newest first. Submitting the
+The Project page (under [`apps/web/src/app/project/`](../../apps/web/src/app/project)) renders the Project ID in the app
+bar, the "New analysis" composer, and the Project's Analyses as a grid of cards ordered newest first. Submitting the
 composer creates the Analysis and immediately navigates to `/analysis/<newId>`; because the new Analysis is the
 composer's only outcome, the Project page never has to display a run in progress. A Project with no Analyses yet renders
 the composer above an explicit empty state.
@@ -149,14 +151,14 @@ wordmark linking to `/` on the far left, and the verified caller's email on the 
 | Page                     | `left` slot                                        | `right` slot              |
 | ------------------------ | -------------------------------------------------- | ------------------------- |
 | `/`                      | —                                                  | —                         |
-| `/project/[projectId]`   | Back link to `/`; Project name                     | —                         |
+| `/project/[projectId]`   | Back link to `/`; Project ID                       | —                         |
 | `/analysis/[analysisId]` | Back link to `/project/[projectId]`; Analysis name | Conversation-dock control |
 
 The two slots behave differently under horizontal compression:
 
 - **`left` names where the curator is** (the back link and the title of the current Project or Analysis) and is the only
-  flex child allowed to shrink (`min-w-0`), so a long Project name or variant identifier truncates with an ellipsis
-  rather than pushing the bar wider than the viewport.
+  flex child allowed to shrink (`min-w-0`), so a long Project ID or variant identifier truncates with an ellipsis rather
+  than pushing the bar wider than the viewport.
 - **`right` holds controls that act on the current view** (sitting just inboard of the verified caller) and never
   shrinks (`shrink-0`), ensuring interactive controls are either wholly visible or absent. When a slot is empty, its
   vertical divider is omitted with it.
@@ -174,7 +176,7 @@ Data that changes while a page is open — the 2.5-second event poll and the wor
 client with TanStack Query ([`apps/web/src/lib/queries.ts`](../../apps/web/src/lib/queries.ts); see
 [`frontend-framework.md`](frontend-framework.md)). Everything else these pages render is fixed for the lifetime of the
 page visit (the caller's Projects on `/`, the Project metadata and Analysis list on `/project/[projectId]`, and the
-Analysis identity and owning Project name on `/analysis/[analysisId]`). Each route's async server component reads that
+Analysis identity and owning Project ID on `/analysis/[analysisId]`). Each route's async server component reads that
 state directly from [`AuthorizedBackend`](../../apps/web/src/server/authorized-backend.ts) via `userContext`. Only three
 client islands mount across the three pages:
 
@@ -210,7 +212,7 @@ before `router.push('/analysis/<newId>')`. The only other workbench mutations (`
 server-rendered listing data and get their freshness from the live event poll.
 
 A co-member's create is not covered by client-side invalidation, and that staleness is accepted rather than solved.
-Because Projects map M:N to users ([`GLOSSARY.md`](../../GLOSSARY.md)), a colleague starting a run changes what
+Because a Project has several members ([`GLOSSARY.md`](../../GLOSSARY.md)), a colleague starting a run changes what
 `/project/[projectId]` lists and what `/` counts with no signal to other browsers. Those pages are therefore current as
 of the navigation that rendered them; a curator who wants a colleague's newest run navigates or reloads. Closing that
 would mean polling every listing page, or a shared invalidation channel, for a page a curator arrives at fresh and
@@ -223,7 +225,7 @@ Projects triggers Next.js `notFound()` (`404`) before any page shell mounts. Vis
 unreachable Analysis returns `404` immediately instead of mounting a workbench that polls a dead ID behind blank chrome.
 Visiting `/project/[projectId]` for an unreachable Project likewise returns `404` before rendering a composer that would
 offer to create inside a forbidden Project; looking up `projectId` in `backend.listProjects()` checks membership and
-retrieves the Project's display name in a single read.
+retrieves the Project in a single read.
 
 Two methods on [`AnalysisDataPlane`](../../apps/web/src/server/ports.ts) and
 [`AuthorizedBackend`](../../apps/web/src/server/authorized-backend.ts) support these server reads without adding RPCs to
