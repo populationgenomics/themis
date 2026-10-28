@@ -11,7 +11,7 @@ FROM apache/beam_python3.13_sdk:2.77.0 AS beam
 
 # A named stage rather than `COPY --from=<image>`: Dependabot updates images on FROM lines only.
 FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
-FROM python:3.13.15-slim-bookworm@sha256:2325bb286ec344af3e5898cc224b5844e2707ac6e26b1632516fd3edc84a5e26 AS base
+FROM python:3.13.16-slim-bookworm@sha256:73aa5faee130c60da030e105ec971ccf57473fbd22ce73bd6fc9ba99a40b838d AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 # ca-certificates, plus the RHEL-canonical bundle path native libcurl clients probe (the
