@@ -589,7 +589,7 @@ silently into the new meaning.
 ### Quote-reference model
 
 Analyses and conversation turns cite papers using markdown directives `:paper[doc_id]` and
-`:quote[doc_id, "verbatim quote"]` ([`document-pane.md`](document-pane.md)). If a citation stored character offsets
+`:quote[doc_id, verbatim quote]` ([`document-pane.md`](document-pane.md)). If a citation stored character offsets
 (`start`, `end`) as its primary anchor, any re-conversion of the paper—or even toggling the document pane between
 markdown and PDF—would shift offsets and silently highlight the wrong text.
 
@@ -598,7 +598,7 @@ demand by [`anchorite`](../../themis/services/evidence/literature/litcache.py) a
 
 ```
 Authoring / storage (durable):
-  :quote[doc_id="a1b2...", quote="the variant was observed in 14 of 18 probands"]
+  :quote[a1b2..., the variant was observed in 14 of 18 probands]
 
 Resolution via evidence service Locate / Validate (per representation):
   ├── REPRESENTATION_MARKDOWN ──► reads Manifest.refs["markdown"] ("d49b...")
