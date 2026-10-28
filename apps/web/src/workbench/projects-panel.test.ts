@@ -8,8 +8,8 @@ import { projectRows } from "./projects-panel";
 // holds Analyses rendering as though it held none.
 
 const projects = [
-  create(ProjectSchema, { id: "proj_a", name: "A" }),
-  create(ProjectSchema, { id: "proj_b", name: "B" }),
+  create(ProjectSchema, { id: "proj_a" }),
+  create(ProjectSchema, { id: "proj_b" }),
 ];
 
 function analysis(id: string, projectId: string, iso?: string) {

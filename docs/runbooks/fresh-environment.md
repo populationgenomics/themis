@@ -14,11 +14,15 @@ program change.
   a budget).
 - You have **Owner** on the project (to run `bootstrap.sh`) and local `gcloud` ADC:
   `gcloud auth application-default login`.
-- The IAP access group exists — see [`iap-access.md`](iap-access.md). It must exist before `pulumi up` (the IAP IAM
-  binding targets it).
-- The project has an OAuth consent screen (brand), configured once in the Console — `infra/` declares no
-  `gcp.iap.Brand`, so no `up` creates it; see [`iap-access.md`](iap-access.md), whose user type also decides whether
-  out-of-org accounts can be admitted at all.
+- The OAuth client IAP signs people in through exists and its id and secret are in the stack config. It is created by
+  hand in the console, with an External consent screen so that accounts from outside the organisation can sign in; see
+  [`access-control.md`](access-control.md#setting-up-iaps-sign-in-for-a-deployment).
+- The project allows an IAM grant to `allAuthenticatedUsers`, which the IAP grant on the web service is: if the
+  organisation enforces Domain Restricted Sharing (`iam.allowedPolicyMemberDomains`), the `up` fails on that grant until
+  the project has an exception (same section).
+- The site has a service account that will write the environment's ACL, and `themis:aclWriter` names it
+  ([`access-control.md`](access-control.md#where-the-acl-lives)). The site's writer is configured with the secret it
+  writes to, `projects/cpg-themis-dev/secrets/acl`, which only the first, targeted `up` creates (§2).
 - The `themis-clu` group exists — see [`hand-driving-a-service.md`](hand-driving-a-service.md). It must exist before
   `pulumi up` too: the impersonation binding names it, and GCP rejects a binding whose `group:` member does not resolve.
 
@@ -54,12 +58,19 @@ rules). Idempotent. The deploy/preview SA emails and the WIF provider path it pr
 The registry is created by the program, so the first `pulumi up` uses a public placeholder image — that one `up` creates
 the registry *and* brings the edge up running the placeholder; later deploys push real images to that registry.
 
+The auth service refuses to start without a valid ACL, and the secret the site writes the ACL into is one the program
+creates, so the bring-up runs in three steps. A first `up` limited to the project's baseline, the auth service's account
+and the ACL secret creates the secret, the account, and the grants on the secret: the site's writer may manage and read
+its versions, and the account may read them. The site then deploys and adds the ACL's first version. Only then does the
+full `up` below run, so the auth service finds a valid ACL when it first starts, and its read grant has long applied.
+
 A few of the required keys name values this same `up` produces, or registrations that can only follow it, so they carry
 placeholders for this one run — [§3](#3-values-that-only-exist-after-the-first-up). Every other key the program reads
 must already hold its real value: `preview` stops at the first `config.require*` the stack does not satisfy, before
-anything is created. Two of them are external registrations. `themis:openalexApiKey` is the API key of an OpenAlex
+anything is created. Three of them are external registrations. One is the OAuth client, `themis:iapOauthClientId` and
+`themis:iapOauthClientSecret`, from the prerequisites above. `themis:openalexApiKey` is the API key of an OpenAlex
 account, which every litcache lookup of a work sends; set it with `pulumi config set --secret themis:openalexApiKey`.
-The other is `themis:slackBotToken`, the bot token of the Slack app the spend monitor's notifications and morning report
+The third is `themis:slackBotToken`, the bot token of the Slack app the spend monitor's notifications and morning report
 post through ([`cost-monitoring.md`](../design/cost-monitoring.md)). Create the app in the Slack workspace with the bot
 scopes `chat:write` and `files:write` (the report's chart is a file upload), install it, invite it to the channel
 `themis:slackChannel` names — a file upload needs the bot in the channel whatever the channel's visibility — set
@@ -72,9 +83,30 @@ pulumi login gs://cpg-themis-dev-pulumi-state
 # from the committed Pulumi.dev.yaml; without it Pulumi falls back to passphrase.
 pulumi stack init dev \
   --secrets-provider="gcpkms://projects/cpg-themis-dev/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi"
+# The ACL secret and the auth service's account first, with the baseline that enables Secret Manager; pass the same
+# image overrides as the full up.
+THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up \
+  --target 'urn:pulumi:dev::themis::themis:infra:Baseline**' \
+  --target 'urn:pulumi:dev::themis::themis:infra:AclSecret**' \
+  --target 'urn:pulumi:dev::themis::gcp:serviceaccount/account:Account::themis-auth-runtime'
+pulumi stack output acl_secret   # projects/cpg-themis-dev/secrets/acl
+# …the site deploys and adds the ACL's first version; check it is there:
+gcloud secrets versions list acl --project cpg-themis-dev
 THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi preview   # review the plan
 THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up
 ```
+
+An existing environment whose stack does not yet hold the ACL secret takes the same three steps, with the targeted `up`
+limited to the last two targets. Its baseline exists already, and targeting it would make Pulumi stop on any resource
+that depends on it and that the program no longer declares.
+
+### When the ACL secret is re-created
+
+The stack protects the secret, so a `destroy`, or a change that would replace it, stops until someone unprotects it
+(`pulumi state unprotect`). If the secret is re-created anyway, for instance in a rebuilt environment, it starts empty,
+and the auth service admits nobody until the site writes the ACL again. The site's writer must then run once with a
+refresh, so that it sees the empty secret: CPG's deploy does not refresh by default, so it assumes the version it wrote
+last still exists and writes nothing.
 
 `stack init` writes a generated `encryptedkey` line into `Pulumi.dev.yaml`; commit it (inert without KMS access, safe on
 the mirror). Requires the operator KMS grant from the prerequisites above.
@@ -90,6 +122,10 @@ the table says which — and on a first bring-up neither costs anything: the edg
 | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
 | `themis:anthropicFederationRuleId`                                                             | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B                | The BFF cannot mint a Managed-Agents token.                                                        |
 | `themis:anthropicCostExporterServiceAccountId`, `themis:anthropicCostExporterFederationRuleId` | The svac and rule registered together against `pulumi stack output cost_exporter_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the cost exporter | The cost exporter fails every scheduled run at the token exchange, so the spend gauge stays empty. |
+
+One grant is the site's to make against an account the first `up` creates, and is no stack config at all: read on the
+datasets the ACL names as Projects for `pulumi stack output sandbox_job_sa_email`, the account that mounts their files
+into the agent's sandbox.
 
 Any non-empty string serves as the placeholder; neither the program nor the app parses these beyond requiring them. The
 remaining `themis:anthropic*` ids are set for real from the start: the web app's svac, the org and the workspace are
@@ -208,4 +244,5 @@ Leave the ruleset in place: it costs nothing and keeps the branch un-creatable, 
 ## Tearing down
 
 The reserved IP is `protect`ed; `pulumi destroy` refuses until you clear the protection (deliberate — it guards the
-externally-bound address).
+externally-bound address). The ACL secret is protected too, because a re-created one is empty until the site writes it
+again ([above](#when-the-acl-secret-is-re-created)).

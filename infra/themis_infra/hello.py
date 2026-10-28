@@ -64,9 +64,7 @@ class HelloService(pulumi.ComponentResource):
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                     min_instance_count=0, max_instance_count=_MAX_INSTANCES
                 ),
-                # Direct VPC egress so the auth call arrives over the VPC and auth's internal ingress
-                # admits it; all traffic, since auth's run.app is a public hostname a private-ranges
-                # route would send straight out.
+                # Direct VPC egress on the services network, all traffic (services_network.py).
                 vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                     network_interfaces=[
                         gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(

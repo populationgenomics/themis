@@ -64,7 +64,14 @@ gcp_config = pulumi.Config('gcp')
 project = gcp_config.require('project')
 region = gcp_config.require('region')
 domain = config.require('domain')
-iap_access_group = config.require('iapAccessGroup')
+# The OAuth client IAP signs people in through (docs/runbooks/access-control.md): created by hand with an External
+# consent screen, so its id is plain config and its secret encrypted config.
+iap_oauth_client_id = config.require('iapOauthClientId')
+iap_oauth_client_secret = config.require_secret('iapOauthClientSecret')
+# The site's service account that writes the ACL into this stack's ACL secret (docs/design/access-control.md), and how
+# long the auth service trusts its last good copy while no new one loads.
+acl_writer = config.require('aclWriter')
+acl_staleness_limit_seconds = config.require_int('aclStalenessLimitSeconds')
 # Whether this environment hosts the public-read PR review screenshot bucket. Required, not
 # defaulted: a stack must decide, so no environment inherits a public bucket by omission.
 enable_pr_screenshot_bucket = config.require_bool('enablePrScreenshotBucket')
@@ -112,7 +119,7 @@ slack_bot_token = config.require_secret('slackBotToken')
 cost_spike_alert_cents = config.require_int('costSpikeAlertCents')
 cost_spike_window_minutes = config.require_int('costSpikeWindowMinutes')
 cost_freshness_minutes = config.require_int('costFreshnessMinutes')
-# The project's numeric id: part of the IAP-JWT audience the web app verifies.
+# The project's numeric id: part of the IAP-JWT audience the web app verifies, and of the IAP settings' name.
 project_number = gcp.organizations.get_project(project_id=project).number
 # May impersonate the themis-clu account to call a backend service by hand. The group + roster live
 # in cpg-infrastructure-private; this is the principal only (no PII).
@@ -190,18 +197,33 @@ automation_user = clu.AutomationUser(
     migrator_db_role=migrator_db_user.name,
     opts=pulumi.ResourceOptions(depends_on=[base, database, migrator_db_user]),
 )
+# The auth service's account and the ACL secret, deployed alone ahead of the rest on a fresh environment: the site adds
+# the ACL's first version, and the account's read grant applies, before the service first starts
+# (docs/runbooks/fresh-environment.md).
+auth_account = auth.runtime_account(project=project, opts=pulumi.ResourceOptions(depends_on=[base]))
+acl_secret = auth.AclSecret(
+    project=project,
+    region=region,
+    writer=acl_writer,
+    reader=auth_account,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
+)
 auth_service = auth.AuthService(
     project=project,
+    project_number=project_number,
     region=region,
     image=_image(_AUTH_IMAGE_ENV, lambda: _live_service_image('themis-auth')),
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
+    service_account=auth_account,
+    acl_secret=acl_secret,
+    acl_staleness_limit_seconds=acl_staleness_limit_seconds,
     trace_sample_ratio=trace_sample_ratio,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
-# Every caller of an internal-ingress service attaches here (Direct VPC egress): the data-plane services reach auth
-# over it, the web tier evidence and sheaf, and the sandbox worker hello, evidence and sheaf.
+# Every caller of an internal-ingress service attaches here (Direct VPC egress): the web tier and the data-plane
+# services reach auth over it, the web tier evidence and sheaf too, and the sandbox worker hello, evidence and sheaf.
 services_net = services_network.ServicesNetwork(
     project=project,
     region=region,
@@ -274,10 +296,13 @@ convert_invoker = convert.ConversionInvoker(
     worker_service_name=convert_worker.service_name,
     opts=pulumi.ResourceOptions(depends_on=[convert_worker]),
 )
-openalex = secrets.openalex_secret(
+# The key every litcache lookup of a work sends, since OpenAlex meters keyless callers; the runtime reads it by
+# `themis.litcache.openalex_key.SECRET_ID`.
+openalex = secrets.stack_secret(
+    'openalex-api-key',
     project=project,
     region=region,
-    api_key=openalex_api_key,
+    value=openalex_api_key,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 evidence_service = evidence.EvidenceService(
@@ -443,16 +468,20 @@ session_token_key_version = pulumi.Output.concat(session_token_key.id, '/cryptoK
 # (sandbox-worker.md §"One trusted process, not two containers"). No dedicated VPC / egress firewall /
 # internal load balancer — the guest has zero network, and the trusted worker reaches the internal services
 # over Direct VPC egress. (The session-token KMS key is the shared substrate created above.)
-anthropic_environment_key_secret = sandbox.environment_key_secret(
+# The worker credential (`sk-ant-oat01-…`) that claims work and posts results for the whole environment, and the
+# key the dispatcher verifies webhook deliveries against; the dispatcher alone reads either.
+anthropic_environment_key_secret = secrets.stack_secret(
+    'anthropic-environment-key',
     project=project,
     region=region,
-    environment_key=anthropic_environment_key,
+    value=anthropic_environment_key,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
-anthropic_webhook_signing_key_secret = sandbox.webhook_signing_key_secret(
+anthropic_webhook_signing_key_secret = secrets.stack_secret(
+    'anthropic-webhook-signing-key',
     project=project,
     region=region,
-    signing_key=anthropic_webhook_signing_key,
+    value=anthropic_webhook_signing_key,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 sandbox_job = sandbox.SandboxJob(
@@ -490,14 +519,22 @@ dispatcher_service = sandbox.DispatcherService(
     region=region,
     image=_image(_DISPATCHER_IMAGE_ENV, lambda: _live_service_image('themis-dispatcher')),
     environment_id=anthropic_environment_id,
-    environment_key_secret_id=anthropic_environment_key_secret.secret_id,
-    webhook_signing_key_secret_id=anthropic_webhook_signing_key_secret.secret_id,
+    environment_key_secret_id=anthropic_environment_key_secret.secret.secret_id,
+    webhook_signing_key_secret_id=anthropic_webhook_signing_key_secret.secret.secret_id,
     session_token_key_id=session_token_key.id,
     sandbox_job_name=sandbox_job.job_name,
     reclaim_older_than_ms=_RECLAIM_OLDER_THAN_MS,
     # Confirmed against dev's load-balancer log (docs/runbooks/self-hosted-sandbox.md, "Webhook source allowlist").
     enforce_source_range=True,
-    opts=pulumi.ResourceOptions(depends_on=[base, sandbox_job]),
+    # Its revision reads both secrets at `latest`, which has to exist when Cloud Run creates it.
+    opts=pulumi.ResourceOptions(
+        depends_on=[
+            base,
+            sandbox_job,
+            anthropic_environment_key_secret.version,
+            anthropic_webhook_signing_key_secret.version,
+        ]
+    ),
 )
 grants.SandboxSpawner(
     'themis-dispatcher',
@@ -536,6 +573,9 @@ site = web.WebService(
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
     session_token_key_version=session_token_key_version,
+    auth_url=auth_service.url,
+    iap_oauth_client_id=iap_oauth_client_id,
+    iap_oauth_client_secret=iap_oauth_client_secret,
     evidence_url=evidence_service.url,
     fulltext_bucket=fulltext.name,
     sheaf_url=sheaf_service.url,
@@ -558,27 +598,28 @@ site = web.WebService(
     ],
     opts=pulumi.ResourceOptions(depends_on=[base, database, services_net, sheaf_service]),
 )
-# Who may pass IAP to reach the web app: the access group in a browser, and the automation account
-# anything programmatic impersonates.
+# Any Google account, service accounts included, may pass IAP: IAP only establishes who the caller is, and the ACL
+# decides who is admitted (the auth service's GetAccess, at the app's perimeter and its data seam).
 grants.IapAccessor(
-    'themis-access-group',
-    member=f'group:{iap_access_group}',
+    'any-google-account',
+    member='allAuthenticatedUsers',
     service=site.service_name,
     project=project,
     location=region,
     opts=pulumi.ResourceOptions(depends_on=[site]),
 )
-grants.IapAccessor(
-    'themis-clu',
-    member=automation_user.member,
-    service=site.service_name,
-    project=project,
-    location=region,
-    opts=pulumi.ResourceOptions(depends_on=[site]),
-)
-# The web BFF: derives each session's bearer at session create, resolves papers through the evidence
-# service and serves the resolved object from the fulltext bucket itself.
+# The web BFF: asks the auth service what each caller may reach, derives each session's bearer at session
+# create, resolves papers through the evidence service and serves the resolved object from the fulltext bucket
+# itself.
 web_member = grants.service_account(site.service_account_email)
+grants.ServiceInvoker(
+    'themis-web',
+    member=web_member,
+    service=auth_service.service_name,
+    project=project,
+    location=region,
+    target='auth',
+)
 grants.SessionBearerDeriver(
     'themis-web',
     member=web_member,
@@ -631,10 +672,13 @@ if clu_derives_session_tokens:
         prior=grants.Prior('themis-clu-mac-signer'),
         opts=pulumi.ResourceOptions(depends_on=[deploy.bindings['roles/cloudkms.admin']]),
     )
-semantic_scholar = secrets.semantic_scholar_secret(
+# The litcache OA id resolver falls back to Semantic Scholar, whose keyless endpoint is too rate-limited for a bulk
+# (Dataflow) run.
+semantic_scholar = secrets.stack_secret(
+    'semantic-scholar-api-key',
     project=project,
     region=region,
-    api_key=semantic_scholar_api_key,
+    value=semantic_scholar_api_key,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 ingest_net = ingest_network.IngestionNetwork(
@@ -745,6 +789,11 @@ spend_alerts = cost_alerts.CostAlerts(
     dashboard_url=spend_dashboard.console_url,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
+auth.acl_rejection_alert(
+    project=project,
+    notification_channel=spend_alerts.notification_channel_name,
+    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
+)
 cost_report.CostReport(
     project=project,
     region=region,
@@ -765,7 +814,7 @@ if enable_pr_screenshot_bucket:
         screenshots.pr_screenshot_bucket(
             project=project,
             region=region,
-            team_group=iap_access_group,
+            team_group=config.require('prScreenshotWriterGroup'),
             opts=pulumi.ResourceOptions(depends_on=[base]),
         ).name,
     )
@@ -785,6 +834,8 @@ pulumi.export('sql_database', database.database_name)
 pulumi.export('migrator_db_user', migrator_db_user.name)
 pulumi.export('auth_url', auth_service.url)
 pulumi.export('auth_sa_email', auth_service.service_account_email)
+# The secret the site's writer adds the ACL's versions to.
+pulumi.export('acl_secret', acl_secret.name)
 pulumi.export('hello_url', hello_service.url)
 pulumi.export('hello_sa_email', hello_service.service_account_email)
 pulumi.export('sheaf_url', sheaf_service.url)
@@ -812,8 +863,8 @@ pulumi.export('ingest_db_user', ingestion.db_user.name)
 # The subnet the Dataflow launch targets (`--subnetwork`), consumed from outside this program.
 pulumi.export('ingest_subnetwork', ingest_net.subnetwork.self_link)
 pulumi.export('session_token_signing_key', session_token_key.id)
-pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_secret.secret_id)
-pulumi.export('anthropic_webhook_signing_key_secret_id', anthropic_webhook_signing_key_secret.secret_id)
+pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_secret.secret.secret_id)
+pulumi.export('anthropic_webhook_signing_key_secret_id', anthropic_webhook_signing_key_secret.secret.secret_id)
 # The model the agent declaration is applied with; a secret output, as the config it comes from.
 pulumi.export('anthropic_agent_model_id', anthropic_agent_model_id)
 # What the deploy workflow's agent step reads: the agent it applies the declaration to, and the identity it

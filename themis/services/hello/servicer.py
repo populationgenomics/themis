@@ -28,6 +28,6 @@ class Servicer(hello_pb2_grpc.HelloServicer):
         session = await session_mod.require_session(context, self._session_resolver)
         return hello_pb2.SayHelloResponse(
             greeting=f'hello from analysis {session.analysis_id}: {request.note}',
-            project_id=session.project_id,
+            project_id=session.project.id,
             analysis_id=session.analysis_id,
         )

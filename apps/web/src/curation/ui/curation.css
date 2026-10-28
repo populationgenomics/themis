@@ -9,7 +9,7 @@
  */
 
 @theme static {
-  /* The curator's own voice. Loaded by app/curation/layout.tsx. */
+  /* The curator's own voice. Loaded by app/project/[projectId]/curation/layout.tsx. */
   --font-curator: var(--font-curator-serif), ui-serif, Georgia, serif;
 
   /* An answered workflow, a workflow deliberately left unscored, and one not yet reached. Three

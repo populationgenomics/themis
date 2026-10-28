@@ -43,14 +43,14 @@ export class AuthorizedBackend {
   ) {}
 
   async listProjects(): Promise<Project[]> {
-    return this.membership.projectsOf(this.userEmail);
+    return this.membership.projects();
   }
 
   async createAnalysis(input: {
     inputs: AnalysisInputs;
     projectId: string;
   }): Promise<Analysis> {
-    await this.requireMemberOf(input.projectId);
+    this.requireMemberOf(input.projectId);
     return this.data.createAnalysis({
       inputs: input.inputs,
       projectId: input.projectId,
@@ -65,12 +65,12 @@ export class AuthorizedBackend {
       throw new Error("this backend does not seed documents");
     }
     const { projectId } = this.documents;
-    await this.requireMemberOf(projectId);
+    this.requireMemberOf(projectId);
     return this.documents.seedDocument(projectId, prompt, files);
   }
 
   async listAnalyses(projectId: string): Promise<Analysis[]> {
-    await this.requireMemberOf(projectId);
+    this.requireMemberOf(projectId);
     return this.data.listAnalysesIn([projectId]);
   }
 
@@ -78,7 +78,7 @@ export class AuthorizedBackend {
    *  and dates each Project by. One read over the whole membership, not one per
    *  Project. */
   async listAllAnalyses(): Promise<Analysis[]> {
-    const projects = await this.membership.projectsOf(this.userEmail);
+    const projects = this.membership.projects();
     return this.data.listAnalysesIn(projects.map((p) => p.id));
   }
 
@@ -229,13 +229,13 @@ export class AuthorizedBackend {
       // gets the same not-found as an unknown id and cannot tell the row exists. A member sees the
       // fault, which is theirs to know about.
       if (isUndecodableAnalysisError(e)) {
-        if (!(await this.membership.isMember(this.userEmail, e.projectId))) {
+        if (!this.membership.isMember(e.projectId)) {
           throw new ResourceNotFoundError(`analysis not found: ${analysisId}`);
         }
       }
       throw e;
     }
-    if (!(await this.membership.isMember(this.userEmail, analysis.projectId))) {
+    if (!this.membership.isMember(analysis.projectId)) {
       throw new ResourceNotFoundError(`analysis not found: ${analysisId}`);
     }
     return analysis;
@@ -244,8 +244,8 @@ export class AuthorizedBackend {
   /** Authorize access to a named Project: the caller must belong to it. A non-member
    *  Project is answered not-found for the same existence-hiding reason — a caller
    *  must not learn a Project outside their membership exists. */
-  private async requireMemberOf(projectId: string): Promise<void> {
-    if (!(await this.membership.isMember(this.userEmail, projectId))) {
+  private requireMemberOf(projectId: string): void {
+    if (!this.membership.isMember(projectId)) {
       throw new ResourceNotFoundError(`project not found: ${projectId}`);
     }
   }

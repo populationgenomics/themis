@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  isNotAdmittedError,
   isResourceNotFoundError,
   isUnauthenticatedError,
 } from "@/server/errors";
@@ -11,7 +12,8 @@ import {
 // so this only shapes what a route body *throws*.
 
 /** Map a thrown value to a compact JSON error response. `ResourceNotFoundError` → 404,
- *  `UnauthenticatedError` → 401, then a generic 500 that never leaks internals. */
+ *  `UnauthenticatedError` → 401, `NotAdmittedError` → 403, then a generic 500 that never leaks
+ *  internals. */
 export function toErrorResponse(error: unknown): NextResponse {
   if (isResourceNotFoundError(error)) {
     return NextResponse.json(
@@ -23,6 +25,12 @@ export function toErrorResponse(error: unknown): NextResponse {
     return NextResponse.json(
       { error: { code: "unauthenticated", message: "unauthenticated" } },
       { status: 401 },
+    );
+  }
+  if (isNotAdmittedError(error)) {
+    return NextResponse.json(
+      { error: { code: "permission_denied", message: "not admitted" } },
+      { status: 403 },
     );
   }
   console.error("unhandled route error", error);

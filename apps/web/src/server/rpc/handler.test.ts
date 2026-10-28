@@ -6,10 +6,10 @@ import { GET as getPack } from "@/app/api/workspaces/[analysisId]/packs/[packId]
 import { POLL_TIP_BUDGET_MS } from "@/lib/workspace-deadlines";
 import type { RefDocSnapshot } from "@/models/sheaf";
 import { Workbench } from "@/models/workbench";
+import { FIXTURE_GRANTS } from "@/server/adapters/fixture/access";
 import { FixtureDataPlane } from "@/server/adapters/fixture/data-plane";
 import { DEV_USER_EMAIL } from "@/server/adapters/fixture/identity";
 import { DOC_XML, XML_QUOTE } from "@/server/adapters/fixture/literature";
-import { FixtureMembership } from "@/server/adapters/fixture/membership";
 import { FixtureWorkspace } from "@/server/adapters/fixture/workspace";
 import { AuthorizedBackend } from "@/server/authorized-backend";
 import {
@@ -18,6 +18,7 @@ import {
   WorkspacePackNotListedError,
   WorkspacePublishError,
 } from "@/server/errors";
+import { GrantedMembership } from "@/server/membership";
 import { setUserContext } from "./context";
 import type { FetchRouter } from "./fetch-router";
 import { createFetchRouter } from "./fetch-router";
@@ -115,7 +116,7 @@ function pollingPast(failure: Error): FetchRouter {
     new FixtureDataPlane(new FixtureWorkspace()),
     new UnreadableWorkspace(failure),
     null,
-    new FixtureMembership(),
+    new GrantedMembership(FIXTURE_GRANTS),
     DEV_USER_EMAIL,
     POLL_TIP_BUDGET_MS,
   );
@@ -165,7 +166,7 @@ describe("the served surface", () => {
           clinicalContext: "de novo, developmental delay",
         },
       },
-      projectId: "proj_fixture",
+      projectId: "fixture-cohort",
     });
     expect(created.status).toBe(200);
     const id = created.body?.id as string;
@@ -177,7 +178,7 @@ describe("the served surface", () => {
   test("a curator's turn joins the run it was sent to", async () => {
     const created = await call("CreateAnalysis", {
       inputs: { freeForm: { prompt: "classify the variant" } },
-      projectId: "proj_fixture",
+      projectId: "fixture-cohort",
     });
     const id = created.body?.id as string;
     await call("Poll", { analysisId: id });
@@ -201,7 +202,7 @@ describe("the served surface", () => {
   test("a turn sent mid-step is refused typed; the interrupt clears the way", async () => {
     const created = await call("CreateAnalysis", {
       inputs: { freeForm: { prompt: "classify the variant" } },
-      projectId: "proj_fixture",
+      projectId: "fixture-cohort",
     });
     const id = created.body?.id as string;
     // Seven ticks: the seventh reveals the edit call still awaiting its result.
@@ -376,7 +377,7 @@ function publishOn(
 async function created(): Promise<string> {
   const { body } = await call("CreateAnalysis", {
     inputs: { freeForm: { prompt: "classify the variant" } },
-    projectId: "proj_fixture",
+    projectId: "fixture-cohort",
   });
   return body?.id as string;
 }
@@ -541,7 +542,7 @@ describe("the request boundary", () => {
           clinicalContext: "   ",
         },
       },
-      projectId: "proj_fixture",
+      projectId: "fixture-cohort",
     });
     expect(status).toBe(400);
     expect(body?.code).toBe("invalid_argument");
@@ -553,7 +554,7 @@ describe("the request boundary", () => {
   test("inputs naming no scenario are rejected, not stored as an unreadable Analysis", async () => {
     // The oneof's `required` rule is what stops an Analysis existing that no surface can name.
     const { status, body } = await call("CreateAnalysis", {
-      projectId: "proj_fixture",
+      projectId: "fixture-cohort",
       inputs: {},
     });
     expect(status).toBe(400);
@@ -564,7 +565,7 @@ describe("the request boundary", () => {
     // `service.ts` guards this too; the guard is a fault path, and this is the rule that makes it
     // unreachable. Without the field rule the guard would surface as a masked 500, not a 400.
     const { status, body } = await call("CreateAnalysis", {
-      projectId: "proj_fixture",
+      projectId: "fixture-cohort",
     });
     expect(status).toBe(400);
     expect(body?.code).toBe("invalid_argument");
@@ -574,7 +575,7 @@ describe("the request boundary", () => {
     // The inputs are stored inline in the analyses row and rendered into the agent's opening
     // instruction, so the bound is what keeps both finite.
     const { status, body } = await call("CreateAnalysis", {
-      projectId: "proj_fixture",
+      projectId: "fixture-cohort",
       inputs: {
         variantClassification: {
           transcript: "NM_001382309.1",
@@ -695,7 +696,7 @@ describe("failures reaching the client", () => {
       result = await send(
         async (request, path) => maskInternal(await router(request, path)),
         "ListAnalyses",
-        { projectId: "proj_fixture" },
+        { projectId: "fixture-cohort" },
       );
     } finally {
       console.error = wasError;

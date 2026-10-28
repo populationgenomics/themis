@@ -36,7 +36,7 @@ import {
 const ANALYSIS: Analysis = create(AnalysisSchema, {
   id: "an_1",
   sessionId: "sess_1",
-  projectId: "proj_fixture",
+  projectId: "fixture-cohort",
   inputs: create(AnalysisInputsSchema, {
     scenario: { case: "freeForm", value: { prompt: "do the thing" } },
   }),

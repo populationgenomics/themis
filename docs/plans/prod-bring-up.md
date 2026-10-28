@@ -89,7 +89,12 @@ values.
 
 - The deploy workflow applies the agent declaration (which agent, skills and model a session runs) after `pulumi up`,
   signed in to Anthropic as the deploy account. The declaration and its skill ids are tracked in the repo.
-- IAP guards the web app on its Cloud Run service. No IAP setting depends on an id that only the first `up` produces.
+- IAP guards the web app on its Cloud Run service and lets any Google account through, signing people in through an
+  OAuth client created by hand for each deployment; the auth service admits them from the ACL the site writes
+  ([`access-control.md`](../design/access-control.md)). The client's redirect URI names only its own id, so it is
+  created before the first `up`. The ACL lives in a secret the stack creates in prod's project, which the site's writer
+  (`themis:aclWriter`) may manage and read; the site's config names that secret, `projects/cpg-themis-prod/secrets/acl`,
+  rather than any account of Themis's.
 - Each stack sets the ratio at which request traces are sampled. The auth service keeps a pool of database connections
   and runs at most three instances.
 - The migrate runner compares its ledger with the committed migrations before it applies anything, by content hash where
@@ -342,8 +347,11 @@ Some of what the running system reads is created by neither `bootstrap.sh` nor `
   for transcription twice. Either way, the seed stays until prod's corpus exists.
 - The reference mirror, loaded by the resource mirror tool into prod's bucket. No running service reads it yet, so it
   does not block launch.
-- The Project and membership rows. A fresh database admits nobody until they are seeded, which is done by hand as clu;
-  the rosters are personal data and stay out of the repo.
+- Prod's ACL, which the site writes as compact JSON into prod's `acl` secret
+  ([`access-control.md`](../runbooks/access-control.md)). The auth service refuses to start without a valid one, so a
+  first `up` limited to the secret precedes the site's write, and the full `up` follows it. The auth service admits
+  nobody the ACL does not list except the operator account, which it admits to every Project the ACL holds. The rosters
+  are personal data and stay out of the repo.
 
 Variant annotation reads live public APIs, so there is nothing to copy for it. How CaRDinal data itself reaches prod is
 not covered by any design doc; see open questions.
@@ -370,8 +378,13 @@ running prod and the first CaRDinal data.
    Cloud SQL public IP (the instance is reached only through the connector, but the IP must exist), or the Dataflow
    workers' external IPs.
 1. Choose prod's hostname and tell the IT team an A record will follow, so the request is ready when the IP exists.
-1. Create the prod IAP access group through `cpg-infrastructure-private`, and check that the OAuth consent screen's user
-   type admits the external curators who will use prod.
+1. Create prod's OAuth client for IAP by hand ([`access-control.md`](../runbooks/access-control.md)), with an External
+   consent screen in production so that the external curators who will use prod can sign in, and ask the site to
+   configure prod's ACL with the first Projects: its writer is CPG's deploy account, which prod's `themis:aclWriter`
+   names, and its target is `projects/cpg-themis-prod/secrets/acl`.
+1. Check that the organisation does not enforce Domain Restricted Sharing on prod's project
+   (`gcloud resource-manager org-policies describe iam.allowedPolicyMemberDomains --project=cpg-themis-prod --effective`).
+   The IAP grant to `allAuthenticatedUsers` fails at `up` if it does, and then needs an exception for the project.
 1. Anthropic org-admin round 1: the prod workspace, its spend limit, retention and geography settings, and the deploy
    account's service account and rule.
 1. A Slack app of prod's own, `Themis prod`, so that a post shows which environment sent it and dev's token cannot post
@@ -418,13 +431,18 @@ Items without a stated dependency can run in parallel.
    it on that PR.
 1. In the prod workspace, create the self-hosted environment and its key, upload the skills from source, and create the
    agent. The webhook waits for the dispatcher's URL.
+1. Deploy prod's ACL secret and the auth service's account alone, with a targeted `up` and every image override set
+   ([`fresh-environment.md`](../runbooks/fresh-environment.md#2-first-bring-up-once-per-environment)), and have the site
+   deploy its first version of prod's ACL. The auth service refuses to start until that version exists, and its read
+   grant on the secret applies well before its first start.
 1. Run the bring-up script. Then send a test notification from each Slack notification channel it created and check that
    it arrives in Slack: a post from a bot missing from the channel is refused, and Cloud Monitoring reports nothing.
 1. Hand the load balancer's reserved IP to IT for the A record; the managed certificate becomes active once the record
    resolves.
 1. Anthropic org-admin round 2 against the new service-account ids, and register the webhook. Set the rule ids and the
    signing key, and run `up` again.
-1. Load the literature corpus and the reference mirror, and seed the Projects and their members.
+1. Load the literature corpus and the reference mirror, and have the site grant the sandbox job's account read on the
+   first Projects' datasets.
 1. Create the `prod` GitHub Environment and hand deploys to it.
 1. Smoke-test an Analysis end to end, and fire one alert of each kind to confirm it arrives.
 

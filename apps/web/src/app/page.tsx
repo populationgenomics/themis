@@ -1,6 +1,5 @@
 import { headers } from "next/headers";
 import { AppBar } from "@/components/app-bar";
-import { CurationPanel } from "@/curation/ui/panel";
 import { userContext } from "@/server/context";
 import { ProjectsPanel } from "@/workbench/projects-panel";
 
@@ -18,7 +17,6 @@ export default async function LandingPage() {
       <main className="tscroll flex-1 overflow-auto px-[56px] py-[40px]">
         <div className="mx-auto flex max-w-[1100px] flex-col gap-[24px]">
           <ProjectsPanel />
-          <CurationPanel />
         </div>
       </main>
     </div>

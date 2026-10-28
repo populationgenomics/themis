@@ -4,16 +4,6 @@ import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
 // The curation module's own domain. Deliberately shares nothing with the workbench's models: a
 // curation is not an Analysis, and the two have no reason to move together (curation-surface.md).
 
-/** What a caller may do. Managers additionally administer curators, variants and assignments. */
-export type Role = "manager" | "curator";
-
-export interface Person {
-  email: string;
-  role: Role;
-  addedBy: string;
-  addedAt: Date;
-}
-
 /** A MONDO term id as a registration states it, the form `curation.variants` checks. */
 export const MONDO_ID = /^MONDO:[0-9]{7}$/;
 
@@ -36,6 +26,8 @@ export function clinicalContextLength(raw: string): number {
  *  against the same disease under another mode is a registration of its own. */
 export interface Variant {
   id: string;
+  /** The Project the registration belongs to; its worksheets and their answers belong there too. */
+  projectId: string;
   gene: string;
   transcript: string;
   hgvsC: string;
@@ -51,7 +43,10 @@ export interface Variant {
   createdAt: Date;
 }
 
-export type NewVariant = Omit<Variant, "id" | "createdBy" | "createdAt">;
+export type NewVariant = Omit<
+  Variant,
+  "id" | "projectId" | "createdBy" | "createdAt"
+>;
 
 /** One curator's worksheet on one variant. `workflowsVersion` pins the transcription it is answered
  *  against, so a later correction cannot silently change what a stored answer meant. */

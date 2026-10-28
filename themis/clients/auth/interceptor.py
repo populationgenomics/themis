@@ -7,8 +7,9 @@ the rpc's contract declares — the principals the rpc admits — and denies whe
 server-wide by construction: a gRPC interceptor sees every method path before any handler runs, so an
 rpc whose contract admits nobody is denied without anyone having remembered to gate it, and a path no
 imported contract declares is denied before any rule is consulted — it is not an rpc, so not even the
-developer identity, admitted on every rpc there is, reaches it. The health check is the one exemption,
-probed by Cloud Run without credentials.
+developer identity, admitted on every rpc there is, reaches it. Two things pass through ungated: the
+health check, probed by Cloud Run without credentials, and the rpc admission is derived through
+(``rules.UNGATED_METHODS``), which only the auth service serves.
 
 What is verified and what is trusted: the account is verified, by Google's signature on the token; the
 claim is trusted, because the account is trusted to make it, and is checked only for being one the
@@ -18,8 +19,9 @@ callee cannot honour — one that does not decode, one naming nothing, one namin
 no token, or a self claim (or no claim) from an account that has no self-acting member — is
 ``INTERNAL``, a caller-side fault. A session token that does not resolve is a denial whatever the claim:
 the call would be attributed wrongly or not at all, so a handler that finds no session on its context
-knows the claim named none. A session-resolver failure that is not "the token does not resolve"
-propagates, for any call presenting a token.
+knows the claim named none. The auth service answering UNAVAILABLE ends the call UNAVAILABLE; any other
+session-resolver failure that is not "the token does not resolve" propagates, for any call presenting a
+token.
 
 The gate is also the one place a call's status is sent. A handler behind it raises :class:`StatusError`
 — a gRPC status carried as an exception — and the gate aborts the context with it, so a servicer never
@@ -114,7 +116,7 @@ class AuthInterceptor(grpc.aio.ServerInterceptor):
         if handler is None:  # pyright: ignore[reportUnnecessaryComparison]  — no such method: the server answers UNIMPLEMENTED
             return handler
         path = handler_call_details.method
-        if path.startswith(_HEALTH_SERVICE):
+        if path.startswith(_HEALTH_SERVICE) or rules_mod.is_ungated(path):
             return handler
         rule = rules_mod.rule_for_path(path)
         if rule is None:
@@ -161,28 +163,9 @@ def authorizer_from_env(*, fixture_contexts_var: str, fixture_callers_var: str) 
             ``Authorizer`` is built, so a misconfigured deploy names the first missing variable; nothing
             here opens a connection.
     """
-    backend = os.environ.get(AUTHORIZER_VAR)
-    if backend is None:
-        raise SystemExit(f'{AUTHORIZER_VAR} is required (expected "http" or "fixture")')
-    if backend not in ('http', 'fixture'):
-        raise SystemExit(f'unsupported {AUTHORIZER_VAR} {backend!r} (expected "http" or "fixture")')
-    if backend == 'http':
-        audience = os.environ.get(AUDIENCE_VAR)
-        if not audience:
-            raise SystemExit(f'{AUDIENCE_VAR} is required for the http authorizer: the URL callers mint ID tokens for')
-        try:
-            verify_caller = caller_mod.cloud_run_caller_verifier(audience)
-        except ValueError as e:
-            raise SystemExit(f'{AUDIENCE_VAR}: {e}') from e
-    else:
-        verify_caller = caller_mod.fixture_caller_verifier_from_json(
-            os.environ.get(fixture_callers_var), var_name=fixture_callers_var
-        )
-    project = os.environ.get(PROJECT_VAR)
-    if not project:
-        raise SystemExit(
-            f'{PROJECT_VAR} is required: the GCP project this service runs in, completing each Caller into an email'
-        )
+    backend = _authorizer_backend()
+    verify_caller = _caller_verifier(backend, fixture_callers_var=fixture_callers_var)
+    project = project_from_env()
     if backend == 'http':
         session_resolver = session_mod.session_resolver_from_env()
     else:
@@ -190,6 +173,57 @@ def authorizer_from_env(*, fixture_contexts_var: str, fixture_callers_var: str) 
             os.environ.get(fixture_contexts_var), var_name=fixture_contexts_var
         )
     return Authorizer(session_resolver=session_resolver, verify_caller=verify_caller, project=project)
+
+
+def authorizer_resolving_through(
+    session_resolver: session_mod.SessionResolver, *, fixture_callers_var: str
+) -> Authorizer:
+    """The ``Authorizer`` of the auth service itself, which resolves sessions in-process, or ``SystemExit``.
+
+    Read from the environment as :func:`authorizer_from_env` reads it, less the session resolver's inputs:
+    ``THEMIS_AUTHORIZER_BACKEND`` selects how callers are verified, ``THEMIS_ID_TOKEN_AUDIENCE`` is the
+    audience the ``http`` verifier requires, ``fixture_callers_var`` seeds the ``fixture`` verifier, and
+    ``THEMIS_GCP_PROJECT`` completes each ``Caller`` into an email.
+
+    Raises:
+        SystemExit: A selector or seed is unset, unknown or malformed.
+    """
+    backend = _authorizer_backend()
+    verify_caller = _caller_verifier(backend, fixture_callers_var=fixture_callers_var)
+    return Authorizer(session_resolver=session_resolver, verify_caller=verify_caller, project=project_from_env())
+
+
+def _authorizer_backend() -> str:
+    backend = os.environ.get(AUTHORIZER_VAR)
+    if backend is None:
+        raise SystemExit(f'{AUTHORIZER_VAR} is required (expected "http" or "fixture")')
+    if backend not in ('http', 'fixture'):
+        raise SystemExit(f'unsupported {AUTHORIZER_VAR} {backend!r} (expected "http" or "fixture")')
+    return backend
+
+
+def _caller_verifier(backend: str, *, fixture_callers_var: str) -> caller_mod.CallerVerifier:
+    if backend == 'http':
+        audience = os.environ.get(AUDIENCE_VAR)
+        if not audience:
+            raise SystemExit(f'{AUDIENCE_VAR} is required for the http authorizer: the URL callers mint ID tokens for')
+        try:
+            return caller_mod.cloud_run_caller_verifier(audience)
+        except ValueError as e:
+            raise SystemExit(f'{AUDIENCE_VAR}: {e}') from e
+    return caller_mod.fixture_caller_verifier_from_json(
+        os.environ.get(fixture_callers_var), var_name=fixture_callers_var
+    )
+
+
+def project_from_env() -> str:
+    """``THEMIS_GCP_PROJECT``, the GCP project this service runs in, or ``SystemExit``."""
+    project = os.environ.get(PROJECT_VAR)
+    if not project:
+        raise SystemExit(
+            f'{PROJECT_VAR} is required: the GCP project this service runs in, completing each Caller into an email'
+        )
+    return project
 
 
 async def _build_context(context: grpc.aio.ServicerContext, authorizer: Authorizer) -> context_mod.AuthContext:
@@ -224,6 +258,11 @@ async def _resolve_session(token: str, resolver: session_mod.SessionResolver) ->
         return await resolver(token)
     except session_mod.UnresolvedSessionError as e:
         raise StatusError(grpc.StatusCode.PERMISSION_DENIED, 'the session the claim names does not resolve') from e
+    except grpc.aio.AioRpcError as e:
+        # The auth service down, or refusing everyone on a stale ACL: retryable, and said so.
+        if e.code() is grpc.StatusCode.UNAVAILABLE:
+            raise StatusError(grpc.StatusCode.UNAVAILABLE, f'the auth service is unavailable: {e.details()}') from e
+        raise
 
 
 async def _admit(

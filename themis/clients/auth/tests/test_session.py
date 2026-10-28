@@ -22,7 +22,18 @@ from themis.rpc import auth_pb2, auth_pb2_grpc
 from themis.testing import in_process_grpc
 
 
-class _StubAuth(auth_pb2_grpc.AuthServicer):
+class _ResolveOnly(auth_pb2_grpc.AuthServicer):
+    """An auth service serving only ``ResolveSession``, which each stub below implements."""
+
+    @override
+    async def GetAccess(
+        self, request: auth_pb2.GetAccessRequest, context: grpc.aio.ServicerContext
+    ) -> auth_pb2.GetAccessResponse:
+        del request
+        await context.abort(grpc.StatusCode.UNIMPLEMENTED, 'this stub serves ResolveSession alone')
+
+
+class _StubAuth(_ResolveOnly):
     """A minimal auth service: resolves ``good`` to a binding, aborts every other token.
 
     ``abort_code`` selects the failure: ``PERMISSION_DENIED`` models an unresolvable token,
@@ -38,10 +49,10 @@ class _StubAuth(auth_pb2_grpc.AuthServicer):
     ) -> auth_pb2.SessionContext:
         if request.session_token != 'good':
             await context.abort(self._abort_code, 'unknown token')
-        return auth_pb2.SessionContext(project_id='p1', analysis_id='a1')
+        return auth_pb2.SessionContext(analysis_id='a1', project=auth_pb2.ProjectGrant(id='p1'))
 
 
-class _GuardServicer(auth_pb2_grpc.AuthServicer):
+class _GuardServicer(_ResolveOnly):
     """Hosts ``require_session`` so it runs under a real context; returns the resolved binding."""
 
     def __init__(self, session_resolver: session.SessionResolver) -> None:
@@ -68,7 +79,7 @@ def test_session_resolver_returns_the_binding() -> None:
             return await session._session_resolver_over_stub(stub)('good')
 
     result = asyncio.run(run())
-    assert result.project_id == 'p1'
+    assert result.project.id == 'p1'
     assert result.analysis_id == 'a1'
 
 
@@ -101,7 +112,7 @@ def test_require_session_returns_the_binding() -> None:
             )
 
     result = asyncio.run(run())
-    assert result.project_id == fixture_session.PROJECT_ID
+    assert result.project.id == fixture_session.PROJECT_ID
 
 
 def test_require_session_missing_token_is_unauthenticated() -> None:
@@ -127,6 +138,21 @@ def test_require_session_unresolvable_token_is_permission_denied() -> None:
     assert exc_info.value.code() is grpc.StatusCode.PERMISSION_DENIED
 
 
+def test_require_session_passes_an_unavailable_auth_service_on_as_unavailable() -> None:
+    # The guard resolves through a real auth stub, against an auth service answering UNAVAILABLE.
+    async def run() -> None:
+        async with _serving(_StubAuth(grpc.StatusCode.UNAVAILABLE)) as auth_stub:
+            resolver = session._session_resolver_over_stub(auth_stub)
+            async with _serving(_GuardServicer(resolver)) as stub:
+                await stub.ResolveSession(
+                    auth_pb2.ResolveTokenRequest(), metadata=fixture_session.session_metadata('nope')
+                )
+
+    with pytest.raises(grpc.aio.AioRpcError) as exc_info:
+        asyncio.run(run())
+    assert exc_info.value.code() is grpc.StatusCode.UNAVAILABLE
+
+
 @pytest.mark.parametrize(
     ('auth_url', 'expected'),
     [
@@ -147,14 +173,14 @@ def test_session_resolver_from_env_requires_url(monkeypatch: pytest.MonkeyPatch)
 
 def test_fixture_resolver_resolves_a_seeded_bearer() -> None:
     session_resolver = session.fixture_session_resolver_from_json(
-        '{"tok": {"project_id": "p1", "analysis_id": "a1"}}', var_name='V'
+        '{"tok": {"analysis_id": "a1", "project": {"id": "p1"}}}', var_name='V'
     )
 
     async def run() -> auth_pb2.SessionContext:
         return await session_resolver('tok')
 
     context = asyncio.run(run())
-    assert context.project_id == 'p1'
+    assert context.project.id == 'p1'
     assert context.analysis_id == 'a1'
 
 

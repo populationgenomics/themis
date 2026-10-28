@@ -29,16 +29,19 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM base AS runtime
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
-# No backend is baked in: the runtime requires THEMIS_BACKEND (and, for cloudsql, the
-# THEMIS_SQL_* connection env) from whoever runs the image, and exits at startup without it.
+# No backend is baked in: the runtime requires THEMIS_BACKEND, the ACL's secret and staleness
+# limit, and the authorizer selector from whoever runs the image, and exits at startup without them.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH=/app
 COPY themis/rpc ./themis/rpc
+COPY themis/clients ./themis/clients
 COPY themis/common/__init__.py themis/common/sql.py themis/common/sql_pool.py ./themis/common/
 COPY themis/telemetry ./themis/telemetry
 COPY themis/services/auth ./themis/services/auth
 # -x skips the venv's site-packages, which uv compiled at install.
 RUN python -m compileall -q -x /site-packages/ /app
+# Import the entrypoint at build time, so a module the COPY set misses fails the build.
+RUN python -c 'import themis.services.auth.__main__'
 # Serve unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime,
 # so no chown is needed.
 RUN useradd --system --uid 10001 app

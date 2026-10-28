@@ -32,14 +32,12 @@ class ProjectGrant(_message.Message):
     def __init__(self, id: _Optional[str] = ..., roles: _Optional[_Iterable[_Union[Role, str]]] = ...) -> None: ...
 
 class SessionContext(_message.Message):
-    __slots__ = ("project_id", "analysis_id", "project")
-    PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
+    __slots__ = ("analysis_id", "project")
     ANALYSIS_ID_FIELD_NUMBER: _ClassVar[int]
     PROJECT_FIELD_NUMBER: _ClassVar[int]
-    project_id: str
     analysis_id: str
     project: ProjectGrant
-    def __init__(self, project_id: _Optional[str] = ..., analysis_id: _Optional[str] = ..., project: _Optional[_Union[ProjectGrant, _Mapping]] = ...) -> None: ...
+    def __init__(self, analysis_id: _Optional[str] = ..., project: _Optional[_Union[ProjectGrant, _Mapping]] = ...) -> None: ...
 
 class GetAccessRequest(_message.Message):
     __slots__ = ("email",)

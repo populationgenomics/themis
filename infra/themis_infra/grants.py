@@ -31,7 +31,7 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/compute.admin',
     'roles/iam.serviceAccountAdmin',
     'roles/iam.serviceAccountUser',
-    'roles/iap.admin',
+    'roles/iap.admin',  # the web service's IAP policy and its OAuth-client settings
     'roles/logging.configWriter',  # retention on the _Default log bucket (baseline.py) is a buckets.create/update
     'roles/monitoring.editor',  # the workspace-spend monitor's dashboard and alert policies
     'roles/run.admin',
@@ -419,6 +419,59 @@ class SecretReader(_Capability):
             member=member,
             opts=self._binding(prior),
         )
+        self.register_outputs({})
+
+
+class SecretVersionManager(_Capability):
+    """May add, disable, enable and destroy the versions of one Secret Manager secret, and read none of them.
+
+    The holder writes the secret's value but cannot read it back, and this grant reaches no other secret.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        secret: pulumi.Input[str],
+        project: str,
+        target: str,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        name = f'{holder}-manages-versions-of-{target}'
+        super().__init__(name, opts)
+        gcp.secretmanager.SecretIamMember(
+            name,
+            project=project,
+            secret_id=secret,
+            role='roles/secretmanager.secretVersionManager',
+            member=member,
+            opts=self._binding(None),
+        )
+        self.register_outputs({})
+
+
+class QuotaConsumer(_Capability):
+    """May bill API calls to the project's quota, and see its enabled APIs, quotas and time series; reads no data.
+
+    `serviceUsageConsumer` is the `serviceusage.services.use` an API checks on the project a call bills its quota to.
+    It carries `serviceusage.services.get`/`list` and `serviceusage.quotas.get` besides, and
+    `monitoring.timeSeries.list` as for `TelemetryWriter`: the holder may list every series in the project, not read
+    their points.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        project: str,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        name = f'{holder}-bills-quota'
+        super().__init__(name, opts)
+        slug, role = _SERVICE_USAGE_CONSUMER
+        gcp.projects.IAMMember(f'{holder}-{slug}', project=project, role=role, member=member, opts=self._binding(None))
         self.register_outputs({})
 
 
@@ -866,8 +919,8 @@ class RepositoryReader(_Capability):
 class IapAccessor(_Capability):
     """May pass IAP to reach one IAP-enabled Cloud Run service — in a browser, or with a signed JWT.
 
-    The coarse "may reach the app" gate. What the holder may do inside is the app's own roles, decided
-    from its identity after IAP admits it.
+    The coarse gate in front of the app, which establishes a Google identity and nothing more. What the
+    holder may reach inside is the auth service's answer for that identity from the ACL.
     """
 
     def __init__(

@@ -141,9 +141,9 @@ describe("a second registration of one entity", () => {
 
   test("is refused as a conflict that names the entity", async () => {
     const store = new FixtureCurationStore();
-    await store.createVariant(variant, "manager@example.org");
+    await store.createVariant("validation", variant, "manager@example.org");
     const error = await store
-      .createVariant(variant, "manager@example.org")
+      .createVariant("validation", variant, "manager@example.org")
       .then(
         () => undefined,
         (e: unknown) => e,
@@ -172,10 +172,25 @@ describe("a second registration of one entity", () => {
     ).toBe(true);
   });
 
+  test("in another Project is a registration of its own", async () => {
+    const store = new FixtureCurationStore();
+    await store.createVariant("validation", variant, "manager@example.org");
+    const elsewhere = await store.createVariant(
+      "acute-care",
+      variant,
+      "manager@example.org",
+    );
+    expect(elsewhere.projectId).toBe("acute-care");
+    expect((await store.listVariants("acute-care")).map((v) => v.id)).toEqual([
+      elsewhere.id,
+    ]);
+  });
+
   test("under another mode is a registration of its own", async () => {
     const store = new FixtureCurationStore();
-    await store.createVariant(variant, "manager@example.org");
+    await store.createVariant("validation", variant, "manager@example.org");
     const recessive = await store.createVariant(
+      "validation",
       { ...variant, modeOfInheritance: ModeOfInheritance.AUTOSOMAL_RECESSIVE },
       "manager@example.org",
     );

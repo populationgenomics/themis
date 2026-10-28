@@ -27,7 +27,10 @@ _LIMIT_ENV = {
 def test_the_authorizer_is_seeded_from_the_sheaf_image_s_own_variables(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_AUTHORIZER_BACKEND', 'fixture')
     monkeypatch.setenv('THEMIS_GCP_PROJECT', 'x')
-    monkeypatch.setenv('THEMIS_SHEAF_FIXTURE_CONTEXTS', '{"tok": {"project_id": "p", "analysis_id": "a"}}')
+    monkeypatch.setenv(
+        'THEMIS_SHEAF_FIXTURE_CONTEXTS',
+        '{"tok": {"analysis_id": "a", "project": {"id": "p"}}}',
+    )
     monkeypatch.setenv('THEMIS_SHEAF_FIXTURE_CALLERS', '{}')
     authorizer = main_mod.build_authorizer()
 
@@ -35,7 +38,7 @@ def test_the_authorizer_is_seeded_from_the_sheaf_image_s_own_variables(monkeypat
         return await authorizer.session_resolver('tok')
 
     context = asyncio.run(resolve())
-    assert (context.project_id, context.analysis_id) == ('p', 'a')
+    assert (context.project.id, context.analysis_id) == ('p', 'a')
 
 
 def test_the_sheaf_server_is_built_only_through_the_gated_factory() -> None:

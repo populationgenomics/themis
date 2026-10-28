@@ -172,30 +172,6 @@ export class Sql {
     // by the case it already has. Opening that Analysis still raises: see `getAnalysis`.
     return rows.map(analysisForListing);
   }
-
-  /** Whether the user is a member of the Project. */
-  async isMember(userEmail: string, projectId: string): Promise<boolean> {
-    const rows = await this.query<{ one: number }>(
-      "isMember",
-      `SELECT 1 AS one FROM project_members
-       WHERE user_email = $1 AND project_id = $2`,
-      [userEmail, projectId],
-    );
-    return rows.length > 0;
-  }
-
-  /** Every Project the user belongs to (id + display name), joined to the Project
-   *  registry. */
-  async projectsOf(userEmail: string): Promise<{ id: string; name: string }[]> {
-    return this.query<{ id: string; name: string }>(
-      "projectsOf",
-      `SELECT p.id, p.name FROM projects p
-       JOIN project_members m ON m.project_id = p.id
-       WHERE m.user_email = $1
-       ORDER BY p.name`,
-      [userEmail],
-    );
-  }
 }
 
 /** An Analysis whose stored inputs did not decode, shaped so a listing can render it: the oneof is

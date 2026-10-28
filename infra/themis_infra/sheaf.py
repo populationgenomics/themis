@@ -164,9 +164,8 @@ class SheafService(pulumi.ComponentResource):
                 # `_MAX_PUBLISH_BYTES` (512 MiB) peak per request — so three in flight fit the 2Gi limit
                 # with the GCS client and runtime; Cloud Run's default of 80 would not.
                 max_instance_request_concurrency=3,
-                # Direct VPC egress so the auth call arrives over the VPC and auth's internal ingress
-                # admits it; all traffic, since auth's run.app is a public hostname a private-ranges
-                # route would send straight out. GCS stays on the private path (subnet PGA).
+                # Direct VPC egress on the services network, all traffic; GCS stays on the private path
+                # (subnet PGA).
                 vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                     network_interfaces=[
                         gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(

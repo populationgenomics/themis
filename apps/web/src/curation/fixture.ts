@@ -14,13 +14,15 @@ import {
   Classification,
   ModeOfInheritance,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
+import {
+  FIXTURE_CURATORS,
+  FIXTURE_PROJECT,
+} from "@/server/adapters/fixture/access";
 import { ClientInputError, ResourceNotFoundError } from "@/server/errors";
 import { DEV_USER_EMAIL } from "@/server/identity";
 import type {
   Entry,
   NewVariant,
-  Person,
-  Role,
   Submission,
   Variant,
   Worksheet,
@@ -32,20 +34,18 @@ import { WORKFLOWS_VERSION } from "./version";
 // The offline store: the same semantics as `sql.ts`, in memory. Assessments round-trip through the
 // proto encoding here too, so an encoding fault shows up offline rather than only against Cloud SQL.
 //
-// Seeded with one manager (the dev user, who is also assigned a worksheet — the arrangement the
-// blindness rule exists for) and two curators, so the surface has something to render without a
-// database. Both curators of the second variant have submitted, so the comparison page has two
-// answers to read against each other.
+// Seeded in the fixture Project, whose seeded ACL makes the dev user its manager and a curator
+// too (the arrangement the blindness rule exists for) beside two other curators, so the surface has
+// something to render without a database. Both curators of the second variant have submitted, so
+// the comparison page has two answers to read against each other.
 
-const SECOND_CURATOR = "sam.okafor@example.org";
-const THIRD_CURATOR = "rin.tanaka@example.org";
+const [SECOND_CURATOR, THIRD_CURATOR] = FIXTURE_CURATORS;
 
 interface StoredSubmission extends Submission {
   entries: Map<string, Uint8Array>;
 }
 
 export class FixtureCurationStore implements CurationStore {
-  private readonly people = new Map<string, Person>();
   private readonly variants = new Map<string, Variant>();
   private readonly worksheets = new Map<string, Worksheet>();
   private readonly draftRows = new Map<string, Map<string, Uint8Array>>();
@@ -63,18 +63,6 @@ export class FixtureCurationStore implements CurationStore {
 
   private seed(): void {
     const at = new Date("2026-08-01T09:00:00Z");
-    for (const [email, role] of [
-      [DEV_USER_EMAIL, "manager"],
-      [SECOND_CURATOR, "curator"],
-      [THIRD_CURATOR, "curator"],
-    ] as const) {
-      this.people.set(email, {
-        email,
-        role,
-        addedBy: DEV_USER_EMAIL,
-        addedAt: at,
-      });
-    }
     const seeded: NewVariant[] = [
       {
         gene: "MYH7",
@@ -100,7 +88,12 @@ export class FixtureCurationStore implements CurationStore {
       },
     ];
     for (const variant of seeded) {
-      const stored = this.insertVariant(variant, DEV_USER_EMAIL, at);
+      const stored = this.insertVariant(
+        FIXTURE_PROJECT,
+        variant,
+        DEV_USER_EMAIL,
+        at,
+      );
       // The dev user curates the first variant as well as managing, so the offline surface
       // exercises the manager-who-is-also-assigned case rather than only the clean one.
       const curators =
@@ -143,12 +136,14 @@ export class FixtureCurationStore implements CurationStore {
   }
 
   private insertVariant(
+    projectId: string,
     variant: NewVariant,
     createdBy: string,
     createdAt: Date,
   ): Variant {
     const registered = [...this.variants.values()].some(
       (v) =>
+        v.projectId === projectId &&
         v.transcript === variant.transcript &&
         v.hgvsC === variant.hgvsC &&
         v.mondoId === variant.mondoId &&
@@ -158,6 +153,7 @@ export class FixtureCurationStore implements CurationStore {
     const stored: Variant = {
       ...variant,
       id: this.id("var"),
+      projectId,
       createdBy,
       createdAt,
     };
@@ -183,39 +179,18 @@ export class FixtureCurationStore implements CurationStore {
     return worksheet;
   }
 
-  async roleOf(email: string): Promise<Role | undefined> {
-    return this.people.get(email)?.role;
-  }
-
-  async listPeople(): Promise<Person[]> {
-    return [...this.people.values()].sort((a, b) =>
-      a.email.localeCompare(b.email),
-    );
-  }
-
-  async addPerson(email: string, role: Role, addedBy: string): Promise<Person> {
-    const existing = this.people.get(email);
-    if (existing !== undefined) return existing;
-    const person: Person = { email, role, addedBy, addedAt: new Date() };
-    this.people.set(email, person);
-    return person;
-  }
-
-  async removePerson(email: string): Promise<void> {
-    this.people.delete(email);
-  }
-
   async createVariant(
+    projectId: string,
     variant: NewVariant,
     createdBy: string,
   ): Promise<Variant> {
-    return this.insertVariant(variant, createdBy, new Date());
+    return this.insertVariant(projectId, variant, createdBy, new Date());
   }
 
-  async listVariants(): Promise<Variant[]> {
-    return [...this.variants.values()].sort(
-      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
-    );
+  async listVariants(projectId: string): Promise<Variant[]> {
+    return [...this.variants.values()]
+      .filter((v) => v.projectId === projectId)
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   }
 
   async getVariant(id: string): Promise<Variant | undefined> {

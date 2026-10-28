@@ -1,4 +1,7 @@
-"""``authorizer_from_env``: the selector, the seeds, and the project, each required and named when missing."""
+"""Building an ``Authorizer`` from the environment: the selector, the seeds, the audience and the project.
+
+Each is required and named when missing.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ _CALLERS_VAR = 'TEST_FIXTURE_CALLERS'
 _FIXTURE_ENV = {
     'THEMIS_AUTHORIZER_BACKEND': 'fixture',
     'THEMIS_GCP_PROJECT': 'x',
-    _CONTEXTS_VAR: '{"tok": {"project_id": "p", "analysis_id": "a"}}',
+    _CONTEXTS_VAR: '{"tok": {"analysis_id": "a", "project": {"id": "p"}}}',
     _CALLERS_VAR: '{"bearer": "themis-web@x.iam.gserviceaccount.com"}',
 }
 
@@ -39,7 +42,7 @@ def test_the_fixture_authorizer_resolves_its_seeded_session_in_the_stated_projec
         return await authorizer.session_resolver(token)
 
     context = asyncio.run(resolve('tok'))
-    assert (context.project_id, context.analysis_id) == ('p', 'a')
+    assert (context.project.id, context.analysis_id) == ('p', 'a')
     assert authorizer.project == 'x'
     with pytest.raises(session_mod.UnresolvedSessionError):
         asyncio.run(resolve('unknown'))
@@ -85,3 +88,20 @@ def test_the_http_authorizer_refuses_an_audience_that_is_not_an_https_url(monkey
     )
     with pytest.raises(SystemExit, match='THEMIS_ID_TOKEN_AUDIENCE'):
         _build()
+
+
+@pytest.mark.parametrize('audience', [None, 'themis-auth'])
+def test_the_auth_services_own_http_authorizer_needs_an_https_audience(
+    monkeypatch: pytest.MonkeyPatch, audience: str | None
+) -> None:
+    _seed(monkeypatch, THEMIS_AUTHORIZER_BACKEND='http')
+    if audience is None:
+        monkeypatch.delenv('THEMIS_ID_TOKEN_AUDIENCE', raising=False)
+    else:
+        monkeypatch.setenv('THEMIS_ID_TOKEN_AUDIENCE', audience)
+
+    async def unused(token: str) -> auth_pb2.SessionContext:
+        raise AssertionError(token)
+
+    with pytest.raises(SystemExit, match='THEMIS_ID_TOKEN_AUDIENCE'):
+        interceptor_mod.authorizer_resolving_through(unused, fixture_callers_var=_CALLERS_VAR)

@@ -7,6 +7,7 @@ import { BackLink } from "@/components/back-link";
 import { Eyebrow } from "@/components/eyebrow";
 import { ReaderTime } from "@/components/reader-time";
 import { timeAgo } from "@/lib/format";
+import { curationPath } from "@/lib/routes";
 import { cardContent, requireInputs } from "@/lib/scenario";
 import type { Analysis } from "@/models/workbench";
 import { userContext } from "@/server/context";
@@ -24,8 +25,8 @@ export default async function ProjectPage({
 }) {
   const { projectId } = await params;
   const { userEmail, backend } = await userContext(await headers());
-  // Resolved through the membership rather than by catching the list's not-found, so the page has the
-  // Project's name for its heading either way.
+  // Checked against the membership up front, so a Project the caller is not on is a 404 before any
+  // Analysis is listed.
   const project = (await backend.listProjects()).find(
     (p) => p.id === projectId,
   );
@@ -45,7 +46,7 @@ export default async function ProjectPage({
                 aria-hidden
               />
               <span className="truncate text-[13px] font-semibold text-ink-primary">
-                {project.name}
+                {project.id}
               </span>
             </span>
           </>
@@ -75,6 +76,22 @@ export default async function ProjectPage({
                 ))}
               </ul>
             )}
+          </section>
+
+          <section className="flex flex-col gap-[6px] border-t border-line-soft pt-[24px]">
+            <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-ink-primary">
+              Curation
+            </h2>
+            <p className="text-[13px] text-ink-muted">
+              SVCv4 worksheets on this Project's variants: each records one
+              curator's judgement on one variant, unaided.
+            </p>
+            <Link
+              href={curationPath(projectId)}
+              className="mt-[6px] w-fit rounded-card border border-line-primary bg-white px-[18px] py-[12px] text-[13px] text-ink-body hover:border-line-input"
+            >
+              Open curation
+            </Link>
           </section>
         </div>
       </main>

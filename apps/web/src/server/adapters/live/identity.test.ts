@@ -58,9 +58,16 @@ const carrying = (jwt: string) =>
 
 describe("IapVerifier", () => {
   test("admits an assertion for the Cloud Run service and returns its email", async () => {
-    expect(await verifier.assertedEmail(carrying(assertion({})))).toBe(
-      "curator@example.org",
-    );
+    expect(await verifier.authenticate(carrying(assertion({})))).toEqual({
+      email: "curator@example.org",
+    });
+  });
+
+  test("returns the email lowercase, as the auth service matches addresses", async () => {
+    const mixed = carrying(assertion({ email: "Curator@Example.ORG" }));
+    expect(await verifier.authenticate(mixed)).toEqual({
+      email: "curator@example.org",
+    });
   });
 
   test.each([
@@ -85,7 +92,7 @@ describe("IapVerifier", () => {
     ["no email claim", { email: undefined }],
   ])("refuses an assertion with %s", async (_, claims) => {
     await expect(
-      verifier.assertedEmail(carrying(assertion(claims))),
+      verifier.authenticate(carrying(assertion(claims))),
     ).rejects.toBeInstanceOf(UnauthenticatedError);
   });
 
@@ -99,7 +106,7 @@ describe("IapVerifier", () => {
     );
     const forged = `${header}.${payload}.${base64url(signature)}`;
     await expect(
-      verifier.assertedEmail(carrying(forged)),
+      verifier.authenticate(carrying(forged)),
     ).rejects.toBeInstanceOf(UnauthenticatedError);
   });
 
@@ -110,13 +117,25 @@ describe("IapVerifier", () => {
       }
     }
     const outage = new IapVerifier(CONFIG, new UnreachableKeys());
-    const refusal = outage.assertedEmail(carrying(assertion({})));
+    const refusal = outage.authenticate(carrying(assertion({})));
     await expect(refusal).rejects.toThrow("gstatic unreachable");
     await expect(refusal).rejects.not.toBeInstanceOf(UnauthenticatedError);
   });
 
   test("refuses a request with no assertion", async () => {
-    await expect(verifier.assertedEmail(new Headers())).rejects.toBeInstanceOf(
+    await expect(verifier.authenticate(new Headers())).rejects.toBeInstanceOf(
+      UnauthenticatedError,
+    );
+  });
+
+  test("refuses the plaintext identity headers IAP also sets, which anything reaching the container can forge", async () => {
+    const plaintext = new Headers({
+      "x-goog-authenticated-user-email":
+        "accounts.google.com:curator@example.org",
+      "x-goog-authenticated-user-id": "accounts.google.com:1",
+      "x-serverless-authorization": "Bearer forged",
+    });
+    await expect(verifier.authenticate(plaintext)).rejects.toBeInstanceOf(
       UnauthenticatedError,
     );
   });
@@ -159,12 +178,12 @@ describe("IapVerifier's keys", () => {
     });
     const cached = new IapVerifier(CONFIG, client);
     try {
-      await cached.assertedEmail(carrying(assertion({})));
+      await cached.authenticate(carrying(assertion({})));
       setSystemTime(start + 1_999_000);
-      await cached.assertedEmail(carrying(assertion({})));
+      await cached.authenticate(carrying(assertion({})));
       expect(client.fetches).toBe(1);
       setSystemTime(start + 2_001_000);
-      await cached.assertedEmail(carrying(assertion({})));
+      await cached.authenticate(carrying(assertion({})));
       expect(client.fetches).toBe(2);
     } finally {
       setSystemTime();
@@ -181,10 +200,10 @@ describe("IapVerifier's keys", () => {
     const client = new EmptyKeyClient({ "cache-control": "max-age=3000" });
     const verifier = new IapVerifier(CONFIG, client);
     await expect(
-      verifier.assertedEmail(carrying(assertion({}))),
+      verifier.authenticate(carrying(assertion({}))),
     ).rejects.toThrow("not a non-empty map");
     await expect(
-      verifier.assertedEmail(carrying(assertion({}))),
+      verifier.authenticate(carrying(assertion({}))),
     ).rejects.toThrow("not a non-empty map");
     expect(client.fetches).toBe(2);
   });
@@ -199,8 +218,8 @@ describe("IapVerifier's keys", () => {
   ])("are fetched anew when the response %s", async (_, headers) => {
     const client = new CountingKeyClient(headers);
     const uncached = new IapVerifier(CONFIG, client);
-    await uncached.assertedEmail(carrying(assertion({})));
-    await uncached.assertedEmail(carrying(assertion({})));
+    await uncached.authenticate(carrying(assertion({})));
+    await uncached.authenticate(carrying(assertion({})));
     expect(client.fetches).toBe(2);
   });
 
@@ -208,8 +227,8 @@ describe("IapVerifier's keys", () => {
     const client = new CountingKeyClient();
     const verifier = new IapVerifier(CONFIG, client);
     await Promise.all([
-      verifier.assertedEmail(carrying(assertion({}))),
-      verifier.assertedEmail(carrying(assertion({}))),
+      verifier.authenticate(carrying(assertion({}))),
+      verifier.authenticate(carrying(assertion({}))),
     ]);
     expect(client.fetches).toBe(1);
   });
@@ -221,11 +240,11 @@ describe("IapVerifier's keys", () => {
     );
     const verifier = new IapVerifier(CONFIG, client);
     await expect(
-      verifier.assertedEmail(carrying(assertion({}))),
+      verifier.authenticate(carrying(assertion({}))),
     ).rejects.toThrow("gstatic unreachable");
-    expect(await verifier.assertedEmail(carrying(assertion({})))).toBe(
-      "curator@example.org",
-    );
+    expect(await verifier.authenticate(carrying(assertion({})))).toEqual({
+      email: "curator@example.org",
+    });
     expect(client.fetches).toBe(2);
   });
 });

@@ -51,9 +51,9 @@ which an impersonated token carries only when asked (`clu.identity_token` asks).
 
 The app takes the same JWT IAP checks in front of the backend services, sent in `Authorization` here, since the app
 needs no second token. IAP does not take a service URL as an OIDC audience, but it accepts this second token type: a JWT
-the account signs itself, whose `aud` is the app's own URL. Nothing has to be registered for it — no OAuth client, no
-allowlist — and `iss`/`sub` carry the email the app authorizes on, so no extra flag is needed. `tools.web_app` signs it
-the same way `tools.operator_path` does.
+the account signs itself, whose `aud` is the app's own URL. Nothing has to be registered for it (no OAuth client, no
+allowlist), and `iss`/`sub` carry the account's email, which IAP passes on to the app in its own signed assertion.
+`tools.web_app` signs it the same way `tools.operator_path` does.
 
 Use the path wildcard. An `aud` of the exact URL admits that one URL only, so `https://…/` reaches `/` and gets a `401`
 on every API path.
@@ -73,15 +73,15 @@ curl -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{
 `exp` must be within 3600 seconds of `iat`; signing needs the same `serviceAccountTokenCreator` the service calls above
 use, so a person who can reach a service can reach the app.
 
-A `401` is IAP refusing the token, and its body says which check failed —
-`Audience specified does not match requested endpoint` for an `aud` that is not this URL (or lacks the wildcard the path
-needs). A `403` is IAP admitting the token and the accessor binding refusing the account. The two are indistinguishable
-from the status alone, which is why they are named here.
-
-The app authorizes on the email in the IAP assertion, and that email is the account's rather than yours — so a call
-lands on the Projects `project_members` names `themis-clu@…` against, not the ones you see in a browser, and an
-otherwise-correct call answers empty until such a row exists. The app's logs attribute the call to the account; which
-person made it is in the signing's delegation chain in Cloud Audit Logs, logged as `signJwt`.
+A `401` with a plain body is IAP refusing the token, and the body says which check failed:
+`Audience specified does not match requested endpoint` for an `aud` that is not this URL, or lacks the wildcard the path
+needs. Once IAP lets the call through, the app asks the auth service what the account may reach, as it would for a
+person. The auth service grants `themis-clu`, the deployment's operator account, both roles on every Project in the ACL
+file without the site listing it ([`access-control.md`](access-control.md#the-operator-account)). A `403` whose body is
+the Connect error `permission_denied` / `not admitted` is the app finding the account not admitted, which for
+`themis-clu` means the ACL holds no Project or the deployment is misconfigured. A call that succeeds sees every Project
+in the ACL, not only the ones you see in a browser. The app's logs attribute the call to the account; which person made
+it is in the signing's delegation chain in Cloud Audit Logs, logged as `signJwt`.
 
 ## The database
 
@@ -103,9 +103,6 @@ without this would be owned by `themis-clu` rather than by the migrator that own
 ```sql
 SET ROLE "themis-deploy@cpg-themis-dev.iam";
 ```
-
-So the account can write `project_members`, which decides the Projects a signed-in user sees — worth knowing because it
-is how a fresh environment gets seeded, not as a caution.
 
 ## A git remote over the sheaf service
 
@@ -145,8 +142,9 @@ token is only ever in that file; it is never on the command line or in the envir
 
 ## What it can reach
 
-`themis-clu` passes IAP in front of the evidence and sheaf services and the web app, and holds a database login with the
-migrator's rights. Where the stack opts in (`themis:cluDerivesSessionTokens`, on in dev) it also holds `signerVerifier`
+`themis-clu` passes IAP in front of the evidence and sheaf services and the web app, whose IAP lets any Google account
+through, and holds a database login with the migrator's rights; through the web app it reaches every Project in the
+deployment's ACL. Where the stack opts in (`themis:cluDerivesSessionTokens`, on in dev) it also holds `signerVerifier`
 on the session-token MAC key: the bearer of any live session is `HMAC(key, session_id)` (`themis.clients.auth.derive`),
 and the login reads every `session_id`, so the account can act as any live session against a session-scoped service such
 as `themis-sheaf`. Each of these is a named capability in the Pulumi program (`infra/themis_infra/grants.py`); the

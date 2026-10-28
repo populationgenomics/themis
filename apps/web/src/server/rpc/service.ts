@@ -9,7 +9,7 @@ import { requireUserContext } from "./context";
 // The analysis and workspace-repository methods read their caller through `requireUserContext` and
 // reach the data plane and the repository only through that caller's `AuthorizedBackend`, so each
 // access is membership-scoped by construction. The paper methods (`describePaper`/`locate`) read the
-// shared corpus through the literature port instead — IAP-only, not Project-scoped — but still call
+// shared corpus through the literature port instead — admission only, not Project-scoped — but still call
 // `requireUserContext` as the fail-loud backstop every method shares: it raises if the identity
 // interceptor did not run, so an unwired chokepoint can never serve them either. Browser-controlled request fields are validated
 // here (a blank doc_id, an unspecified representation) so a client slip surfaces as InvalidArgument

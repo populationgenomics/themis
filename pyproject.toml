@@ -72,11 +72,13 @@ cloudsql = ["cloud-sql-python-connector", "pg8000"]
 # request: SQLAlchemy's pool over the cloudsql client. opentelemetry-api is the span around each
 # dial, a no-op where no tracer provider is installed.
 sql_pool = ["sqlalchemy", "opentelemetry-api", { include-group = "cloudsql" }]
-# auth service (themis/services/auth): the grpc.aio server + generated stubs + the Cloud
-# SQL backend. grpcio is the runtime; grpcio-health-checking serves grpc.health.v1;
-# protobuf backs the generated messages (json_format seeds the fixture backend); the
-# tracing group carries its spans to Cloud Trace.
-auth = ["grpcio", "grpcio-health-checking", "protobuf", { include-group = "sql_pool" }, { include-group = "tracing" }]
+# auth service (themis/services/auth): the grpc.aio server + generated stubs + the live
+# backend's two sources. grpcio is the runtime; grpcio-health-checking serves grpc.health.v1;
+# protobuf backs the generated messages; sql_pool reads the token store in Cloud SQL;
+# google-cloud-secret-manager reads the ACL; the session group is the auth interceptor the server
+# runs behind, which verifies callers with google-auth; the tracing group carries its spans to
+# Cloud Trace.
+auth = ["grpcio", "grpcio-health-checking", "protobuf", "google-cloud-secret-manager", { include-group = "sql_pool" }, { include-group = "session" }, { include-group = "tracing" }]
 # migration runner (themis/migrate): applies the committed SQL migrations at deploy.
 migrate = [{ include-group = "cloudsql" }]
 # curation operator tooling (themis/curation/): rewrites the stored assessments through the

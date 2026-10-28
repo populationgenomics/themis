@@ -83,20 +83,19 @@ each committed `.proto` file against the base branch using `buf breaking` and re
 
 ### Single-service anatomy
 
-[`themis/services/auth/`](../../themis/services/auth/) illustrates a single-interface deployment (`auth` predates
-separating `fixture.py` from `backend.py` and still keeps `FixtureBackend` in `backend.py`; newer capabilities split
-`fixture.py` into its own module):
+[`themis/services/auth/`](../../themis/services/auth/) illustrates a single-interface deployment:
 
 - **`servicer.py`** subclasses the generated `<Service>Servicer` with one `async` method per RPC. It receives its
   backend through its constructor typed as the abstract port, so the servicer never imports a concrete storage client.
-- **`<port>.py`** defines that abstract port as an `abc.ABC` (for `auth`, `SessionBackend` in
+- **`<port>.py`** defines that abstract port as an `abc.ABC` (for `auth`, `AuthBackend` in
   [`themis/services/auth/backend.py`](../../themis/services/auth/backend.py)). Its methods are `async` and correspond
   directly to the RPCs the servicer handles.
 - **`fixture.py`** implements the in-memory backend for offline runs and tests, along with the seed document vocabulary
-  and parser (kept inside `backend.py` in `auth` until `auth` is next substantially edited).
-- **`<adapter>.py`** implements the live backend used in Cloud Run (for `auth`, `CloudSqlBackend` in
-  [`themis/services/auth/cloudsql.py`](../../themis/services/auth/cloudsql.py)), with one module per upstream data
-  source.
+  and parser (for `auth`, [`themis/services/auth/fixture.py`](../../themis/services/auth/fixture.py)).
+- **`<adapter>.py`** implements the live backend used in Cloud Run, with one module per upstream data source. For
+  `auth`, `LiveBackend` in [`themis/services/auth/live.py`](../../themis/services/auth/live.py) reads the token store
+  through [`cloudsql.py`](../../themis/services/auth/cloudsql.py) and the ACL through
+  [`secret.py`](../../themis/services/auth/secret.py).
 - **`__main__.py`** reads the environment, constructs the selected backend, registers the servicer and the standard
   `grpc.health.v1` health servicer on a `grpc.aio` server, and listens on Cloud Run's `$PORT`.
 - **`tests/`** runs behavioral tests against an in-process `grpc.aio` server using

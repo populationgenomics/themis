@@ -1,4 +1,4 @@
-"""The Cloud SQL backend (verified live at deploy, not offline).
+"""The token store in Cloud SQL, the live backend's session source (verified live at deploy, not offline).
 
 Reads the ``session_context`` table by token hash through the Cloud SQL connector with
 IAM authentication (the auth SA is the DB user, no password — mirrors
@@ -14,14 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import override
 
 import sqlalchemy
 import sqlalchemy.exc
 from opentelemetry import trace
 
 from themis.common import sql, sql_pool
-from themis.rpc import auth_pb2
 from themis.services.auth import backend as auth_backend
 
 _logger = logging.getLogger(__name__)
@@ -41,7 +39,7 @@ POOL_RECYCLE_S = 15 * 60
 
 
 def engine(*, connection_name: str, database: str, db_user: str) -> sqlalchemy.Engine:
-    """The pooled engine `CloudSqlBackend` runs on, for one Cloud SQL database.
+    """The pooled engine `SessionStore` runs on, for one Cloud SQL database.
 
     Its connector lives as long as the process: nothing in the service handles shutdown.
     """
@@ -55,8 +53,8 @@ def engine(*, connection_name: str, database: str, db_user: str) -> sqlalchemy.E
     )
 
 
-class CloudSqlBackend(auth_backend.SessionBackend):
-    """A ``backend.SessionBackend`` over ``session_context``, on a pooled engine.
+class SessionStore:
+    """The ``session_context`` table, on a pooled engine.
 
     Lookups are by ``hash_token`` of the bearer, never the plaintext — matching the
     store's invariant.
@@ -65,14 +63,14 @@ class CloudSqlBackend(auth_backend.SessionBackend):
     def __init__(self, pooled: sqlalchemy.Engine) -> None:
         self._engine = pooled
 
-    @override
-    async def resolve(self, session_token: str) -> auth_pb2.SessionContext:
+    async def resolve(self, session_token: str) -> auth_backend.StoredSession:
+        """Return the token's binding, or raise ``backend.UnresolvedError`` if no row holds its hash."""
         # pg8000 is a blocking driver; offload so the query doesn't stall the event loop. `to_thread` rather
         # than `run_in_executor`: it carries the rpc's context, so the spans below are children of its span.
         row = await asyncio.to_thread(self._resolve_blocking, auth_backend.hash_token(session_token))
         if row is None:
             raise auth_backend.UnresolvedError
-        return auth_pb2.SessionContext(project_id=row[0], analysis_id=row[1])
+        return auth_backend.StoredSession(analysis_id=row[1], project_id=row[0])
 
     def _resolve_blocking(self, token_hash: str) -> sql.Row | None:
         """Query once, and once more if the first attempt lost an open connection.

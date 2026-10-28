@@ -3,8 +3,8 @@
 The seed-ingestion pipeline (`litcache/ingest_beam.py`) runs on Dataflow. Its
 workers need nothing from the internal service mesh — they read GCS, call
 NCBI/OpenAlex, and mint into Cloud SQL over the connector, all public or Google
-endpoints. So they run here, off the internal services VPC, which exists to gate
-the internal-ingress auth service and has no business carrying a batch job.
+endpoints. So they run here, off the internal services VPC, which exists to reach
+the internal-ingress services and has no business carrying a batch job.
 
 Workers take external IPs, so all egress — Google and non-Google alike — leaves
 through them and no Cloud NAT is needed. External IPs over a NAT is deliberate:

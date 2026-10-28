@@ -16,6 +16,7 @@ import contextlib
 import dataclasses
 import datetime
 import hashlib
+import json
 import pathlib
 import threading
 import urllib.parse
@@ -24,6 +25,7 @@ from typing import override
 
 import grpc
 import pytest
+from google.protobuf import json_format
 
 from themis import sheaf
 from themis.clients.auth import interceptor as interceptor_mod
@@ -75,12 +77,12 @@ Moves = Mapping[str, tuple[str | None, str | None]]
 
 
 def resolver() -> session_mod.SessionResolver:
-    seeds = (
-        f'{{"{fixture_session.GOOD_TOKEN}": {{"project_id": "{fixture_session.PROJECT_ID}", '
-        f'"analysis_id": "{fixture_session.ANALYSIS_ID}"}}, '
-        f'"{OTHER_TOKEN}": {{"project_id": "{fixture_session.PROJECT_ID}", "analysis_id": "{OTHER_ANALYSIS_ID}"}}}}'
-    )
-    return session_mod.fixture_session_resolver_from_json(seeds, var_name='test')
+    project = json_format.MessageToDict(fixture_session.project_grant())
+    seeds = {
+        fixture_session.GOOD_TOKEN: {'analysis_id': fixture_session.ANALYSIS_ID, 'project': project},
+        OTHER_TOKEN: {'analysis_id': OTHER_ANALYSIS_ID, 'project': project},
+    }
+    return session_mod.fixture_session_resolver_from_json(json.dumps(seeds), var_name='test')
 
 
 def authorizer(session_resolver: session_mod.SessionResolver | None = None) -> interceptor_mod.Authorizer:

@@ -51,8 +51,9 @@ def _register(cursor: pg8000.dbapi.Cursor, variant_id: str, mode: str = 'AUTOSOM
     # The registration key is unique per variant and entity, so each registration takes its own transcript.
     cursor.execute(
         'INSERT INTO curation.variants'
-        ' (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance, clinical_context, created_by)'
-        " VALUES (%s, 'FBN1', %s, 'c.7003C>T', 'Marfan syndrome', 'MONDO:0007947', %s, %s, 'm@example.org')",
+        ' (id, project_id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance, clinical_context,'
+        " created_by) VALUES (%s, 'validation', 'FBN1', %s, 'c.7003C>T', 'Marfan syndrome', 'MONDO:0007947', %s, %s,"
+        " 'm@example.org')",
         (variant_id, f'NM_{variant_id}', mode, f'The proband registered as {variant_id}.\n'),
     )
 

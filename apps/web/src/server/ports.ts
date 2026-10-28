@@ -1,3 +1,4 @@
+import type { GetAccessResponse } from "@/gen/themis/rpc/auth_pb";
 import type {
   LocateResponse,
   PaperInfo,
@@ -18,7 +19,7 @@ import type {
 } from "@/models/workbench";
 
 // The server's ports — what an adapter implements. `AnalysisDataPlane` is the raw,
-// unauthorized persistence layer; `ProjectMembership` is the user↔Project mapping.
+// unauthorized persistence layer; `ProjectMembership` is the caller's Projects for one request.
 // RPC handlers reach neither directly: `AuthorizedBackend` (authorized-backend.ts)
 // wraps the pair, bound to the verified user, and `userContext` is its sole
 // constructor — so every access is membership-scoped by construction. See
@@ -87,14 +88,20 @@ export interface AnalysisDataPlane {
   getAnalysis(analysisId: string): Promise<Analysis>;
 }
 
-/** The user↔Project membership mapping — the access boundary. Seeded offline by
- *  the fixture; read from the `project_members` table by the live adapter. */
-export interface ProjectMembership {
-  isMember(userEmail: string, projectId: string): Promise<boolean>;
+/** What the person behind an authenticated email may reach: the auth service's answer from the ACL
+ *  file (docs/design/access-control.md), or the fixture's seeded one offline. */
+export interface AccessPort {
+  getAccess(email: string): Promise<GetAccessResponse>;
+}
 
-  /** Every Project the user belongs to (id + name). Empty ⇒ the user can reach
-   *  nothing (default-deny). */
-  projectsOf(userEmail: string): Promise<Project[]>;
+/** One caller's Project membership, for one request: the access boundary `AuthorizedBackend`
+ *  checks every Project and Analysis against. */
+export interface ProjectMembership {
+  isMember(projectId: string): boolean;
+
+  /** Every Project the caller belongs to, ordered by id. Empty ⇒ the caller can reach no Project
+   *  (default-deny). */
+  projects(): Project[];
 }
 
 /** A stored content object and how to serve it. Backend-neutral: the object lives in a GCS bucket
@@ -123,7 +130,7 @@ export type ContentSelector =
   | { kind: "file"; name: string };
 
 /** The literature read surface the pane needs. Unlike the data plane it is NOT
- *  Project-scoped: a paper is a shared-corpus resource, IAP-gated at the route, so routes reach it
+ *  Project-scoped: a paper is a shared-corpus resource, gated on admission at the route, so routes reach it
  *  directly (no `AuthorizedBackend`). The fixture serves a seeded corpus offline; the live adapter
  *  calls the evidence gRPC service and resolves each object through an injected `ContentPort`. */
 export interface LiteraturePort {

@@ -36,6 +36,7 @@ import {
   WORKING_DOC_TAB_ID,
 } from "@/components/workbench/workspace-model";
 import { usePoll } from "@/lib/queries";
+import { projectPath } from "@/lib/routes";
 import { useTipAnnouncements } from "@/lib/tip-announcements";
 
 /** The Analysis as its page resolved it — identity fixed for the life of the page, so it arrives as
@@ -53,7 +54,6 @@ export interface AnalysisIdentity {
    *  until `ReaderTime` reformats it on the reader's clock. */
   created: { iso: string; pinnedLabel: string };
   projectId: string;
-  projectName: string;
   /** Whether the platform holds this run's session, and so whether it has a conversation. */
   managed: boolean;
 }
@@ -189,8 +189,8 @@ export function Workbench({
         userEmail={userEmail}
         left={
           <>
-            <BackLink href={`/project/${analysis.projectId}`}>
-              {analysis.projectName}
+            <BackLink href={projectPath(analysis.projectId)}>
+              {analysis.projectId}
             </BackLink>
             <span className="flex min-w-0 max-w-[560px] flex-col leading-[1.25]">
               <span className="flex items-center gap-[7px] text-[10.5px] text-ink-faintest">

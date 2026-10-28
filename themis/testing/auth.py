@@ -27,7 +27,7 @@ WEB_EMAIL = rules.account_email('themis-web', PROJECT)
 CLU_EMAIL = rules.account_email('themis-clu', PROJECT)
 SANDBOX_JOB_EMAIL = rules.account_email('themis-sandbox-job', PROJECT)
 
-SESSION = auth_pb2.SessionContext(project_id='proj', analysis_id='ana')
+SESSION = auth_pb2.SessionContext(analysis_id='ana', project=auth_pb2.ProjectGrant(id='proj'))
 
 _GOOD = 'good'
 _BAD = 'bad'

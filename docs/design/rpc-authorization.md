@@ -135,7 +135,7 @@ Servicer handler / backend port (LiteratureBackend.view_for, Sheaf store)
 
 ### One context built for every call
 
-For every inbound RPC (except the health check), `AuthInterceptor` builds one frozen `AuthContext` instance
+For every inbound RPC (except the two exempt paths below), `AuthInterceptor` builds one frozen `AuthContext` instance
 ([`themis/clients/auth/context.py`](../../themis/clients/auth/context.py)) containing:
 
 - `caller: str` — the verified service-account email extracted from the Google ID token.
@@ -245,8 +245,11 @@ server, matching the default-on session gate in the web tier ([`security.md`](se
 Because a gRPC server interceptor intercepts every inbound call by its full `/package.Service/Method` path before
 dispatching to any servicer, it does not maintain a hand-written list of governed services. Instead, it resolves each
 method path in the generated protobuf `DescriptorPool`, derives the admission rule from the method's options, and denies
-any method whose contract admits no principals (except to `CALLER_CLU`) or whose path is not in the descriptor pool.
-Exactly one path is exempt: `/grpc.health.v1.Health/Check`, which Cloud Run probes without credentials. The production
+any method whose contract admits no principals (except to `CALLER_CLU`) or whose path is not in the descriptor pool. Two
+paths are exempt. The first is `/grpc.health.v1.Health/Check`, which Cloud Run probes without credentials. The second is
+`/themis.rpc.auth.Auth/ResolveSession`, which only the auth service serves ([`access-control.md`](access-control.md)).
+The interceptor calls it to resolve a call's session before it can derive admission, so the rpc cannot itself be gated
+on an admission rule; Cloud Run's `run.invoker` decides which data-plane service accounts reach it. The production
 data-plane servers (`evidence` and `sheaf`) are constructed through the interceptor
 ([`interceptor.py`](../../themis/clients/auth/interceptor.py),
 [`__main__.py`](../../themis/services/evidence/__main__.py)), so admission on those services never depends on a handler

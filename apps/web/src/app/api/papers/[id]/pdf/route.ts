@@ -1,7 +1,7 @@
 import { literatureContext } from "@/server/context";
 import { run } from "../../../_lib/http";
 
-/** GET /api/papers/[id]/pdf — the PDF revision. IAP-only; 302s to a signed GCS URL (live) or streams
+/** GET /api/papers/[id]/pdf — the PDF revision. Admission only; 302s to a signed GCS URL (live) or streams
  *  the fixture's bytes. NOT_FOUND when the paper has no PDF. */
 export async function GET(
   request: Request,

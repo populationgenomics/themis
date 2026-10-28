@@ -13,7 +13,7 @@ _PROJECT = 'x'
 _WEB = rules.account_email('themis-web', _PROJECT)
 _JOB = rules.account_email('themis-sandbox-job', _PROJECT)
 _CLU = rules.account_email('themis-clu', _PROJECT)
-_SESSION = auth_pb2.SessionContext(project_id='p', analysis_id='a')
+_SESSION = auth_pb2.SessionContext(analysis_id='a', project=auth_pb2.ProjectGrant(id='p'))
 _LITERATURE = literature_pb2.DESCRIPTOR.services_by_name['Literature']
 _SHEAF = sheaf_pb2.DESCRIPTOR.services_by_name['Sheaf']
 
@@ -140,3 +140,26 @@ def test_admitting_the_unspecified_member_is_refused() -> None:
     pool.Add(file)
     with pytest.raises(ValueError, match='CALLER_UNSPECIFIED'):
         rules.rule_for(pool.FindMethodByName('t.bad.S.Call'))
+
+
+@pytest.mark.parametrize('name', sorted(rules.UNGATED_METHODS))
+def test_an_ungated_rpc_is_declared_and_names_no_caller(name: str) -> None:
+    # Passing it through has to be the only admission it gets: a caller its contract named would read as gated.
+    assert rules.rule_for(descriptor_pool.Default().FindMethodByName(name)) == rules.DENY
+
+
+def test_a_path_is_ungated_only_for_an_ungated_rpc() -> None:
+    assert rules.is_ungated('/themis.rpc.auth.Auth/ResolveSession')
+    assert not rules.is_ungated('/themis.rpc.auth.Auth/GetAccess')
+
+
+@pytest.mark.parametrize(
+    'path',
+    [
+        '/themis.rpc.auth.Auth.ResolveSession',
+        '//themis.rpc.auth.Auth/ResolveSession/',
+        'themis.rpc.auth.Auth/ResolveSession',
+    ],
+)
+def test_only_the_exact_path_of_an_ungated_rpc_is_ungated(path: str) -> None:
+    assert not rules.is_ungated(path)

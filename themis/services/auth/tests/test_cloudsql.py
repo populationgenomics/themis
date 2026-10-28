@@ -126,21 +126,21 @@ def dial(postgres: testcontainers.postgres.PostgresContainer) -> _CountingDial:
 class _MakeBackend(Protocol):
     def __call__(
         self, *, recycle_s: float = ..., statement_timeout_s: float = ..., io_timeout_s: float = ...
-    ) -> cloudsql.CloudSqlBackend: ...
+    ) -> cloudsql.SessionStore: ...
 
 
 @pytest.fixture
 def make_backend(admin: _Admin, dial: _CountingDial) -> Iterator[_MakeBackend]:
     """Build a backend on the production pool settings, overriding the timing ones a test must shorten."""
     del admin  # depended on so the table exists first and the pool's connections are reaped after
-    built: list[cloudsql.CloudSqlBackend] = []
+    built: list[cloudsql.SessionStore] = []
 
     def make(
         *,
         recycle_s: float = cloudsql.POOL_RECYCLE_S,
         statement_timeout_s: float = sql_pool.STATEMENT_TIMEOUT_S,
         io_timeout_s: float = sql_pool.IO_TIMEOUT_S,
-    ) -> cloudsql.CloudSqlBackend:
+    ) -> cloudsql.SessionStore:
         pooled = sql_pool.pooled_engine(
             dial,
             pool_size=cloudsql.POOL_SIZE,
@@ -148,7 +148,7 @@ def make_backend(admin: _Admin, dial: _CountingDial) -> Iterator[_MakeBackend]:
             statement_timeout_s=statement_timeout_s,
             io_timeout_s=io_timeout_s,
         )
-        built.append(cloudsql.CloudSqlBackend(pooled))
+        built.append(cloudsql.SessionStore(pooled))
         return built[-1]
 
     yield make
@@ -157,15 +157,15 @@ def make_backend(admin: _Admin, dial: _CountingDial) -> Iterator[_MakeBackend]:
 
 
 @pytest.fixture
-def backend(make_backend: _MakeBackend) -> cloudsql.CloudSqlBackend:
+def backend(make_backend: _MakeBackend) -> cloudsql.SessionStore:
     return make_backend()
 
 
-async def _resolve_project(backend: cloudsql.CloudSqlBackend) -> str:
+async def _resolve_project(backend: cloudsql.SessionStore) -> str:
     return (await backend.resolve('tok-1')).project_id
 
 
-def test_resolves_reuse_a_connection(backend: cloudsql.CloudSqlBackend, dial: _CountingDial) -> None:
+def test_resolves_reuse_a_connection(backend: cloudsql.SessionStore, dial: _CountingDial) -> None:
     async def run() -> list[str]:
         return [await _resolve_project(backend) for _ in range(5)]
 
@@ -173,7 +173,7 @@ def test_resolves_reuse_a_connection(backend: cloudsql.CloudSqlBackend, dial: _C
     assert dial.opened == 1
 
 
-def test_concurrent_resolves_open_at_most_the_pool_size(backend: cloudsql.CloudSqlBackend, dial: _CountingDial) -> None:
+def test_concurrent_resolves_open_at_most_the_pool_size(backend: cloudsql.SessionStore, dial: _CountingDial) -> None:
     resolves = 4 * cloudsql.POOL_SIZE
 
     async def run() -> list[str]:
@@ -184,7 +184,7 @@ def test_concurrent_resolves_open_at_most_the_pool_size(backend: cloudsql.CloudS
 
 
 def test_a_dropped_connection_is_replaced(
-    backend: cloudsql.CloudSqlBackend, admin: _Admin, dial: _CountingDial, caplog: pytest.LogCaptureFixture
+    backend: cloudsql.SessionStore, admin: _Admin, dial: _CountingDial, caplog: pytest.LogCaptureFixture
 ) -> None:
     async def run() -> list[str]:
         first = await _resolve_project(backend)
@@ -198,7 +198,7 @@ def test_a_dropped_connection_is_replaced(
 
 
 def test_a_revoked_token_stops_resolving_through_a_warm_connection(
-    backend: cloudsql.CloudSqlBackend, admin: _Admin, dial: _CountingDial
+    backend: cloudsql.SessionStore, admin: _Admin, dial: _CountingDial
 ) -> None:
     async def run() -> None:
         await backend.resolve('tok-1')
@@ -211,7 +211,7 @@ def test_a_revoked_token_stops_resolving_through_a_warm_connection(
 
 
 def test_a_query_error_leaves_the_pool_usable(
-    backend: cloudsql.CloudSqlBackend, admin: _Admin, dial: _CountingDial, caplog: pytest.LogCaptureFixture
+    backend: cloudsql.SessionStore, admin: _Admin, dial: _CountingDial, caplog: pytest.LogCaptureFixture
 ) -> None:
     async def run() -> None:
         await backend.resolve('tok-1')
@@ -227,7 +227,7 @@ def test_a_query_error_leaves_the_pool_usable(
     assert dial.opened == 1, 'the connection that raised stays usable'
 
 
-def test_an_idle_pooled_connection_holds_no_transaction(backend: cloudsql.CloudSqlBackend, admin: _Admin) -> None:
+def test_an_idle_pooled_connection_holds_no_transaction(backend: cloudsql.SessionStore, admin: _Admin) -> None:
     # An open transaction's lock would queue a migration's ALTER TABLE on session_context behind it.
     asyncio.run(backend.resolve('tok-1'))
     assert [state for _, state in admin.pooled()] == ['idle']
@@ -322,7 +322,7 @@ def test_a_failed_dial_is_not_retried() -> None:
         attempts += 1
         raise ConnectionRefusedError('nothing listens there')
 
-    backend = cloudsql.CloudSqlBackend(
+    backend = cloudsql.SessionStore(
         sql_pool.pooled_engine(refuse, pool_size=cloudsql.POOL_SIZE, recycle_s=cloudsql.POOL_RECYCLE_S)
     )
     with pytest.raises(sql_pool.DialError):
@@ -376,7 +376,7 @@ def test_a_resolve_is_a_query_span_and_a_dial_is_its_connect_child(
     recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
 ) -> None:
     del admin  # depended on so the table exists first and the pool's connections are reaped after
-    backend = cloudsql.CloudSqlBackend(
+    backend = cloudsql.SessionStore(
         sql_pool.cloud_sql_engine(
             _ContainerConnector(postgres),  # pyright: ignore[reportArgumentType]
             connection_name='proj:region:instance',

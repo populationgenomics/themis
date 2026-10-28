@@ -31,12 +31,15 @@ def test_fixture_backend_requires_contexts(monkeypatch: pytest.MonkeyPatch) -> N
 
 def test_fixture_backend_resolves_a_seeded_bearer(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_AUTHORIZER_BACKEND', 'fixture')
-    monkeypatch.setenv('THEMIS_HELLO_FIXTURE_CONTEXTS', '{"tok": {"project_id": "p", "analysis_id": "a"}}')
+    monkeypatch.setenv(
+        'THEMIS_HELLO_FIXTURE_CONTEXTS',
+        '{"tok": {"analysis_id": "a", "project": {"id": "p"}}}',
+    )
     session_resolver = main_mod.build_session_resolver()
 
     async def run() -> auth_pb2.SessionContext:
         return await session_resolver('tok')
 
     context = asyncio.run(run())
-    assert context.project_id == 'p'
+    assert context.project.id == 'p'
     assert context.analysis_id == 'a'

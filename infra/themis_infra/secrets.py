@@ -1,114 +1,111 @@
-"""Third-party API-key secrets in Secret Manager.
+"""Secret Manager secrets: credentials the stack writes, and secrets a site writes into.
 
-Third-party credentials that have no keyless/WIF alternative (unlike the Google-side auth the backend and CI use)
-live as Secret Manager secrets, their values sourced from encrypted Pulumi config (`config.require_secret`) so the
-plaintext never enters the repo. See `infra/README.md` (State and secrets).
-
-No accessor grant is attached here: each runtime that reads a key is granted `secretAccessor` on it by its own
-component (`grants.SecretReader`), beside the identity it runs as.
+A credential with no keyless alternative arrives as `config.require_secret`, so the plaintext never enters the
+repo, and leaves as one secret whose latest version a Cloud Run container reads as env (`stack_secret`). A secret
+a site writes into is created empty, and the site's writer adds every version (`site_written_secret`). Who may
+read one is a `grants.SecretReader` where its consumer is wired. See `infra/README.md` (State and secrets).
 """
 
 from __future__ import annotations
 
-import dataclasses
+from typing import NamedTuple
 
 import pulumi
 import pulumi_gcp as gcp
 
 
-@dataclasses.dataclass(frozen=True)
-class ApiKeySecret:
-    """A provisioned key: the secret, and the version holding its value.
+class StackSecret(NamedTuple):
+    """A secret and its one version.
 
-    Attributes:
-        secret: The secret; a reader is granted on its `secret_id`.
-        version: Its one config-sourced version. A runtime that resolves `latest` at deploy time (a Cloud Run env
-            var) depends on it, so the deploy never finds the secret empty.
+    Cloud Run checks at revision creation that `latest` exists and that the runtime account may read it,
+    so a workload reading the secret depends on `version` and on its `grants.SecretReader`, not on `secret`
+    alone.
     """
 
     secret: gcp.secretmanager.Secret
     version: gcp.secretmanager.SecretVersion
 
 
-def semantic_scholar_secret(
-    *,
-    project: str,
-    region: str,
-    api_key: pulumi.Input[str],
-    opts: pulumi.ResourceOptions | None = None,
-) -> ApiKeySecret:
-    """Provision the Semantic Scholar API key as a Secret Manager secret.
-
-    The litcache OA id resolver falls back to Semantic Scholar; the keyless endpoint is rate-limited, so a bulk
-    (Dataflow) run needs the authenticated key.
-
-    Args:
-        project: The GCP project to create the secret in.
-        region: The single region the secret replicates to.
-        api_key: The key value, from `config.require_secret` (kept secret).
-        opts: Resource options (parent/dependency wiring).
-
-    Returns:
-        The secret and the version carrying `api_key`.
-    """
-    return _api_key_secret(
-        'themis-semantic-scholar-api-key',
-        secret_id='semantic-scholar-api-key',  # noqa: S106 — the secret's name, not its value
-        project=project,
-        region=region,
-        api_key=api_key,
-        opts=opts,
-    )
-
-
-def openalex_secret(
-    *,
-    project: str,
-    region: str,
-    api_key: pulumi.Input[str],
-    opts: pulumi.ResourceOptions | None = None,
-) -> ApiKeySecret:
-    """Provision the OpenAlex API key as a Secret Manager secret.
-
-    OpenAlex meters keyless callers, so every litcache lookup of a work sends the key: the evidence service's on-demand
-    ingest and the Dataflow ingest workers. Its name is `themis.litcache.openalex_key.SECRET_ID`.
-
-    Args:
-        project: The GCP project to create the secret in.
-        region: The single region the secret replicates to.
-        api_key: The key value, from `config.require_secret` (kept secret).
-        opts: Resource options (parent/dependency wiring).
-
-    Returns:
-        The secret and the version carrying `api_key`.
-    """
-    return _api_key_secret(
-        'themis-openalex-api-key',
-        secret_id='openalex-api-key',  # noqa: S106 — the secret's name, not its value
-        project=project,
-        region=region,
-        api_key=api_key,
-        opts=opts,
-    )
-
-
-def _api_key_secret(
-    resource_name: str,
-    *,
+def stack_secret(
     secret_id: str,
+    *,
     project: str,
     region: str,
-    api_key: pulumi.Input[str],
-    opts: pulumi.ResourceOptions | None,
-) -> ApiKeySecret:
-    """One API key's secret, replicated in `region` alone to keep it in-region with the rest of the stack."""
-    secret = gcp.secretmanager.Secret(
-        resource_name,
+    value: pulumi.Input[str],
+    opts: pulumi.ResourceOptions | None = None,
+) -> StackSecret:
+    """Provision one Secret Manager secret whose only version is `value`.
+
+    The secret is named and replicated as `_secret` describes. Rotating is updating the encrypted config
+    value, which replaces the version; consumers read `latest`.
+
+    Args:
+        secret_id: The secret's name (`anthropic-environment-key`); the Pulumi resource is `themis-<secret_id>`.
+        project: The GCP project to create the secret in.
+        region: The single region the secret replicates to.
+        value: The secret value, from `config.require_secret` (kept secret).
+        opts: Resource options (parent/dependency wiring).
+
+    Returns:
+        The secret, and the version that carries `value`.
+    """
+    secret = _secret(secret_id, project=project, region=region, opts=opts)
+    version = gcp.secretmanager.SecretVersion(
+        f'themis-{secret_id}-current',
+        secret=secret.id,
+        secret_data=value,
+        opts=pulumi.ResourceOptions(parent=secret),
+    )
+    return StackSecret(secret, version)
+
+
+def site_written_secret(
+    secret_id: str,
+    *,
+    project: str,
+    region: str,
+    opts: pulumi.ResourceOptions | None = None,
+) -> gcp.secretmanager.Secret:
+    """Provision one Secret Manager secret with no version: whoever is granted its versions writes them.
+
+    The secret is named and replicated as `_secret` describes, and protected: the stack never writes it, so
+    re-creating it would leave it empty until its writer next runs, and a `destroy` stops on it until it is
+    unprotected.
+
+    Args:
+        secret_id: The secret's name (`acl`); the Pulumi resource is `themis-<secret_id>`.
+        project: The GCP project to create the secret in.
+        region: The single region the secret replicates to.
+        opts: Resource options (parent/dependency wiring).
+
+    Returns:
+        The secret.
+    """
+    return _secret(
+        secret_id,
         project=project,
-        # Deliberately unprefixed: secret_id is project-scoped, and each env is its
-        # own project, so there is no cross-stack collision to disambiguate. Keeping
-        # it stable and env-agnostic lets the runtime reader resolve it from a fixed
-        # name + its own project — it need not know the Pulumi `themis-` prefix.
+        region=region,
+        opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(protect=True)),
+    )
+
+
+def _secret(
+    secret_id: str,
+    *,
+    project: str,
+    region: str,
+    opts: pulumi.ResourceOptions | None,
+) -> gcp.secretmanager.Secret:
+    """One Secret Manager secret, with no version.
+
+    The `secret_id` is unprefixed and the same in every environment: secret ids are project-scoped and each
+    environment is its own project, so a reader resolves the secret from a fixed name in its own project.
+    Replication is pinned to `region`, in-region with the rest of the stack. The Pulumi resource is
+    `themis-<secret_id>`.
+    """
+    return gcp.secretmanager.Secret(
+        f'themis-{secret_id}',
+        project=project,
         secret_id=secret_id,
         replication=gcp.secretmanager.SecretReplicationArgs(
             user_managed=gcp.secretmanager.SecretReplicationUserManagedArgs(
@@ -117,13 +114,18 @@ def _api_key_secret(
         ),
         opts=opts,
     )
-    # One config-sourced version; rotate by updating the encrypted config value,
-    # which replaces this version (consumers read `latest`). Additive versioning
-    # with an overlap window isn't needed for a read-latest API key.
-    version = gcp.secretmanager.SecretVersion(
-        f'{resource_name}-current',
-        secret=secret.id,
-        secret_data=api_key,
-        opts=pulumi.ResourceOptions(parent=secret),
+
+
+def secret_env(name: str, secret_id: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
+    """A Cloud Run container env var `name` carrying the latest version of the secret `secret_id`.
+
+    The runtime account reads it at instance start, so it needs a `grants.SecretReader` on the secret.
+    """
+    return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
+        name=name,
+        value_source=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceArgs(
+            secret_key_ref=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceSecretKeyRefArgs(
+                secret=secret_id, version='latest'
+            ),
+        ),
     )
-    return ApiKeySecret(secret=secret, version=version)

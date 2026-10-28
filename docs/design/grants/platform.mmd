@@ -1,13 +1,16 @@
 %%{init: {"layout": "elk", "elk": {"mergeEdges": true, "nodePlacementStrategy": "NETWORK_SIMPLEX"}, "htmlLabels": false, "flowchart": {"htmlLabels": false, "wrappingWidth": 320}}}%%
 flowchart LR
     n0["Dataflow service agent"]
-    n1["themis-deploy"]
-    n2["themis-ingest"]
-    n3[("image repository themis")]
-    n4[("project")]
-    n5[("subnet themis-ingest")]
-    n0 -->|SubnetUser| n5
-    n1 -->|DeployAccountBuilder| n4
-    n2 -->|DataflowWorker| n4
-    n2 -->|RepositoryReader| n3
-    n2 -->|SubnetUser| n5
+    n1["pulumi@cpg-common.iam.gserviceaccount.com"]
+    n2["themis-deploy"]
+    n3["themis-ingest"]
+    n4[("image repository themis")]
+    n5[("project")]
+    n6[("project quota")]
+    n7[("subnet themis-ingest")]
+    n0 -->|SubnetUser| n7
+    n1 -->|QuotaConsumer| n6
+    n2 -->|DeployAccountBuilder| n5
+    n3 -->|DataflowWorker| n5
+    n3 -->|RepositoryReader| n4
+    n3 -->|SubnetUser| n7

@@ -6,37 +6,37 @@ all differences live in `Pulumi.<stack>.yaml`.
 
 ## Layout
 
-| Path                                  | What                                                                                                                                                                                                   |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Pulumi.yaml`                         | Project + Python runtime (uses the repo venv `../.venv`). No `backend:` — state is per-environment (below).                                                                                            |
-| `Pulumi.<stack>.yaml`                 | Per-environment config + `gcpkms` secrets provider.                                                                                                                                                    |
-| `__main__.py`                         | Entrypoint: read config, compose the modules, export outputs.                                                                                                                                          |
-| `themis_infra/baseline.py`            | Enabled GCP services + the shared Artifact Registry, and IAP's service agent, which every IAP-protected resource calls Cloud Run as.                                                                   |
-| `themis_infra/web.py`                 | Cloud Run web app with IAP + external HTTPS LB, which also routes the dispatcher webhook and the operator gRPC paths to their own backends; its runtime SA is the Managed-Agents client identity.      |
-| `themis_infra/operator_ingress.py`    | The IAP-enabled load-balancer backend an operator reaches a data-plane gRPC service through from a laptop.                                                                                             |
-| `themis_infra/cloud_run.py`           | The run.app URL a service is dialed at and checks its callers' ID-token audience against.                                                                                                              |
-| `themis_infra/auth.py`                | The auth data-plane gRPC service (internal-ingress Cloud Run) + its runtime SA and Cloud SQL IAM DB login.                                                                                             |
-| `themis_infra/sheaf.py`               | The sheaf data-plane gRPC service (internal and load-balancer ingress), its bucket of repositories, and its runtime SA, an object-user on that bucket.                                                 |
-| `themis_infra/sql.py`                 | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                                                  |
-| `themis_infra/storage.py`             | The durable GCS buckets shared across the data plane: the literature full-text store, the resources bucket.                                                                                            |
-| `themis_infra/convert.py`             | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                                                  |
-| `themis_infra/cost.py`                | The workspace-spend monitor: the cost exporter Cloud Run Job and its schedule, and its runtime SA (the GCP side of its Anthropic WIF identity; a `TelemetryWriter` for its gauges).                    |
-| `themis_infra/ci_telemetry.py`        | The metrics-writer identity the repository's Claude Code workflows federate into, to report each run's token usage and cost.                                                                           |
-| `themis_infra/cost_metrics.py`        | The spend metrics' vocabulary as the queries read it — names and labels — held to the producers' by a contract test.                                                                                   |
-| `themis_infra/cost_prices.py`         | The list-price table and flat rates the queries price tokens with, rendered into PromQL as literal multipliers; a model absent here pages as unpriced rather than pricing at zero.                     |
-| `themis_infra/claude_code_metrics.py` | The metrics Claude Code writes from CI, as the queries read them: Claude Code's two counter names (Anthropic's vocabulary, so no contract test) and the resource label the workflow's name arrives as. |
-| `themis_infra/cost_promql.py`         | PromQL over the spend metrics: selectors (UTF-8 quoted where a name has dots), window figures per metric kind, the table-priced convert figure, the guarded workspace total, cents to dollars.         |
-| `themis_infra/cost_dashboard.py`      | The spend dashboard: a workspace section over every producer, then one section each for sessions, the convert worker and CI (Claude Code).                                                             |
-| `themis_infra/cost_alerts.py`         | The spend alerts: the Slack notification channel, the spike policy (PromQL over the workspace total), the exporter-freshness policy (its heartbeat silent) and the unpriced-usage policy.              |
-| `themis_infra/cost_report.py`         | The morning spend report: a viewer-only Cloud Run Job from the exporter image on a daily Sydney schedule, the Slack bot-token secret it posts with, and its PromQL rendered as the JSON it reads.      |
-| `themis_infra/screenshots.py`         | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                                                               |
-| `themis_infra/secrets.py`             | Ingestion API-key secrets (Secret Manager) sourced from encrypted config.                                                                                                                              |
-| `themis_infra/ingest.py`              | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants. Running a pass: [`reingest-literature-seed-corpus.md`](../docs/runbooks/reingest-literature-seed-corpus.md).              |
-| `themis_infra/sandbox.py`             | Self-hosted sandbox substrate: dedicated VPC/subnet, deny-all egress firewall, DNS sinkhole policy, session-token KMS key, and the Anthropic environment-key secret.                                   |
-| `themis_infra/clu.py`                 | The impersonated identity a person calls a backend service as, and the group permitted to impersonate it.                                                                                              |
-| `themis_infra/grants.py`              | Every IAM grant, as a named capability: one component per ability, its docstring saying what the holder can do (`docs/design/deployment.md` § Grants are capabilities).                                |
-| `themis_infra/deploy_iam.py`          | The CI deploy SA's identity; its project roles are `grants.DeployAccountBuilder`.                                                                                                                      |
-| `bootstrap/bootstrap.sh`              | One-time substrate setup (below). Run locally, never CI.                                                                                                                                               |
+| Path                                  | What                                                                                                                                                                                                                       |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Pulumi.yaml`                         | Project + Python runtime (uses the repo venv `../.venv`). No `backend:` — state is per-environment (below).                                                                                                                |
+| `Pulumi.<stack>.yaml`                 | Per-environment config + `gcpkms` secrets provider.                                                                                                                                                                        |
+| `__main__.py`                         | Entrypoint: read config, compose the modules, export outputs.                                                                                                                                                              |
+| `themis_infra/baseline.py`            | Enabled GCP services + the shared Artifact Registry, and IAP's service agent, which every IAP-protected resource calls Cloud Run as.                                                                                       |
+| `themis_infra/web.py`                 | Cloud Run web app with IAP (signing in through the site's OAuth client) + external HTTPS LB, which also routes the dispatcher webhook and operator gRPC paths; its SA is the Managed-Agents client.                        |
+| `themis_infra/operator_ingress.py`    | The IAP-enabled load-balancer backend an operator reaches a data-plane gRPC service through from a laptop.                                                                                                                 |
+| `themis_infra/cloud_run.py`           | The run.app URL a service is dialed at and checks its callers' ID-token audience against.                                                                                                                                  |
+| `themis_infra/auth.py`                | The ACL secret the site writes into, and its writer's grants; the auth data-plane gRPC service (internal-ingress Cloud Run, reading that secret) + its runtime SA and Cloud SQL IAM DB login; the alert on a rejected ACL. |
+| `themis_infra/sheaf.py`               | The sheaf data-plane gRPC service (internal and load-balancer ingress), its bucket of repositories, and its runtime SA, an object-user on that bucket.                                                                     |
+| `themis_infra/sql.py`                 | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                                                                      |
+| `themis_infra/storage.py`             | The durable GCS buckets shared across the data plane: the literature full-text store, the resources bucket.                                                                                                                |
+| `themis_infra/convert.py`             | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                                                                      |
+| `themis_infra/cost.py`                | The workspace-spend monitor: the cost exporter Cloud Run Job and its schedule, and its runtime SA (the GCP side of its Anthropic WIF identity; a `TelemetryWriter` for its gauges).                                        |
+| `themis_infra/ci_telemetry.py`        | The metrics-writer identity the repository's Claude Code workflows federate into, to report each run's token usage and cost.                                                                                               |
+| `themis_infra/cost_metrics.py`        | The spend metrics' vocabulary as the queries read it — names and labels — held to the producers' by a contract test.                                                                                                       |
+| `themis_infra/cost_prices.py`         | The list-price table and flat rates the queries price tokens with, rendered into PromQL as literal multipliers; a model absent here pages as unpriced rather than pricing at zero.                                         |
+| `themis_infra/claude_code_metrics.py` | The metrics Claude Code writes from CI, as the queries read them: Claude Code's two counter names (Anthropic's vocabulary, so no contract test) and the resource label the workflow's name arrives as.                     |
+| `themis_infra/cost_promql.py`         | PromQL over the spend metrics: selectors (UTF-8 quoted where a name has dots), window figures per metric kind, the table-priced convert figure, the guarded workspace total, cents to dollars.                             |
+| `themis_infra/cost_dashboard.py`      | The spend dashboard: a workspace section over every producer, then one section each for sessions, the convert worker and CI (Claude Code).                                                                                 |
+| `themis_infra/cost_alerts.py`         | The spend alerts: the Slack notification channel, the spike policy (PromQL over the workspace total), the exporter-freshness policy (its heartbeat silent) and the unpriced-usage policy.                                  |
+| `themis_infra/cost_report.py`         | The morning spend report: a viewer-only Cloud Run Job from the exporter image on a daily Sydney schedule, the Slack bot-token secret it posts with, and its PromQL rendered as the JSON it reads.                          |
+| `themis_infra/screenshots.py`         | The public-read PR review screenshot bucket (get-without-list, so it is not enumerable).                                                                                                                                   |
+| `themis_infra/secrets.py`             | Secret Manager secrets: those sourced from encrypted config, those a site writes into, and the container env that reads one.                                                                                               |
+| `themis_infra/ingest.py`              | The litcache ingestion runtime SA (Dataflow worker) + its data-plane grants. Running a pass: [`reingest-literature-seed-corpus.md`](../docs/runbooks/reingest-literature-seed-corpus.md).                                  |
+| `themis_infra/sandbox.py`             | Self-hosted sandbox: the session-token KMS key, the dispatcher service and the sandbox Cloud Run Job.                                                                                                                      |
+| `themis_infra/clu.py`                 | The impersonated identity a person calls a backend service as, and the group permitted to impersonate it.                                                                                                                  |
+| `themis_infra/grants.py`              | Every IAM grant, as a named capability: one component per ability, its docstring saying what the holder can do (`docs/design/deployment.md` § Grants are capabilities).                                                    |
+| `themis_infra/deploy_iam.py`          | The CI deploy SA's identity; its project roles are `grants.DeployAccountBuilder`.                                                                                                                                          |
+| `bootstrap/bootstrap.sh`              | One-time substrate setup (below). Run locally, never CI.                                                                                                                                                                   |
 
 Audit arrives as a sibling module under `themis_infra/`, composed in `__main__.py` — still one `pulumi up`.
 
@@ -76,10 +76,11 @@ and the only bucket in the project that permits public access: GitHub renders a 
 which fetches the origin anonymously, so the read is necessarily unauthenticated
 ([`docs/design/pr-screenshots.md`](../docs/design/pr-screenshots.md)). `allUsers` holds
 `roles/storage.legacyObjectReader` — `storage.objects.get` and nothing else — so an object is fetchable by exact name
-but the bucket is not enumerable; the `themis-dev-access` group holds `objectAdmin` so an uploader can also retract, and
-a developer's own `gcloud` ADC is the writer. Objects are `<sha256>.png`, kept forever, Autoclass-tiered, with soft
-delete off so a takedown is immediate. A stack only gets a bucket if it sets `themis:enablePrScreenshotBucket` —
-screenshots are of the fixture UI, so no other environment has a reason to expose a public one.
+but the bucket is not enumerable; the `themis-dev-access` group (`themis:prScreenshotWriterGroup`) holds `objectAdmin`
+so an uploader can also retract, and a developer's own `gcloud` ADC is the writer. Objects are `<sha256>.png`, kept
+forever, Autoclass-tiered, with soft delete off so a takedown is immediate. A stack only gets a bucket if it sets
+`themis:enablePrScreenshotBucket` — screenshots are of the fixture UI, so no other environment has a reason to expose a
+public one.
 
 **Supplied papers** — records the open-access archive does not serve, obtained through a human's institutional access —
 have no store of their own. A deposit is an ordinary litcache paper in the full-text bucket: the PDF as its source
@@ -144,12 +145,13 @@ deploy, not just its own.
 - **Secrets** use the `gcpkms` provider (per-stack KMS key): the value goes in encrypted stack config
   (`pulumi config set --secret themis:<key>`), the program reads it with `config.require_secret(...)`, and — for a
   runtime credential — provisions it into Secret Manager (`themis_infra/secrets.py`) so the workload reads it there, not
-  from Pulumi config. It provisions two: `themis:semanticScholarApiKey` → the `semantic-scholar-api-key` secret, and
+  from Pulumi config: `themis:semanticScholarApiKey` → the `semantic-scholar-api-key` secret, say, or
   `themis:openalexApiKey` → `openalex-api-key`, which Cloud Run mounts into the evidence service and the Dataflow ingest
-  workers read directly (`themis/litcache/openalex_key.py`). A credential a Google-managed service also holds for us —
-  the Slack bot token, `themis:slackBotToken`, behind the spend alerts' notification channel — goes to that resource's
-  sensitive field directly as well as into Secret Manager (`slack-bot-token`), which the morning report Job reads
-  (`themis_infra/cost_report.py`).
+  workers read directly (`themis/litcache/openalex_key.py`). The IAP OAuth client's `themis:iapOauthClientSecret` is no
+  runtime credential: the program hands it to IAP's settings, and no workload reads it. A credential a Google-managed
+  service also holds for us — the Slack bot token, `themis:slackBotToken`, behind the spend alerts' notification channel
+  — goes to that resource's sensitive field directly as well as into Secret Manager (`slack-bot-token`), which the
+  morning report Job reads (`themis_infra/cost_report.py`).
 
 ## Config
 
@@ -190,7 +192,11 @@ onto a wrong outcome: `themis:enablePrScreenshotBucket`, because a copied `true`
 environment that has no review workflow to justify one; `themis:cluDerivesSessionTokens`, because a copied `true` lets
 whoever can impersonate `themis-clu` act as any live session in an environment whose sessions may be real; and
 `themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another environment's service account, so the convert
-worker deploys healthy and fails only when it first tries to transcribe. No program change; the full sequence is
+worker deploys healthy and fails only when it first tries to transcribe. `themis:iapOauthClientId` (with its secret)
+names the OAuth client IAP signs people in through for one deployment, and each environment has its own.
+`themis:aclWriter` names the site's account that writes the ACL into the deployment's secret
+([`access-control.md`](../docs/runbooks/access-control.md)); a new environment's secret starts empty, so its first `up`
+deploys that secret alone. No program change; the full sequence is
 [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development

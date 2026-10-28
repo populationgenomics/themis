@@ -130,10 +130,13 @@ message ConversationEvent {
   }
 }
 
-// A Project the user belongs to — the access/data boundary an Analysis is bound to (GLOSSARY).
+// A Project the user belongs to — the access/data boundary an Analysis is bound to (GLOSSARY). A
+// Project is one dataset, and `id` is the dataset's name, which is also what the browser shows.
 message Project {
   string id = 1;
-  string name = 2;
+
+  reserved 2;
+  reserved "name";
 }
 
 // The inputs of a variant-classification Analysis: which variant, on which transcript, in what

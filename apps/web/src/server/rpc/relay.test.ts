@@ -10,9 +10,9 @@ import {
 } from "@/lib/workspace-deadlines";
 import { Sheaf } from "@/models/sheaf";
 import { Workbench } from "@/models/workbench";
+import { FIXTURE_GRANTS } from "@/server/adapters/fixture/access";
 import { FixtureDataPlane } from "@/server/adapters/fixture/data-plane";
 import { DEV_USER_EMAIL } from "@/server/adapters/fixture/identity";
-import { FixtureMembership } from "@/server/adapters/fixture/membership";
 import { FixtureWorkspace } from "@/server/adapters/fixture/workspace";
 import {
   type EarlyAnswer,
@@ -23,6 +23,7 @@ import {
   PUBLISH_CHUNK_BYTES,
 } from "@/server/adapters/live/workspace";
 import { AuthorizedBackend } from "@/server/authorized-backend";
+import { GrantedMembership } from "@/server/membership";
 import { setUserContext } from "./context";
 import { createFetchRouter } from "./fetch-router";
 import { errors } from "./interceptors";
@@ -51,7 +52,7 @@ async function relayingTo(answer: EarlyAnswer) {
     new FixtureDataPlane(new FixtureWorkspace()),
     workspace,
     null,
-    new FixtureMembership(),
+    new GrantedMembership(FIXTURE_GRANTS),
     DEV_USER_EMAIL,
     POLL_TIP_BUDGET_MS,
   );

@@ -1,34 +1,53 @@
-"""The auth service backend: resolve a per-session token to its binding (self-hosted-sandbox.md §7).
+"""The auth service's port: the two sources it answers from (access-control.md, self-hosted-sandbox.md §7).
 
-The auth service is the sole reader of the token store. A caller (the store) forwards a
-session token; the backend hashes it and returns the bound Project + Analysis, or raises
-``UnresolvedError`` if the token grants nothing. The adapter is pluggable (selected by
-``THEMIS_BACKEND``): the in-memory ``FixtureBackend`` runs offline (tests, a first deploy),
-and ``cloudsql.CloudSqlBackend`` reads the ``session_context`` table over the Cloud SQL
-connector with IAM auth (the deployed path).
+The token store binds a per-session token's hash to the Analysis it was minted for and that Analysis's
+Project id; the ACL says which Projects exist, what each reads, and who may reach them. The adapter is
+selected by ``THEMIS_BACKEND``: ``live.LiveBackend`` reads the token store in Cloud SQL and the ACL from
+Secret Manager, and ``fixture.FixtureBackend`` holds both in memory.
 """
 
 from __future__ import annotations
 
 import abc
+import dataclasses
 import hashlib
-from collections.abc import Mapping
-from typing import override
 
-from themis.rpc import auth_pb2
+# A read of the ACL not finished within this is abandoned, and the last good copy kept.
+ACL_READ_TIMEOUT_SECONDS = 30
 
 
 class UnresolvedError(Exception):
     """The session token resolves to no binding — an invalid, revoked, or expired token."""
 
 
-class SessionBackend(abc.ABC):
-    @abc.abstractmethod
-    async def resolve(self, session_token: str) -> auth_pb2.SessionContext:
-        """Return the token's binding, or raise ``UnresolvedError`` if it grants nothing.
+@dataclasses.dataclass(frozen=True)
+class StoredSession:
+    """What the token store binds a token to.
 
-        Async: the servicer runs on ``grpc.aio``, so a real adapter (Cloud SQL) offloads
-        its blocking driver rather than stalling the single event loop.
+    Attributes:
+        analysis_id: The Analysis the token was minted for.
+        project_id: The id of the Analysis's Project, as stored when the Analysis was created; whether the
+            Project still exists is the ACL's to say.
+    """
+
+    analysis_id: str
+    project_id: str
+
+
+class AuthBackend(abc.ABC):
+    """The token store and the ACL. Async: a live adapter offloads its blocking I/O to a thread."""
+
+    @abc.abstractmethod
+    async def resolve(self, session_token: str) -> StoredSession:
+        """Return the token's binding, or raise ``UnresolvedError`` if it grants nothing."""
+        ...
+
+    @abc.abstractmethod
+    async def read_acl(self) -> bytes:
+        """The current version of the ACL, unvalidated.
+
+        Raises:
+            Exception: Whatever the source raises when the ACL cannot be read; the caller keeps its last good copy.
         """
         ...
 
@@ -36,21 +55,3 @@ class SessionBackend(abc.ABC):
 def hash_token(token: str) -> str:
     """SHA-256 of the token — the store never holds plaintext (§7)."""
     return hashlib.sha256(token.encode('utf-8')).hexdigest()
-
-
-class FixtureBackend(SessionBackend):
-    """In-memory backend keyed by token hash, for offline use and tests.
-
-    The invariant matches the real store: lookups are by ``hash_token`` of the bearer,
-    never the plaintext.
-    """
-
-    def __init__(self, bindings_by_token_hash: Mapping[str, auth_pb2.SessionContext]) -> None:
-        self._by_hash = dict(bindings_by_token_hash)
-
-    @override
-    async def resolve(self, session_token: str) -> auth_pb2.SessionContext:
-        try:
-            return self._by_hash[hash_token(session_token)]
-        except KeyError:
-            raise UnresolvedError from None

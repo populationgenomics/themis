@@ -6,7 +6,7 @@ import type {
 } from "@/models/literature";
 
 // The paper read seam. `describePaper`/`locate` are structured proto messages over the Workbench
-// Connect client (`@/lib/rpc`) — validated, one Connect error model, IAP-gated, the same seam as the
+// Connect client (`@/lib/rpc`) — validated, one Connect error model, behind the perimeter, the same seam as the
 // analysis methods. The content objects (markdown, pdf, files) are raw bytes the pane fetches from
 // their own routes (which 302 to a signed GCS URL on the live adapter, serve seeded bytes offline);
 // only their URLs live here.

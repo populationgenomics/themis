@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
+import { ProjectGrantSchema, Role } from "@/gen/themis/rpc/auth_pb";
 import {
   type PublishIntent,
   PublishIntentSchema,
@@ -17,8 +18,6 @@ import {
   AnalysisSchema,
   type PollResponse,
   PollResponseSchema,
-  type Project,
-  ProjectSchema,
   type ThreadResponse,
   ThreadResponseSchema,
 } from "@/models/workbench";
@@ -29,26 +28,23 @@ import {
   UndecodableAnalysisError,
   WorkspaceDamagedError,
 } from "./errors";
+import { GrantedMembership } from "./membership";
 import type {
   AnalysisDataPlane,
   CreateAnalysisInput,
   DocumentFiles,
   DocumentSeeding,
-  ProjectMembership,
   WorkspaceRepository,
 } from "./ports";
 import { COLLABORATIVE_BRANCH } from "./workspace";
 
-class FakeMembership implements ProjectMembership {
-  constructor(private readonly byUser: Record<string, string[]>) {}
-  async isMember(userEmail: string, projectId: string): Promise<boolean> {
-    return (this.byUser[userEmail] ?? []).includes(projectId);
-  }
-  async projectsOf(userEmail: string): Promise<Project[]> {
-    return (this.byUser[userEmail] ?? []).map((id) =>
-      create(ProjectSchema, { id, name: id }),
-    );
-  }
+/** The caller's membership, granted the Projects named. */
+function membershipOf(projectIds: readonly string[]): GrantedMembership {
+  return new GrantedMembership(
+    projectIds.map((id) =>
+      create(ProjectGrantSchema, { id, roles: [Role.CURATOR] }),
+    ),
+  );
 }
 
 /** The events every poll of the fake data plane answers with. */
@@ -185,7 +181,7 @@ function backend(extra: Record<string, string> = {}): {
     ...extra,
   });
   const workspace = new FakeWorkspace();
-  const membership = new FakeMembership({ [USER]: ["proj_a"] });
+  const membership = membershipOf(["proj_a"]);
   return {
     authz: new AuthorizedBackend(
       data,
@@ -412,7 +408,7 @@ function seedingBackend(documents: DocumentSeeding | null): AuthorizedBackend {
     new FakeDataPlane({}),
     new FakeWorkspace(),
     documents,
-    new FakeMembership({ [USER]: ["proj_a"] }),
+    membershipOf(["proj_a"]),
     USER,
     POLL_TIP_BUDGET_MS,
   );

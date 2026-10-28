@@ -28,21 +28,21 @@ _DB_USERS = {
 }
 
 _VARIANT = (
-    'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance,'
-    " clinical_context, created_by) VALUES (%s, 'FBN1', %s, %s, 'Marfan syndrome', 'MONDO:0007947',"
-    " 'AUTOSOMAL_DOMINANT', 'Tall stature.', 'manager@example.org')"
+    'INSERT INTO curation.variants (id, project_id, gene, transcript, hgvs_c, disease_label, mondo_id,'
+    " mode_of_inheritance, clinical_context, created_by) VALUES (%s, 'validation', 'FBN1', %s, %s,"
+    " 'Marfan syndrome', 'MONDO:0007947', 'AUTOSOMAL_DOMINANT', 'Tall stature.', 'manager@example.org')"
 )
 
 _ENTITY = (
-    'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance,'
-    " clinical_context, created_by) VALUES (%s, 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome', %s, %s,"
-    " 'Tall stature.', 'manager@example.org')"
+    'INSERT INTO curation.variants (id, project_id, gene, transcript, hgvs_c, disease_label, mondo_id,'
+    " mode_of_inheritance, clinical_context, created_by) VALUES (%s, 'validation', 'FBN1', 'NM_000138.5',"
+    " 'c.7003C>T', 'Marfan syndrome', %s, %s, 'Tall stature.', 'manager@example.org')"
 )
 
 _VARIANT_WITH_CLINICAL_CONTEXT = (
-    'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance,'
-    " clinical_context, created_by) VALUES (%s, 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome',"
-    " 'MONDO:0007947', 'AUTOSOMAL_DOMINANT', %s, 'manager@example.org')"
+    'INSERT INTO curation.variants (id, project_id, gene, transcript, hgvs_c, disease_label, mondo_id,'
+    " mode_of_inheritance, clinical_context, created_by) VALUES (%s, 'validation', 'FBN1', 'NM_000138.5',"
+    " 'c.7003C>T', 'Marfan syndrome', 'MONDO:0007947', 'AUTOSOMAL_DOMINANT', %s, 'manager@example.org')"
 )
 
 
@@ -140,9 +140,9 @@ def test_a_variant_left_without_a_mondo_term_is_refused(migrated: pg8000.dbapi.C
     """The column has no default to fall back on: a registration states its term or is refused."""
     with pytest.raises(pg8000.dbapi.DatabaseError, match='mondo_id'), contextlib.closing(migrated.cursor()) as cursor:
         cursor.execute(
-            'INSERT INTO curation.variants (id, gene, transcript, hgvs_c, disease_label, mode_of_inheritance,'
-            " clinical_context, created_by) VALUES ('probe', 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome',"
-            " 'AUTOSOMAL_DOMINANT', 'Tall stature.', 'manager@example.org')"
+            'INSERT INTO curation.variants (id, project_id, gene, transcript, hgvs_c, disease_label,'
+            " mode_of_inheritance, clinical_context, created_by) VALUES ('probe', 'validation', 'FBN1', 'NM_000138.5',"
+            " 'c.7003C>T', 'Marfan syndrome', 'AUTOSOMAL_DOMINANT', 'Tall stature.', 'manager@example.org')"
         )
     migrated.rollback()
 
@@ -197,3 +197,55 @@ def test_a_variant_is_registered_with_a_clinical_context(migrated: pg8000.dbapi.
     ):
         cursor.execute(_VARIANT_WITH_CLINICAL_CONTEXT, ('probe', None))
     migrated.rollback()
+
+
+def test_an_analysis_names_its_project_by_an_id_no_table_registers(migrated: pg8000.dbapi.Connection) -> None:
+    """Projects live in the site's ACL, so the database holds neither a registry nor a reference to one."""
+    with contextlib.closing(migrated.cursor()) as cursor:
+        cursor.execute(
+            'INSERT INTO analyses (id, session_id, project_id, inputs, created_by) VALUES (%s, %s, %s, %s, %s)',
+            ('an_probe', 'sesn_probe', 'unregistered', b'', 'someone@example.org'),
+        )
+        cursor.execute(
+            'INSERT INTO session_context (token_hash, project_id, analysis_id) VALUES (%s, %s, %s)',
+            ('0' * 64, 'unregistered', 'an_probe'),
+        )
+        cursor.execute("SELECT to_regclass('projects') IS NULL, to_regclass('project_members') IS NULL")
+        assert list(cursor.fetchall()) == [[True, True]]
+    migrated.rollback()
+
+
+_IN_PROJECT = (
+    'INSERT INTO curation.variants (id, project_id, gene, transcript, hgvs_c, disease_label, mondo_id,'
+    " mode_of_inheritance, clinical_context, created_by) VALUES (%s, %s, 'FBN1', 'NM_000138.5', 'c.7003C>T',"
+    " 'Marfan syndrome', 'MONDO:0007947', 'AUTOSOMAL_DOMINANT', 'Tall stature.', 'manager@example.org')"
+)
+
+
+@pytest.mark.parametrize('project_id', [None, '', 'Validation', 'cohort/2024', '-validation'])
+def test_a_variant_is_registered_in_a_project_whose_id_is_a_lowercase_slug(
+    migrated: pg8000.dbapi.Connection, project_id: str | None
+) -> None:
+    with pytest.raises(pg8000.dbapi.DatabaseError, match='project_id'), contextlib.closing(migrated.cursor()) as cursor:
+        cursor.execute(_IN_PROJECT, ('probe', project_id))
+    migrated.rollback()
+
+
+def test_one_entity_is_registered_once_per_project(migrated: pg8000.dbapi.Connection) -> None:
+    with contextlib.closing(migrated.cursor()) as cursor:
+        cursor.execute(_IN_PROJECT, ('in-validation', 'validation'))
+        cursor.execute(_IN_PROJECT, ('in-acute-care', 'acute-care'))
+    migrated.commit()
+    with (
+        pytest.raises(pg8000.dbapi.DatabaseError, match='variants_registration_key'),
+        contextlib.closing(migrated.cursor()) as cursor,
+    ):
+        cursor.execute(_IN_PROJECT, ('again', 'validation'))
+    migrated.rollback()
+
+
+def test_curation_keeps_no_role_table_of_its_own(migrated: pg8000.dbapi.Connection) -> None:
+    """Who manages or curates a Project is the ACL's to say."""
+    with contextlib.closing(migrated.cursor()) as cursor:
+        cursor.execute("SELECT to_regclass('curation.roles') IS NULL")
+        assert list(cursor.fetchall()) == [[True]]

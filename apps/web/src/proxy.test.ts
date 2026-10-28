@@ -1,73 +1,126 @@
 import { describe, expect, test } from "bun:test";
+import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
 import { getScriptNonceFromHeader } from "next/dist/server/app-render/get-script-nonce-from-header";
 import { NextRequest } from "next/server";
+import {
+  GetAccessResponseSchema,
+  ProjectGrantSchema,
+  Role,
+} from "@/gen/themis/rpc/auth_pb";
 import * as csp from "@/lib/csp";
 import { Workbench } from "@/models/workbench";
+import type { Gate } from "@/server/admission";
 import { UnauthenticatedError } from "@/server/errors";
-import type { UserIdentity } from "@/server/identity";
+import type { Caller, UserIdentity } from "@/server/identity";
+import type { AccessPort } from "@/server/ports";
 import {
   CLOUD_RUN_HTTP1_REQUEST_MAX_BYTES,
   READ_MAX_BYTES,
 } from "@/server/rpc/limits";
 import nextConfig from "../next.config";
 import {
-  enforceChunkPolicy,
-  enforceRequestAuth,
+  decide,
   enforceRequestPolicy,
   config as proxyConfig,
   servesWorkerScripts,
+  servingChunk,
 } from "./proxy";
 
-// The perimeter with its identity supplied, so both outcomes are reachable without the
-// live verifier's env or a network call.
+// The perimeter with its identity and access answers supplied, so every outcome is reachable without
+// the live adapters' env or a network call. The live identity's own checks are
+// adapters/live/identity.test.ts's.
 
-const REFUSING: UserIdentity = {
-  async assertedEmail() {
+const EMAIL = "curator@example.org";
+
+const AUTHENTICATING: UserIdentity = {
+  async authenticate() {
+    return { email: EMAIL };
+  },
+};
+
+const REFUSING_IDENTITY: UserIdentity = {
+  async authenticate() {
     throw new UnauthenticatedError("missing x-goog-iap-jwt-assertion");
   },
 };
 
-const ADMITTING: UserIdentity = {
-  async assertedEmail() {
-    return "curator@example.org";
-  },
-};
-
-/** Fails the test if the perimeter consults it — for the paths that must not. */
-const UNREACHED: UserIdentity = {
-  async assertedEmail() {
+/** Fails the test if the perimeter consults it — for the path that must not. */
+const UNREACHED_IDENTITY: UserIdentity = {
+  async authenticate() {
     throw new Error("identity was consulted");
   },
 };
 
-const request = (path: string) =>
-  new NextRequest(new URL(path, "https://themis.example"), {
-    headers: { cookie: "GCP_IAAP_AUTH_TOKEN=expired" },
+const access = (admitted: boolean): AccessPort => ({
+  async getAccess(email) {
+    expect(email).toBe(EMAIL);
+    return create(GetAccessResponseSchema, {
+      projects: admitted
+        ? [create(ProjectGrantSchema, { id: "asd", roles: [Role.CURATOR] })]
+        : [],
+    });
+  },
+});
+
+const ADMITTING: Gate = { identity: AUTHENTICATING, access: access(true) };
+const NOT_ADMITTING: Gate = {
+  identity: AUTHENTICATING,
+  access: access(false),
+};
+const REFUSING: Gate = { identity: REFUSING_IDENTITY, access: access(true) };
+const UNREACHED: Gate = { identity: UNREACHED_IDENTITY, access: access(true) };
+
+const ORIGIN = "https://themis.example";
+
+const request = (
+  path: string,
+  init?: ConstructorParameters<typeof NextRequest>[1],
+) => new NextRequest(new URL(path, ORIGIN), init);
+
+/** A browser loading `path` as a page. */
+const pageLoad = (path: string) =>
+  request(path, {
+    headers: {
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-dest": "document",
+      "sec-fetch-site": "none",
+    },
   });
+
+/** A script's request from one of the app's own pages. */
+const fetched = (path: string, method = "POST") =>
+  request(path, {
+    method,
+    headers: { "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin" },
+  });
+
+function refusal(decision: Response | null): Response {
+  if (decision === null) throw new Error("the request was served");
+  return decision;
+}
 
 const throughRefusingPerimeter = async (
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> =>
-  enforceRequestAuth(new NextRequest(new Request(input, init)), REFUSING).then(
-    (refusal) => refusal ?? new Response(null),
-  );
+  (await decide(new NextRequest(new Request(input, init)), REFUSING)) ??
+  new Response(null);
 
 /** The generated client, talking to a perimeter that refuses every request. The transport
  *  never reaches the RPC mount, so what it parses is the refusal itself. */
 const refusedClient = createClient(
   Workbench,
   createConnectTransport({
-    baseUrl: "https://themis.example/api/rpc",
+    baseUrl: `${ORIGIN}/api/rpc`,
     // The runtime's `fetch` type carries statics (`preconnect`) a plain function has not.
     fetch: throughRefusingPerimeter as typeof globalThis.fetch,
   }),
 );
 
 describe("the request-auth perimeter", () => {
-  test("an unverifiable caller is refused in the client's own vocabulary", async () => {
+  test("an unauthenticated call is refused in the client's own vocabulary", async () => {
     // The refusal lands in front of the RPC mount, so the client has to read it as a
     // Connect error: a body it cannot parse surfaces to a curator with no message at all.
     const error = await refusedClient
@@ -78,57 +131,124 @@ describe("the request-auth perimeter", () => {
     expect(error?.rawMessage).not.toBe("");
   });
 
-  test("a verified caller is passed through", async () => {
-    expect(
-      await enforceRequestAuth(request("/api/rpc/x"), ADMITTING),
-    ).toBeNull();
+  test.each([
+    ["a page load", pageLoad("/project/asd?tab=analyses")],
+    ["a script's GET", fetched("/api/papers/p1/pdf", "GET")],
+    [
+      "a script's POST",
+      fetched("/api/rpc/themis.workbench.rpc.Workbench/Poll"),
+    ],
+    ["a request with no Fetch Metadata", request("/")],
+  ])("%s with no verifiable assertion is answered 401", async (_, req) => {
+    // Only a request that went around IAP arrives without one, so there is no sign-in to send it to.
+    const response = refusal(await decide(req, REFUSING));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("location")).toBeNull();
+    expect(await response.json()).toEqual({
+      code: "unauthenticated",
+      message: "unauthenticated",
+    });
+  });
+
+  test("an unauthenticated request is refused before access is asked", async () => {
+    const asking: Gate = {
+      identity: REFUSING_IDENTITY,
+      access: {
+        async getAccess() {
+          throw new Error("access was asked for an unauthenticated caller");
+        },
+      },
+    };
+    expect(refusal(await decide(fetched("/api/rpc/x"), asking)).status).toBe(
+      401,
+    );
+  });
+
+  test("a caller the deployment does not admit is refused 403", async () => {
+    const response = refusal(
+      await decide(fetched("/api/rpc/x"), NOT_ADMITTING),
+    );
+    expect(response.status).toBe(403);
+    expect(((await response.json()) as { code: string }).code).toBe(
+      "permission_denied",
+    );
+  });
+
+  test("a page load by a caller not admitted is told so in words", async () => {
+    // IAP signed the person in; the ACL is the decision, so there is nothing to redirect to.
+    const response = refusal(await decide(pageLoad("/"), NOT_ADMITTING));
+    expect(response.status).toBe(403);
+    expect(response.headers.get("location")).toBeNull();
+    expect(await response.text()).toContain("not admitted");
+  });
+
+  test("an admitted caller is served", async () => {
+    expect(await decide(fetched("/api/rpc/x"), ADMITTING)).toBeNull();
   });
 
   test("the liveness probe is served without an assertion", async () => {
-    // It reaches the container directly, bypassing the load balancer, so it carries none.
-    expect(
-      await enforceRequestAuth(request("/api/healthz"), UNREACHED),
-    ).toBeNull();
+    expect(await decide(request("/api/healthz"), UNREACHED)).toBeNull();
   });
 
-  test("a path that merely starts with a public one is not public", async () => {
-    // The allowlist matches a path or a segment below it, never a prefix of a longer name.
-    const refusal = await enforceRequestAuth(
-      request("/api/healthzzz"),
-      REFUSING,
+  test.each([
+    "/api/healthz/x",
+    "/api/healthzzz",
+    "/api/healthz.json",
+    "/auth/login",
+    "/auth/callback",
+  ])("%s is not exempt: the exemption matches exactly", async (path) => {
+    expect(refusal(await decide(fetched(path, "GET"), REFUSING)).status).toBe(
+      401,
     );
-    expect(refusal?.status).toBe(401);
   });
 
   test("a refusal minted by another module graph is still the perimeter's 401", async () => {
-    // The identity can be memoized across Next's module graphs, so its refusal may
-    // carry the right name on a foreign class object — the perimeter must not treat
-    // it as an outage to rethrow.
-    const foreignRefusing: UserIdentity = {
-      async assertedEmail(): Promise<string> {
-        throw Object.assign(new Error("missing assertion"), {
-          name: "UnauthenticatedError",
-        });
+    // The identity is memoized across Next's module graphs, so its refusal may carry the right name
+    // on a foreign class object — the perimeter must not treat it as an outage to rethrow.
+    const foreign: Gate = {
+      identity: {
+        async authenticate(): Promise<Caller> {
+          throw Object.assign(new Error("no assertion"), {
+            name: "UnauthenticatedError",
+          });
+        },
       },
+      access: access(true),
     };
-    const refusal = await enforceRequestAuth(
-      request("/api/rpc/x"),
-      foreignRefusing,
+    expect(refusal(await decide(fetched("/api/rpc/x"), foreign)).status).toBe(
+      401,
     );
-    expect(refusal?.status).toBe(401);
   });
 
-  test("a failure that is not an unverifiable caller is not answered as one", async () => {
-    // An outage reaching IAP's keys must not read as a refusal — the caller would be
-    // told to re-authenticate over a fault that has nothing to do with their credential.
-    const outage: UserIdentity = {
-      async assertedEmail() {
-        throw new Error("getIapPublicKeys: ECONNREFUSED");
+  test("an outage is not answered as an unverifiable caller", async () => {
+    // IAP's key source or the auth service unreachable must not read as a refusal: the fault has
+    // nothing to do with the caller's credential.
+    const outage: Gate = {
+      identity: AUTHENTICATING,
+      access: {
+        async getAccess() {
+          throw new Error("auth service: ECONNREFUSED");
+        },
       },
     };
-    await expect(
-      enforceRequestAuth(request("/api/rpc/x"), outage),
-    ).rejects.toThrow("ECONNREFUSED");
+    await expect(decide(fetched("/api/rpc/x"), outage)).rejects.toThrow(
+      "ECONNREFUSED",
+    );
+  });
+
+  test("an auth service serving a stale ACL is an outage, not a refusal", async () => {
+    const stale: Gate = {
+      identity: AUTHENTICATING,
+      access: {
+        async getAccess() {
+          throw new ConnectError("ACL is stale", Code.Unavailable);
+        },
+      },
+    };
+    const error = await decide(fetched("/api/rpc/x"), stale).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(ConnectError.from(error).code).toBe(Code.Unavailable);
   });
 });
 
@@ -145,8 +265,8 @@ const OFFLINE: csp.PolicyOptions = {
   sheafSources: [],
 };
 
-const underPolicy = (request: NextRequest, identity: UserIdentity) =>
-  enforceRequestPolicy(request, identity, OFFLINE);
+const underPolicy = (req: NextRequest, gate: Gate) =>
+  enforceRequestPolicy(req, gate, OFFLINE);
 
 describe("the content security policy", () => {
   test("a served request renders under the policy its response declares", async () => {
@@ -179,7 +299,7 @@ describe("the content security policy", () => {
 
   test("a caller cannot choose the nonce the app renders with", async () => {
     // Otherwise an attacker who can set a request header signs their own inline script.
-    const forged = new NextRequest(new URL("/", "https://themis.example"), {
+    const forged = request("/", {
       headers: { "content-security-policy": "script-src 'nonce-forged'" },
     });
     const response = await underPolicy(forged, ADMITTING);
@@ -196,8 +316,8 @@ describe("the content security policy", () => {
     // The perimeter overrides the request's headers to carry the policy. Seeding that override from
     // anything but the wire headers would strip the IAP assertion, which server/context.ts
     // re-verifies from what the app can see — and the fixture identity, which reads no headers,
-    // would keep every offline test and fixture-mode run green while live IAP refused everyone.
-    const carrying = new NextRequest(new URL("/", "https://themis.example"), {
+    // would keep every offline test and fixture-mode run green while live refused everyone.
+    const carrying = request("/", {
       headers: { "x-goog-iap-jwt-assertion": "an-assertion" },
     });
     const response = await underPolicy(carrying, ADMITTING);
@@ -237,25 +357,16 @@ describe("the content security policy", () => {
 });
 
 describe("the worker policy", () => {
-  test("a script chunk carries it, so the worker it starts runs under it", async () => {
+  test("a script chunk carries it, so the worker it starts runs under it", () => {
     // A worker takes the policy delivered with its own entry script, not the page's.
-    const response = await enforceChunkPolicy(
-      request("/_next/static/chunks/turbopack-worker-abc.js"),
-      ADMITTING,
-      OFFLINE,
-    );
+    const response = servingChunk(OFFLINE);
     expect(response.headers.get(RESPONSE_POLICY)).toBe(
       csp.workerPolicy(OFFLINE),
     );
   });
 
-  test("a chunk is behind the same perimeter as every other path", async () => {
-    const response = await enforceChunkPolicy(
-      request("/_next/static/chunks/a.js"),
-      REFUSING,
-      OFFLINE,
-    );
-    expect(response.status).toBe(401);
+  test("a chunk is served like every other build asset, with no credential", () => {
+    expect(servingChunk(OFFLINE).headers.get("x-middleware-next")).toBe("1");
   });
 });
 

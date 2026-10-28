@@ -6,7 +6,9 @@ service account (verified from the ID token) and what a call from it claims to b
 because the account is). An rpc naming none admits nobody. :func:`rule_for` reads the option off a
 method descriptor; :func:`rule_for_path` finds the descriptor for a call's ``/package.Service/Method``
 path in the default descriptor pool, where every stub this process imported registered its contract;
-a path no stub registered has no rule, and the interceptor refuses it outright.
+a path no stub registered has no rule, and the interceptor refuses it outright. One rpc is ungated,
+:data:`UNGATED_METHODS`: ``Auth.ResolveSession``, the rpc admission is derived through, whose contract
+says why it cannot itself be gated on one.
 
 A member names its account by id, the same in every environment; the project that completes it into an
 email is the deployment's, so :meth:`Rule.admits` takes it.
@@ -27,7 +29,7 @@ from google.protobuf import descriptor, descriptor_pool
 
 from themis.clients.auth import claim as claim_mod
 from themis.clients.auth import context as context_mod
-from themis.rpc import sandbox_options_pb2
+from themis.rpc import auth_pb2, sandbox_options_pb2
 
 
 class Principal(NamedTuple):
@@ -80,6 +82,11 @@ def account_email(account_id: str, project: str) -> str:
     return f'{account_id}@{project}.iam.gserviceaccount.com'
 
 
+def operator_email(project: str) -> str:
+    """The email of the deployment's operator account, the ``UNIVERSAL_CALLER`` principal's, in ``project``."""
+    return account_email(principals()[UNIVERSAL_CALLER].account_id, project)
+
+
 @functools.cache
 def principals() -> dict[int, Principal]:
     """Each ``Caller`` member's number to the principal its options name; the zero value excluded."""
@@ -125,6 +132,16 @@ def rule_for(method: descriptor.MethodDescriptor) -> Rule:
     if any(number not in named for number in numbers):
         raise ValueError(f'{method.full_name}: admits_caller names CALLER_UNSPECIFIED, which admits nobody')
     return Rule(principals=frozenset(named[number] for number in numbers))
+
+
+_UNGATED = (auth_pb2.DESCRIPTOR.services_by_name['Auth'].methods_by_name['ResolveSession'],)
+UNGATED_METHODS: frozenset[str] = frozenset(method.full_name for method in _UNGATED)
+_UNGATED_PATHS = frozenset(f'/{method.containing_service.full_name}/{method.name}' for method in _UNGATED)
+
+
+def is_ungated(path: str) -> bool:
+    """Whether a call's method path is exactly one the gate passes through without admitting it."""
+    return path in _UNGATED_PATHS
 
 
 def rule_for_path(path: str) -> Rule | None:

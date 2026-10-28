@@ -1,24 +1,25 @@
 import { OAuth2Client } from "google-auth-library";
+import { asciiLowercase } from "../../email";
 import { UnauthenticatedError } from "../../errors";
-import type { UserIdentity } from "../../identity";
+import type { Caller, UserIdentity } from "../../identity";
 import { type IapConfig, loadIapConfig } from "./config";
 
 // App-layer IAP verification. The plaintext `x-goog-authenticated-user-email` (and
 // `x-serverless-authorization`) headers are forgeable by anything that reaches the
 // container and MUST NOT be trusted. The only unforgeable identity is the signed IAP
 // assertion — a per-request JWT IAP mints. We verify its signature, issuer, and
-// audience against IAP's published keys and read the user email (and sub) from the
-// VERIFIED claims. Fail CLOSED: a request that cannot be verified is rejected, never
-// treated as anonymous.
+// audience against IAP's published keys and read the user email from the VERIFIED
+// claims. Fail CLOSED: a request that cannot be verified is rejected, never treated
+// as anonymous.
 
 const IAP_ASSERTION_HEADER = "x-goog-iap-jwt-assertion";
 const IAP_ISSUER = "https://cloud.google.com/iap";
 // Every request waits on a key fetch in flight, so one that stalls must not hold them for long.
 const KEY_FETCH_TIMEOUT_MS = 5_000;
 
-/** Verifies the signed IAP assertion and returns the email from its verified
- *  claims. Every failure mode — absent, bad signature, wrong issuer/audience,
- *  expired, or no email claim — throws `UnauthenticatedError` (→ 401). */
+/** Verifies the signed IAP assertion and returns the caller its verified claims name.
+ *  Every failure mode — absent, bad signature, wrong issuer/audience, expired, or no
+ *  email claim — throws `UnauthenticatedError` (→ 401). */
 export class IapVerifier implements UserIdentity {
   // IAP is enabled on the Cloud Run service, so the audience names the service:
   // `/projects/<n>/locations/<region>/services/<name>`.
@@ -37,7 +38,7 @@ export class IapVerifier implements UserIdentity {
     this.audience = `/projects/${config.projectNumber}/locations/${config.region}/services/${config.serviceName}`;
   }
 
-  async assertedEmail(headers: Headers): Promise<string> {
+  async authenticate(headers: Headers): Promise<Caller> {
     const assertion = headers.get(IAP_ASSERTION_HEADER);
     if (!assertion) {
       throw new UnauthenticatedError(`missing ${IAP_ASSERTION_HEADER}`);
@@ -64,7 +65,7 @@ export class IapVerifier implements UserIdentity {
         "verified IAP assertion carries no email claim",
       );
     }
-    return email;
+    return { email: asciiLowercase(email) };
   }
 
   /** IAP's published keys, reused for as long as the response's own headers keep them fresh; the
@@ -123,9 +124,8 @@ function isKeySet(value: unknown): value is PublicKeys {
 }
 
 /** Build the IAP verifier from env (`THEMIS_PROJECT_NUMBER`, `THEMIS_REGION`,
- *  `THEMIS_WEB_SERVICE_NAME`: the audience inputs). Fails
- *  loud on a missing input — a fail-closed misconfiguration, not a reason to skip
- *  verification. */
+ *  `THEMIS_WEB_SERVICE_NAME`: the audience inputs). Fails loud on a missing input — a
+ *  fail-closed misconfiguration, not a reason to skip verification. */
 export function createIdentity(
   env: Record<string, string | undefined> = process.env,
 ): IapVerifier {

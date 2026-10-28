@@ -128,12 +128,10 @@ class ConversationEvent(_message.Message):
     def __init__(self, id: _Optional[str] = ..., occurred_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., assistant: _Optional[_Union[Narration, _Mapping]] = ..., user: _Optional[_Union[Narration, _Mapping]] = ..., tool: _Optional[_Union[ToolCall, _Mapping]] = ..., sub_agent: _Optional[_Union[SubAgent, _Mapping]] = ..., refusal: _Optional[_Union[Refusal, _Mapping]] = ...) -> None: ...
 
 class Project(_message.Message):
-    __slots__ = ("id", "name")
+    __slots__ = ("id",)
     ID_FIELD_NUMBER: _ClassVar[int]
-    NAME_FIELD_NUMBER: _ClassVar[int]
     id: str
-    name: str
-    def __init__(self, id: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
+    def __init__(self, id: _Optional[str] = ...) -> None: ...
 
 class VariantClassificationInputs(_message.Message):
     __slots__ = ("transcript", "hgvs_c", "clinical_context")

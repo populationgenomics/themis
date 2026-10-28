@@ -39,6 +39,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.parse
 from typing import NamedTuple
 
 
@@ -122,6 +123,8 @@ def resolve(source: pathlib.Path, target: str, root: pathlib.Path) -> str | None
     if EXTERNAL_RE.match(target):
         return None
     path_part, _, fragment = target.partition('#')
+    # A link names a path URL-encoded (`%5B` for `[`), as mdformat writes one; the file system holds it decoded.
+    path_part = urllib.parse.unquote(path_part)
     if path_part:
         if path_part.startswith('/'):
             # GitHub treats a leading slash as repo-root-relative, not

@@ -27,6 +27,16 @@ export class UnauthenticatedError extends Error {
   }
 }
 
+/** Thrown when an authenticated caller is not admitted to the deployment: the ACL lists them
+ *  on no Project, and they are not the deployment's operator account. Maps to 403 (Connect
+ *  `PermissionDenied`): the caller has proved who they are, so authenticating again would not help. */
+export class NotAdmittedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NotAdmittedError";
+  }
+}
+
 /** Thrown when the run's session refuses a curator turn because the agent is mid-step —
  *  a tool call in flight, so the session accepts only tool-result-shaped events. A
  *  recurring runtime state the curator resolves (wait, or interrupt), not a broken
@@ -133,6 +143,10 @@ export function isUnauthenticatedError(
   error: unknown,
 ): error is UnauthenticatedError {
   return named(error, "UnauthenticatedError");
+}
+
+export function isNotAdmittedError(error: unknown): error is NotAdmittedError {
+  return named(error, "NotAdmittedError");
 }
 
 export function isSessionBusyError(error: unknown): error is SessionBusyError {

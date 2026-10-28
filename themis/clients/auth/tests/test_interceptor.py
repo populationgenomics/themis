@@ -8,6 +8,7 @@ contract declares, and the health check.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 from collections.abc import Awaitable, Callable
 from typing import override
 
@@ -20,7 +21,7 @@ from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from themis.clients.auth import claim as claim_mod
 from themis.clients.auth import context as auth_context
 from themis.clients.auth import interceptor as interceptor_mod
-from themis.rpc import literature_pb2, sandbox_options_pb2, sheaf_pb2
+from themis.rpc import auth_pb2, literature_pb2, sandbox_options_pb2, sheaf_pb2
 from themis.testing import auth as fixture
 from themis.testing import in_process_grpc
 
@@ -88,15 +89,18 @@ def _register(seen: _Seen) -> Callable[[grpc.aio.Server], None]:
 
 
 def _call(
-    path: str, metadata: Metadata, request: bytes = b''
+    path: str,
+    metadata: Metadata,
+    request: bytes = b'',
+    *,
+    authorizer: interceptor_mod.Authorizer | None = None,
 ) -> tuple[grpc.StatusCode, auth_context.AuthContext | None]:
     """Drive one unary call through the gated server; the status it ended with, and what the handler saw."""
     seen = _Seen()
+    gate = interceptor_mod.AuthInterceptor(fixture.authorizer() if authorizer is None else authorizer)
 
     async def run() -> grpc.StatusCode:
-        async with in_process_grpc.serving(
-            _register(seen), server_interceptors=(interceptor_mod.AuthInterceptor(fixture.authorizer()),)
-        ) as channel:
+        async with in_process_grpc.serving(_register(seen), server_interceptors=(gate,)) as channel:
             method = channel.unary_unary(path, request_serializer=_bytes, response_deserializer=_bytes)
             try:
                 await method(request, metadata=claim_mod.pairs(metadata))
@@ -168,6 +172,19 @@ def test_the_agent_with_a_session_that_does_not_resolve_is_denied_not_faulted() 
 def test_a_session_resolver_outage_propagates_rather_than_denying() -> None:
     code, _ = _call(f'/{_LITERATURE}/Validate', fixture.AGENT_OUTAGE)
     assert code is grpc.StatusCode.UNKNOWN  # the raise surfaced; it did not read as "no session"
+
+
+def test_an_unavailable_auth_service_ends_the_call_unavailable() -> None:
+    async def unavailable(session_token: str) -> auth_pb2.SessionContext:
+        del session_token
+        raise grpc.aio.AioRpcError(
+            grpc.StatusCode.UNAVAILABLE, grpc.aio.Metadata(), grpc.aio.Metadata(), details='stale ACL'
+        )
+
+    authorizer = dataclasses.replace(fixture.authorizer(), session_resolver=unavailable)
+    code, auth = _call(f'/{_LITERATURE}/Validate', fixture.AGENT, authorizer=authorizer)
+    assert code is grpc.StatusCode.UNAVAILABLE
+    assert auth is None
 
 
 @pytest.mark.parametrize('metadata', [(('authorization', 'Bearer nobody'),), fixture.claim(_AGENT_SESSION, 'good'), ()])

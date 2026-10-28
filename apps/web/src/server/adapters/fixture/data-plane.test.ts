@@ -14,8 +14,8 @@ import {
 import { gitText, runGit, scratchDir } from "@/workspace-copy/git.test-support";
 import { ResourceNotFoundError } from "../../errors";
 import { COLLABORATIVE_BRANCH } from "../../workspace";
+import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./access";
 import { FixtureDataPlane } from "./data-plane";
-import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./membership";
 import {
   documentMarkdown,
   FINAL_DOC_VERSION,

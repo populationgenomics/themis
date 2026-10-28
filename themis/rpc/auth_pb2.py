@@ -25,27 +25,29 @@ _sym_db = _symbol_database.Default()
 from themis.rpc import sandbox_options_pb2 as themis_dot_rpc_dot_sandbox__options__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15themis/rpc/auth.proto\x12\x0fthemis.rpc.auth\x1a themis/rpc/sandbox_options.proto\",\n\x13ResolveTokenRequest\x12\x15\n\rsession_token\x18\x01 \x01(\t\"@\n\x0cProjectGrant\x12\n\n\x02id\x18\x01 \x01(\t\x12$\n\x05roles\x18\x02 \x03(\x0e\x32\x15.themis.rpc.auth.Role\"i\n\x0eSessionContext\x12\x12\n\nproject_id\x18\x01 \x01(\t\x12\x13\n\x0b\x61nalysis_id\x18\x02 \x01(\t\x12.\n\x07project\x18\x03 \x01(\x0b\x32\x1d.themis.rpc.auth.ProjectGrant\"!\n\x10GetAccessRequest\x12\r\n\x05\x65mail\x18\x01 \x01(\t\"D\n\x11GetAccessResponse\x12/\n\x08projects\x18\x01 \x03(\x0b\x32\x1d.themis.rpc.auth.ProjectGrant\"O\n\x0b\x43\x61llerClaim\x12)\n\ncalling_as\x18\x01 \x01(\x0e\x32\x15.themis.rpc.CallingAs\x12\x15\n\rsession_token\x18\x02 \x01(\t*@\n\x04Role\x12\x14\n\x10ROLE_UNSPECIFIED\x10\x00\x12\x10\n\x0cROLE_MANAGER\x10\x01\x12\x10\n\x0cROLE_CURATOR\x10\x02\x32_\n\x04\x41uth\x12W\n\x0eResolveSession\x12$.themis.rpc.auth.ResolveTokenRequest\x1a\x1f.themis.rpc.auth.SessionContextb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15themis/rpc/auth.proto\x12\x0fthemis.rpc.auth\x1a themis/rpc/sandbox_options.proto\",\n\x13ResolveTokenRequest\x12\x15\n\rsession_token\x18\x01 \x01(\t\"@\n\x0cProjectGrant\x12\n\n\x02id\x18\x01 \x01(\t\x12$\n\x05roles\x18\x02 \x03(\x0e\x32\x15.themis.rpc.auth.Role\"g\n\x0eSessionContext\x12\x13\n\x0b\x61nalysis_id\x18\x02 \x01(\t\x12.\n\x07project\x18\x03 \x01(\x0b\x32\x1d.themis.rpc.auth.ProjectGrantJ\x04\x08\x01\x10\x02R\nproject_id\"!\n\x10GetAccessRequest\x12\r\n\x05\x65mail\x18\x01 \x01(\t\"D\n\x11GetAccessResponse\x12/\n\x08projects\x18\x01 \x03(\x0b\x32\x1d.themis.rpc.auth.ProjectGrant\"O\n\x0b\x43\x61llerClaim\x12)\n\ncalling_as\x18\x01 \x01(\x0e\x32\x15.themis.rpc.CallingAs\x12\x15\n\rsession_token\x18\x02 \x01(\t*@\n\x04Role\x12\x14\n\x10ROLE_UNSPECIFIED\x10\x00\x12\x10\n\x0cROLE_MANAGER\x10\x01\x12\x10\n\x0cROLE_CURATOR\x10\x02\x32\xba\x01\n\x04\x41uth\x12Y\n\tGetAccess\x12!.themis.rpc.auth.GetAccessRequest\x1a\".themis.rpc.auth.GetAccessResponse\"\x05\xa2\xb5\x18\x01\x01\x12W\n\x0eResolveSession\x12$.themis.rpc.auth.ResolveTokenRequest\x1a\x1f.themis.rpc.auth.SessionContextb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'themis.rpc.auth_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_ROLE']._serialized_start=481
-  _globals['_ROLE']._serialized_end=545
+  _globals['_AUTH'].methods_by_name['GetAccess']._loaded_options = None
+  _globals['_AUTH'].methods_by_name['GetAccess']._serialized_options = b'\242\265\030\001\001'
+  _globals['_ROLE']._serialized_start=479
+  _globals['_ROLE']._serialized_end=543
   _globals['_RESOLVETOKENREQUEST']._serialized_start=76
   _globals['_RESOLVETOKENREQUEST']._serialized_end=120
   _globals['_PROJECTGRANT']._serialized_start=122
   _globals['_PROJECTGRANT']._serialized_end=186
   _globals['_SESSIONCONTEXT']._serialized_start=188
-  _globals['_SESSIONCONTEXT']._serialized_end=293
-  _globals['_GETACCESSREQUEST']._serialized_start=295
-  _globals['_GETACCESSREQUEST']._serialized_end=328
-  _globals['_GETACCESSRESPONSE']._serialized_start=330
-  _globals['_GETACCESSRESPONSE']._serialized_end=398
-  _globals['_CALLERCLAIM']._serialized_start=400
-  _globals['_CALLERCLAIM']._serialized_end=479
-  _globals['_AUTH']._serialized_start=547
-  _globals['_AUTH']._serialized_end=642
+  _globals['_SESSIONCONTEXT']._serialized_end=291
+  _globals['_GETACCESSREQUEST']._serialized_start=293
+  _globals['_GETACCESSREQUEST']._serialized_end=326
+  _globals['_GETACCESSRESPONSE']._serialized_start=328
+  _globals['_GETACCESSRESPONSE']._serialized_end=396
+  _globals['_CALLERCLAIM']._serialized_start=398
+  _globals['_CALLERCLAIM']._serialized_end=477
+  _globals['_AUTH']._serialized_start=546
+  _globals['_AUTH']._serialized_end=732
 # @@protoc_insertion_point(module_scope)

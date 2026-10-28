@@ -6,10 +6,12 @@ import {
   WorkflowAssessmentSchema,
 } from "@/gen/themis/curation/models/curation_pb";
 import { Consequence } from "@/gen/themis/evidence/models/evidence_pb";
+import { Role } from "@/gen/themis/rpc/auth_pb";
 import {
   AssessmentStatus,
   ModeOfInheritance,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { FIXTURE_PROJECT } from "@/server/adapters/fixture/access";
 import { DEV_USER_EMAIL } from "@/server/identity";
 import { CurationAccess } from "./access";
 import { FixtureCurationStore } from "./fixture";
@@ -31,14 +33,21 @@ function scored(rationale: string): WorkflowAssessment {
   });
 }
 
-async function seeded() {
-  const store = new FixtureCurationStore();
-  const access = new CurationAccess(
+/** The dev user as the fixture's ACL grants them: manager and curator of the fixture Project. */
+function devUserAccess(store: FixtureCurationStore): CurationAccess {
+  return new CurationAccess(
     store,
     DEV_USER_EMAIL,
-    "manager",
+    FIXTURE_PROJECT,
+    new Set([Role.MANAGER, Role.CURATOR]),
     new FixtureVariantResolver(),
+    async () => true,
   );
+}
+
+async function seeded() {
+  const store = new FixtureCurationStore();
+  const access = devUserAccess(store);
   const put = (workflowId: string, workflow: WorkflowAssessment) =>
     access.saveDraft(WORKSHEET, {
       workflowId,
@@ -97,12 +106,7 @@ describe("the hidden answers the submit card names", () => {
 describe("the submit button", () => {
   test("follows the server on a submission holding only a section", async () => {
     const store = new FixtureCurationStore();
-    const access = new CurationAccess(
-      store,
-      DEV_USER_EMAIL,
-      "manager",
-      new FixtureVariantResolver(),
-    );
+    const access = devUserAccess(store);
     const visible = workflowsFor({
       modeOfInheritance: ModeOfInheritance.AUTOSOMAL_DOMINANT,
       consequenceClass: Consequence.UNSPECIFIED,

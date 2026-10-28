@@ -4,11 +4,11 @@ The auth and hello services admit only internal traffic, and the evidence and sh
 traffic and the load balancer's. A request counts as internal only if it arrives over a same-project VPC. A
 Cloud Run workload egresses to the public internet by default, so a caller with no VPC attachment reaches
 the service's public front end and is rejected before IAM. This module provisions that VPC. The hello,
-sheaf and evidence services attach to it because they call auth, the web tier because it calls evidence
-and sheaf, and the sandbox Job because it calls hello, evidence and sheaf. Each attaches with Direct VPC
-egress for all traffic, so a call to a public run.app hostname traverses the VPC and is delivered
-internally, while the subnet's Private Google Access keeps Google-API traffic (GCS, logging) on the
-private path.
+sheaf and evidence services attach to it because they call auth, the web tier because it calls auth,
+evidence and sheaf, and the sandbox Job because it calls hello, evidence and sheaf. Each attaches with
+Direct VPC egress for all traffic, so a call to a public run.app hostname traverses the VPC and is
+delivered internally, while the subnet's Private Google Access keeps Google-API traffic (GCS, logging) on
+the private path.
 
 This VPC is deliberately not sealed. The egress boundary is the sandbox guest's empty network namespace
 (postern): the untrusted code reaches the outside world only through the hatch, never directly. The

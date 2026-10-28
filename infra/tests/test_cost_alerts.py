@@ -14,6 +14,7 @@ from themis_infra import capture, cost, cost_alerts, cost_metrics, cost_prices, 
 
 _CHANNEL_TYPE = 'gcp:monitoring/notificationChannel:NotificationChannel'
 _POLICY_TYPE = 'gcp:monitoring/alertPolicy:AlertPolicy'
+_SPEND_COMPONENTS = ('themis:infra:CostAlerts', 'themis:infra:CostReport')
 _EXPORTER_JOB_CHAIN = ['themis:infra:CostExporter', 'gcp:cloudrunv2/job:Job']
 _EXPORTER_SCHEDULE_CHAIN = ['themis:infra:CostExporter', 'gcp:cloudscheduler/job:Job']
 _EVERY_N_MINUTES = re.compile(r'\*/(\d+) \* \* \* \*')
@@ -79,7 +80,12 @@ def channel(program: capture.Capture) -> dict[str, object]:
 
 @pytest.fixture(scope='module')
 def policies(program: capture.Capture) -> dict[str, dict[str, object]]:
-    return _of_type(program, _POLICY_TYPE)
+    """The spend policies: every alert policy the spend monitor's components declare."""
+    return {
+        urn.rsplit('::', 1)[-1]: _mapping(registration.state)
+        for urn, registration in program.resources.items()
+        if capture.urn_type_chain(urn) in ([parent, _POLICY_TYPE] for parent in _SPEND_COMPONENTS)
+    }
 
 
 @pytest.fixture(scope='module')

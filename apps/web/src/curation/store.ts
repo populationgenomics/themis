@@ -2,8 +2,6 @@ import { inlineMode } from "./mode";
 import type {
   Entry,
   NewVariant,
-  Person,
-  Role,
   Submission,
   Variant,
   Worksheet,
@@ -42,18 +40,15 @@ export function isDuplicateRegistrationError(
 }
 
 export interface CurationStore {
-  /** The caller's role, or undefined for an email with no row — which is how a verified IAP user
-   *  who was never granted access is refused. */
-  roleOf(email: string): Promise<Role | undefined>;
-
-  listPeople(): Promise<Person[]>;
-  addPerson(email: string, role: Role, addedBy: string): Promise<Person>;
-  removePerson(email: string): Promise<void>;
-
-  /** Register a variant. Throws `DuplicateRegistrationError` where one with the same transcript,
-   *  HGVS c., MONDO term and mode is already registered. */
-  createVariant(variant: NewVariant, createdBy: string): Promise<Variant>;
-  listVariants(): Promise<Variant[]>;
+  /** Register a variant in `projectId`. Throws `DuplicateRegistrationError` where one with the same
+   *  transcript, HGVS c., MONDO term and mode is already registered in that Project. */
+  createVariant(
+    projectId: string,
+    variant: NewVariant,
+    createdBy: string,
+  ): Promise<Variant>;
+  /** The Project's registrations, newest first. */
+  listVariants(projectId: string): Promise<Variant[]>;
   getVariant(id: string): Promise<Variant | undefined>;
 
   /** Assign a curator, minting their worksheet. Rejects a second assignment of the same curator to

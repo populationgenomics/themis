@@ -118,31 +118,16 @@ If deliveries start failing once enforced, set the switch back to `False` and de
 Cloud Armor refused in the meantime, unless ~20 consecutive failures have disabled the endpoint, in which case re-enable
 it in the Console.
 
-## Project registry and membership
+## Projects and members
 
-`projects` and `project_members` are owned by the migrator DB role and the web SA holds `SELECT` only, so rows go in by
-hand — as `themis-clu`, which is a member of that role. Authorization is default-deny — without a `project_members` row
-a user who cleared the IAP gate sees no Projects and cannot create an Analysis, so seed before the smoke. Member emails
-are PII: database only, never this repo.
-
-The instance refuses direct connections (empty `authorizedNetworks`) and a personal identity has no DB login, so reach
-it through `tools/psql.py`, which runs the connector and connects as `themis-clu` — the account a person impersonates
-for this (`infra/themis_infra/clu.py`):
-
-```sh
-uv run python -m tools.psql -- -c "
-INSERT INTO projects (id, name) VALUES ('demo', 'Demo project')
-    ON CONFLICT (id) DO NOTHING;
-INSERT INTO project_members (project_id, user_email) VALUES ('demo', 'someone@populationgenomics.org.au')
-    ON CONFLICT DO NOTHING;"
-```
-
-`user_email` must match the email in the IAP assertion (the signed-in Google account), and the Project must be
-registered before a membership references it (FK).
+Which Projects exist, and who works on each, comes from the deployment's ACL, which the site writes
+([`access-control.md`](access-control.md)). A person is not admitted and cannot create an Analysis until the ACL lists
+them as a manager or curator of a Project, so ask the site for a Project before the smoke test below. The ACL names
+people, so its contents never enter this repo.
 
 ## Operations
 
-- **End-to-end smoke** — with a seeded Project and membership (above), create one Analysis (BFF
+- **End-to-end smoke** — with a Project you are a member of (above), create one Analysis (BFF
   `POST /api/rpc/themis.workbench.rpc.Workbench/CreateAnalysis`) whose first `user.message` is the user prompt that
   drives both data-plane legs: a `hello` code-mode call plus a `/workspace/working_document.md` write embedding the
   returned `greeting`, `analysis_id`, and `project_id`. A well-formed document (one `#` title, non-empty) carrying the

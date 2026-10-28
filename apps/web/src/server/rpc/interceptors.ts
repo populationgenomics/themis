@@ -3,6 +3,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { userContext } from "@/server/context";
 import {
   isClientInputError,
+  isNotAdmittedError,
   isResourceNotFoundError,
   isSessionBusyError,
   isUnauthenticatedError,
@@ -18,7 +19,7 @@ import { setUserContext } from "./context";
 // The two layers every RPC passes through, applied to the router rather than to each
 // method.
 
-/** Verify the request's caller and bind it to the call. */
+/** Admit the request's caller and bind it, with their Projects, to the call. */
 export function identity(): Interceptor {
   return (next) => async (req) => {
     setUserContext(req.contextValues, await userContext(req.header));
@@ -65,6 +66,9 @@ function toConnectError(error: unknown): ConnectError {
   }
   if (isUnauthenticatedError(error)) {
     return new ConnectError("unauthenticated", Code.Unauthenticated);
+  }
+  if (isNotAdmittedError(error)) {
+    return new ConnectError("not admitted", Code.PermissionDenied);
   }
   if (isSessionBusyError(error)) {
     // A fixed phrase, not the thrown message: the upstream refusal names internal

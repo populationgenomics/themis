@@ -1,6 +1,7 @@
 // The `auth` service: authorization (docs/design/access-control.md). It is the sole reader of the
-// deployment's ACL and of the token store, and answers from them what a per-session token grants
-// a data-plane service forwarding the token a call carries. This proto is the source of truth (the
+// deployment's ACL and of the token store, and answers from them for both paths: what a person may
+// reach (GetAccess, for the web tier), and what a per-session token grants (ResolveSession, for a
+// data-plane service forwarding the token a call carries). This proto is the source of truth (the
 // contract); `regen` (buf generate) emits the themis/rpc/auth stubs each consumer imports — the server
 // subclasses the servicer base, a caller uses the stub.
 syntax = "proto3";
@@ -18,7 +19,8 @@ message ResolveTokenRequest {
   string session_token = 1;
 }
 
-// What a person may do in a Project. The ACL lists the people holding each role; a person may hold both.
+// What a person may do in a Project. The ACL lists the people holding each role; a person may hold
+// both.
 enum Role {
   ROLE_UNSPECIFIED = 0;
   // Runs the Project's curation: manages its variants, assigns curators and reads the comparisons.
@@ -27,8 +29,8 @@ enum Role {
   ROLE_CURATOR = 2;
 }
 
-// A Project a caller may reach, as the ACL states it at the moment of the call: the one shape the auth
-// service answers in, whether asked for a session's Project or for a person's. A Project is one
+// A Project a caller may reach, as the ACL states it at the moment of the call: the one shape the
+// auth service answers in, whether asked for a session's Project or for a person's. A Project is one
 // dataset, so its id is also what a backend service reads on the Project's behalf.
 message ProjectGrant {
   // The Project's key in the ACL: the dataset's name, a lowercase slug (`[a-z0-9][a-z0-9-]*`). The
@@ -42,13 +44,12 @@ message ProjectGrant {
 // The binding a resolved token grants — the Project and the Analysis whose workspace the caller may
 // read and write. Project first (a Project nests Analyses).
 message SessionContext {
-  // The Analysis's Project id as the token store recorded it when the Analysis was created: the same
-  // value as `project.id`.
-  string project_id = 1;
+  reserved 1;
+  reserved "project_id";
   // `an_` followed by a lowercase, hyphenated UUIDv4, minted when the Analysis is created.
   string analysis_id = 2;
-  // The Analysis's Project, read from the ACL at the moment of the call, so a Project removed from the
-  // ACL stops being granted at the next call.
+  // The Analysis's Project, read from the ACL at the moment of the call, so a Project removed
+  // from the ACL stops being granted at the next call.
   ProjectGrant project = 3;
 }
 
@@ -80,15 +81,22 @@ message CallerClaim {
   string session_token = 2;
 }
 
-// The auth service: resolve a session token to the Project + Analysis binding it grants.
+// The auth service: what a person may reach, and what a session token grants.
 service Auth {
+  // What the person behind an authenticated email address may reach. Only the web tier may call it,
+  // because it trusts the address it is given: the web tier authenticated the person itself and relays
+  // nobody's claim. While the auth service's copy of the ACL is older than its staleness limit,
+  // every call is UNAVAILABLE rather than answered from that copy.
+  rpc GetAccess(GetAccessRequest) returns (GetAccessResponse) {
+    option (themis.rpc.admits_caller) = CALLER_WEB;
+  }
   // Resolve a session token to its binding. An invalid, revoked, or expired token, or one whose Project
   // is no longer in the ACL, is a PERMISSION_DENIED the server adds — a transport-level rejection,
   // not a modelled body. While the auth service's copy of the ACL is older than its staleness
-  // limit, every call is UNAVAILABLE rather than answered from that copy.
+  // limit, every call is UNAVAILABLE, as for GetAccess.
   //
   // No `admits_caller`, and not an omission: this is the rpc an admission is derived through, so it
   // cannot itself be gated on one. Its callers are the data-plane service accounts, which no
-  // `Caller` member names; what may reach it is internal ingress and `run.invoker`.
+  // `Caller` member names; what may reach it is `run.invoker`.
   rpc ResolveSession(ResolveTokenRequest) returns (SessionContext);
 }

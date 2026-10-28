@@ -7,8 +7,6 @@ import { modeColumn, modeFromColumn } from "./mode";
 import type {
   Entry,
   NewVariant,
-  Person,
-  Role,
   Submission,
   Variant,
   Worksheet,
@@ -20,14 +18,16 @@ import { type CurationStore, duplicateRegistration } from "./store";
 // search_path the pool does not set.
 
 const VARIANT_COLUMNS =
-  "id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id, mode_of_inheritance, clinical_context, created_by, created_at";
-/** The uniqueness key `0014_curation_registration_mode` declares on `curation.variants`. */
+  "id, project_id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id, mode_of_inheritance, clinical_context, created_by, created_at";
+/** The uniqueness key `0019_curation_projects` declares on `curation.variants`: one registration per
+ *  Project, variant and entity. */
 export const REGISTRATION_KEY = "variants_registration_key";
 const WORKSHEET_COLUMNS =
   "id, variant_id, curator_email, workflows_version, assigned_by, assigned_at";
 
 export interface VariantRow {
   id: string;
+  project_id: string;
   gene: string;
   transcript: string;
   hgvs_c: string;
@@ -73,78 +73,22 @@ export class SqlCurationStore implements CurationStore {
     return inTransaction(await this.pool(), body);
   }
 
-  async roleOf(email: string): Promise<Role | undefined> {
-    const rows = await this.query<{ role: string }>(
-      "SELECT role FROM curation.roles WHERE email = $1",
-      [email],
-    );
-    const role = rows[0]?.role;
-    if (role === undefined) return undefined;
-    if (role !== "manager" && role !== "curator") {
-      throw new Error(`curation.roles holds an unknown role: ${role}`);
-    }
-    return role;
-  }
-
-  async listPeople(): Promise<Person[]> {
-    const rows = await this.query<{
-      email: string;
-      role: string;
-      added_by: string;
-      added_at: Date;
-    }>(
-      "SELECT email, role, added_by, added_at FROM curation.roles ORDER BY email",
-    );
-    return rows.map((row) => {
-      if (row.role !== "manager" && row.role !== "curator") {
-        throw new Error(`curation.roles holds an unknown role: ${row.role}`);
-      }
-      return {
-        email: row.email,
-        role: row.role,
-        addedBy: row.added_by,
-        addedAt: row.added_at,
-      };
-    });
-  }
-
-  async addPerson(email: string, role: Role, addedBy: string): Promise<Person> {
-    const rows = await this.query<{ added_at: Date }>(
-      `INSERT INTO curation.roles (email, role, added_by) VALUES ($1, $2, $3)
-       ON CONFLICT (email) DO NOTHING RETURNING added_at`,
-      [email, role, addedBy],
-    );
-    const addedAt = rows[0]?.added_at;
-    if (addedAt === undefined) {
-      const existing = (await this.listPeople()).find((p) => p.email === email);
-      if (existing === undefined) {
-        throw new Error(
-          `curation.roles lost the row it refused to insert: ${email}`,
-        );
-      }
-      return existing;
-    }
-    return { email, role, addedBy, addedAt };
-  }
-
-  async removePerson(email: string): Promise<void> {
-    await this.query("DELETE FROM curation.roles WHERE email = $1", [email]);
-  }
-
   async createVariant(
+    projectId: string,
     variant: NewVariant,
     createdBy: string,
   ): Promise<Variant> {
     const id = crypto.randomUUID();
     const rows = await this.query<{ created_at: Date }>(
       `INSERT INTO curation.variants
-         (id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id,
+         (id, project_id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id,
           mode_of_inheritance, clinical_context, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT ON CONSTRAINT ${REGISTRATION_KEY} DO NOTHING
        RETURNING created_at`,
       [
         id,
+        projectId,
         variant.gene,
         variant.transcript,
         variant.hgvsC,
@@ -158,12 +102,14 @@ export class SqlCurationStore implements CurationStore {
     );
     const createdAt = rows[0]?.created_at;
     if (createdAt === undefined) throw duplicateRegistration(variant);
-    return { ...variant, id, createdBy, createdAt };
+    return { ...variant, id, projectId, createdBy, createdAt };
   }
 
-  async listVariants(): Promise<Variant[]> {
+  async listVariants(projectId: string): Promise<Variant[]> {
     const rows = await this.query<VariantRow>(
-      `SELECT ${VARIANT_COLUMNS} FROM curation.variants ORDER BY created_at DESC`,
+      `SELECT ${VARIANT_COLUMNS} FROM curation.variants
+       WHERE project_id = $1 ORDER BY created_at DESC`,
+      [projectId],
     );
     return rows.map(parseVariant);
   }
@@ -351,6 +297,7 @@ export function parseVariant(row: VariantRow): Variant {
   }
   return {
     id: row.id,
+    projectId: row.project_id,
     gene: row.gene,
     transcript: row.transcript,
     hgvsC: row.hgvs_c,

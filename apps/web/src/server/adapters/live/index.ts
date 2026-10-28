@@ -1,10 +1,15 @@
 import { loadSqlConfig } from "../../pg";
-import type { AnalysisPorts, ProjectMembership } from "../../ports";
+import type { AccessPort, AnalysisPorts } from "../../ports";
+import { createAccess as buildAccess } from "./access";
 import { AnthropicClient } from "./client";
-import { loadAnthropicConfig, loadKmsConfig, loadSheafConfig } from "./config";
+import {
+  loadAnthropicConfig,
+  loadAuthServiceConfig,
+  loadKmsConfig,
+  loadSheafConfig,
+} from "./config";
 import { DataPlane } from "./data-plane";
 import { KmsSessionTokenDeriver, MemoizedBearerDeriver } from "./derive";
-import { Membership } from "./membership";
 import { Sql } from "./sql";
 import { createWorkspace } from "./workspace";
 
@@ -14,10 +19,8 @@ import { createWorkspace } from "./workspace";
 // service, which names each Analysis by a bearer the same deriver derives. Authorization is the AuthorizedBackend
 // decorator's job; this layer trusts the (user, project) its caller resolved.
 
-// One SQL pool + Cloud SQL connector, shared by the backend and membership (both
-// query the same instance). Memoized on `globalThis` so Next's dev HMR does not leak
-// a fresh pool per reload; `context.ts` builds the backend and membership from
-// separate factories, so without this each would open its own.
+// One SQL pool + Cloud SQL connector. Memoized on `globalThis` so Next's dev HMR does not leak
+// a fresh pool per reload.
 function sharedSql(): Sql {
   const holder = globalThis as typeof globalThis & {
     __themisLiveSql?: Sql;
@@ -42,8 +45,11 @@ export function createAnalysisPorts(): AnalysisPorts {
   };
 }
 
-export function createMembership(): ProjectMembership {
-  return new Membership(sharedSql());
+/** The auth service's access answers (`THEMIS_AUTH_URL`). */
+export function createAccess(
+  env: Record<string, string | undefined> = process.env,
+): AccessPort {
+  return buildAccess(loadAuthServiceConfig(env));
 }
 
 export { createContent } from "./content";

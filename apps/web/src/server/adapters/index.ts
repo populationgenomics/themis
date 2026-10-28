@@ -1,9 +1,9 @@
 import { type Backend, selectedBackend } from "../backend";
 import type {
+  AccessPort,
   AnalysisPorts,
   ContentPort,
   LiteraturePort,
-  ProjectMembership,
 } from "../ports";
 import * as fixture from "./fixture";
 import * as live from "./live";
@@ -23,14 +23,12 @@ export function createAnalysisPorts(env: EnvLike = process.env): AnalysisPorts {
     : fixture.createAnalysisPorts();
 }
 
-/** Build a FRESH membership — the user↔Project mapping the `AuthorizedBackend`
- *  authorizes against. Memoized by `context.ts`. */
-export function createMembership(
-  env: EnvLike = process.env,
-): ProjectMembership {
+/** Build a FRESH access port — what a person may reach, which both the perimeter and the data seam
+ *  ask on every request. Memoized by `admission.ts`. */
+export function createAccess(env: EnvLike = process.env): AccessPort {
   return selectedBackend(env) === "live"
-    ? live.createMembership()
-    : fixture.createMembership();
+    ? live.createAccess(env)
+    : fixture.createAccess();
 }
 
 /** Build a FRESH content port — the generic GCS-object serving surface (signed-URL 302 live, seeded
@@ -41,7 +39,7 @@ export function createContent(env: EnvLike = process.env): ContentPort {
     : fixture.createContent();
 }
 
-/** Build a FRESH literature port — the literature read surface, IAP-gated (not Project-scoped) — with
+/** Build a FRESH literature port — the literature read surface, gated on admission (not Project-scoped) — with
  *  the matching content port injected. Memoized by `context.ts`. */
 export function createLiterature(env: EnvLike = process.env): LiteraturePort {
   const content = createContent(env);

@@ -5,7 +5,9 @@
 (public ingress rules, IAP boundary, and webhook authentication), [`access-control.md`](access-control.md) (who may
 reach the app and what they may see), [`sandbox-worker.md`](sandbox-worker.md) (self-hosted sandbox worker, Unix-socket
 hatches, and per-session tokens), [`../runbooks/fresh-environment.md`](../runbooks/fresh-environment.md) (bringing up a
-new environment), [`../runbooks/iap-access.md`](../runbooks/iap-access.md) (programmatic access through IAP).
+new environment),
+[`../runbooks/hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md#the-web-app-behind-iap) (programmatic
+access through IAP).
 
 ## Overview
 
@@ -123,9 +125,10 @@ secrets ([`deployment.md`](deployment.md)):
   ([`access-control.md`](access-control.md) §Authentication in front of the web tier).
 - Developers and scripts reaching the application without a browser impersonate the `themis-clu` service account and
   present a short-lived token that the account signs through IAM
-  ([`../runbooks/iap-access.md`](../runbooks/iap-access.md)). IAP forwards the request with its signed assertion, as for
-  a person, and the auth service admits the account to every Project, so what gates it is IAM's answer to who may
-  impersonate it rather than a shared key ([`access-control.md`](access-control.md) §Programmatic callers).
+  ([`../runbooks/hand-driving-a-service.md`](../runbooks/hand-driving-a-service.md#the-web-app-behind-iap)). IAP
+  forwards the request with its signed assertion, as for a person, and the auth service admits the account to every
+  Project, so what gates it is IAM's answer to who may impersonate it rather than a shared key
+  ([`access-control.md`](access-control.md) §Programmatic callers).
 
 Secret Manager ([`infra/themis_infra/secrets.py`](../../infra/themis_infra/secrets.py) and
 [`infra/themis_infra/sandbox.py`](../../infra/themis_infra/sandbox.py)) holds four credentials that have no WIF path:

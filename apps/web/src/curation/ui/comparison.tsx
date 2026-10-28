@@ -23,8 +23,9 @@ import type { WorkflowDef } from "../workflows/types";
 import { ClinicalContextPanel } from "./clinical-context";
 import { classificationLabel } from "./worksheet";
 
-// The sections of the comparison page (app/curation/compare). A client module because the workflow
-// registry is one: its workflows carry their bodies, which a server component cannot import.
+// The sections of the comparison page (app/project/[projectId]/curation/compare). A client module
+// because the workflow registry is one: its workflows carry their bodies, which a server component
+// cannot import.
 
 /** One curator's submission as the page hands it over. */
 export interface CuratorAnswers {

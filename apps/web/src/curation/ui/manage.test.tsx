@@ -21,7 +21,10 @@ function row(clinicalContext: string): VariantRow {
 
 function panel(clinicalContext: string): string {
   return renderToStaticMarkup(
-    <AssignPanel variants={[row(clinicalContext)]} curators={[]} />,
+    <AssignPanel
+      projectId="fixture-cohort"
+      variants={[row(clinicalContext)]}
+    />,
   );
 }
 

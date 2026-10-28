@@ -159,8 +159,8 @@ def _prepare(args: argparse.Namespace) -> int:
     listed = {project.id for project in web.list_projects().projects}
     if args.workbench_project not in listed:
         raise CommandError(
-            f'{service_account} is not a member of the Project {args.workbench_project!r}; '
-            f'its Projects: {sorted(listed)}'
+            f"the deployment's ACL holds no Project {args.workbench_project!r}; {service_account}, the "
+            f'operator account, reaches every Project it holds: {sorted(listed)}'
         )
     with clu_database.connect(args.project, service_account) as conn:
         reading = reference.read(conn)

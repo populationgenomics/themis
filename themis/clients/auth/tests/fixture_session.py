@@ -26,8 +26,13 @@ PROJECT_ID = 'proj'
 ANALYSIS_ID = 'ana'
 
 
+def project_grant() -> auth_pb2.ProjectGrant:
+    """The grant for ``PROJECT_ID`` the double resolves to."""
+    return auth_pb2.ProjectGrant(id=PROJECT_ID)
+
+
 async def resolve_fixture_session(session_token: str) -> auth_pb2.SessionContext:
     """Resolve ``GOOD_TOKEN`` to its binding; raise ``UnresolvedSessionError`` for any other token."""
     if session_token != GOOD_TOKEN:
         raise session.UnresolvedSessionError
-    return auth_pb2.SessionContext(project_id=PROJECT_ID, analysis_id=ANALYSIS_ID)
+    return auth_pb2.SessionContext(analysis_id=ANALYSIS_ID, project=project_grant())

@@ -1,15 +1,15 @@
 import type { UserIdentity } from "../../identity";
 import type {
+  AccessPort,
   AnalysisPorts,
   ContentPort,
   LiteraturePort,
-  ProjectMembership,
 } from "../../ports";
+import { FIXTURE_PROJECT, FixtureAccess } from "./access";
 import { createContent as buildContent } from "./content";
 import { FixtureDataPlane } from "./data-plane";
 import { DevUserIdentity } from "./identity";
 import { FixtureLiterature, seedContentStore } from "./literature";
-import { FIXTURE_PROJECT, FixtureMembership } from "./membership";
 import { FixtureWorkspace } from "./workspace";
 
 /** A FRESH in-memory data plane, the workspace repositories its scripted runs wrote, and document
@@ -29,9 +29,9 @@ export function createAnalysisPorts(): AnalysisPorts {
   };
 }
 
-/** The seeded fixture membership. */
-export function createMembership(): ProjectMembership {
-  return new FixtureMembership();
+/** The fixture's seeded access answers. */
+export function createAccess(): AccessPort {
+  return new FixtureAccess();
 }
 
 /** The offline content port: serves the seeded corpus bytes. */
@@ -46,7 +46,7 @@ export function createLiterature(
   return new FixtureLiterature(content);
 }
 
-/** The offline identity: every request is the seed dev user, no assertion. */
+/** The offline identity: every request is the seed dev user, no credential. */
 export function createIdentity(): UserIdentity {
   return new DevUserIdentity();
 }

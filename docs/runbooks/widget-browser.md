@@ -26,9 +26,10 @@ backend. The dev server reloads a changed component by itself. To stop it, press
 Claude started it in the background, ask Claude to stop it.
 
 Each example is a card: click it to open that example. Each widget type also has an **Open all** button. Opening makes a
-new Analysis in the Fixture Project whose working document holds the examples, and takes you to it. Ticks and notes you
-make there are published to that Analysis's repository as they would be on a real one, but the repository lives in the
-server's memory and is gone when the server stops. To start again from a clean copy, open the example again.
+new Analysis in the `fixture-cohort` Project whose working document holds the examples, and takes you to it. Ticks and
+notes you make there are published to that Analysis's repository as they would be on a real one, but the repository
+lives in the server's memory and is gone when the server stops. To start again from a clean copy, open the example
+again.
 
 ## The examples
 

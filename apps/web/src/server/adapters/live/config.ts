@@ -52,6 +52,12 @@ export interface IapConfig {
   serviceName: string;
 }
 
+/** The auth service the web tier asks what a person may reach. `authUrl` is both the transport base
+ *  URL and the audience the ID-token interceptor mints for. */
+export interface AuthServiceConfig {
+  authUrl: string;
+}
+
 function required(env: EnvLike, name: string): string {
   const value = env[name];
   if (value === undefined || value === "") {
@@ -60,15 +66,32 @@ function required(env: EnvLike, name: string): string {
   return value;
 }
 
-/** Read + validate the IAP audience inputs. Identity verification runs on every
- *  request (create/poll/document), independent of the Anthropic/KMS/GCS
- *  wiring a data-plane method touches. */
+/** Read + validate the IAP audience inputs. Every request but the exempt one reads them, at the
+ *  perimeter and again at the data seam. */
 export function loadIapConfig(env: EnvLike = process.env): IapConfig {
   return {
     projectNumber: required(env, "THEMIS_PROJECT_NUMBER"),
     region: required(env, "THEMIS_REGION"),
     serviceName: required(env, "THEMIS_WEB_SERVICE_NAME"),
   };
+}
+
+/** An `https` URL. */
+function requiredHttpsUrl(env: EnvLike, name: string): string {
+  const value = required(env, name);
+  if (!value.startsWith("https://")) {
+    throw new Error(
+      `${name} must be an https URL (got ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+/** Read + validate the auth service URL. */
+export function loadAuthServiceConfig(
+  env: EnvLike = process.env,
+): AuthServiceConfig {
+  return { authUrl: requiredHttpsUrl(env, "THEMIS_AUTH_URL") };
 }
 
 /** Read + validate the Managed Agents inputs. Rejects a set `ANTHROPIC_API_KEY` /

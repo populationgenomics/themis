@@ -1,24 +1,21 @@
 import { POLL_TIP_BUDGET_MS } from "@/lib/workspace-deadlines";
-import {
-  createAnalysisPorts,
-  createLiterature,
-  createMembership,
-} from "./adapters";
+import { createAnalysisPorts, createLiterature } from "./adapters";
+import { admit, getGate } from "./admission";
 import { AuthorizedBackend } from "./authorized-backend";
-import { getUserIdentity } from "./identity";
-import type { AnalysisPorts, LiteraturePort, ProjectMembership } from "./ports";
+import type { GrantedMembership } from "./membership";
+import type { AccessPort, AnalysisPorts, LiteraturePort } from "./ports";
 
 // The authenticated + authorized per-request context — the data-seam half of the
 // request-auth chokepoint (docs/design/security.md; proxy.ts is the perimeter half).
 // A handler obtains its backend only through `userContext`, so it cannot reach the
-// data plane without the caller being verified (identity) and scoped to their
-// Projects (AuthorizedBackend). The raw analysis ports and membership are memoized here,
-// module-private and never exported, so there is no accessor a handler could import to
-// go around the decorator.
+// data plane without the caller being verified, admitted, and scoped to the Projects
+// the access answer granted (AuthorizedBackend). The seam runs admission itself rather
+// than trusting the perimeter's, and builds the membership from that one answer for this
+// request only. The raw analysis ports are memoized here, module-private and never
+// exported, so there is no accessor a handler could import to go around the decorator.
 
 interface Composition {
   analysisPorts?: AnalysisPorts;
-  membership?: ProjectMembership;
   literature?: LiteraturePort;
 }
 
@@ -40,22 +37,16 @@ function analysisPorts(): AnalysisPorts {
   return c.analysisPorts;
 }
 
-function membership(): ProjectMembership {
-  const c = composition();
-  if (!c.membership) c.membership = createMembership();
-  return c.membership;
-}
-
 function literature(): LiteraturePort {
   const c = composition();
   if (!c.literature) c.literature = createLiterature();
   return c.literature;
 }
 
-/** The shared-corpus literature read surface. Deliberately not wrapped in `AuthorizedBackend`: a
- *  paper is IAP-only, not Project-scoped (document-pane.md §Backend seam), so — unlike `analysisPorts`/
- *  `membership` — exposing an accessor bypasses no per-Project decorator. The RPC identity
- *  interceptor still gates every call on a verified caller. */
+/** The shared-corpus literature read surface, for a call already admitted. Deliberately not wrapped
+ *  in `AuthorizedBackend`: a paper is not Project-scoped (document-pane.md §Backend seam), so
+ *  exposing an accessor bypasses no per-Project decorator. Its RPC callers are admitted by the
+ *  identity interceptor, which builds a `userContext` for every call. */
 export function literaturePort(): LiteraturePort {
   return literature();
 }
@@ -70,30 +61,47 @@ export interface LiteratureContext {
   readonly literature: LiteraturePort;
 }
 
-/** Verify the request's caller and return the authenticated, Project-scoped
- *  data-plane context. Throws UnauthenticatedError (mapped to `unauthenticated` by the
- *  RPC error interceptor) when the request carries no verifiable identity. */
+/** Admit the request's caller and return the authenticated, Project-scoped data-plane context.
+ *  Throws `UnauthenticatedError` (→ 401) for a request with no verifiable credential and
+ *  `NotAdmittedError` (→ 403) for a caller the deployment does not admit. */
 export async function userContext(headers: Headers): Promise<UserContext> {
-  const userEmail = await getUserIdentity().assertedEmail(headers);
+  const { caller, membership } = await admit(headers, getGate());
   const { dataPlane, workspace, documents } = analysisPorts();
   const backend = new AuthorizedBackend(
     dataPlane,
     workspace,
     documents,
-    membership(),
-    userEmail,
+    membership,
+    caller.email,
     POLL_TIP_BUDGET_MS,
   );
-  return { userEmail, backend };
+  return { userEmail: caller.email, backend };
 }
 
-/** Verify the request's caller and return the literature read surface. IAP-only: a paper is a
- *  shared-corpus resource, not Project-scoped, so this gates on a verified identity but does not
- *  wrap `AuthorizedBackend`. Throws UnauthenticatedError (→ 401) when the request carries no
- *  verifiable identity. */
+/** Admit the request's caller and return the literature read surface. A paper is a shared-corpus
+ *  resource, not Project-scoped, so admission is the whole check. Throws as `userContext` does. */
 export async function literatureContext(
   request: Request,
 ): Promise<LiteratureContext> {
-  const userEmail = await getUserIdentity().assertedEmail(request.headers);
-  return { userEmail, literature: literature() };
+  const { caller } = await admit(request.headers, getGate());
+  return { userEmail: caller.email, literature: literature() };
+}
+
+export interface MemberContext {
+  readonly userEmail: string;
+  readonly membership: GrantedMembership;
+}
+
+/** Admit the request's caller and return their Projects with their roles in each, for a surface
+ *  that decides per Project what a role may do (the curation worksheets). Throws as `userContext`
+ *  does. */
+export async function memberContext(headers: Headers): Promise<MemberContext> {
+  const { caller, membership } = await admit(headers, getGate());
+  return { userEmail: caller.email, membership };
+}
+
+/** What the person behind `email` may reach, for a check about someone other than the caller: that
+ *  an assignment targets a curator of the Project, say. */
+export function accessPort(): AccessPort {
+  return getGate().access;
 }

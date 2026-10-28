@@ -80,6 +80,7 @@ VIEWS = (
                 'PublicObjectReader',
                 'DatabaseConnector',
                 'SecretReader',
+                'SecretVersionManager',
                 'SessionBearerDeriver',
                 'TelemetryWriter',
                 'TraceWriter',
@@ -90,7 +91,7 @@ VIEWS = (
     ),
     View(
         'Platform',
-        frozenset({'DeployAccountBuilder', 'DataflowWorker', 'SubnetUser', 'RepositoryReader'}),
+        frozenset({'DeployAccountBuilder', 'DataflowWorker', 'SubnetUser', 'RepositoryReader', 'QuotaConsumer'}),
         direction='LR',
     ),
 )
@@ -114,6 +115,7 @@ _FIXED_TARGET_LABEL = {
     'MetricReader': 'Cloud Monitoring, project-wide',
     'DeployAccountBuilder': 'project',
     'DataflowWorker': 'project',
+    'QuotaConsumer': 'project quota',
 }
 
 _PRINCIPAL = 'principal'
@@ -134,10 +136,10 @@ class _Edge(NamedTuple):
     dotted: bool = False
 
 
-def _principal(member: str) -> _Node:
-    """The node for an IAM member string."""
-    if member == 'allUsers':
-        return _Node(_PRINCIPAL, 'allUsers')
+def _principal(member: str, project: str) -> _Node:
+    """The node for an IAM member string; a service account outside `project` is labelled by its whole email."""
+    if member in ('allUsers', 'allAuthenticatedUsers'):
+        return _Node(_PRINCIPAL, member)
     kind, _, identity = member.partition(':')
     if kind == 'principalSet':
         match = _POOL_ATTRIBUTE_PRINCIPAL_SET.match(identity)
@@ -157,15 +159,17 @@ def _principal(member: str) -> _Node:
         if product not in _SERVICE_AGENTS:
             raise ValueError(f'{member}: a Google service agent with no display name in _SERVICE_AGENTS')
         return _Node(_PRINCIPAL, f'{_SERVICE_AGENTS[product]} service agent')
+    if domain != f'{project}.iam.gserviceaccount.com':
+        return _Node(_PRINCIPAL, identity)
     return _Node(_PRINCIPAL, local)
 
 
-def _account_target(resource_name: str) -> _Node:
+def _account_target(resource_name: str, project: str) -> _Node:
     """The principal node for a service account named as a binding target (`projects/…/serviceAccounts/…`)."""
     match = _SERVICE_ACCOUNT_RESOURCE.match(resource_name)
     if match is None:
         raise ValueError(f'not a service account resource name: {resource_name}')
-    return _principal(f'serviceAccount:{match.group(1)}')
+    return _principal(f'serviceAccount:{match.group(1)}', project)
 
 
 def _target(binding: capture.Binding, project: str) -> _Node:
@@ -175,14 +179,14 @@ def _target(binding: capture.Binding, project: str) -> _Node:
         case 'ServiceInvoker' | 'PublicService' | 'JobRunner' | 'SandboxSpawner' | 'IapAccessor':
             return _Node(_WORKLOAD, target)
         case 'AccountImpersonator' | 'FederatedImpersonator' | 'AccountUser' | 'SelfSigner':
-            return _account_target(target)
+            return _account_target(target, project)
         case 'IapBackendAccessor':
             return _Node(_RESOURCE, f'IAP backend {target}')
         case 'TaskEnqueuer':
             return _Node(_RESOURCE, f'queue {target}')
         case 'BucketObjectReader' | 'BucketObjectReadWriter' | 'PublicObjectReader':
             return _Node(_RESOURCE, f'bucket {target.removeprefix(f"{project}-")}')
-        case 'SecretReader':
+        case 'SecretReader' | 'SecretVersionManager':
             return _Node(_RESOURCE, f'secret {target}')
         case str(capability) if capability in _FIXED_TARGET_LABEL:
             return _Node(_RESOURCE, _FIXED_TARGET_LABEL[capability])
@@ -195,7 +199,7 @@ def _target(binding: capture.Binding, project: str) -> _Node:
 
 def _view_edges(program: capture.Capture, capabilities: frozenset[str]) -> set[_Edge]:
     edges = {
-        _Edge(_principal(b.member), b.capability, _target(b, program.project))
+        _Edge(_principal(b.member, program.project), b.capability, _target(b, program.project))
         for b in program.bindings
         if b.capability in capabilities
     }
@@ -203,7 +207,7 @@ def _view_edges(program: capture.Capture, capabilities: frozenset[str]) -> set[_
     for workload in program.workloads:
         node = _Node(_WORKLOAD, workload.name)
         if node in drawn:
-            account = _principal(f'serviceAccount:{workload.service_account}')
+            account = _principal(f'serviceAccount:{workload.service_account}', program.project)
             edges.add(_Edge(node, 'runs as', account, dotted=True))
     return edges
 

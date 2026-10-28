@@ -1,6 +1,7 @@
 // The `auth` service: authorization (docs/design/access-control.md). It is the sole reader of the
-// deployment's ACL and of the token store, and answers from them what a per-session token grants
-// a data-plane service forwarding the token a call carries. This proto is the source of truth (the
+// deployment's ACL and of the token store, and answers from them for both paths: what a person may
+// reach (GetAccess, for the web tier), and what a per-session token grants (ResolveSession, for a
+// data-plane service forwarding the token a call carries). This proto is the source of truth (the
 // contract); `regen` (buf generate) emits the themis/rpc/auth stubs each consumer imports — the server
 // subclasses the servicer base, a caller uses the stub.
 
@@ -18,7 +19,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/rpc/auth.proto.
  */
 export const file_themis_rpc_auth: GenFile = /*@__PURE__*/
-  fileDesc("ChV0aGVtaXMvcnBjL2F1dGgucHJvdG8SD3RoZW1pcy5ycGMuYXV0aCIsChNSZXNvbHZlVG9rZW5SZXF1ZXN0EhUKDXNlc3Npb25fdG9rZW4YASABKAkiQAoMUHJvamVjdEdyYW50EgoKAmlkGAEgASgJEiQKBXJvbGVzGAIgAygOMhUudGhlbWlzLnJwYy5hdXRoLlJvbGUiaQoOU2Vzc2lvbkNvbnRleHQSEgoKcHJvamVjdF9pZBgBIAEoCRITCgthbmFseXNpc19pZBgCIAEoCRIuCgdwcm9qZWN0GAMgASgLMh0udGhlbWlzLnJwYy5hdXRoLlByb2plY3RHcmFudCIhChBHZXRBY2Nlc3NSZXF1ZXN0Eg0KBWVtYWlsGAEgASgJIkQKEUdldEFjY2Vzc1Jlc3BvbnNlEi8KCHByb2plY3RzGAEgAygLMh0udGhlbWlzLnJwYy5hdXRoLlByb2plY3RHcmFudCJPCgtDYWxsZXJDbGFpbRIpCgpjYWxsaW5nX2FzGAEgASgOMhUudGhlbWlzLnJwYy5DYWxsaW5nQXMSFQoNc2Vzc2lvbl90b2tlbhgCIAEoCSpACgRSb2xlEhQKEFJPTEVfVU5TUEVDSUZJRUQQABIQCgxST0xFX01BTkFHRVIQARIQCgxST0xFX0NVUkFUT1IQAjJfCgRBdXRoElcKDlJlc29sdmVTZXNzaW9uEiQudGhlbWlzLnJwYy5hdXRoLlJlc29sdmVUb2tlblJlcXVlc3QaHy50aGVtaXMucnBjLmF1dGguU2Vzc2lvbkNvbnRleHRiBnByb3RvMw", [file_themis_rpc_sandbox_options]);
+  fileDesc("ChV0aGVtaXMvcnBjL2F1dGgucHJvdG8SD3RoZW1pcy5ycGMuYXV0aCIsChNSZXNvbHZlVG9rZW5SZXF1ZXN0EhUKDXNlc3Npb25fdG9rZW4YASABKAkiQAoMUHJvamVjdEdyYW50EgoKAmlkGAEgASgJEiQKBXJvbGVzGAIgAygOMhUudGhlbWlzLnJwYy5hdXRoLlJvbGUiZwoOU2Vzc2lvbkNvbnRleHQSEwoLYW5hbHlzaXNfaWQYAiABKAkSLgoHcHJvamVjdBgDIAEoCzIdLnRoZW1pcy5ycGMuYXV0aC5Qcm9qZWN0R3JhbnRKBAgBEAJSCnByb2plY3RfaWQiIQoQR2V0QWNjZXNzUmVxdWVzdBINCgVlbWFpbBgBIAEoCSJEChFHZXRBY2Nlc3NSZXNwb25zZRIvCghwcm9qZWN0cxgBIAMoCzIdLnRoZW1pcy5ycGMuYXV0aC5Qcm9qZWN0R3JhbnQiTwoLQ2FsbGVyQ2xhaW0SKQoKY2FsbGluZ19hcxgBIAEoDjIVLnRoZW1pcy5ycGMuQ2FsbGluZ0FzEhUKDXNlc3Npb25fdG9rZW4YAiABKAkqQAoEUm9sZRIUChBST0xFX1VOU1BFQ0lGSUVEEAASEAoMUk9MRV9NQU5BR0VSEAESEAoMUk9MRV9DVVJBVE9SEAIyugEKBEF1dGgSWQoJR2V0QWNjZXNzEiEudGhlbWlzLnJwYy5hdXRoLkdldEFjY2Vzc1JlcXVlc3QaIi50aGVtaXMucnBjLmF1dGguR2V0QWNjZXNzUmVzcG9uc2UiBaK1GAEBElcKDlJlc29sdmVTZXNzaW9uEiQudGhlbWlzLnJwYy5hdXRoLlJlc29sdmVUb2tlblJlcXVlc3QaHy50aGVtaXMucnBjLmF1dGguU2Vzc2lvbkNvbnRleHRiBnByb3RvMw", [file_themis_rpc_sandbox_options]);
 
 /**
  * The token forwarded to be resolved: a high-entropy per-session secret the auth service hashes
@@ -45,8 +46,8 @@ export const ResolveTokenRequestSchema: GenMessage<ResolveTokenRequest> = /*@__P
   messageDesc(file_themis_rpc_auth, 0);
 
 /**
- * A Project a caller may reach, as the ACL states it at the moment of the call: the one shape the auth
- * service answers in, whether asked for a session's Project or for a person's. A Project is one
+ * A Project a caller may reach, as the ACL states it at the moment of the call: the one shape the
+ * auth service answers in, whether asked for a session's Project or for a person's. A Project is one
  * dataset, so its id is also what a backend service reads on the Project's behalf.
  *
  * @generated from message themis.rpc.auth.ProjectGrant
@@ -84,14 +85,6 @@ export const ProjectGrantSchema: GenMessage<ProjectGrant> = /*@__PURE__*/
  */
 export type SessionContext = Message<"themis.rpc.auth.SessionContext"> & {
   /**
-   * The Analysis's Project id as the token store recorded it when the Analysis was created: the same
-   * value as `project.id`.
-   *
-   * @generated from field: string project_id = 1;
-   */
-  projectId: string;
-
-  /**
    * `an_` followed by a lowercase, hyphenated UUIDv4, minted when the Analysis is created.
    *
    * @generated from field: string analysis_id = 2;
@@ -99,8 +92,8 @@ export type SessionContext = Message<"themis.rpc.auth.SessionContext"> & {
   analysisId: string;
 
   /**
-   * The Analysis's Project, read from the ACL at the moment of the call, so a Project removed from the
-   * ACL stops being granted at the next call.
+   * The Analysis's Project, read from the ACL at the moment of the call, so a Project removed
+   * from the ACL stops being granted at the next call.
    *
    * @generated from field: themis.rpc.auth.ProjectGrant project = 3;
    */
@@ -190,7 +183,8 @@ export const CallerClaimSchema: GenMessage<CallerClaim> = /*@__PURE__*/
   messageDesc(file_themis_rpc_auth, 5);
 
 /**
- * What a person may do in a Project. The ACL lists the people holding each role; a person may hold both.
+ * What a person may do in a Project. The ACL lists the people holding each role; a person may hold
+ * both.
  *
  * @generated from enum themis.rpc.auth.Role
  */
@@ -222,20 +216,33 @@ export const RoleSchema: GenEnum<Role> = /*@__PURE__*/
   enumDesc(file_themis_rpc_auth, 0);
 
 /**
- * The auth service: resolve a session token to the Project + Analysis binding it grants.
+ * The auth service: what a person may reach, and what a session token grants.
  *
  * @generated from service themis.rpc.auth.Auth
  */
 export const Auth: GenService<{
   /**
+   * What the person behind an authenticated email address may reach. Only the web tier may call it,
+   * because it trusts the address it is given: the web tier authenticated the person itself and relays
+   * nobody's claim. While the auth service's copy of the ACL is older than its staleness limit,
+   * every call is UNAVAILABLE rather than answered from that copy.
+   *
+   * @generated from rpc themis.rpc.auth.Auth.GetAccess
+   */
+  getAccess: {
+    methodKind: "unary";
+    input: typeof GetAccessRequestSchema;
+    output: typeof GetAccessResponseSchema;
+  },
+  /**
    * Resolve a session token to its binding. An invalid, revoked, or expired token, or one whose Project
    * is no longer in the ACL, is a PERMISSION_DENIED the server adds — a transport-level rejection,
    * not a modelled body. While the auth service's copy of the ACL is older than its staleness
-   * limit, every call is UNAVAILABLE rather than answered from that copy.
+   * limit, every call is UNAVAILABLE, as for GetAccess.
    *
    * No `admits_caller`, and not an omission: this is the rpc an admission is derived through, so it
    * cannot itself be gated on one. Its callers are the data-plane service accounts, which no
-   * `Caller` member names; what may reach it is internal ingress and `run.invoker`.
+   * `Caller` member names; what may reach it is `run.invoker`.
    *
    * @generated from rpc themis.rpc.auth.Auth.ResolveSession
    */

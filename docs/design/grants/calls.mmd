@@ -3,9 +3,9 @@ flowchart TB
     n0["Cloud Tasks service agent"]
     n1["IAP service agent"]
     n2["WIF pool github: repository populationgenomics/themis-internal"]
-    n3["allUsers"]
-    n4["group themis-clu"]
-    n5["group themis-dev-access"]
+    n3["allAuthenticatedUsers"]
+    n4["allUsers"]
+    n5["group themis-clu"]
     n6["themis-auth"]
     n7["themis-ci-telemetry"]
     n8["themis-clu"]
@@ -48,11 +48,10 @@ flowchart TB
     n1 -->|ServiceInvoker| n39
     n1 -->|ServiceInvoker| n40
     n2 -->|FederatedImpersonator| n7
-    n3 -->|PublicService| n34
-    n4 -->|AccountImpersonator| n8
-    n5 -->|IapAccessor| n40
+    n3 -->|IapAccessor| n40
+    n4 -->|PublicService| n34
+    n5 -->|AccountImpersonator| n8
     n8 -->|AccountUser| n9
-    n8 -->|IapAccessor| n40
     n8 -->|IapBackendAccessor| n26
     n8 -->|IapBackendAccessor| n27
     n8 -->|TaskEnqueuer| n29
@@ -73,6 +72,7 @@ flowchart TB
     n22 -->|SelfSigner| n22
     n22 -->|ServiceInvoker| n30
     n23 -->|SelfSigner| n23
+    n23 -->|ServiceInvoker| n30
     n23 -->|ServiceInvoker| n35
     n23 -->|ServiceInvoker| n39
     n24 -->|AccountUser| n9

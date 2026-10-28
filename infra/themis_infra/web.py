@@ -1,15 +1,17 @@
 """The web service: Cloud Run with IAP, behind an external HTTPS load balancer.
 
 Provisions the public web surface for one environment — a Cloud Run service with
-IAP enabled on it, and the external Application Load Balancer that fronts it
-(serverless NEG, Google-managed TLS certificate, HTTP→HTTPS redirect). The load
-balancer also carries the routes other components hand it, each sent to that
+IAP enabled on it, signing people in through the site's own OAuth client, and the
+external Application Load Balancer that fronts it (serverless NEG, Google-managed TLS
+certificate, HTTP→HTTPS redirect). IAP establishes who the caller is; what they may
+reach is the auth service's answer from the ACL (docs/design/access-control.md).
+The load balancer also carries the routes other components hand it, each sent to that
 component's own backend service: a `Route` is one exact path, a `GrpcRoute` every
 method of one gRPC service. Identical across environments; all per-environment
 values arrive as constructor arguments.
 
 The web tier attaches to the services network with Direct VPC egress, because the
-evidence and sheaf services it calls take only internal traffic.
+auth, evidence and sheaf services it calls take only internal traffic.
 
 The load balancer needs a stable address before DNS can point at it, so the
 component reserves a global static IP and exposes it as `ip_address`; the
@@ -137,7 +139,7 @@ class WebService(pulumi.ComponentResource):
             for the container, and the `${WEB_DB_USER}` the `analyses` and
             `session_context` write grants substitute.
         service_name: The Cloud Run service's name — the IAP resource an
-            `IapAccessor` grant is over. Who may reach the app is decided in the
+            `IapAccessor` grant is over. Who may pass IAP is decided in the
             program, not here.
     """
 
@@ -152,6 +154,11 @@ class WebService(pulumi.ComponentResource):
         sql_connection_name: pulumi.Input[str],
         sql_database: pulumi.Input[str],
         session_token_key_version: pulumi.Input[str],
+        auth_url: pulumi.Input[str],
+        vpc_network: pulumi.Input[str],
+        vpc_subnetwork: pulumi.Input[str],
+        iap_oauth_client_id: str,
+        iap_oauth_client_secret: pulumi.Input[str],
         evidence_url: pulumi.Input[str],
         fulltext_bucket: pulumi.Input[str],
         sheaf_url: pulumi.Input[str],
@@ -165,8 +172,6 @@ class WebService(pulumi.ComponentResource):
         project_number: pulumi.Input[str],
         trace_sample_ratio: float,
         iap_service_agent: pulumi.Input[str],
-        vpc_network: pulumi.Input[str],
-        vpc_subnetwork: pulumi.Input[str],
         routes: Sequence[Route | GrpcRoute],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
@@ -229,7 +234,7 @@ class WebService(pulumi.ComponentResource):
             deletion_protection=False,
             # IAP runs in front of the service on every ingress path, the load
             # balancer's included; it cannot also be on the LB's backend service.
-            # Google-managed OAuth client (../../docs/design/spike-infrastructure.md §4).
+            # The OAuth client it signs people in through is the `gcp.iap.Settings` below.
             iap_enabled=True,
             # Network gate: only the external LB (and internal traffic) may
             # reach the service — direct public requests to the run.app URL are
@@ -242,7 +247,7 @@ class WebService(pulumi.ComponentResource):
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                     min_instance_count=0, max_instance_count=_MAX_INSTANCES
                 ),
-                # Direct VPC egress on the services network, all traffic, so the evidence and sheaf services
+                # Direct VPC egress on the services network, all traffic, so the auth, evidence and sheaf services
                 # admit the BFF's calls at their run.app URLs (services_network.py).
                 vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                     network_interfaces=[
@@ -274,6 +279,7 @@ class WebService(pulumi.ComponentResource):
                             _env('ANTHROPIC_WORKSPACE_ID', anthropic_workspace_id),
                             _env('THEMIS_ANTHROPIC_AGENT_ID', anthropic_agent_id),
                             _env('THEMIS_SESSION_TOKEN_KEY_VERSION', session_token_key_version),
+                            _env('THEMIS_AUTH_URL', auth_url),
                             _env('THEMIS_SQL_CONNECTION_NAME', sql_connection_name),
                             _env('THEMIS_SQL_DATABASE', sql_database),
                             _env('THEMIS_DB_USER', db_user.name),
@@ -289,7 +295,7 @@ class WebService(pulumi.ComponentResource):
                             _env('THEMIS_TRACE_SAMPLE_RATIO', str(trace_sample_ratio)),
                         ],
                         # Probes reach the container directly, not through the LB, so they carry no
-                        # IAP assertion; the app's proxy allowlists this path.
+                        # IAP assertion; the app's proxy exempts this path.
                         startup_probe=cloud_run.http_startup_probe('/api/healthz'),
                     )
                 ],
@@ -310,6 +316,23 @@ class WebService(pulumi.ComponentResource):
             location=region,
             target='web',
             prior=grants.Prior('themis-invoker', parent=self),
+            opts=child,
+        )
+
+        # The site's own OAuth client, created by hand with an External consent screen: IAP's
+        # Google-managed client signs in only accounts inside the project's Workspace organization.
+        # The resource name is the form `gcloud iap settings --resource-type=cloud-run` addresses.
+        gcp.iap.Settings(
+            'themis-iap-settings',
+            name=pulumi.Output.format(
+                'projects/{0}/iap_web/cloud_run-{1}/services/{2}', project_number, region, self._service.name
+            ),
+            access_settings=gcp.iap.SettingsAccessSettingsArgs(
+                oauth_settings=gcp.iap.SettingsAccessSettingsOauthSettingsArgs(
+                    client_id=iap_oauth_client_id,
+                    client_secret=iap_oauth_client_secret,
+                ),
+            ),
             opts=child,
         )
 

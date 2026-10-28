@@ -2,8 +2,7 @@
 
 The self-hosted execution sandbox after the postern swap. It provisions:
 
-- the use-only KMS MAC key that signs per-session tokens (§7) and the environment-key and
-  webhook-signing-key secrets,
+- the use-only KMS MAC key that signs per-session tokens (§7),
 - the dispatcher service (HMAC-verified webhook → jobs.run), the load-balancer backend that admits only
   Anthropic's outbound range to it, and the sandbox Cloud Run Job.
 
@@ -22,7 +21,7 @@ from collections.abc import Sequence
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cloud_run, grants
+from themis_infra import cloud_run, grants, secrets
 
 # One instance drains every webhook; the rest is headroom, since Anthropic disables an endpoint after
 # ~20 consecutive failed deliveries.
@@ -73,94 +72,8 @@ def session_token_signing_key(
     )
 
 
-def environment_key_secret(
-    *,
-    project: str,
-    region: str,
-    environment_key: pulumi.Input[str],
-    opts: pulumi.ResourceOptions | None = None,
-) -> gcp.secretmanager.Secret:
-    """Provision the Anthropic environment key as a Secret Manager secret (§7).
-
-    The worker credential (`sk-ant-oat01-…`) that authorises claiming work and posting
-    results for the whole environment. Sourced from encrypted Pulumi config so the
-    plaintext never enters the repo; replication is pinned in-region. The reader's grant
-    is the dispatcher's (`grants.SecretReader`).
-
-    Args:
-        project: The GCP project to create the secret in.
-        region: The single region the secret replicates to.
-        environment_key: The key value, from `config.require_secret` (kept secret).
-        opts: Resource options (parent/dependency wiring).
-
-    Returns:
-        The `Secret`; its latest version carries `environment_key`.
-    """
-    secret = gcp.secretmanager.Secret(
-        'themis-anthropic-environment-key',
-        project=project,
-        secret_id='anthropic-environment-key',  # noqa: S106 — the secret's name, not its value
-        replication=gcp.secretmanager.SecretReplicationArgs(
-            user_managed=gcp.secretmanager.SecretReplicationUserManagedArgs(
-                replicas=[gcp.secretmanager.SecretReplicationUserManagedReplicaArgs(location=region)],
-            ),
-        ),
-        opts=opts,
-    )
-    gcp.secretmanager.SecretVersion(
-        'themis-anthropic-environment-key-current',
-        secret=secret.id,
-        secret_data=environment_key,
-        opts=pulumi.ResourceOptions(parent=secret),
-    )
-    return secret
-
-
-def webhook_signing_key_secret(
-    *,
-    project: str,
-    region: str,
-    signing_key: pulumi.Input[str],
-    opts: pulumi.ResourceOptions | None = None,
-) -> gcp.secretmanager.Secret:
-    """Provision the Anthropic webhook signing key (``whsec_…``) as a Secret Manager secret (§5).
-
-    The key the dispatcher's webhook endpoint verifies deliveries against (Standard Webhooks). Console-
-    generated per environment, sourced from encrypted config; read only by the dispatcher SA.
-    """
-    secret = gcp.secretmanager.Secret(
-        'themis-anthropic-webhook-signing-key',
-        project=project,
-        secret_id='anthropic-webhook-signing-key',  # noqa: S106 — the secret's name, not its value
-        replication=gcp.secretmanager.SecretReplicationArgs(
-            user_managed=gcp.secretmanager.SecretReplicationUserManagedArgs(
-                replicas=[gcp.secretmanager.SecretReplicationUserManagedReplicaArgs(location=region)],
-            ),
-        ),
-        opts=opts,
-    )
-    gcp.secretmanager.SecretVersion(
-        'themis-anthropic-webhook-signing-key-current',
-        secret=secret.id,
-        secret_data=signing_key,
-        opts=pulumi.ResourceOptions(parent=secret),
-    )
-    return secret
-
-
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
     return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
-
-
-def _secret_env(name: str, secret_id: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
-    return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
-        name=name,
-        value_source=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceArgs(
-            secret_key_ref=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceSecretKeyRefArgs(
-                secret=secret_id, version='latest'
-            ),
-        ),
-    )
 
 
 class DispatcherService(pulumi.ComponentResource):
@@ -210,10 +123,7 @@ class DispatcherService(pulumi.ComponentResource):
         self.service_account_email = service_account.email
         member = pulumi.Output.concat('serviceAccount:', service_account.email)
 
-        for label, secret_id in (
-            ('environment-key', environment_key_secret_id),
-            ('webhook-signing-key', webhook_signing_key_secret_id),
-        ):
+        secret_readers = [
             grants.SecretReader(
                 'themis-dispatcher',
                 member=member,
@@ -223,6 +133,11 @@ class DispatcherService(pulumi.ComponentResource):
                 prior=grants.Prior(f'themis-dispatcher-{label}-access', parent=self),
                 opts=child,
             )
+            for label, secret_id in (
+                ('environment-key', environment_key_secret_id),
+                ('webhook-signing-key', webhook_signing_key_secret_id),
+            )
+        ]
         grants.SessionBearerDeriver(
             'themis-dispatcher',
             member=member,
@@ -257,15 +172,16 @@ class DispatcherService(pulumi.ComponentResource):
                             _env('THEMIS_SANDBOX_JOB_REGION', region),
                             _env('THEMIS_SANDBOX_JOB_NAME', sandbox_job_name),
                             _env('THEMIS_RECLAIM_OLDER_THAN_MS', str(reclaim_older_than_ms)),
-                            _secret_env('ANTHROPIC_ENVIRONMENT_KEY', environment_key_secret_id),
-                            _secret_env('ANTHROPIC_WEBHOOK_SIGNING_KEY', webhook_signing_key_secret_id),
+                            secrets.secret_env('ANTHROPIC_ENVIRONMENT_KEY', environment_key_secret_id),
+                            secrets.secret_env('ANTHROPIC_WEBHOOK_SIGNING_KEY', webhook_signing_key_secret_id),
                         ],
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(container_port=8080),  # HTTP/1.1
                         startup_probe=cloud_run.http_startup_probe('/healthz'),
                     )
                 ],
             ),
-            opts=child,
+            # Cloud Run checks the runtime account's read of each secret when it creates a revision.
+            opts=pulumi.ResourceOptions.merge(child, pulumi.ResourceOptions(depends_on=secret_readers)),
         )
         # Anthropic posts the webhook without a GCP token, so the IAM gate stays open; ingress and Cloud Armor
         # are the network gate, the HMAC signature the authentication.

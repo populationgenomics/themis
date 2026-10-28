@@ -1,5 +1,5 @@
 # Dev environment. Prod is the same program with a Pulumi.prod.yaml carrying
-# cpg-themis-prod's project, hostname, access group, and KMS key — no program
+# cpg-themis-prod's project, hostname, OAuth client, ACL writer, and KMS key — no program
 # change. State and KMS are isolated per environment.
 #
 # gcpkms secrets provider (Cloud KMS key, IAM-gated). The wrapped data key
@@ -10,14 +10,25 @@ config:
   gcp:project: cpg-themis-dev
   gcp:region: australia-southeast1
   themis:domain: themis-dev.populationgenomics.org.au
-  # IAP "may reach the app" gate, and objectAdmin on the PR-screenshot bucket below —
-  # adding a member grants publish-and-retract on world-readable content. The group +
-  # roster live in cpg-infrastructure-private; this is the principal only (no PII).
-  themis:iapAccessGroup: themis-dev-access@populationgenomics.org.au
+  # The OAuth client IAP signs people in through, so that accounts outside the Workspace organization
+  # can sign in (docs/runbooks/access-control.md). Created by hand in the console; its secret is
+  # `themis:iapOauthClientSecret`, encrypted.
+  themis:iapOauthClientId: 698160839187-l1akell2vlqqgecn8jdj9a7dgljvl1pu.apps.googleusercontent.com
+  themis:iapOauthClientSecret:
+    secure: v1:lbqy/5mjDuEr9eJn:AuxN4RjhPCDo4aZlZZjVaBupvx96VaHfQ42TJ1lrOvPitn3kcVy1ab8dAHgaD8PPVUJs
+  # The site's service account that adds the ACL's versions to this stack's `acl` secret; at CPG, cpg-infrastructure's
+  # deploy account. The ACL lists each dataset Themis serves, as a Project, with its managers and curators. The stack's
+  # grants let the account manage and read that secret's versions, and reach no other secret.
+  themis:aclWriter: pulumi@cpg-common.iam.gserviceaccount.com
+  # How long the auth service answers from its last good ACL while no new one loads, before it
+  # refuses everyone: rides out a Secret Manager outage of up to half an hour.
+  themis:aclStalenessLimitSeconds: "1800"
+  # objectAdmin on the PR-screenshot bucket below — adding a member grants publish-and-retract on
+  # world-readable content. The group + roster live in cpg-infrastructure-private; this is the
+  # principal only (no PII).
+  themis:prScreenshotWriterGroup: themis-dev-access@populationgenomics.org.au
   # May impersonate themis-clu@ to call a backend service by hand
   # (docs/runbooks/hand-driving-a-service.md); the roster lives in cpg-infrastructure-private.
-  # Deliberately not iapAccessGroup: that gate admits clinical users of the web app, who have no
-  # reason to reach the services underneath it.
   themis:cluGroup: themis-clu@populationgenomics.org.au
   # Whether themis-clu may derive the bearer of any live session (docs/runbooks/hand-driving-a-service.md).
   # Opt-in per stack; dev's sessions are synthetic.

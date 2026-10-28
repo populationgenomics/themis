@@ -26,7 +26,7 @@ if _version_not_supported:
 
 
 class AuthStub:
-    """The auth service: resolve a session token to the Project + Analysis binding it grants.
+    """The auth service: what a person may reach, and what a session token grants.
     """
 
     def __init__(self, channel):
@@ -35,6 +35,11 @@ class AuthStub:
         Args:
             channel: A grpc.Channel.
         """
+        self.GetAccess = channel.unary_unary(
+                '/themis.rpc.auth.Auth/GetAccess',
+                request_serializer=themis_dot_rpc_dot_auth__pb2.GetAccessRequest.SerializeToString,
+                response_deserializer=themis_dot_rpc_dot_auth__pb2.GetAccessResponse.FromString,
+                _registered_method=True)
         self.ResolveSession = channel.unary_unary(
                 '/themis.rpc.auth.Auth/ResolveSession',
                 request_serializer=themis_dot_rpc_dot_auth__pb2.ResolveTokenRequest.SerializeToString,
@@ -43,18 +48,28 @@ class AuthStub:
 
 
 class AuthServicer:
-    """The auth service: resolve a session token to the Project + Analysis binding it grants.
+    """The auth service: what a person may reach, and what a session token grants.
     """
+
+    def GetAccess(self, request, context):
+        """What the person behind an authenticated email address may reach. Only the web tier may call it,
+        because it trusts the address it is given: the web tier authenticated the person itself and relays
+        nobody's claim. While the auth service's copy of the ACL is older than its staleness limit,
+        every call is UNAVAILABLE rather than answered from that copy.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def ResolveSession(self, request, context):
         """Resolve a session token to its binding. An invalid, revoked, or expired token, or one whose Project
         is no longer in the ACL, is a PERMISSION_DENIED the server adds — a transport-level rejection,
         not a modelled body. While the auth service's copy of the ACL is older than its staleness
-        limit, every call is UNAVAILABLE rather than answered from that copy.
+        limit, every call is UNAVAILABLE, as for GetAccess.
 
         No `admits_caller`, and not an omission: this is the rpc an admission is derived through, so it
         cannot itself be gated on one. Its callers are the data-plane service accounts, which no
-        `Caller` member names; what may reach it is internal ingress and `run.invoker`.
+        `Caller` member names; what may reach it is `run.invoker`.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -63,6 +78,11 @@ class AuthServicer:
 
 def add_AuthServicer_to_server(servicer, server):
     rpc_method_handlers = {
+            'GetAccess': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetAccess,
+                    request_deserializer=themis_dot_rpc_dot_auth__pb2.GetAccessRequest.FromString,
+                    response_serializer=themis_dot_rpc_dot_auth__pb2.GetAccessResponse.SerializeToString,
+            ),
             'ResolveSession': grpc.unary_unary_rpc_method_handler(
                     servicer.ResolveSession,
                     request_deserializer=themis_dot_rpc_dot_auth__pb2.ResolveTokenRequest.FromString,
@@ -77,8 +97,35 @@ def add_AuthServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class Auth:
-    """The auth service: resolve a session token to the Project + Analysis binding it grants.
+    """The auth service: what a person may reach, and what a session token grants.
     """
+
+    @staticmethod
+    def GetAccess(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/themis.rpc.auth.Auth/GetAccess',
+            themis_dot_rpc_dot_auth__pb2.GetAccessRequest.SerializeToString,
+            themis_dot_rpc_dot_auth__pb2.GetAccessResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def ResolveSession(request,

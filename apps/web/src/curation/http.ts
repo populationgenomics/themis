@@ -1,7 +1,11 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import { NextResponse } from "next/server";
+import { Role } from "@/gen/themis/rpc/auth_pb";
+import { accessPort, memberContext } from "@/server/context";
 import {
   ClientInputError,
   isClientInputError,
+  isNotAdmittedError,
   isResourceNotFoundError,
   isUnauthenticatedError,
 } from "@/server/errors";
@@ -9,11 +13,14 @@ import {
   enforceResourceIsolation,
   isCrossSiteRequestError,
 } from "@/server/fetch-metadata";
-import { getUserIdentity, type UserIdentity } from "@/server/identity";
+import { GrantedMembership } from "@/server/membership";
+import type { AccessPort } from "@/server/ports";
 import {
   accessFor,
   type CurationAccess,
+  type CuratorCheck,
   isCurationAccessError,
+  type ProjectRoles,
 } from "./access";
 import { curationStore, variantResolver } from "./index";
 import {
@@ -24,39 +31,73 @@ import {
 import { type CurationStore, isDuplicateRegistrationError } from "./store";
 
 // The module's request boundary: reject a request another site caused the browser to send, resolve
-// the caller to their scoped access, and map a thrown value to a status. Every curation request —
-// route or page — passes through here, so the resource-isolation check lives here and nowhere else.
-// Separate from `app/api/_lib/http.ts` because the curation surface raises errors the workbench
-// routes never do — a cross-site request and a caller with no role (403), a malformed input (400) —
-// and a route that mapped any of them to a 500 would tell a curator their own typo was a server
-// fault.
+// the caller to their access in the Project the request names, and map a thrown value to a status.
+// Every curation request — route or page — passes through here, so the resource-isolation check
+// lives here and nowhere else. Separate from `app/api/_lib/http.ts` because the curation surface
+// raises errors the workbench routes never do — a cross-site request and an operation the caller's
+// role does not allow (403), a malformed input (400) — and a route that mapped any of them to a 500
+// would tell a curator their own typo was a server fault.
 
 /** What the boundary resolves a request through: the process-wide seams for a route, a test's own
  *  otherwise. */
 export interface CurationBoundary {
-  identity: UserIdentity;
+  /** The admitted caller and their roles in each Project; raises for a caller who is not
+   *  authenticated or not admitted. */
+  member: (headers: Headers) => Promise<{ email: string; roles: ProjectRoles }>;
+  /** Whether someone other than the caller curates a Project. */
+  isCurator: CuratorCheck;
   store: CurationStore;
   resolver: VariantResolver;
 }
 
-/** Resolve the verified caller and their curation access. Throws `CrossSiteRequestError` for a
- *  request another site caused — before the caller is resolved — `UnauthenticatedError` for an
- *  unverifiable request and `CurationAccessError` for a verified caller holding no role. */
-export async function curationContext(
-  request: Request,
-  boundary: CurationBoundary = {
-    identity: getUserIdentity(),
+/** Whether `email` holds the curator role on `projectId`, by the access answer for that person. */
+export function curatorCheckThrough(access: AccessPort): CuratorCheck {
+  return async (email, projectId) =>
+    new GrantedMembership((await access.getAccess(email)).projects).hasRole(
+      projectId,
+      Role.CURATOR,
+    );
+}
+
+function defaultBoundary(): CurationBoundary {
+  return {
+    member: async (headers) => {
+      const { userEmail, membership } = await memberContext(headers);
+      return { email: userEmail, roles: membership };
+    },
+    isCurator: curatorCheckThrough(accessPort()),
     store: curationStore(),
     resolver: variantResolver(),
-  },
+  };
+}
+
+/** Resolve the admitted caller and their curation access in `projectId`. Throws
+ *  `CrossSiteRequestError` for a request another site caused — before the caller is resolved —
+ *  `UnauthenticatedError` for an unverifiable request, `NotAdmittedError` for a caller the
+ *  deployment does not admit, and `ResourceNotFoundError` for a Project the caller holds no role
+ *  on. */
+export async function curationContext(
+  request: Request,
+  projectId: string,
+  boundary: CurationBoundary = defaultBoundary(),
 ): Promise<CurationAccess> {
   enforceResourceIsolation(request);
-  const email = await boundary.identity.assertedEmail(request.headers);
-  return accessFor(boundary.store, email, boundary.resolver);
+  const caller = await boundary.member(request.headers);
+  return accessFor(
+    boundary.store,
+    caller,
+    projectId,
+    boundary.resolver,
+    boundary.isCurator,
+  );
 }
 
 export function toCurationErrorResponse(error: unknown): NextResponse {
-  if (isCrossSiteRequestError(error) || isCurationAccessError(error)) {
+  if (
+    isCrossSiteRequestError(error) ||
+    isCurationAccessError(error) ||
+    isNotAdmittedError(error)
+  ) {
     return NextResponse.json(
       { error: { code: "forbidden", message: error.message } },
       { status: 403 },
@@ -85,6 +126,20 @@ export function toCurationErrorResponse(error: unknown): NextResponse {
     // Not the caller's fault and not permanent, so neither a 400 nor a masked 500.
     return NextResponse.json(
       { error: { code: "unavailable", message: error.message } },
+      { status: 503 },
+    );
+  }
+  if (error instanceof ConnectError && error.code === Code.Unavailable) {
+    // The auth service, stale or unreachable, while a check asked it about someone: transient, as
+    // the registry's outage is, and its own wording stays in the log.
+    console.error("curation: the auth service is unavailable", error);
+    return NextResponse.json(
+      {
+        error: {
+          code: "unavailable",
+          message: "access could not be checked just now; try again shortly",
+        },
+      },
       { status: 503 },
     );
   }

@@ -92,6 +92,7 @@ describe("the registered entity", () => {
       <Header
         saveState="idle"
         init={{
+          projectId: "fixture-cohort",
           worksheetId: "ws",
           workflowsVersion: "v",
           submissionCount: 0,
@@ -107,6 +108,7 @@ describe("the registered entity", () => {
 
 function worksheetInit(clinicalContext: string): WorksheetInit {
   return {
+    projectId: "fixture-cohort",
     worksheetId: "ws",
     workflowsVersion: "v",
     submissionCount: 0,

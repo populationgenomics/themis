@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { FIXTURE_PROJECT } from "@/server/adapters/fixture/access";
 import { FixtureCurationStore } from "./fixture";
 import type { Entry } from "./model";
 import { cellLabel } from "./ui/primitives";
@@ -14,7 +15,7 @@ import { workflowById } from "./workflows/registry";
 async function seededEntries(): Promise<Entry[]> {
   const store = new FixtureCurationStore();
   const entries: Entry[] = [];
-  for (const variant of await store.listVariants()) {
+  for (const variant of await store.listVariants(FIXTURE_PROJECT)) {
     for (const worksheet of await store.worksheetsOfVariant(variant.id)) {
       for (const submission of await store.submissions(worksheet.id)) {
         entries.push(...(await store.assessments(submission.id)));

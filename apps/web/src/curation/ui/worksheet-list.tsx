@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { curationPath } from "@/lib/routes";
 import { inlineMode } from "../mode";
 import {
   WORKSHEET_STATUS_LABELS,
@@ -34,7 +35,13 @@ export interface WorksheetRow {
   submittedAt: string | null;
 }
 
-export function WorksheetList({ rows }: { rows: WorksheetRow[] }) {
+export function WorksheetList({
+  projectId,
+  rows,
+}: {
+  projectId: string;
+  rows: WorksheetRow[];
+}) {
   const [status, setStatus] = useState<WorksheetStatus | null>(null);
   const [sort, setSort] = useState<SortBy>("recent");
 
@@ -96,7 +103,7 @@ export function WorksheetList({ rows }: { rows: WorksheetRow[] }) {
           {shown.map(({ row, status: rowStatus }) => (
             <li key={row.worksheetId}>
               <Link
-                href={`/curation/${row.worksheetId}`}
+                href={curationPath(projectId, row.worksheetId)}
                 className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 rounded-md border border-line-primary bg-white px-4 py-3 hover:border-ink-ghost"
               >
                 <div className="min-w-0">

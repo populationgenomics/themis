@@ -17,13 +17,14 @@ from opentelemetry.sdk import trace as sdk_trace
 from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.rpc import auth_pb2, auth_pb2_grpc
+from themis.services.auth import acl_holder
 from themis.services.auth import backend as auth_backend
 from themis.services.auth import servicer as servicer_mod
+from themis.services.auth.tests import harness
 from themis.telemetry import tracing
 from themis.testing import in_process_grpc
 
 _TOKEN = 'tok-123'
-_CONTEXT = auth_pb2.SessionContext(project_id='proj-1', analysis_id='ana-1')
 _TRACER = trace.get_tracer(__name__)
 
 
@@ -41,11 +42,17 @@ def _context(span: sdk_trace.ReadableSpan) -> trace.SpanContext:
     return span.context
 
 
-def _resolve_through(backend: auth_backend.SessionBackend) -> None:
+def _resolve_through(backend: auth_backend.AuthBackend) -> None:
     """Resolve `_TOKEN` through a served auth servicer over `backend`, inside a `caller` span."""
 
     async def run() -> None:
-        servicer = servicer_mod.Servicer(backend)
+        acl = await acl_holder.AclHolder.load(
+            backend.read_acl,
+            read_timeout_seconds=harness.READ_TIMEOUT_SECONDS,
+            staleness_limit_seconds=harness.STALENESS_LIMIT_SECONDS,
+            clock=harness.Clock(),
+        )
+        servicer = servicer_mod.Servicer(backend, acl, operator=harness.OPERATOR)
         async with in_process_grpc.serving(
             lambda server: auth_pb2_grpc.add_AuthServicer_to_server(servicer, server),
             interceptors=grpc_instrumentation.aio_client_interceptors(),
@@ -58,7 +65,8 @@ def _resolve_through(backend: auth_backend.SessionBackend) -> None:
 
 
 def test_a_resolve_continues_the_callers_trace(recorded_spans: in_memory_span_exporter.InMemorySpanExporter) -> None:
-    _resolve_through(auth_backend.FixtureBackend({auth_backend.hash_token(_TOKEN): _CONTEXT}))
+    stored = auth_backend.StoredSession(analysis_id='ana-1', project_id='asd')
+    _resolve_through(harness.Backend({_TOKEN: stored}, harness.acl_version()))
 
     spans = recorded_spans.get_finished_spans()
     caller = _named(spans, 'caller')

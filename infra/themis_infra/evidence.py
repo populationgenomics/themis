@@ -70,17 +70,6 @@ def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateC
     return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
 
 
-def _secret_env(name: str, secret_id: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
-    return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(
-        name=name,
-        value_source=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceArgs(
-            secret_key_ref=gcp.cloudrunv2.ServiceTemplateContainerEnvValueSourceSecretKeyRefArgs(
-                secret=secret_id, version='latest'
-            ),
-        ),
-    )
-
-
 class EvidenceService(pulumi.ComponentResource):
     """Cloud Run evidence service (internal and load-balancer ingress) hosting the evidence image's interfaces.
 
@@ -112,7 +101,7 @@ class EvidenceService(pulumi.ComponentResource):
         convert_queue_path: pulumi.Input[str],
         convert_worker_url: pulumi.Input[str],
         convert_invoker_sa_email: pulumi.Input[str],
-        openalex_api_key: secrets.ApiKeySecret,
+        openalex_api_key: secrets.StackSecret,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:EvidenceService', 'themis', None, opts)
@@ -194,9 +183,8 @@ class EvidenceService(pulumi.ComponentResource):
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                     min_instance_count=0, max_instance_count=_MAX_INSTANCES
                 ),
-                # Direct VPC egress so the auth call arrives over the VPC and auth's internal ingress
-                # admits it; all traffic, since the auth run.app and the public upstream hosts both
-                # leave over the VPC (the services subnet's NAT provides the outbound path).
+                # Direct VPC egress on the services network, all traffic: the public upstream hosts are
+                # reached through the services subnet's NAT.
                 vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                     network_interfaces=[
                         gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
@@ -237,7 +225,7 @@ class EvidenceService(pulumi.ComponentResource):
                             _env('THEMIS_LITERATURE_CONVERT_QUEUE', convert_queue_path),
                             _env('THEMIS_LITERATURE_CONVERT_WORKER_URL', convert_worker_url),
                             _env('THEMIS_LITERATURE_CONVERT_INVOKER_SA', convert_invoker_sa_email),
-                            _secret_env('THEMIS_LITERATURE_OPENALEX_API_KEY', openalex_api_key.secret.secret_id),
+                            secrets.secret_env('THEMIS_LITERATURE_OPENALEX_API_KEY', openalex_api_key.secret.secret_id),
                             _env('THEMIS_VARIANT_BACKEND', 'live'),
                             _env('THEMIS_VEP_BACKEND', 'live'),
                             _env('THEMIS_GNOMAD_BACKEND', 'live'),

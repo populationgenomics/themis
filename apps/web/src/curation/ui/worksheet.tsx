@@ -19,6 +19,7 @@ import {
   Classification,
   type ModeOfInheritance,
 } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { curationApiPath, curationPath } from "@/lib/routes";
 import { CONSEQUENCES } from "../consequence";
 import { inlineMode } from "../mode";
 import { ROUTING_ID, VERDICT_ID } from "../sections";
@@ -50,6 +51,8 @@ const IDLE_MS = 2000;
 const RETRY_MS = 5000;
 
 export interface WorksheetInit {
+  /** The Project the worksheet's variant is registered in. */
+  projectId: string;
   worksheetId: string;
   variant: {
     gene: string;
@@ -79,18 +82,22 @@ function wrap(workflow: WorkflowAssessment): Assessment {
 }
 
 async function putDraft(
+  projectId: string,
   worksheetId: string,
   sectionId: string,
   payload: string,
 ): Promise<void> {
-  const res = await fetch(`/api/curation/worksheets/${worksheetId}/draft`, {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      workflowId: sectionId,
-      assessment: JSON.parse(payload),
-    }),
-  });
+  const res = await fetch(
+    curationApiPath(projectId, "worksheets", worksheetId, "draft"),
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workflowId: sectionId,
+        assessment: JSON.parse(payload),
+      }),
+    },
+  );
   if (!res.ok) throw new Error(`save failed: ${res.status}`);
 }
 
@@ -166,7 +173,7 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
       new Autosave({
         stored: decoded.payloads,
         write: (sectionId, payload) =>
-          putDraft(init.worksheetId, sectionId, payload),
+          putDraft(init.projectId, init.worksheetId, sectionId, payload),
         onState: setSaveState,
         idleMs: IDLE_MS,
         retryMs: RETRY_MS,
@@ -339,6 +346,7 @@ export function Worksheet({ init }: { init: WorksheetInit }) {
           onBlur={() => autosave.flush(VERDICT_ID)}
         />
         <Submit
+          projectId={init.projectId}
           worksheetId={init.worksheetId}
           autosave={autosave}
           saveState={saveState}
@@ -366,7 +374,7 @@ export function Header({
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <Link
-            href="/curation"
+            href={curationPath(init.projectId)}
             className="framework-voice mb-1 inline-flex items-center gap-1 text-[12.5px] text-ink-faint hover:text-ink-body"
           >
             <span aria-hidden>&larr;</span> All worksheets
@@ -698,6 +706,7 @@ export function hiddenAnswers(
  *  can be applied after it. A section still failing bars submitting — the submission would quietly
  *  leave it out. */
 function Submit({
+  projectId,
   worksheetId,
   autosave,
   saveState,
@@ -705,6 +714,7 @@ function Submit({
   submittable,
   hidden,
 }: {
+  projectId: string;
   worksheetId: string;
   autosave: Autosave;
   saveState: SaveState;
@@ -754,7 +764,7 @@ function Submit({
           setState("sending");
           try {
             const res = await fetch(
-              `/api/curation/worksheets/${worksheetId}/submit`,
+              curationApiPath(projectId, "worksheets", worksheetId, "submit"),
               {
                 method: "POST",
                 headers: { "content-type": "application/json" },

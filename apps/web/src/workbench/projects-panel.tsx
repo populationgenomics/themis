@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { ReaderTime } from "@/components/reader-time";
 import { timeAgo } from "@/lib/format";
+import { projectPath } from "@/lib/routes";
 import type { Analysis, Project } from "@/models/workbench";
 import { userContext } from "@/server/context";
 
@@ -59,8 +60,8 @@ export async function ProjectsPanel() {
           Your Projects
         </h1>
         <p className="text-[13px] text-ink-muted">
-          A Project holds the datasets and people an Analysis is scoped to. Open
-          one to see its analyses, or start a new one.
+          A Project is one dataset and the people who may work on it. Open one
+          to see its analyses, or start a new one.
         </p>
       </div>
 
@@ -85,7 +86,7 @@ function ProjectCard({ row }: { row: ProjectRow }) {
   const { project, analysisCount, latestIso } = row;
   return (
     <Link
-      href={`/project/${project.id}`}
+      href={projectPath(project.id)}
       className="flex h-full flex-col gap-[12px] rounded-card border border-line-primary bg-white px-[18px] py-[16px] hover:border-line-input hover:shadow-[0_1px_3px_rgba(0,0,0,0.05)]"
     >
       <span className="flex items-center gap-[9px]">
@@ -94,11 +95,8 @@ function ProjectCard({ row }: { row: ProjectRow }) {
           aria-hidden
         />
         <span className="truncate text-[15px] font-semibold text-ink-primary">
-          {project.name}
+          {project.id}
         </span>
-      </span>
-      <span className="truncate font-mono text-[10.5px] text-ink-faintest">
-        {project.id}
       </span>
       <span className="mt-auto flex items-center gap-[8px] text-[12px] text-ink-muted">
         <span>

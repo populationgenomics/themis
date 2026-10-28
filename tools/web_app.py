@@ -1,10 +1,12 @@
 """Call the deployed web app's `Workbench` rpcs from a laptop, as `themis-clu`, through IAP.
 
 The app sits behind IAP on its Cloud Run service. IAP admits a JWT the account signs itself, whose
-`aud` is the app's origin with the path wildcard, and the app authorizes the email in it like any
-user's (`docs/runbooks/hand-driving-a-service.md`). The signing is IAM's, authorized by the caller's
-application-default login, so the caller needs what `tools.clu` needs: membership of the `themis-clu`
-group.
+`aud` is the app's origin with the path wildcard, and passes the account's email on to the app in its
+own assertion. The app asks the auth service what that email may reach, as it would for a person; the
+auth service grants the deployment's operator account, `themis-clu`, both roles on every Project in the
+deployment's ACL without the ACL listing it (`docs/runbooks/hand-driving-a-service.md`). The
+signing is IAM's, authorized by the caller's application-default login, so the caller needs what
+`tools.clu` needs: membership of the `themis-clu` group.
 
 The rpcs are the Connect protocol over HTTP: a POST to `/api/rpc/<service>/<method>` carrying the
 request message, here in its binary encoding, so the generated stubs are the whole contract and no
@@ -35,7 +37,7 @@ _SIGNING_FAILURES = (google.auth.exceptions.RefreshError, google.auth.exceptions
 
 
 class AccessRefusedError(Exception):
-    """No token could be signed, or IAP turned the request away before the app saw it."""
+    """No token could be signed, or IAP or the app's perimeter turned the request away before any rpc ran."""
 
 
 class RpcError(Exception):
@@ -47,7 +49,7 @@ class RpcError(Exception):
 
 
 class UnavailableError(RpcError):
-    """The app, or the proxy in front of it, said it cannot answer now: a call that may succeed if made again.
+    """The app, or the proxies in front of it, said it cannot answer now: a call that may succeed if made again.
 
     Whether to make it again is the caller's: a `CreateAnalysis` that raised this may still have created.
     """
@@ -65,10 +67,13 @@ class RejectedError(RpcError):
 _UNAVAILABLE_CODES = frozenset({'unavailable', 'http 502', 'http 503', 'http 504'})
 # The Connect codes the app's boundary (validation, authentication, membership) answers with.
 _REJECTED_CODES = frozenset({'invalid_argument', 'unauthenticated', 'permission_denied', 'not_found'})
+# What the app's perimeter and rpc interceptor answer, with a 403, for a caller the auth service does not admit
+# (apps/web/src/proxy.ts, apps/web/src/server/rpc/interceptors.ts).
+_NOT_ADMITTED = ('permission_denied', 'not admitted')
 # The errors the transport raises before any answer, worth trying again on the same terms.
 TRANSIENT_ERRORS: tuple[type[Exception], ...] = (requests.ConnectionError, requests.Timeout, UnavailableError)
-# The errors after which the app provably did not act on the request: no token could be signed, IAP turned
-# it away before the app saw it, or the app refused it at its boundary.
+# The errors after which the app provably did not act on the request: no token could be signed, IAP or the
+# app's perimeter turned it away, or the app refused it at its boundary.
 NOT_ACTED_ON: tuple[type[Exception], ...] = (AccessRefusedError, RejectedError)
 
 
@@ -119,8 +124,8 @@ class Workbench:
         """POST `request` to `method` and parse the answer into `reply`.
 
         Raises:
-            AccessRefusedError: If no token could be signed, or IAP refused the token or the account.
-            UnavailableError: If the app or its proxy answered that it cannot answer now.
+            AccessRefusedError: If no token could be signed, IAP refused the token, or the app refused the account.
+            UnavailableError: If the app or a proxy in front of it answered that it cannot answer now.
             RejectedError: If the app refused the request at its boundary.
             RpcError: If the app answered with any other Connect error.
             requests.ConnectionError, requests.Timeout: If no answer came.
@@ -165,21 +170,44 @@ class Workbench:
     def _raise_for_refusal(self, method: str, response: requests.Response) -> None:
         if response.is_redirect:
             raise AccessRefusedError(f'IAP answered {method} with a sign-in redirect: the bearer was not accepted')
-        if response.status_code == http.HTTPStatus.UNAUTHORIZED:
+        # The app's own refusals are Connect errors in JSON; a 401 or 403 in any other shape is IAP's.
+        error = _connect_error(response)
+        if response.status_code == http.HTTPStatus.UNAUTHORIZED and error is None:
             raise AccessRefusedError(
                 f'IAP refused the token signed by {self._service_account} for audience {self._audience}; '
                 f'its body names the check: {response.text.strip()[:_BODY_EXCERPT]}'
             )
-        # The app's own refusals are Connect errors in JSON; a 403 in any other shape is IAP's.
-        if response.status_code == http.HTTPStatus.FORBIDDEN and not _is_json(response):
+        if response.status_code == http.HTTPStatus.FORBIDDEN and error is None:
             raise AccessRefusedError(
-                f'IAP admitted the token and refused {self._service_account}: it holds no '
-                "`roles/iap.httpsResourceAccessor` on the web app's Cloud Run service"
+                f'IAP or Cloud Run refused {self._service_account} after IAP accepted its token: the IAP policy on the '
+                "web app's Cloud Run service, or an org policy over it, does not let the account through: "
+                f'{response.text.strip()[:_BODY_EXCERPT]}'
+            )
+        if response.status_code == http.HTTPStatus.UNAUTHORIZED and error is not None:
+            raise AccessRefusedError(
+                f'IAP let {self._service_account} through and the app could not verify the IAP assertion: the '
+                'audience it checks (THEMIS_PROJECT_NUMBER, THEMIS_REGION, THEMIS_WEB_SERVICE_NAME on the web '
+                'service) does not name the service IAP signed for'
+            )
+        if response.status_code == http.HTTPStatus.FORBIDDEN and error == _NOT_ADMITTED:
+            raise AccessRefusedError(
+                f'the app authenticated {self._service_account} and refused it as not admitted. The auth service '
+                "grants the deployment's operator account every Project the ACL holds, so either the ACL holds "
+                f'none, this is not that account, or the deployment is misconfigured ({_RUNBOOK})'
             )
 
 
-def _is_json(response: requests.Response) -> bool:
-    return response.headers.get('content-type', '').startswith('application/json')
+def _connect_error(response: requests.Response) -> tuple[str, str] | None:
+    """The `(code, message)` of a Connect error body, or None for a body that is not one."""
+    if not response.headers.get('content-type', '').startswith('application/json'):
+        return None
+    try:
+        body = response.json()
+    except requests.JSONDecodeError:
+        return None
+    if not isinstance(body, dict) or 'code' not in body:
+        return None
+    return str(body['code']), str(body.get('message', ''))
 
 
 def _error_kind(code: str) -> type[RpcError]:
@@ -189,13 +217,12 @@ def _error_kind(code: str) -> type[RpcError]:
 
 
 def _rpc_error(method: str, response: requests.Response) -> RpcError:
-    if not _is_json(response):
+    error = _connect_error(response)
+    if error is None:
         code = f'http {response.status_code}'
         return _error_kind(code)(method, code, response.text.strip()[:_BODY_EXCERPT])
-    body = response.json()
-    code = str(body.get('code', f'http {response.status_code}'))
-    detail = str(body.get('message', ''))
+    code, detail = error
     if code == 'not_found':
         # The app answers a Project or Analysis outside the caller's membership as not found.
-        detail += ' (the account may have no project_members row for the Project named)'
+        detail += ' (the operator account reaches every Project in the ACL, so this one may not be in it)'
     return _error_kind(code)(method, code, detail)

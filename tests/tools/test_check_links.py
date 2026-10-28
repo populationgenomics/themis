@@ -49,6 +49,13 @@ class TestResolve:
         src.write_text('')
         assert check_links.resolve(src, 'b.md', tmp_path) is None
 
+    def test_url_encoded_target_resolves(self, tmp_path: pathlib.Path) -> None:
+        # A route directory such as `[projectId]` is linked as `%5BprojectId%5D`.
+        (tmp_path / '[projectId]').mkdir()
+        src = tmp_path / 'a.md'
+        src.write_text('')
+        assert check_links.resolve(src, '%5BprojectId%5D', tmp_path) is None
+
     def test_repo_root_relative_resolves(self, tmp_path: pathlib.Path) -> None:
         # A path that does not resolve against the source's directory but does
         # against the repo root (the .github/review/*.md prompt-fragment case).

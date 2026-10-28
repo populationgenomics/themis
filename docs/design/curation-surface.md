@@ -131,20 +131,21 @@ shared Project visibility. What the two share is the Project: a variant under cu
 does.
 
 The curation surface is therefore isolated in [`apps/web/src/curation/`](../../apps/web/src/curation), with page routes
-under `apps/web/src/app/project/[projectId]/curation/`, JSON API routes under
-`apps/web/src/app/api/projects/[projectId]/curation/`, and its own `curation` schema in Cloud SQL
-([`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql)). The pages and the API both sit under the
-Project they belong to, and a Project's page links to its curation.
+under [`apps/web/src/app/project/[projectId]/curation/`](../../apps/web/src/app/project/%5BprojectId%5D/curation), JSON
+API routes under
+[`apps/web/src/app/api/projects/[projectId]/curation/`](../../apps/web/src/app/api/projects/%5BprojectId%5D/curation),
+and its own `curation` schema in Cloud SQL ([`0011_curation.sql`](../../themis/migrate/migrations/0011_curation.sql)).
+The pages and the API both sit under the Project they belong to, and a Project's page links to its curation.
 
 Beyond the Project and its roles, the module shares three seams with the rest of the web tier and nothing else:
 
 1. **Identity verification and request isolation.** Every curation page and API route authenticates the caller through
-   [`http.ts`](../../apps/web/src/curation/http.ts), which verifies the signed `X-Goog-IAP-JWT-Assertion` header via
-   `getUserIdentity().assertedEmail` ([`frontend-framework.md`](frontend-framework.md)), and takes the caller's roles on
-   the page's Project from the auth service's `GetAccess` answer ([`access-control.md`](access-control.md)). Because the
-   curation API uses plain JSON `fetch` routes rather than the workbench's Connect RPC mount, `curationContext` also
-   calls `enforceResourceIsolation` directly to reject cross-site requests via Fetch Metadata headers before checking
-   roles.
+   [`http.ts`](../../apps/web/src/curation/http.ts). It calls the web tier's `memberContext`
+   ([`context.ts`](../../apps/web/src/server/context.ts)), which verifies the signed `X-Goog-IAP-JWT-Assertion` header
+   ([`frontend-framework.md`](frontend-framework.md)) and returns the caller's roles in each Project from the auth
+   service's `GetAccess` answer ([`access-control.md`](access-control.md)). Because the curation API uses plain JSON
+   `fetch` routes rather than the workbench's Connect RPC mount, `curationContext` also calls `enforceResourceIsolation`
+   directly to reject cross-site requests via Fetch Metadata headers before checking roles.
 1. **Database pool and backend selector.** [`index.ts`](../../apps/web/src/curation/index.ts) selects between the live
    PostgreSQL store ([`sql.ts`](../../apps/web/src/curation/sql.ts), using the shared pool in `server/pg.ts`) and an
    in-memory fixture store ([`fixture.ts`](../../apps/web/src/curation/fixture.ts)) using `THEMIS_BACKEND`, memoizing
@@ -164,8 +165,9 @@ database schema.
 ### Roles and blindness enforcement
 
 All access decisions pass through `CurationAccess` in [`access.ts`](../../apps/web/src/curation/access.ts), which wraps
-the raw `CurationStore` ([`store.ts`](../../apps/web/src/curation/store.ts)) for a verified caller email. No page or API
-route holds an unscoped store.
+the raw `CurationStore` ([`store.ts`](../../apps/web/src/curation/store.ts)) for a verified caller email and one
+Project. A registration or worksheet of another Project is not found through it, and no page or API route holds an
+unscoped store.
 
 A caller holds one or both of two roles on a Project, `manager` and `curator`. The auth service reports them from the
 ACL ([`access-control.md`](access-control.md) §Two roles on a Project), and the surface keeps no record of its own of
@@ -177,8 +179,9 @@ a small team, is listed in both roles.
 A caller who holds no role on the Project receives the masked `404`, as for any Project they are not on
 ([`workspace-model.md`](workspace-model.md) §Authorization). A caller on the Project who lacks the role a page needs
 receives `403 Forbidden` instead, with a message naming the role: they already know the Project exists, and telling them
-which role they need is more useful than a masked not-found. A manager can assign a variant only to a person who holds
-the curator role on the variant's Project.
+which role they need is more useful than a masked not-found. A manager assigns a worksheet by the curator's email
+address. The server asks the auth service whether that address holds the curator role on the variant's Project, and
+answers a bad request if it does not.
 
 Once a caller holds a role on the Project, `CurationAccess` enforces two rules to keep curations blind:
 
@@ -413,7 +416,7 @@ The curation surface mounts five routes:
 | `/project/[projectId]/curation/compare/[variantId]` | Unassigned `manager` on the Project   | Side-by-side read-only comparison of two or more submitted worksheets on a variant.                  |
 
 On the worksheet and comparison routes, typography separates the two voices on the page
-([`layout.tsx`](../../apps/web/src/app/curation/layout.tsx),
+([`layout.tsx`](../../apps/web/src/app/project/%5BprojectId%5D/curation/layout.tsx),
 [`curation.css`](../../apps/web/src/curation/ui/curation.css)): every heading, applicability note, cell label, and modal
 transcribed from the framework renders in the system geometric sans-serif (`framework-voice`), while everything a
 curator types or selects—their prose notes, evidence citations, rationales, and comparison answers—renders in a serif
@@ -547,8 +550,9 @@ holds five tables. It holds no table of roles, because a caller's roles on a Pro
 
 Only a variant names its Project. Every row beneath it, from a worksheet down to an assessment, reaches the Project
 through its foreign keys, so no row can name a Project that disagrees with its variant's. Variants registered on the
-development deployment before curation was bound to Projects are backfilled to one Project over public data, which the
-migration that adds `project_id` names.
+development deployment before curation was bound to Projects are backfilled to one Project over public data. The
+migration that adds `project_id`,
+[`0019_curation_projects.sql`](../../themis/migrate/migrations/0019_curation_projects.sql), names that Project.
 
 Database grants enforce the mutability boundary at the schema level. The web service account receives `SELECT, INSERT`
 on all five tables, `UPDATE` on `curation.drafts` alone, and `DELETE` on `curation.worksheets` alone. Because

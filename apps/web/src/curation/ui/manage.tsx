@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import type { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
+import { curationApiPath, curationPath } from "@/lib/routes";
 import { inlineMode, MODES, modeName } from "../mode";
 import { CLINICAL_CONTEXT_MAX_LENGTH, clinicalContextLength } from "../model";
 import type { ResolvedAllele } from "../resolver";
@@ -62,7 +63,7 @@ const BLANK_IDENTITY: FormIdentity = {
  *  in the manager confirming what came back, not a resolution folded into the submit: both curators
  *  of this variant answer whichever identity is registered, so a mistyped id registering a different
  *  variant unseen is the most expensive error this screen can make. */
-export function NewVariantForm() {
+export function NewVariantForm({ projectId }: { projectId: string }) {
   const [open, setOpen] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -83,7 +84,7 @@ export function NewVariantForm() {
     // "Retrieving…" and disabled for the life of the page, with nothing on screen saying why.
     try {
       const res = await fetch(
-        `/api/curation/alleles/${encodeURIComponent(caid.trim())}`,
+        curationApiPath(projectId, "alleles", caid.trim()),
       );
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as {
@@ -136,7 +137,7 @@ export function NewVariantForm() {
         setError("");
         const data = new FormData(e.currentTarget);
         try {
-          const res = await fetch("/api/curation/variants", {
+          const res = await fetch(curationApiPath(projectId, "variants"), {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify(Object.fromEntries(data.entries())),
@@ -379,11 +380,11 @@ function ResolvedIdentity({ allele }: { allele: ResolvedAllele }) {
 }
 
 export function AssignPanel({
+  projectId,
   variants,
-  curators,
 }: {
+  projectId: string;
   variants: VariantRow[];
-  curators: string[];
 }) {
   const [status, setStatus] = useState<VariantStatus | null>(null);
   const [sort, setSort] = useState<SortBy>("recent");
@@ -408,6 +409,16 @@ export function AssignPanel({
     for (const { progress } of withProgress) out[progress.status] += 1;
     return out;
   }, [withProgress]);
+
+  // Suggestions only: the site's access list says who curates the Project, and the server checks
+  // the address against it. These are the curators the Project's worksheets already name.
+  const knownCurators = useMemo(
+    () =>
+      [
+        ...new Set(variants.flatMap((v) => v.rows.map((r) => r.curatorEmail))),
+      ].sort(),
+    [variants],
+  );
 
   const shown = useMemo(() => {
     const kept = withProgress.filter(
@@ -455,9 +466,10 @@ export function AssignPanel({
         shown.map(({ variant, progress }) => (
           <VariantCard
             key={variant.id}
+            projectId={projectId}
             variant={variant}
             progress={progress}
-            curators={curators}
+            knownCurators={knownCurators}
           />
         ))
       )}
@@ -466,17 +478,20 @@ export function AssignPanel({
 }
 
 function VariantCard({
+  projectId,
   variant,
   progress,
-  curators,
+  knownCurators,
 }: {
+  projectId: string;
   variant: VariantRow;
   progress: VariantProgress;
-  curators: string[];
+  knownCurators: readonly string[];
 }) {
   const assigned = new Set(variant.rows.map((r) => r.curatorEmail));
-  const available = curators.filter((c) => !assigned.has(c));
-  const [choice, setChoice] = useState(available[0] ?? "");
+  const suggested = knownCurators.filter((c) => !assigned.has(c));
+  const suggestionsId = useId();
+  const [choice, setChoice] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   return (
@@ -496,7 +511,7 @@ function VariantCard({
           {variant.rows.length} assigned
           {variant.rows.filter((r) => r.submittedAt !== null).length >= 2 ? (
             <a
-              href={`/curation/compare/${variant.id}`}
+              href={curationPath(projectId, "compare", variant.id)}
               className="text-ink-body underline decoration-line-input underline-offset-2 hover:decoration-ink-ghost"
             >
               Read the divergence
@@ -527,60 +542,60 @@ function VariantCard({
           </li>
         ))}
       </ul>
-      {available.length > 0 ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <select
-            aria-label={`Assign a curator to ${variant.gene} ${variant.hgvsC}`}
-            value={choice}
-            onChange={(e) => setChoice(e.target.value)}
-            className="framework-voice rounded-sm border border-line-input bg-white px-2.5 py-1.5 text-[13px] text-ink-body"
-          >
-            {available.map((email) => (
-              <option key={email} value={email}>
-                {email}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setError("");
-              try {
-                const res = await fetch(
-                  `/api/curation/variants/${variant.id}/assign`,
-                  {
-                    method: "POST",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify({ curatorEmail: choice }),
-                  },
-                );
-                if (res.ok) {
-                  window.location.reload();
-                  return;
-                }
-                const body = (await res.json().catch(() => null)) as {
-                  error?: { message?: string };
-                } | null;
-                setError(body?.error?.message ?? "Could not assign.");
-              } catch {
-                setError("Could not reach the server to assign. Try again.");
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input
+          type="email"
+          aria-label={`Assign a curator to ${variant.gene} ${variant.hgvsC}`}
+          placeholder="curator's email"
+          list={suggestionsId}
+          value={choice}
+          onChange={(e) => setChoice(e.target.value)}
+          className="framework-voice w-[260px] rounded-sm border border-line-input bg-white px-2.5 py-1.5 text-[13px] text-ink-body"
+        />
+        <datalist id={suggestionsId}>
+          {suggested.map((email) => (
+            <option key={email} value={email} />
+          ))}
+        </datalist>
+        <button
+          type="button"
+          disabled={busy || choice.trim() === ""}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              const res = await fetch(
+                curationApiPath(projectId, "variants", variant.id, "assign"),
+                {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ curatorEmail: choice }),
+                },
+              );
+              if (res.ok) {
+                window.location.reload();
+                return;
               }
-              // Not a `finally`: the reload path leaves with the button still disabled.
-              setBusy(false);
-            }}
-            className="framework-voice rounded-sm bg-primary px-3 py-1.5 text-[13px] text-primary-foreground disabled:opacity-40"
-          >
-            {busy ? "Assigning…" : "Assign"}
-          </button>
-          {error ? (
-            <span className="framework-voice text-[12.5px] text-destructive">
-              {error}
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+              const body = (await res.json().catch(() => null)) as {
+                error?: { message?: string };
+              } | null;
+              setError(body?.error?.message ?? "Could not assign.");
+            } catch {
+              setError("Could not reach the server to assign. Try again.");
+            }
+            // Not a `finally`: the reload path leaves with the button still disabled.
+            setBusy(false);
+          }}
+          className="framework-voice rounded-sm bg-primary px-3 py-1.5 text-[13px] text-primary-foreground disabled:opacity-40"
+        >
+          {busy ? "Assigning…" : "Assign"}
+        </button>
+        {error ? (
+          <span className="framework-voice text-[12.5px] text-destructive">
+            {error}
+          </span>
+        ) : null}
+      </div>
     </section>
   );
 }

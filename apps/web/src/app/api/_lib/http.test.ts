@@ -32,6 +32,7 @@ describe("toErrorResponse", () => {
   test.each([
     ["ResourceNotFoundError", 404, "not_found"],
     ["UnauthenticatedError", 401, "unauthenticated"],
+    ["NotAdmittedError", 403, "permission_denied"],
   ] as const)(
     "a foreign-graph %s still maps to its envelope",
     async (name, status, code) => {

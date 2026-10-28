@@ -53,7 +53,7 @@ def test_the_context_is_immutable() -> None:
     auth = auth_context.AuthContext(
         caller='a@x',
         calling_as=_SELF,
-        session=auth_pb2.SessionContext(project_id='p', analysis_id='a'),
+        session=auth_pb2.SessionContext(analysis_id='a', project=auth_pb2.ProjectGrant(id='p')),
     )
     with pytest.raises(AttributeError):
         auth.caller = 'b@x'  # type: ignore[misc]

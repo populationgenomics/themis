@@ -60,7 +60,6 @@ export default async function AnalysisPage({
         scenario: scenarioLabel(inputs),
         created: created(timestampDate(analysis.createdAt).toISOString()),
         projectId: project.id,
-        projectName: project.name,
         // Whether this run has a conversation to show at all; the session id it is read from stays
         // server-side, so the chrome is told the consequence rather than the identifier.
         managed: isManagedSession(analysis.sessionId),

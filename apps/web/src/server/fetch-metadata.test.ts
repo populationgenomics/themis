@@ -13,10 +13,13 @@ type Metadata = Partial<
 >;
 
 function request(method: string, metadata: Metadata): Request {
-  return new Request("https://themis.example/api/curation/people", {
-    method,
-    headers: metadata,
-  });
+  return new Request(
+    "https://themis.example/api/projects/asd/curation/variants",
+    {
+      method,
+      headers: metadata,
+    },
+  );
 }
 
 const rejected = (method: string, metadata: Metadata): boolean => {

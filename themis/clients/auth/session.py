@@ -68,7 +68,8 @@ def fixture_session_resolver_from_json(raw: str | None, *, var_name: str) -> Ses
 
     Args:
         raw: The JSON string — an object mapping each plaintext bearer to its binding, e.g.
-            ``{"tok": {"project_id": "p1", "analysis_id": "a1"}}``. ``None`` (an unset env var) is an
+            ``{"tok": {"analysis_id": "a1", "project": {"id": "p1"}}}``,
+            a ``SessionContext`` in its JSON form. ``None`` (an unset env var) is an
             operator error; pass ``"{}"`` for an explicit empty set.
         var_name: The source env var, named in the fail-loud error messages.
 
@@ -106,8 +107,9 @@ def _parse_binding(binding: object, *, var_name: str) -> auth_pb2.SessionContext
         context = json_format.ParseDict(binding, auth_pb2.SessionContext())
     except json_format.ParseError as e:
         raise SystemExit(f'{var_name} binding is malformed: {e}') from e
-    if not context.project_id or not context.analysis_id:
-        raise SystemExit(f'{var_name} binding must set project_id and analysis_id')
+    project = context.project
+    if not context.analysis_id or not project.id:
+        raise SystemExit(f'{var_name} binding must set analysis_id, and project with its id')
     return context
 
 
@@ -118,7 +120,8 @@ async def require_session(
 
     Reads the ``x-themis-session-token`` metadata and resolves it through ``session_resolver``.
     Aborts ``UNAUTHENTICATED`` on a missing token, ``PERMISSION_DENIED`` on one that does not
-    resolve. Never returns ``None``: a servicer cannot proceed without a binding.
+    resolve, and ``UNAVAILABLE`` when the auth service answers ``UNAVAILABLE``; any other failure to
+    resolve propagates. Never returns ``None``: a servicer cannot proceed without a binding.
 
     Args:
         context: The gRPC servicer context for the current call.
@@ -134,6 +137,11 @@ async def require_session(
         return await session_resolver(token)
     except UnresolvedSessionError:
         await context.abort(grpc.StatusCode.PERMISSION_DENIED, 'session token could not be resolved')
+    except grpc.aio.AioRpcError as e:
+        # The auth service down, or refusing everyone on a stale ACL: retryable, and said so.
+        if e.code() is grpc.StatusCode.UNAVAILABLE:
+            await context.abort(grpc.StatusCode.UNAVAILABLE, f'the auth service is unavailable: {e.details()}')
+        raise
 
 
 def _session_resolver_over_stub(stub: auth_pb2_grpc.AuthAsyncStub) -> SessionResolver:

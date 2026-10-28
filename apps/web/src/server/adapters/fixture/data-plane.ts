@@ -18,7 +18,7 @@ import {
 } from "../../errors";
 import type { AnalysisDataPlane, CreateAnalysisInput } from "../../ports";
 import { COLLABORATIVE_BRANCH } from "../../workspace";
-import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./membership";
+import { FIXTURE_PROJECT, SECOND_FIXTURE_PROJECT } from "./access";
 import {
   afterPoll,
   awaitingToolResult,

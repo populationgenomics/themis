@@ -24,7 +24,7 @@ import json
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cost_promql, grants
+from themis_infra import cost_promql, grants, secrets
 
 JOB_NAME = 'themis-cost-report'
 # Every morning, Sydney time; the window is the trailing 24 hours from the run.
@@ -134,22 +134,8 @@ class CostReport(pulumi.ComponentResource):
         )
         grants.MetricReader('themis-cost-report', member=service_account.member, project=project, opts=child)
 
-        secret = gcp.secretmanager.Secret(
-            'themis-slack-bot-token',
-            project=project,
-            secret_id='slack-bot-token',  # noqa: S106 — the secret's name, not its value
-            replication=gcp.secretmanager.SecretReplicationArgs(
-                user_managed=gcp.secretmanager.SecretReplicationUserManagedArgs(
-                    replicas=[gcp.secretmanager.SecretReplicationUserManagedReplicaArgs(location=region)],
-                ),
-            ),
-            opts=child,
-        )
-        version = gcp.secretmanager.SecretVersion(
-            'themis-slack-bot-token-current',
-            secret=secret.id,
-            secret_data=slack_bot_token,
-            opts=pulumi.ResourceOptions(parent=secret),
+        secret, version = secrets.stack_secret(
+            'slack-bot-token', project=project, region=region, value=slack_bot_token, opts=child
         )
         reader = grants.SecretReader(
             'themis-cost-report',
