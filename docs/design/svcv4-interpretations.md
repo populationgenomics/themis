@@ -470,8 +470,8 @@ to read is an interpretive decision rather than a database sort order:
 
 ### Clinical and locus observations: the categorical readings
 
-The seven clinical and locus evidence codes (`CLN_aff`, `CLN_den`, `CLN_uaf`, `CLN_cis`, `CLN_trn`, `LOC_phe`,
-`LOC_seg`) are arithmetic functions *downstream* of categorical clinical readings made by the analyst: the proband's
+The seven clinical and locus evidence codes (`CLN_CCS`, `CLN_AFF`, `CLN_DNV`, `CLN_ALT`, `CLN_UAF`, `LOC_PHE`,
+`LOC_SEG`) are arithmetic functions *downstream* of categorical clinical readings made by the analyst: the proband's
 phenotype specificity tier, whether SM4's caveat exclusions hold, whether parentage was confirmed for a de novo call,
 each relative's genotype and affected status, the disease penetrance band, the classification of an in-trans variant,
 and the diagnostic yield of testing. [`themis/svcv4/observations.py`](../../themis/svcv4/observations.py) computes the
@@ -513,7 +513,7 @@ single rule would hide an unresolved ambiguity in the standard or the primary ev
 - **Specific versus consistent phenotype**, which often turns on whether a distinguishing clinical examination was
   performed and negative or simply never performed—a distinction that a binary input would collapse by treating an
   unperformed exam as negative.
-- **Whether the per-individual benign clinical codes (`CLN_uaf`, `CLN_cis`) carry an unstated code-level floor**,
+- **Whether the per-individual benign clinical codes (`CLN_UAF`, `CLN_ALT`) carry an unstated code-level floor**,
   discussed in
   [De novo observations, and the two per-individual clinical codes](#de-novo-observations-and-the-two-per-individual-clinical-codes).
 
@@ -637,12 +637,12 @@ code-level maximum. Whereas the ClinGen Pilot Calculator imposes an upper cap on
 move), [`themis/svcv4/data/`](../../themis/svcv4/data) follows SM4's text and applies no upper cap on `CLN_DNV`, pinning
 the difference in [`tools/svcv4-oracle/`](../../tools/svcv4-oracle/README.md).
 
-The two per-individual benign clinical codes—unaffected observations (`CLN_UAF`) and observations *in cis* with a known
-pathogenic variant (`CLN_CIS`)—have the same structure in the negative direction: SM4 states a per-individual tariff for
-each observation and specifies no code-level floor on the sum across individuals. Clamping either code to the magnitude
-of its largest single-individual tariff would mistake a single-observation tariff for a multi-observation cap and
-truncate legitimate benign evidence. Here both [`themis.svcv4`](../../themis/svcv4) and the pilot calculator leave the
-negative sum uncapped.
+The two per-individual benign clinical codes—unaffected observations (`CLN_UAF`) and observations with an alternative
+genetic cause, including *in cis* with a known pathogenic variant (`CLN_ALT`)—have the same structure in the negative
+direction: SM4 states a per-individual tariff for each observation and specifies no code-level floor on the sum across
+individuals. Clamping either code to the magnitude of its largest single-individual tariff would mistake a
+single-observation tariff for a multi-observation cap and truncate legitimate benign evidence. Here both
+[`themis.svcv4`](../../themis/svcv4) and the pilot calculator leave the negative sum uncapped.
 
 #### Semidominant entities in `POP_HMZ` and `CLN_UAF`
 

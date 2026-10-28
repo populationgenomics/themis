@@ -282,8 +282,8 @@ Codes on a decision-tree path are the remaining vocabulary gap. The worksheet st
 that a curator chose on a path, such as the predictor row of `MIS_PRD`, whereas the library prices a path code from a
 tier and names no cell for it. The payload therefore carries the agent's plain-text statement of the cell it read, in
 the framework's words, and the run-review loop matches that statement to the curator's cell by reading, just as it
-matches a run's stated derivations ([`curation-surface.md`](curation-surface.md) §"The framework's vocabulary, as used
-here"). Adding a cell id for each path row in the library would close this gap for every consumer at once.
+matches a run's stated derivations ([`curation-surface.md`](curation-surface.md) §"One vocabulary per concept"). Adding
+a cell id for each path row in the library would close this gap for every consumer at once.
 
 The library's cell descriptions are also terser than the calculator's sentences. The library describes a row in the
 shorthand of its transcription ("SPECIFIC · unconfirmed parentage"), whereas the worksheet carries the calculator's full

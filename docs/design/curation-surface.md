@@ -183,15 +183,17 @@ Once a caller holds a role, `CurationAccess` enforces two rules to keep curation
 
 ### Transcribed workflows and reference modals
 
-The worksheet renders the calculator's 23 workflows grouped under the calculator's four headings
-(`Population Observations (POP)`, `Clinical Observations (CLN)`, `Locus Specificity (LOC)`, and
-`Predicted and Functional Effect`), filtered by the variant's registered mode of inheritance and the curator's chosen
-consequence class ([`registry.ts`](../../apps/web/src/curation/workflows/registry.ts)). Each workflow's
-`applies(routing)` predicate lists its covered inheritance modes positively rather than negating `AUTOSOMAL_DOMINANT`,
-so `MODE_OF_INHERITANCE_MITOCHONDRIAL` stays excluded until mitochondrial worksheets are transcribed. How each
-calculator panel and supplement table is transcribed into React components, how workflow and cell IDs are assigned, and
-how the population-frequency rarity gate clears downstream workflows when a variant is not rare are detailed in
-[`svcv4-worksheet-transcription.md`](svcv4-worksheet-transcription.md).
+The worksheet renders the 23 SVCv4 evidence codes across 60 workflows (58 transcribed from the calculator plus 2 from
+the supplements) grouped under the calculator's four headings (`Population Observations (POP)`,
+`Clinical Observations (CLN)`, `Locus Specificity (LOC)`, and `Predicted and Functional Effect`), filtered by the
+variant's registered mode of inheritance and the curator's chosen consequence class
+([`registry.ts`](../../apps/web/src/curation/workflows/registry.ts)). Each workflow's `applies(routing)` predicate lists
+its covered inheritance modes positively rather than negating `AUTOSOMAL_DOMINANT`. Positive predicates are also
+required whenever an enum has more than two members: the calculator groups X-linked modes with autosomal dominant in one
+branch and with autosomal recessive in another, so negating `AUTOSOMAL_DOMINANT` would route an X-linked dominant entity
+into the recessive branch. How each calculator panel and supplement table is transcribed into React components, how
+workflow and cell IDs are assigned, and how the population-frequency rarity gate clears downstream workflows when a
+variant is not rare are detailed in [`svcv4-worksheet-transcription.md`](svcv4-worksheet-transcription.md).
 
 Where the ClinGen Pilot Calculator provides reference popups next to the `POP_FRQ` disease allele frequency threshold
 (**DAFT**) field, the worksheet provides two static, read-only reference modals inside a native `<dialog>`

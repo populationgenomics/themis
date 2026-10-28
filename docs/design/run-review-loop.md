@@ -75,10 +75,10 @@ the session's status changes. The workbench shows a curator a projection of that
 ### What a run is read against
 
 SVCv4, the ClinGen pilot of the points-based ACMG/AMP framework, splits a classification into three layers
-([`curation-surface.md`](curation-surface.md) §"Three layers"). Fact recovery finds what is known about the variant.
-Assessment turns each fact into a code at a strength by choosing a decision-tree cell. Tally sums the codes to a class.
-Retrieval is the evidence services' job and the tally is the library's, so the layer that needs a human reference is
-assessment.
+([`curation-surface.md`](curation-surface.md) §"Separating assessment from fact recovery and arithmetic"). Fact recovery
+finds what is known about the variant. Assessment turns each fact into a code at a strength by choosing a decision-tree
+cell. Tally sums the codes to a class. Retrieval is the evidence services' job and the tally is the library's, so the
+layer that needs a human reference is assessment.
 
 The framework classifies a variant against a Monogenic disease entity (MDE): a gene, a disease, and a mode of
 inheritance, where an allelic disorder that arises by a different mechanism is a different disease. A gene curated for
@@ -88,25 +88,26 @@ same facts differently under each.
 The curation worksheet records the assessment layer. A manager registers a variant against a disease (named by its MONDO
 term) and one of the framework's five modes of inheritance, and writes the referral's clinical facts in prose as the
 clinical context. The gene, the disease, and the mode together fix the entity, so a disease the gene causes under two
-modes is two registrations ([`curation-surface.md`](curation-surface.md) §"The registration states the question, mode
-included"). The manager then assigns curators. Each curator sees the registered entity and clinical context read-only
-and answers alone, blind to the others. Per workflow (the calculator's question block for one code), the curator records
-the status, the cell, the evidence apart from the rationale, the nearest cell they did not choose and why, and how open
-the call is (`settled`, `leaning`, or `open`). Per worksheet, the curator records the routing (the consequence class and
-the reasoning behind it) and the class with the calls that decided it. Submitting a worksheet commits it and records the
-submission date. The worksheet and the run's record use the same status, confidence, and mode vocabularies, and the same
-cell ids for the codes priced per observation.
+modes is two registrations ([`curation-surface.md`](curation-surface.md) §"Variant registration fixes the disease entity
+and clinical context"). The manager then assigns curators. Each curator sees the registered entity and clinical context
+read-only and answers alone, blind to the others. Per workflow (the calculator's question block for one code), the
+curator records the status, the cell, the evidence apart from the rationale, the nearest cell they did not choose and
+why, and how open the call is (`settled`, `leaning`, or `open`). Per worksheet, the curator records the routing (the
+consequence class and the reasoning behind it) and the class with the calls that decided it. Submitting a worksheet
+commits it and records the submission date. The worksheet and the run's record use the same status, confidence, and mode
+vocabularies, and the same cell ids for the codes priced per observation.
 
 A curator is not ground truth. In the SVCv4 pilot, analysts classifying the same ten variants agreed 84% of the time at
-seven class levels ([`curation-surface.md`](curation-surface.md) §"Two curators, blind"). A run that differs from a
-curator inside the range the curator said was open has not made a mistake, and two curators who differ have found
-something about the variant or the framework.
+seven class levels ([`curation-surface.md`](curation-surface.md) §"Measuring the human concordance floor"). A run that
+differs from a curator inside the range the curator said was open has not made a mistake, and two curators who differ
+have found something about the variant or the framework.
 
 ### Why a human authors the reference
 
 The reader that judges a run is a Claude model, and so is the agent. If a model also wrote the reference, a misreading
 the two share would read as agreement. A curator's worksheet is the one input to the loop that no model touched, which
-is why the worksheet is unassisted ([`curation-surface.md`](curation-surface.md) §"Assistance anchors").
+is why the worksheet is unassisted ([`curation-surface.md`](curation-surface.md) §"Why assistance corrupts the
+reference").
 
 ## Non-goals
 
@@ -380,8 +381,8 @@ The kickoff carries what the create form carries: the transcript and the coding 
 clinical context in prose. The round composes the clinical context from the registration alone. It opens with the
 registered entity (the disease by its label and MONDO term and the mode of inheritance), stated as the entity to
 classify against. The registration's clinical context follows: the referral's clinical facts, which the manager wrote
-when registering the variant and every curator was shown read-only ([`curation-surface.md`](curation-surface.md) §"The
-clinical context is part of the question"). For the trace above:
+when registering the variant and every curator was shown read-only ([`curation-surface.md`](curation-surface.md)
+§"Variant registration fixes the disease entity and clinical context"). For the trace above:
 
 ```
 Entity to classify against: disease X (MONDO:0000000), autosomal dominant.

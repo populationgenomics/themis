@@ -20,10 +20,11 @@ The worksheet transcribes its 60 workflows in
 [`apps/web/src/curation/workflows/`](../../apps/web/src/curation/workflows/): 58 directly from the ClinGen Pilot
 Calculator plus two from Supplementary Material 4 (SM4) and Supplementary Material 5 (SM5) where the calculator offers
 only a blank numeric score box (`CLN_CCS` and the non-segregation branch of `LOC_SEG`). All point weights, category
-subtotals, classification bands, and matrix multipliers are omitted from the surface so curators score each observation
-on its merits rather than toward a target threshold. Because workflows vary in shape—from radio tables and integer
-counters to a two-axis phenotype-specificity selector—each workflow is written as a plain React component rather than
-interpreted from a declarative schema, and each worksheet pins a manually bumped transcription version string
+subtotals, classification bands, and matrix multipliers are omitted from the surface because a row's *label* carries the
+meaning while its points carry only the weight, and transcribing the labels verbatim makes an answer given in Themis
+comparable to one given in the calculator without a second manual. Because workflows vary in shape—from radio tables and
+integer counters to a two-axis phenotype-specificity selector—each workflow is written as a plain React component rather
+than interpreted from a declarative schema, and each worksheet pins a manually bumped transcription version string
 ([`version.ts`](../../apps/web/src/curation/version.ts)) so historical submissions keep the version stamp they were
 opened under.
 
@@ -47,12 +48,13 @@ During the SVCv4 pilot, human curators work from two primary documents: the Clin
 HTML page that presents the framework's evidence codes as fill-in tables) and the numbered Supplementary Materials
 (SM1–SM18) that define the underlying rules and reference tables.
 
-The calculator organizes the 23 SVCv4 evidence codes into 30 self-contained question blocks, which the curation surface
-calls *workflows*. A single evidence code can split into more than one workflow when the calculator prints separate
-tables for different modes of inheritance (for example, `POP_HMZ` has one table for autosomal dominant inheritance and
-another for autosomal recessive or X-linked inheritance) or for different variant classes (for example, `EXP_FUN` has
-separate tables for splicing assays and general functional assays). Within each workflow, each decision-tree leaf—a
-radio option, a numeric counter, or a grid cell—is a *cell* with a stable key within that workflow.
+The calculator organizes the 23 SVCv4 evidence codes into 58 calculator question blocks (plus two supplement-derived
+blocks, for 60 *workflows* in total in [`registry.ts`](../../apps/web/src/curation/workflows/registry.ts)). A single
+evidence code can split into more than one workflow when the calculator prints separate tables for different modes of
+inheritance (for example, `POP_HMZ` and `CLN_AFF` each have one table for autosomal dominant inheritance and another for
+autosomal recessive or X-linked inheritance) or for different variant classes (for example, `NUL_INF` has separate
+workflows for nonsense, frameshift, and exon-CNV informative-variant tables). Within each workflow, each decision-tree
+leaf—a radio option, a numeric counter, or a grid cell—is a *cell* with a stable key within that workflow.
 
 For population frequency (`POP_FRQ`), Supplementary Material 3 (SM3) compares two allele frequencies:
 
@@ -97,48 +99,51 @@ toward a different answer than the ClinGen Pilot Calculator would have.
 
 The worksheet therefore transcribes the ClinGen Pilot Calculator verbatim—headings, applicability lines, row labels,
 bracketed caveats, footnotes, and table structure—while stripping every number that expresses a score. Point columns,
-point-range headers, running totals, and classification bands are removed. Where Supplementary Material 18 (SM18)
-combines functional or predictive evidence (`EXP_FUN`, `PRE_SPL`, `PRE_MIS`, `PRE_IND`) with phenotype specificity
-(`LOC_PHE`) using a grid of point multipliers (`1.0×`, `0.5×`, `0.25×`, `0×`), showing the multiplier grid would leak
-the scoring weights. The worksheet replaces the multiplier grid with two independent single-choice selectors—one for the
-assay or predictor strength and one for the phenotype specificity—so the curator records the same two observations
-without seeing how the framework multiplies them:
+point-range headers, running totals, and classification bands are removed. In Supplementary Material 18, the framework
+combines `Loss of Function Score (GenCC Framework)` with `Exon relevance` in a two-dimensional grid of point multipliers
+that scales the predicted loss-of-function workflows (`NUL_PRD`, `SPL_PRD`, and `CDS_PRD`). Showing that multiplier grid
+on the worksheet would leak the scoring weights (`1.0×`, `0.5×`, `0.25×`, `0×`). Instead, the `matrix` workflow in
+[`predicted.tsx`](../../apps/web/src/curation/workflows/predicted.tsx) replaces the grid with two independent
+single-choice selectors—one for the loss-of-function mechanism score and one for exon relevance—so the curator records
+both observations without seeing how the framework multiplies them:
 
 ```
-ClinGen Pilot Calculator (PRE_MIS):
-┌──────────────────────────────────┬─────────────────────────────────────────┐
-│ REVEL score                      │ Phenotype specificity (multiplier)      │
-│                                  │ Highly (1.0x)  Mod (0.5x)  Low (0.25x)  │
-├──────────────────────────────────┼─────────────────────────────────────────┤
-│ >= 0.932              (4 pts)    │   [ ] 4.0       [ ] 2.0      [ ] 1.0    │
-│ [0.773, 0.932)        (2 pts)    │   [ ] 2.0       [ ] 1.0      [ ] 0.5    │
-│ [0.644, 0.773)        (1 pt)     │   [ ] 1.0       [ ] 0.5      [ ] 0.25   │
-└──────────────────────────────────┴─────────────────────────────────────────┘
+ClinGen Pilot Calculator (SM18 multiplier matrix):
+┌──────────────────────────────┬──────────────────────────────────────────────────────────┐
+│ Loss of Function Score       │ Exon relevance (multiplier on NUL/SPL/CDS_PRD)           │
+│ (GenCC Framework)            │ ALL transcripts    MOST transcripts    NOT present       │
+│                              │  (Full Score)        (Half Score)       (No Score)       │
+├──────────────────────────────┼──────────────────────────────────────────────────────────┤
+│ Established                  │    [ ] 100%            [ ] 50%            [ ] 0%         │
+│ Likely                       │    [ ] 50%             [ ] 25%            [ ] 0%         │
+│ Suspected                    │    [ ] 25%             [ ] 0%             [ ] 0%         │
+│ Uncertain or not LoF         │    [ ] 0%              [ ] 0%             [ ] 0%         │
+└──────────────────────────────┴──────────────────────────────────────────────────────────┘
 
-Worksheet transcription (pre_mis):
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Prediction / score                                                         │
-│   ( ) Missense predictor: High score (e.g. REVEL >=0.932)                  │
-│   ( ) Missense predictor: Moderate score (e.g. REVEL [0.773, 0.932))       │
-│   ( ) Missense predictor: Low score (e.g. REVEL [0.644, 0.773))            │
-│   ...                                                                      │
-│ Phenotype specificity                                                      │
-│   ( ) Highly specific phenotype                                            │
-│   ( ) Consistent and moderately specific phenotype                         │
-│   ( ) Consistent but low specificity phenotype                             │
-│   ( ) Phenotype not consistent OR no phenotype specificity (e.g. "any...") │
-└────────────────────────────────────────────────────────────────────────────┘
+Worksheet transcription (matrix):
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│ Loss of Function Score (GenCC Framework) (matrix.mechanism)                             │
+│   ( ) Established   ( ) Likely   ( ) Suspected   ( ) Uncertain or not LoF               │
+│                                                                                         │
+│ Exon relevance (matrix.exon)                                                            │
+│   ( ) Residue is present in ALL clinically relevant transcripts (Full Score)            │
+│   ( ) Residue is present in MOST clinically relevant transcripts (Half Score)           │
+│   ( ) Residue NOT present in clinically relevant transcripts (No Score)                 │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Which workflows appear on screen is routed using the same two inputs as the calculator:
+Which workflows appear on screen is routed by [`registry.ts`](../../apps/web/src/curation/workflows/registry.ts) using
+the same two inputs as the calculator, with the `POP_FRQ` rarity gate running ahead of both to bar gated clinical and
+locus workflows when a variant is not rare:
 
-1. **Mode of inheritance**, read from the variant's registration (`AUTOSOMAL_DOMINANT`, `AUTOSOMAL_RECESSIVE`,
-   `X_LINKED`, `SEMIDOMINANT`, or `MITOCHONDRIAL`) and fixed for the worksheet.
-1. **Consequence class**, chosen by the curator at the top of the worksheet (*Nonsense / frameshift*, *Canonical splice
-   (±1,2)*, *Initiation codon*, *Single or multi-exon deletion*, *Missense / in-frame indel*, or *Silent / intronic /
-   non-coding*), which shows or hides the consequence-specific workflows (`NUL_JAJ`, `NUL_INF`, `NUL_AIC`, `LOC_HOT`,
-   `PRE_MIS`, `PRE_IND`, and `EXP_FUN`'s general-assay table). Leaving the consequence class unset shows every workflow
-   that matches the mode of inheritance.
+1. **Mode of inheritance**, read from the variant's registration in the `ModeOfInheritance` enum in
+   [`svcv4.proto`](../../schema/proto/themis/svcv4/models/svcv4.proto) and fixed for the worksheet, which selects the
+   applicable zygosity, case-level, and co-segregation tables.
+1. **Consequence class**, chosen by the curator at the top of the worksheet from the `Consequence` enum in
+   [`evidence.proto`](../../schema/proto/themis/evidence/models/evidence.proto), which reveals the matching predicted
+   and functional workflow family (for example, `MISSENSE` reveals `MIS_PRD`, `MIS_FXN`, and `MIS_INF`). Leaving the
+   consequence class unspecified shows only the consequence-independent workflows (`POP`, `CLN`, and `LOC`) that match
+   the mode of inheritance.
 
 The calculator also links two read-only reference pop-ups from the `POP_FRQ` row. Both are transcribed into
 [`apps/web/src/curation/reference/`](../../apps/web/src/curation/reference/) and opened from `<ReferenceModals>` in the
@@ -155,19 +160,20 @@ The calculator also links two read-only reference pop-ups from the `POP_FRQ` row
    X-linked Recessive) with penetrance columns (80%, 50%, 20%) and
    `Equivalent to gnomAD v4 AC of: (based on AN = 1,600,000)`.
 
-Those lookup tables contain starred cells where the calculator's modal and SM3 / `themis.svcv4` diverge (SM3 Tables 2
-and 5 cap three `p = 0.25` autosomal-dominant cells at `0.05*` while the calculator's modal prints the uncapped equation
-results `0.0632`, `0.1`, and `0.0707`, and nine starred cells in the transcribed DAFT tables differ from the library's
-copy by the rounded allele count). Because a curator using the Pilot Calculator sees the calculator's modal verbatim,
-the worksheet's reference modal transcribes the calculator's values directly; `themis.svcv4` encodes SM3's values
-([`themis/svcv4/data/population.py`](../../themis/svcv4/data/population.py),
-[svcv4-interpretations.md](svcv4-interpretations.md)), and the differences are pinned in
-[`themis/curation/tests/test_daft_tables.py`](../../themis/curation/tests/test_daft_tables.py).
+Those lookup tables contain six starred cells where the calculator's modal and SM3 / `themis.svcv4` diverge: at the
+`1/500 × 50%`, `1/500 × 20%`, and `1/1,000 × 20%` entries of the Autosomal Recessive and X-linked Recessive Female
+tables, SM3 caps the threshold at `0.05*` while the calculator's modal prints the uncapped equation results (`0.0632`,
+`0.1`, and `0.0707`). Because a curator using the Pilot Calculator sees the calculator's modal verbatim, the worksheet's
+reference modal transcribes the calculator's values directly. By contrast, `themis.svcv4` encodes SM3's capped values in
+[`themis/svcv4/data/population.py`](../../themis/svcv4/data/population.py)
+([svcv4-interpretations.md](svcv4-interpretations.md)), and
+[`themis/curation/tests/test_daft_tables.py`](../../themis/curation/tests/test_daft_tables.py) pins those six cells so
+any seventh divergence fails.
 
 ### Workflow components, version pinning, and spanned descriptions
 
-A tempting way to implement 30 workflows is to define a JSON or protobuf schema for tables, rows, and inputs, and build
-a single generic renderer. In practice, the 30 workflows use five distinct interaction shapes (single-choice radio
+A tempting way to implement 60 workflows is to define a JSON or protobuf schema for tables, rows, and inputs, and build
+a single generic renderer. In practice, the 60 workflows use five distinct interaction shapes (single-choice radio
 lists, per-row numeric counters, two-axis SM18 selectors, derived frequency bins, and multi-field proband/segregation
 counters), along with table-specific footnotes, bracketed caveats, and conditional cell disabling. A declarative schema
 expressive enough to represent every layout quirk would be as complex as the UI code it replaces, while adding a layer
@@ -178,9 +184,11 @@ Instead, each workflow is a plain React component in
 presentational primitives in [`apps/web/src/curation/ui/`](../../apps/web/src/curation/ui/). Because the workflow
 definitions live in code rather than in database rows,
 [`apps/web/src/curation/version.ts`](../../apps/web/src/curation/version.ts) exports a manually bumped string stamp
-(`WORKFLOWS_VERSION`, e.g. `"svcv4-pilot-2026-07.5"`) that is recorded on each worksheet row when created. Any change to
-a workflow key, cell key, or rendered wording bumps `WORKFLOWS_VERSION`; bumping it does not migrate worksheets in
-flight, so existing worksheets keep the `workflows_version` string they were opened under.
+(`WORKFLOWS_VERSION`, e.g. `"svcv4-pilot-2026-07.5"`) that is recorded on each worksheet row when created.
+`WORKFLOWS_VERSION` is bumped by hand only when a change alters what an answer *means* (a reworded option, a changed
+option set, or a workflow added or removed), rather than derived from the build, because a version that moves on every
+deploy pins nothing. Bumping it does not migrate worksheets in flight, so existing worksheets keep the
+`workflows_version` string they were opened under.
 
 Several calculator tables group adjacent rows under a shared description cell that spans multiple rows (`rowspan`). In
 `NUL_INF` (predicted NMD-escaping loss-of-function variants), for instance, the calculator spans the description *"P/LP
@@ -212,7 +220,7 @@ Stored FieldValue.label / exported cell description:
 
 ### Where the supplements fill in or disagree with the calculator
 
-The ClinGen Pilot Calculator is the primary source wherever it prints a decision tree. For 28 of the 30 workflows, the
+The ClinGen Pilot Calculator is the primary source wherever it prints a decision tree. For 58 of the 60 workflows, the
 calculator prints the complete table and the worksheet transcribes it directly (`source: "calculator"`).
 
 For the remaining two workflows, the calculator prints only a blank numeric score box and tells the curator to consult
@@ -233,13 +241,13 @@ stance aligned with [`themis/svcv4/`](../../themis/svcv4/) ([svcv4-interpretatio
    row is carried in the library's reference with no points and reported as unvalued—distinct from a cell nobody mapped,
    which stays an error—so the curator can record the determination directly rather than falling back to *nearest
    alternative*.
-1. **Disputed direction of points (`LOC_SEG` non-segregation).** SM5's prose (§33) recommends a negative award (`-4.0`
-   across `ad`, `ar_homozygous`, and `xl`, and `0.0` in its closing note for autosomal-recessive conditions without
-   homozygosity) for a non-segregation while stating the code's range in the summary header and §32 as starting at zero
-   (`0 to 4`); the calculator implements the range and the library implements the prose
-   ([`svcv4-interpretations.md`](svcv4-interpretations.md#co-segregation)). The worksheet's rows
-   ([`loc.tsx`](../../apps/web/src/curation/workflows/loc.tsx)) take the library's reading, so the two do not diverge
-   further.
+1. **Disputed direction of points (`LOC_SEG` non-segregation).** In SM5, the summary header and §32 state the
+   co-segregation range as `0 to 4`, whereas §33 recommends `-4.0` for non-segregation across autosomal dominant,
+   homozygous autosomal recessive, and X-linked contexts (and `0.0` in its closing note for autosomal recessive without
+   homozygosity). The calculator implements the non-negative header range, while `themis.svcv4` implements §33's prose
+   ([`svcv4-interpretations.md`](svcv4-interpretations.md#co-segregation)). The worksheet's rows in
+   [`loc.tsx`](../../apps/web/src/curation/workflows/loc.tsx) follow the library's reading so the human reference and
+   the library do not diverge further.
 1. **Internal contradiction in SM5 over autosomal-recessive non-segregation.** SM5 grants benignity for
    autosomal-recessive non-segregation with homozygosity in one section (*"Variants observed in homozygosity in
    unaffected individuals (primarily for AR conditions)"*) and withholds it from autosomal recessive outright in an
@@ -264,7 +272,7 @@ External captures (local only)                 Repository (CI on every run)
 │ Supplementary Materials    │  (on change)    │   workflows/ & reference/    │
 └────────────────────────────┘                 └──────────────┬───────────────┘
                                                               │
-                                                 cell-inventory.json & DAFT
+                                                 curation-cells.json & DAFT
                                                               │
                                                               ▼
                                                ┌──────────────────────────────┐
@@ -286,17 +294,19 @@ External captures (local only)                 Repository (CI on every run)
    and the SM4 and SM5 supplement texts, pointed to via local paths when present and skipped in CI), checks each
    workflow's declared `source` in both directions, and verifies that stripped point strings do not appear in the
    rendered output.
-1. **[`themis/curation/tests/test_cell_inventory.py`](../../themis/curation/tests/test_cell_inventory.py)** checks that
-   the `cell_id`s emitted across all workflows (via the checked-in snapshot
-   `apps/web/src/curation/workflows/cell-inventory.json`, kept in lockstep with the TypeScript workflow definitions on
-   every test run) are the domain of the library's cell reference in
+1. **[`themis/curation/tests/test_cell_inventory.py`](../../themis/curation/tests/test_cell_inventory.py)** reads the
+   checked-in cell snapshot [`apps/web/curation-cells.json`](../../apps/web/curation-cells.json), which `bun run cells`
+   generates from [`apps/web/scripts/cells.ts`](../../apps/web/scripts/cells.ts). It checks that the `cell_id`s emitted
+   across all workflows match the domain of the library's cell reference in
    [`themis/svcv4/observations.py`](../../themis/svcv4/observations.py) (plus `CLN_CCS.or_near_or_below_1`), and asserts
    that the frequency rows marked `barsRarityGatedCodes: true` are exactly those the library's reference prices below
    `-1.0`.
-1. **[`themis/curation/tests/test_daft_tables.py`](../../themis/curation/tests/test_daft_tables.py)** checks the
-   transcribed DAFT tables against the library's copy in
-   [`themis/svcv4/data/population.py`](../../themis/svcv4/data/population.py) and asserts the nine starred cells differ
-   by the rounded allele count (along with the three `0.05*` cap differences).
+1. **[`themis/curation/tests/test_daft_tables.py`](../../themis/curation/tests/test_daft_tables.py)** checks the 144
+   cells of the transcribed DAFT tables ([`apps/web/daft-tables.json`](../../apps/web/daft-tables.json), exported by
+   `bun run daft`) against the library's copy in
+   [`themis/svcv4/data/population.py`](../../themis/svcv4/data/population.py). It asserts that the two readings agree on
+   every cell except the six starred cells where SM3 caps the threshold at `0.05*` and the calculator prints it uncapped
+   (`1/500 × 50%`, `1/500 × 20%`, and `1/1,000 × 20%` in the autosomal recessive and X-linked recessive female tables).
 
 ### Deriving the `POP_FRQ` frequency bin and enforcing the rarity gate
 
@@ -393,13 +403,14 @@ on its face—a wrong answer retained to measure whether it was wrong.
 - **Bar `LOC_SEG`'s non-segregation branch along with the calculator's four co-segregation tables.** Leaves a curator
   unable to record an observation the worksheet built somewhere to record.
 - **Render the DAFT tables from the library's reference rather than transcribing them.** Drops the allele-count column
-  the calculator shows, and loses the second reading that caught the nine starred cells.
+  the calculator shows, and loses the second reading that caught the starred cells.
 - **Declarative workflow schema with a generic renderer.** Representing workflows as JSON or protobuf descriptors would
   allow Python and TypeScript to read the same file directly, but encoding five interaction shapes, custom per-table
   caveats, and spanned row headers would recreate a bespoke UI DSL inside JSON while making workflows harder to audit
-  against the calculator HTML. Exporting `cell-inventory.json` from the TypeScript definitions and joining it against
-  `themis.svcv4` in [`test_cell_inventory.py`](../../themis/curation/tests/test_cell_inventory.py) gives the same
-  cross-language check without the schema indirection.
+  against the calculator HTML. Exporting [`apps/web/curation-cells.json`](../../apps/web/curation-cells.json) via
+  `bun run cells` ([`apps/web/scripts/cells.ts`](../../apps/web/scripts/cells.ts)) and joining it against `themis.svcv4`
+  in [`test_cell_inventory.py`](../../themis/curation/tests/test_cell_inventory.py) gives the same cross-language check
+  without the schema indirection.
 
 ## Open questions
 

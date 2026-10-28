@@ -234,7 +234,7 @@ An alternative way to get structure out of a working document is to parse it out
 inside the markdown or a parser over headings. A vocabulary shared across the model prompt, a parser, and a renderer
 drifts over time, and a parser over prose fails silently: a heading one level off drops a criterion without reporting an
 error. The curation surface makes the same choice for a curator's worksheet, which is a form backed by a schema rather
-than parsed notes ([`curation-surface.md`](curation-surface.md) §"What is captured, and why").
+than parsed notes ([`curation-surface.md`](curation-surface.md) §"Capturing cells, evidence, and reasoning").
 
 Widgets apply that rule to the agent's side. The markdown carries no schema, because `::embed` names a file and says
 nothing about its contents. All structure lives in the asset file, where the protobuf schema, the compatibility gate,
