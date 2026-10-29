@@ -1,5 +1,5 @@
 # Every cooldown mirrors the 7-day exclude-newer in pyproject.toml, which Dependabot does not read.
-# Groups take minor and patch updates only, so each major version arrives as a PR of its own.
+# The catch-all groups take minor and patch updates only, so each major version arrives as a PR of its own.
 version: 2
 updates:
   - package-ecosystem: uv
@@ -11,6 +11,9 @@ updates:
     # The == pins in pyproject.toml are deliberate; only the lock moves.
     versioning-strategy: lockfile-only
     groups:
+      # OpenTelemetry releases as one set and moves together, majors included; first match wins.
+      opentelemetry:
+        patterns: ["opentelemetry-*"]
       uv:
         patterns: ["*"]
         update-types: ["minor", "patch"]
@@ -25,6 +28,9 @@ updates:
       # Must match the oven/bun image and setup-web's bun-version; bumped together with them.
       - dependency-name: "@types/bun"
     groups:
+      # OpenTelemetry releases as one set and moves together, majors included; first match wins.
+      opentelemetry:
+        patterns: ["@opentelemetry/*"]
       bun:
         patterns: ["*"]
         update-types: ["minor", "patch"]
