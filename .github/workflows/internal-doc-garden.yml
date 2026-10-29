@@ -135,7 +135,7 @@ jobs:
       # mdformat is not run by the agent, but the PR's lint gate runs the same
       # hook and rejects unformatted docs. Set up uv and cache the hook env so
       # the format step below is a fast, config-pinned pass.
-      - uses: astral-sh/setup-uv@v10.3.1
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
       - uses: actions/cache@v6

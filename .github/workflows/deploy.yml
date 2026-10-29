@@ -41,7 +41,7 @@ jobs:
           echo "::error::deploy runs only on main or deployed/dev; got ${GITHUB_REF}"
           exit 1
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.1
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           enable-cache: true
       - run: uv sync --locked --group infra --python 3.13
