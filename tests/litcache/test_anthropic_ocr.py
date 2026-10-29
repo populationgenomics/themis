@@ -574,6 +574,11 @@ _TOO_MANY_IMAGES = _status_error(
     anthropic.BadRequestError, 400, {'type': 'invalid_request_error', 'message': 'too many images'}
 )
 _OVERLOADED = _status_error(anthropic.APIStatusError, 200, {'type': 'overloaded_error', 'message': 'Overloaded'})
+_BLOCKED = _status_error(
+    anthropic.APIStatusError,
+    200,
+    {'type': 'invalid_request_error', 'message': 'Output blocked by content filtering policy', 'details': None},
+)
 
 
 @pytest.mark.parametrize(
@@ -640,6 +645,66 @@ def test_a_stream_failing_after_message_start_was_paid_for(error: Exception, mon
     # Paid for, so counted, as far as the stream got.
     counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
     assert counted[in_memory_metrics.labels(model='m', type='input', stop_reason='unfinished')] == 4321
+
+
+def test_a_stream_blocked_after_message_start_settles_and_was_paid_for(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_failing(monkeypatch, after_start=_BLOCKED)
+    tokens, reader = _counter()
+
+    # Terminal, not spent: the same pages are blocked again, so a retry only re-bills them.
+    with pytest.raises(ocr.OcrError, match='rejected mid-stream') as raised:
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
+    assert raised.value.__cause__ is _BLOCKED
+    counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
+    assert counted[in_memory_metrics.labels(model='m', type='input', stop_reason='unfinished')] == 4321
+
+
+def test_an_sse_error_event_after_message_start_is_read_as_a_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Through the real client, so the SDK's own parsing of an `event: error` is what sets the type matched on.
+    events = [
+        (
+            'message_start',
+            {
+                'type': 'message_start',
+                'message': {
+                    'id': 'msg_1',
+                    'type': 'message',
+                    'role': 'assistant',
+                    'model': 'm',
+                    'content': [],
+                    'stop_reason': None,
+                    'stop_sequence': None,
+                    'usage': {'input_tokens': 4321, 'output_tokens': 1},
+                },
+            },
+        ),
+        (
+            'error',
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'Output blocked by content filtering policy',
+                    'details': None,
+                },
+            },
+        ),
+    ]
+    body = ''.join(f'event: {name}\ndata: {json.dumps(data)}\n\n' for name, data in events).encode()
+    transport = httpx2.MockTransport(
+        lambda _request: httpx2.Response(
+            200, headers={'content-type': 'text/event-stream', 'request-id': 'req_blocked'}, content=body
+        )
+    )
+    client = anthropic.AsyncAnthropic
+    monkeypatch.setattr(
+        anthropic,
+        'AsyncAnthropic',
+        lambda **kw: client(**kw, api_key='test', http_client=httpx2.AsyncClient(transport=transport)),
+    )
+
+    with pytest.raises(ocr.OcrError, match='req_blocked'):
+        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
 
 
 # --- what the converter depends on ---

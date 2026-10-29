@@ -357,7 +357,7 @@ async def _run_transcription(run: _Run, manifest: litcache_pb2.Manifest, inputs:
         ).download_as_bytes()
         result = await run.convert_pdf(pdf_bytes)
     except ocr.OcrError as e:
-        # A refusal or truncation: the model answered, and would answer the same way again.
+        # A refusal, truncation or block: the model answered, and would answer the same way again.
         raise _permanent(str(e)) from e
     except ocr.SpendRefusedError as e:
         # Undone, not failed: the same call succeeds once the limit leaves room, and the queue's retries run out long

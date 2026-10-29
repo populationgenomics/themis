@@ -103,6 +103,10 @@ _SPEND_CAP_ERROR_CODE = 'enforced_spend_limit_reached'
 _UNFINISHED = 'unfinished'
 # An exhausted credit balance, or other billing fault.
 _BILLING_ERROR_TYPE = 'billing_error'
+# An error event of this type after `message_start` judges the output, not the service. The content
+# filter's "Output blocked by content filtering policy" is one, and has been seen to block the same pages
+# on every attempt.
+_OUTPUT_REJECTED_ERROR_TYPE = 'invalid_request_error'
 
 
 def _max_edge(page_count: int) -> int:
@@ -242,13 +246,14 @@ async def convert_pdf(
     Raises:
         anthropic.BadRequestError: The request was rejected on a limit `render` does not check —
             a shorter block ceiling on a smaller-context model, say (HTTP 400/413).
-        ocr.OcrError: The generation was truncated at the token ceiling or refused by the model, or the
-            pdf will not render into one request (`render`) — none yields a transcription that can be
-            committed as full text, and a retry would not change the outcome.
+        ocr.OcrError: The generation was truncated at the token ceiling, refused by the model, or blocked
+            mid-stream by an `invalid_request_error` event, or the pdf will not render into one request
+            (`render`) — none yields a transcription that can be committed as full text, and a retry
+            would not change the outcome. A blocked turn's tokens are counted under `unfinished`.
         ocr.SpendRefusedError: The API refused the call at a spend limit, or for billing; nothing was spent.
         ocr.SpentError: The call failed in any way after the stream's `message_start`, the sign the model
             answered and the call was paid for: it ran past `_TIMEOUT_SECONDS`, the stream broke or went
-            silent, or an error event arrived. The original error is its cause.
+            silent, or an error event other than a block arrived. The original error is its cause.
         anthropic.APIError: The call failed before the model answered — the connection could not be made,
             the API refused the request, or it was silent for `_STALL_SECONDS` before responding.
             Transient or not, it cost nothing, so it propagates to be retried, as does any other error
@@ -297,6 +302,8 @@ async def convert_pdf(
         # httpx2's own error, so whatever fails after `message_start` is a paid call that failed.
         if snapshot is not None:
             tokens.add(snapshot.usage, model=snapshot.model, stop_reason=_UNFINISHED)
+            if isinstance(e, anthropic.APIStatusError) and e.type == _OUTPUT_REJECTED_ERROR_TYPE:
+                raise ocr.OcrError(f'the transcription was rejected mid-stream (request {e.request_id}): {e}') from e
             raise ocr.SpentError(f'the transcription stream failed after the model answered: {e!r}') from e
         if isinstance(e, anthropic.APIStatusError) and _spend_refused(e):
             raise ocr.SpendRefusedError(str(e)) from e
