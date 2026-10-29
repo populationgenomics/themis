@@ -255,9 +255,11 @@ def test_gated_server_gates_every_path_and_keeps_the_other_interceptors() -> Non
         @override
         async def intercept_service[TRequest, TResponse](
             self,
-            continuation: Callable[[grpc.HandlerCallDetails], Awaitable[grpc.RpcMethodHandler[TRequest, TResponse]]],
+            continuation: Callable[
+                [grpc.HandlerCallDetails], Awaitable[grpc.RpcMethodHandler[TRequest, TResponse] | None]
+            ],
             handler_call_details: grpc.HandlerCallDetails,
-        ) -> grpc.RpcMethodHandler[TRequest, TResponse]:
+        ) -> grpc.RpcMethodHandler[TRequest, TResponse] | None:
             seen.append(handler_call_details.method)
             return await continuation(handler_call_details)
 

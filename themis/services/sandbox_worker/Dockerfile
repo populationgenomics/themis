@@ -107,7 +107,7 @@ COPY themis/clients/work_queue/__init__.py themis/clients/work_queue/client.py .
 COPY themis/telemetry/__init__.py themis/telemetry/tracing.py themis/telemetry/telemetry_api.py ./themis/telemetry/
 # The Sheaf service's client, over which the mirror hydrates and the hook publishes; it rides the session client's
 # metadata key and target form.
-COPY themis/clients/auth/__init__.py themis/clients/auth/session.py themis/clients/auth/claim.py ./themis/clients/auth/
+COPY themis/clients/auth/__init__.py themis/clients/auth/session.py themis/clients/auth/metadata.py themis/clients/auth/claim.py ./themis/clients/auth/
 COPY themis/clients/sheaf/__init__.py themis/clients/sheaf/store.py ./themis/clients/sheaf/
 # sheaf whole: the mirror and the pre-receive hook git spawns, which imports it from this tree by its baked path.
 COPY themis/sheaf ./themis/sheaf

@@ -33,6 +33,8 @@ from google.auth import transport as google_auth_transport
 from google.auth.transport import requests as google_auth_requests
 from google.oauth2 import id_token as google_id_token
 
+from themis.clients.auth import metadata as metadata_mod
+
 # Cloud Run forwards the caller's bearer ID token here after validating `run.invoker`. Lowercased:
 # gRPC normalises metadata keys.
 AUTHORIZATION_METADATA = 'authorization'
@@ -199,10 +201,10 @@ def fixture_caller_verifier_from_json(raw: str | None, *, var_name: str) -> Call
 
 def _bearer_token(context: grpc.aio.ServicerContext) -> str | None:
     """The bearer token from the ``authorization`` metadata, or ``None`` when absent or not a bearer."""
-    for key, value in context.invocation_metadata() or ():
-        if key == AUTHORIZATION_METADATA:
-            scheme, _, token = value.partition(' ')
-            if scheme.lower() == 'bearer' and token:
-                return token
-            return None
+    value = metadata_mod.text_value(context, AUTHORIZATION_METADATA)
+    if value is None:
+        return None
+    scheme, _, token = value.partition(' ')
+    if scheme.lower() == 'bearer' and token:
+        return token
     return None

@@ -109,11 +109,11 @@ class AuthInterceptor(grpc.aio.ServerInterceptor):
     @override
     async def intercept_service[TRequest, TResponse](
         self,
-        continuation: Callable[[grpc.HandlerCallDetails], Awaitable[grpc.RpcMethodHandler[TRequest, TResponse]]],
+        continuation: Callable[[grpc.HandlerCallDetails], Awaitable[grpc.RpcMethodHandler[TRequest, TResponse] | None]],
         handler_call_details: grpc.HandlerCallDetails,
-    ) -> grpc.RpcMethodHandler[TRequest, TResponse]:
+    ) -> grpc.RpcMethodHandler[TRequest, TResponse] | None:
         handler = await continuation(handler_call_details)
-        if handler is None:  # pyright: ignore[reportUnnecessaryComparison]  — no such method: the server answers UNIMPLEMENTED
+        if handler is None:  # no such method: the server answers UNIMPLEMENTED
             return handler
         path = handler_call_details.method
         if path.startswith(_HEALTH_SERVICE) or rules_mod.is_ungated(path):

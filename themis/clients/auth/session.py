@@ -23,6 +23,7 @@ from google.protobuf import json_format
 from opentelemetry.instrumentation import grpc as grpc_instrumentation
 
 from themis.clients import id_token
+from themis.clients.auth import metadata as metadata_mod
 from themis.rpc import auth_pb2, auth_pb2_grpc
 
 SESSION_TOKEN_METADATA = 'x-themis-session-token'  # noqa: S105 — a metadata key name, not a secret
@@ -159,13 +160,7 @@ def _session_resolver_over_stub(stub: auth_pb2_grpc.AuthAsyncStub) -> SessionRes
 
 
 def _session_token(context: grpc.aio.ServicerContext) -> str | None:
-    metadata = context.invocation_metadata()
-    if metadata is None:
-        return None
-    for key, value in metadata:
-        if key == SESSION_TOKEN_METADATA:
-            return value
-    return None
+    return metadata_mod.text_value(context, SESSION_TOKEN_METADATA)
 
 
 def grpc_target(url: str) -> str:
