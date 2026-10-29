@@ -235,6 +235,7 @@ const STOP_LOST_INF_EXTENSION: Cell[] = [
 
 /** One table, one selection: the calculator's rows are a single radio group, branch rows included. */
 function choiceBody(fieldId: string, cells: Cell[]) {
+  // biome-ignore lint/correctness/noComponentHookFactories: called once per workflow while its module builds the workflow table, never during render, so each Body keeps one identity
   return function Body({ assessment, onChange, onBlur }: WorkflowBodyProps) {
     return (
       <ChoiceRows

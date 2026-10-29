@@ -117,36 +117,38 @@ export default function PaperPdfView({
           error={<PdfNotice text="Could not load the PDF." />}
           className="flex flex-col items-center gap-[16px]"
         >
-          {Array.from({ length: pageCount }, (_, index) => {
-            const highlighted = region?.page === index;
-            return (
-              <div
-                key={`page-${index + 1}`}
-                ref={highlighted ? highlightedPageRef : undefined}
-                className="relative shadow-[0_1px_4px_rgba(0,0,0,0.12)]"
-              >
-                <Page
-                  pageNumber={index + 1}
-                  width={width ?? undefined}
-                  renderTextLayer={false}
-                  renderAnnotationLayer={false}
-                />
-                {highlighted &&
-                  region.rects.map((rect) => (
-                    <div
-                      key={`rect-${rect.x}-${rect.y}-${rect.width}-${rect.height}`}
-                      className="pointer-events-none absolute rounded-[2px] bg-[rgb(250_204_21_/_0.4)] mix-blend-multiply"
-                      style={{
-                        left: `${rect.x * 100}%`,
-                        top: `${rect.y * 100}%`,
-                        width: `${rect.width * 100}%`,
-                        height: `${rect.height * 100}%`,
-                      }}
-                    />
-                  ))}
-              </div>
-            );
-          })}
+          {Array.from({ length: pageCount }, (_, index) => index + 1).map(
+            (pageNumber) => {
+              const highlighted = region?.page === pageNumber - 1;
+              return (
+                <div
+                  key={pageNumber}
+                  ref={highlighted ? highlightedPageRef : undefined}
+                  className="relative shadow-[0_1px_4px_rgba(0,0,0,0.12)]"
+                >
+                  <Page
+                    pageNumber={pageNumber}
+                    width={width ?? undefined}
+                    renderTextLayer={false}
+                    renderAnnotationLayer={false}
+                  />
+                  {highlighted &&
+                    region.rects.map((rect) => (
+                      <div
+                        key={`rect-${rect.x}-${rect.y}-${rect.width}-${rect.height}`}
+                        className="pointer-events-none absolute rounded-[2px] bg-[rgb(250_204_21_/_0.4)] mix-blend-multiply"
+                        style={{
+                          left: `${rect.x * 100}%`,
+                          top: `${rect.y * 100}%`,
+                          width: `${rect.width * 100}%`,
+                          height: `${rect.height * 100}%`,
+                        }}
+                      />
+                    ))}
+                </div>
+              );
+            },
+          )}
         </Document>
       </div>
     </div>

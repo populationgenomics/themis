@@ -319,6 +319,7 @@ export function functionalCells(code: string): Cell[] {
 }
 
 export function functionalBody(code: string) {
+  // biome-ignore lint/correctness/noComponentHookFactories: called once per workflow while its module builds the workflow table, never during render, so each Body keeps one identity
   return function Body({ assessment, onChange, onBlur }: WorkflowBodyProps) {
     const cells = functionalCells(code);
     return (

@@ -103,14 +103,14 @@ function roundedShape(
 ): THREE.Shape {
   const s = new THREE.Shape();
   const n = pts.length;
-  const P = (i: number) => {
+  const pointAt = (i: number) => {
     const p = pts[(i + n) % n];
     return new THREE.Vector2(p[0], p[1]);
   };
   for (let i = 0; i < n; i++) {
-    const prev = P(i - 1);
-    const cur = P(i);
-    const next = P(i + 1);
+    const prev = pointAt(i - 1);
+    const cur = pointAt(i);
+    const next = pointAt(i + 1);
     const r = pts[i][2];
     const d0 = cur.clone().sub(prev).normalize();
     const d1 = next.clone().sub(cur).normalize();
@@ -1136,7 +1136,7 @@ export function mountNotFoundScene(
   if (!options.reducedMotion)
     window.addEventListener("pointermove", onPointerMove);
 
-  const V = () => new THREE.Vector3();
+  const vec3 = () => new THREE.Vector3();
   const localToWorld = (
     node: THREE.Object3D,
     x: number,
@@ -1238,8 +1238,8 @@ export function mountNotFoundScene(
     ch.frown.scale.setScalar(Math.max(0.001, wF));
     ch.frown.visible = wF > 0.02;
 
-    const shL = V();
-    const shR = V();
+    const shL = vec3();
+    const shR = vec3();
     ch.shoulderL.getWorldPosition(shL);
     ch.shoulderR.getWorldPosition(shR);
 
@@ -1258,7 +1258,7 @@ export function mountNotFoundScene(
     const wShrug = Tr.wShrug(t);
     const wSitH = Tr.wSitHand(t);
     const wIdleR = clamp(1 - wRaise - wSweep - wDrop - wShrug - wSitH, 0, 1);
-    handRT = V()
+    handRT = vec3()
       .addScaledVector(handRT, wIdleR)
       .addScaledVector(localToWorld(ch.leanN, 0.34, -0.28, 0.55), wRaise)
       .addScaledVector(new THREE.Vector3(rx + Tr.sweepX(t), 0.46, 0.66), wSweep)
@@ -1273,7 +1273,7 @@ export function mountNotFoundScene(
 
     const wBal = Tr.wBalanceL(t);
     const wIdleL = clamp(1 - wBal - wShrug - wSitH, 0, 1);
-    handLT = V()
+    handLT = vec3()
       .addScaledVector(handLT, wIdleL)
       .addScaledVector(localToWorld(ch.leanN, -0.85, 0.05, -0.15), wBal)
       .addScaledVector(localToWorld(ch.leanN, -0.88, -0.3, 0.22), wShrug)
@@ -1305,8 +1305,8 @@ export function mountNotFoundScene(
     );
 
     stepperUpdate(t, rx, yaw, speed);
-    const hipLW = V();
-    const hipRW = V();
+    const hipLW = vec3();
+    const hipRW = vec3();
     ch.hipL.getWorldPosition(hipLW);
     ch.hipR.getWorldPosition(hipRW);
 

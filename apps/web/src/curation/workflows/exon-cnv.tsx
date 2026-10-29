@@ -90,6 +90,7 @@ function informativeRows(
 
 /** A single-select table, the selected row stored under the workflow's own field. */
 function choiceBody(fieldId: string, cells: Cell[]) {
+  // biome-ignore lint/correctness/noComponentHookFactories: called once per workflow while its module builds the workflow table, never during render, so each Body keeps one identity
   return function Body({ assessment, onChange, onBlur }: WorkflowBodyProps) {
     return (
       <ChoiceRows

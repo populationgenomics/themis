@@ -682,14 +682,15 @@ describe("the working document's header", () => {
   });
 });
 
+function FailsAtC0({ drawnAt }: { drawnAt: string }): ReactElement {
+  if (drawnAt === C0) throw new TypeError("a fault at c0");
+  return <p>drawn at c1</p>;
+}
+
 describe("a widget in the working document", () => {
   test("draws again at a commit after the one it failed to draw at", async () => {
     const { WIDGETS } = await import("../widgets/registry");
     const widgets = WIDGETS as Map<string, RegisteredWidget>;
-    function FailsAtC0({ drawnAt }: { drawnAt: string }): ReactElement {
-      if (drawnAt === C0) throw new TypeError("a fault at c0");
-      return <p>drawn at c1</p>;
-    }
     widgets.set(StructSchema.typeName, {
       schema: StructSchema,
       read: () => (context) => <FailsAtC0 drawnAt={context.drawnAt} />,

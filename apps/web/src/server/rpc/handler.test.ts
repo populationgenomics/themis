@@ -430,7 +430,9 @@ describe("the workspace repository surface", () => {
       expect(poll.status).toBe(200);
       expect(poll.body?.workspaceTip).toEqual(tip);
       // Non-empty rules out a vacuous pass: the seeded Analysis has a conversation.
-      expect((poll.body?.events as unknown[]).length).toBeGreaterThan(0);
+      expect(poll.body?.events).toEqual(
+        expect.arrayContaining([expect.anything()]),
+      );
       expect(logged).toHaveLength(1);
     },
   );
@@ -548,7 +550,7 @@ describe("the request boundary", () => {
     expect(body?.code).toBe("invalid_argument");
     // Validation is the one layer outside the mask, so the rejection reaches the caller as
     // raised — the violations name which field of their own message failed which rule.
-    expect((body?.details as unknown[]).length).toBeGreaterThan(0);
+    expect(body?.details).toEqual(expect.arrayContaining([expect.anything()]));
   });
 
   test("inputs naming no scenario are rejected, not stored as an unreadable Analysis", async () => {

@@ -20,6 +20,7 @@ export function countBody(
   countLabel: string,
   notes: string[] = [],
 ) {
+  // biome-ignore lint/correctness/noComponentHookFactories: called once per workflow while its module builds the workflow table, never during render, so each Body keeps one identity
   return function Body({ assessment, onChange, onBlur }: WorkflowBodyProps) {
     return (
       <div>

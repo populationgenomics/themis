@@ -38,9 +38,8 @@ export function DiffBlock({ lines }: { lines: readonly DiffLine[] }) {
     <div className="tscroll max-h-[240px] select-text overflow-auto rounded-button border border-line-softest bg-surface-inset px-[11px] py-[8px] font-mono text-[11.5px] leading-[1.5]">
       {lines.map((line, index) => (
         <DiffRow
-          // A diff line has no id: its position in the replacement is what it is. The
-          // text is folded in because a bare index is refused as a key.
-          key={`${index}-${line.text}`}
+          // biome-ignore lint/suspicious/noArrayIndexKey: a diff line has no id; the list is rendered whole and never reordered, so its position is its identity
+          key={index}
           line={line}
         />
       ))}

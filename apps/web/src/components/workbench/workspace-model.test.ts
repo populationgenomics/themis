@@ -939,7 +939,7 @@ describe("patchTab safety (failed-reveal rollback)", () => {
       .flatMap((w) => w.panes)
       .flatMap((p) => p.tabs)
       .find((t) => t.id === "paper:x");
-    expect((tab?.payload as { error?: boolean }).error).toBe(true);
+    expect(tab?.payload).toMatchObject({ error: true });
     expect(errored.closedStack).toHaveLength(0);
   });
 });

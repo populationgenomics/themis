@@ -19,6 +19,11 @@ interface PaperPayload {
   error?: boolean;
 }
 
+function paperPayload(tab: { payload: unknown } | undefined): PaperPayload {
+  if (tab === undefined) throw new Error("open returned no tab");
+  return tab.payload as PaperPayload;
+}
+
 function mockPaper(
   overrides: Partial<{
     title: string;
@@ -50,23 +55,19 @@ describe("paper content kind", () => {
     expect(tab?.id).toBe(REGISTRY.paper.id(args));
     expect(tab?.kind).toBe("paper");
     expect(tab?.pinned).toBe(false);
-    expect((tab?.payload as PaperPayload).title).toBe("Structural variants");
+    expect(paperPayload(tab).title).toBe("Structural variants");
   });
 
   test("open defaults to PDF only when the paper's default representation is PDF", async () => {
     mockPaper({ defaultRepresentation: Representation.PDF });
     const tab = await REGISTRY.paper.open?.({ docId: "doc-1" });
-    expect((tab?.payload as PaperPayload).representation).toBe(
-      Representation.PDF,
-    );
+    expect(paperPayload(tab).representation).toBe(Representation.PDF);
   });
 
   test("open defaults to markdown when the paper's default is not PDF", async () => {
     mockPaper({ defaultRepresentation: Representation.MARKDOWN });
     const tab = await REGISTRY.paper.open?.({ docId: "doc-1" });
-    expect((tab?.payload as PaperPayload).representation).toBe(
-      Representation.MARKDOWN,
-    );
+    expect(paperPayload(tab).representation).toBe(Representation.MARKDOWN);
   });
 
   // The property the clamp establishes: the opened representation is one the paper actually has, even
@@ -91,14 +92,14 @@ describe("paper content kind", () => {
     async (_label, defaultRepresentation, hasPdf, hasMarkdown, expected) => {
       mockPaper({ defaultRepresentation, hasPdf, hasMarkdown });
       const tab = await REGISTRY.paper.open?.({ docId: "doc-1" });
-      expect((tab?.payload as PaperPayload).representation).toBe(expected);
+      expect(paperPayload(tab).representation).toBe(expected);
     },
   );
 
   test("open with neither representation opens the tab in its error state", async () => {
     mockPaper({ hasMarkdown: false, hasPdf: false });
     const tab = await REGISTRY.paper.open?.({ docId: "doc-1" });
-    expect((tab?.payload as PaperPayload).error).toBe(true);
+    expect(paperPayload(tab).error).toBe(true);
   });
 });
 

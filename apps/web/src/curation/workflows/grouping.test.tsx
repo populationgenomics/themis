@@ -18,6 +18,10 @@ import type { WorkflowDef } from "./types";
 const COUNTED_ROW =
   /^(First (P|LP|B|LB) Variant|Additional (P\/LP|B\/LB) variants)/;
 
+function NoBody() {
+  return null;
+}
+
 function stub(cells: Cell[], inputs?: Cell[]): WorkflowDef {
   return {
     id: "stub",
@@ -26,7 +30,7 @@ function stub(cells: Cell[], inputs?: Cell[]): WorkflowDef {
     cells,
     inputs,
     applies: () => true,
-    Body: () => null,
+    Body: NoBody,
   };
 }
 
