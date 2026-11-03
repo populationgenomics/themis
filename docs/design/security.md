@@ -5,7 +5,7 @@
 [`sandbox-worker.md`](sandbox-worker.md) (the hatch that sandboxed agent calls leave through),
 [`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md) (the condition an RPC meets before the agent may call it),
 [`workspace-model.md`](workspace-model.md) (cross-Project default-deny), [`pr-screenshots.md`](pr-screenshots.md) (the
-public screenshot bucket), [`spike-infrastructure.md`](spike-infrastructure.md) (§6 — the deployables diagram),
+public screenshot bucket), [`infrastructure.md`](infrastructure.md) (the deployables diagram),
 [`../PRODUCT.md`](../PRODUCT.md) (§9 — the security posture this design implements)
 
 ## Overview
@@ -141,19 +141,36 @@ Applying this criterion per RPC leaves three residual risks that explain why we 
    logs or query history can read the payload. We therefore assert the query-only property per named upstream host in
    [`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) instead of assuming it holds for
    arbitrary servers.
+
 1. **Data-derived destinations.** A destination stops being fixed the moment code constructs a URL from fetched data
    (such as following a host read from a database record, chasing an arbitrary HTTP redirect, or fetching a link from a
    search result). The criterion exists specifically to flag and forbid that pattern.
+
 1. **Request timing and count.** Even when request contents are unseen by the attacker, anyone who can observe the
    upstream's traffic or side effects could infer a few bits of information from whether and when Themis queries a
    record. Blocking this covert channel would require a strict per-session request budget, which our exposed RPCs do not
    currently enforce because they bound latency rather than total session call count. Instead, we rely on auditability:
-   the shared HTTP client logs every completed upstream request URL, and the environment retains those logs alongside
-   its audit logs. Because those logs contain the gene symbols, descriptors, and coordinates looked up for a case, they
-   are readable only by principals with project log-viewer access, which is already a subset of the principals who can
-   read the case data itself. If an environment ever separates log viewers from case readers, those request logs will
-   need their own isolated log bucket. We accept detection over prevention here while the bandwidth of timing signals
-   remains low.
+   the shared HTTP client logs every completed upstream request (method, full URL and status), and the environment keeps
+   those entries in its regional log bucket with its other logs
+   ([`infrastructure.md`](infrastructure.md#audit-logging)). We accept detection over prevention here while the
+   bandwidth of timing signals remains low.
+
+   Those entries carry the gene symbols, descriptors and coordinates looked up for a case, so who can read them matters.
+   Anyone with log-viewer access to the environment's cloud project can read them. In prod that is a wider set than the
+   members of any one Project: the environment's operators, and whoever the organization grants log access above the
+   project. We accept that rather than give these entries a log bucket of their own, for two reasons. An upstream-call
+   entry names what was looked up and when, but no participant, sample or Analysis, so tying it to a person takes case
+   data from elsewhere. And the people who can read the logs are trusted with the case data the logs describe. The
+   operators administer the project and can already reach that data, so a log entry gives them nothing new. The
+   acceptance holds on the condition that every principal the organization grants log access to prod is likewise one of
+   its administrators. If that stops holding, the remedy is a log bucket of these entries' own, readable by operators
+   only. The deploy account can read the logs too, but it runs only code that has reached `main`
+   ([`deployment.md`](deployment.md)).
+
+   The same logs hold entries that the first reason does not cover. The sandbox's label for each command it runs can
+   name a variant or a sample, and the database audit log records each statement with its values, clinical context
+   included. For those, the acceptance rests on the second reason alone. How long all of these entries are kept is
+   [`data-retention.md`](data-retention.md)'s decision.
 
 Destination-fixedness is a property of code, and by the chokepoint rule above, a property each call site holds by
 remembering to hold it is not held. It splits into two parts — which host the client may dial, and where untrusted text
@@ -303,7 +320,7 @@ identity or because they use a separate Google-managed authentication plane. Eac
 Anthropic notifies `themis-dispatcher` via webhook at `/webhooks/anthropic` when an analysis session needs a sandbox.
 Because Anthropic's webhook sender cannot authenticate with a Google identity, IAP would block every delivery. Instead,
 two controls protect the webhook endpoint ([`sandbox-worker.md`](sandbox-worker.md),
-[`spike-infrastructure.md`](spike-infrastructure.md) §6):
+[`infrastructure.md`](infrastructure.md)):
 
 - **Cloud Armor IP allowlist at the edge.** A Cloud Armor security policy on the dispatcher's load-balancer backend
   admits only Anthropic's published outbound IPv4 CIDR (`160.79.104.0/21`) and denies all other sources. Anthropic

@@ -5,7 +5,8 @@ the ingestion pipeline are in progress (Implementation state). **Related:**
 [`../design/literature-evidence-layer.md`](../design/literature-evidence-layer.md) (the corpus, its identity model, and
 the interface that serves it) — the design + why; [`../design/litcache-manifest.md`](../design/litcache-manifest.md)
 (manifest structural model); [`../design/proto.md`](../design/proto.md) (schema rails + serialization);
-[`../design/spike-infrastructure.md`](../design/spike-infrastructure.md) §8 (boundary/egress).
+[`../design/infrastructure.md`](../design/infrastructure.md#the-agent-runtime-and-the-sandbox-boundary)
+(boundary/egress).
 
 ## Overview
 

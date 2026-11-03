@@ -4,10 +4,10 @@
 and trace), [`frontend-framework.md`](frontend-framework.md) (web tier, poll-through observation, durable trace, and
 authentication), [`workspace-model.md`](workspace-model.md) (Projects, Analyses, working documents, and authorization
 boundary), [`sandbox-worker.md`](sandbox-worker.md) (execution sandbox, Unix-socket hatches, and session tokens),
-[`spike-infrastructure.md`](spike-infrastructure.md) (deployables, service identities, and write boundaries),
-[`security.md`](security.md) (chokepoint rule and webhook verification), [`conversation-view.md`](conversation-view.md)
-(curator steering and conversation thread), [`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md) (Workload
-Identity Federation for Anthropic API access).
+[`infrastructure.md`](infrastructure.md) (deployables, topology, and write boundaries), [`security.md`](security.md)
+(chokepoint rule and webhook verification), [`conversation-view.md`](conversation-view.md) (curator steering and
+conversation thread), [`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md) (Workload Identity Federation for
+Anthropic API access).
 
 ## Overview
 
@@ -107,8 +107,9 @@ the lifecycle:
 
 This separation costs an extra local hop across the Unix-socket hatch and through internal gRPC services whenever the
 agent reads evidence or writes outputs, but it ensures that arbitrary Python executed by the agent cannot extract a
-database or GCP credential from its environment. The complete service-account and identity table lives in
-[`spike-infrastructure.md`](spike-infrastructure.md).
+database or GCP credential from its environment. The CI accounts are tabled in
+[`deployment.md`](deployment.md#who-may-obtain-the-deploy-account), and the workloads that call the Claude API, each
+with its own federated identity, in [`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md).
 
 ## Alternatives considered
 

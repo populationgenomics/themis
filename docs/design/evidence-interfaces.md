@@ -21,7 +21,7 @@ source), [`proto.md`](proto.md) (schema and serialisation posture), [`sandbox-rp
 follows), [`sandbox-worker.md`](sandbox-worker.md) (the bubblewrap guest, its empty network namespace, and the gRPC
 hatch), [`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md) (the sandbox architecture around that
 guest), [`run-review-loop.md`](run-review-loop.md) (the loop that reads runs against the curation worksheet),
-[`../PRODUCT.md`](../PRODUCT.md) (the product frame: §4 tool layer, §6 facts + judgement, §12 the Spike); terms in
+[`../PRODUCT.md`](../PRODUCT.md) (the product frame: §4 tool layer, §6 facts + judgement, §12 current scope); terms in
 [`../../GLOSSARY.md`](../../GLOSSARY.md).
 
 ## Overview
@@ -124,10 +124,10 @@ constraint requires mirroring external databases locally.
 
 ### Scale: one variant at a time
 
-The Spike targets curator-in-the-loop, single-variant evaluation rather than VCF-wide batch processing
-([`../PRODUCT.md`](../PRODUCT.md) §12). Classifying one variant takes a couple of dozen public REST calls. Every
-per-variant upstream is therefore wrapped live and stamped with its retrieval time. Local mirrors are the at-scale form
-of the same design, staged behind explicit volume and completeness triggers
+Variant classification, the building block of every Analysis, is curator-in-the-loop and evaluates one variant at a time
+rather than batch-processing a VCF ([`../PRODUCT.md`](../PRODUCT.md) §12). Classifying one variant takes a couple of
+dozen public REST calls. Every per-variant upstream is therefore wrapped live and stamped with its retrieval time. Local
+mirrors are the at-scale form of the same design, staged behind explicit volume and completeness triggers
 ([Alternatives considered](#alternatives-considered)).
 
 ## Non-goals
@@ -137,8 +137,8 @@ of the same design, staged behind explicit volume and completeness triggers
   papers ([`literature-evidence-layer.md`](literature-evidence-layer.md)).
 - **Case and patient-data evidence as a service concern.** The `CLN_*` and `LOC_*` codes come from patient and pedigree
   data that no public database holds, so no RPC retrieves them. The in-sandbox library still scores them from the
-  analyst's categorical reading ([below](#the-library-takes-categorical-judgements-and-returns-derivations)). Beyond the
-  public Spike, and gated tighter.
+  analyst's categorical reading ([below](#the-library-takes-categorical-judgements-and-returns-derivations)). Patient
+  data reaches the agent only as its Project's dataset, gated per Project ([`access-control.md`](access-control.md)).
 - **The SVCv4 scoring and combining arithmetic as an RPC.** Deterministic scoring lives in the in-sandbox library
   [`themis.svcv4`](#the-in-sandbox-library-themissvcv4).
 - **CNV and dosage classification.** Copy-number variants follow a separate ACMG framework; multi-gene events route out.

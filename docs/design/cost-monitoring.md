@@ -321,14 +321,15 @@ Three properties of `rise()` are load-bearing:
   (`0 * last_over_time(m[F])`, i.e. a `$0` fallback baseline) would treat any missing `offset W` sample on an existing
   series—such as after an exporter outage longer than `F`—as a baseline of `$0` and re-count the agent's entire
   historical lifetime spend as fresh spend across every window until `offset W` refills.
-- **Why `rise()` is not clamped with `clamp_min(..., 0)`**: Because Themis archives rather than deletes sessions, each
-  `agent`'s workspace total is monotonically non-decreasing in normal operation. If an operator manually deletes an old
-  session and starts a new one, the workspace gauge steps down and then rises again. Wrapping `rise()` in
-  `clamp_min(..., 0)` would hide the downward step (clamping it to `$0`) while counting the replacement session's upward
-  step in full, double-counting spend across sliding windows. Leaving the subtraction unclamped on established series
-  lets a manual deletion show honestly as a downward step for one window `W` until the deletion ages past `offset W`
-  (whereas on a young series inside its first window `W`, `last_over_time(m[F]) - min_over_time(m[W])` is inherently
-  non-negative because the minimum in `W` cannot exceed the latest sample).
+- **Why `rise()` is not clamped with `clamp_min(..., 0)`**: Because Themis deletes a session only when an erasure
+  removes its Analysis ([`data-retention.md`](data-retention.md)), each `agent`'s workspace total is monotonically
+  non-decreasing in normal operation. If an erasure deletes an old session and a new one starts, the workspace gauge
+  steps down and then rises again. Wrapping `rise()` in `clamp_min(..., 0)` would hide the downward step (clamping it to
+  `$0`) while counting the replacement session's upward step in full, double-counting spend across sliding windows.
+  Leaving the subtraction unclamped on established series lets a deletion show honestly as a downward step for one
+  window `W` until the deletion ages past `offset W` (whereas on a young series inside its first window `W`,
+  `last_over_time(m[F]) - min_over_time(m[W])` is inherently non-negative because the minimum in `W` cannot exceed the
+  latest sample).
 
 ### Identity and failure posture
 
@@ -470,11 +471,11 @@ Slack `files.uploadV2` call.
   mintable only by the pinned GCP identity, disabling that identity revokes everything, and any spend such a compromise
   created would land on the exact dashboard and alerts this design builds.
 - **Session deletion dips and first-poll undercount on new agents**: `rise()` assumes
-  `beta.sessions.list(include_archived=True)` is append-only because Themis archives rather than deletes sessions. If an
-  operator manually deletes a session, that agent's gauge steps down and `rise(W)` reports a smaller (or negative) rise
-  for the next window `W` until the step ages past `offset W`. Conversely, when a brand-new `agent` series is observed
-  for the first time inside `W`, `min_over_time(m[W])` uses that first poll's value as the baseline, so spend
-  accumulated before the first 5-minute poll is not counted in `rise(W)`.
+  `beta.sessions.list(include_archived=True)` is append-only because Themis deletes a session only through an erasure
+  ([`data-retention.md`](data-retention.md)). When an erasure deletes a session, that agent's gauge steps down and
+  `rise(W)` reports a smaller (or negative) rise for the next window `W` until the step ages past `offset W`.
+  Conversely, when a brand-new `agent` series is observed for the first time inside `W`, `min_over_time(m[W])` uses that
+  first poll's value as the baseline, so spend accumulated before the first 5-minute poll is not counted in `rise(W)`.
 - **Single-tier, hand-maintained convert pricing**: `cost_prices.py` prices convert-worker tokens at the base (`≤200k`
   input token) rate. Page-by-page OCR prompts are a few thousand tokens per page, well below 200k; if a direct Messages
   API caller ever sent >200k-token prompts, `cost_prices.py` would underprice those requests by 2x. Because the price

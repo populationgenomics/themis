@@ -172,9 +172,9 @@ once per process:
 - **Shared HTTP client (`httpx2.AsyncClient`):** provides a single connection pool across interfaces that query external
   HTTP endpoints.
 - **Process lifetime stack (`contextlib.AsyncExitStack`):** owns long-lived read-only handles opened by interface
-  adapters during `register`. Data-plane services do not install custom `SIGTERM` handlers, so this exit stack unwinds
-  on startup failures rather than during Cloud Run container shutdown; adapters must not rely on it for pre-termination
-  flush work until graceful drain exists.
+  adapters during `register`. On `SIGTERM` a data-plane service stops taking calls, gives in-flight ones a short grace
+  and flushes its metrics and spans, all inside the ten seconds Cloud Run allows; the exit stack unwinds after that, so
+  an adapter's cleanup there gets whatever remains of the window and must not hold work that cannot be lost.
 
 [`themis/services/evidence/__main__.py`](../../themis/services/evidence/__main__.py) holds no interface-specific logic:
 it builds `Deps` once, loops over a tuple of `register` callables (`INTERFACES`), attaches a single `grpc.health.v1`

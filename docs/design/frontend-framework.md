@@ -1,20 +1,20 @@
 # Design: frontend framework and web tier
 
-**Related:** [`spike-infrastructure.md`](spike-infrastructure.md) (IAP, Cloud Run, and secret infrastructure),
-[`access-control.md`](access-control.md) (who may reach the app, and what they may see),
-[`workspace-model.md`](workspace-model.md) (Project, Analysis, working document, and Report entities),
-[`agent-runtime.md`](agent-runtime.md) (Managed Agents coordinator and trace writers),
+**Related:** [`infrastructure.md`](infrastructure.md) (IAP, Cloud Run, and the environments),
+[`deployment.md`](deployment.md) (secrets and confidential configuration), [`access-control.md`](access-control.md) (who
+may reach the app, and what they may see), [`workspace-model.md`](workspace-model.md) (Project, Analysis, working
+document, and Report entities), [`agent-runtime.md`](agent-runtime.md) (Managed Agents coordinator and trace writers),
 [`conversation-view.md`](conversation-view.md) (conversation thread rendering and curator turns),
 [`workbench-navigation.md`](workbench-navigation.md) (routes and server-component page reads), [`proto.md`](proto.md)
 (Connect RPC serialization and boundary validation), [`security.md`](security.md) (default-on request authentication).
 
 ## Overview
 
-Themis serves a web application for variant curators on Cloud Run behind Identity-Aware Proxy (IAP). The initial Spike
-surface is small — a live conversation thread showing the coordinator and its sub-agents working, paired with a report
-and result viewer — but it must grow into the full co-scientist workbench ([`PRODUCT.md`](../PRODUCT.md) §7) without a
-framework rewrite. That workbench adds an editable working document, an interactive trace tree drilled in place, and
-margin comments anchored to text spans and ACMG evidence cells.
+Themis serves a web application for variant curators on Cloud Run behind Identity-Aware Proxy (IAP). Its core surface is
+small — a live conversation thread showing the coordinator and its sub-agents working, paired with a report and result
+viewer — but it must grow into the full co-scientist workbench ([`PRODUCT.md`](../PRODUCT.md) §7) without a framework
+rewrite. That workbench adds an editable working document, an interactive trace tree drilled in place, and margin
+comments anchored to text spans and ACMG evidence cells.
 
 Because the genomics tool tier is written in Python, the obvious choice is a Python web stack or a thin Python
 backend-for-frontend (BFF). A Python full-stack framework breaks down once the UI takes on high-frequency client state;
@@ -38,8 +38,8 @@ When a curator opens an Analysis in the workbench, three runtime tiers participa
    log (`events.list`).
 1. **The agent-facing tool tier** runs Python services that mediate access to genomics data stores and execute code
    inside the self-hosted sandbox ([`agent-runtime.md`](agent-runtime.md),
-   [`spike-infrastructure.md`](spike-infrastructure.md) §8). Only the sandbox reaches these Python services; the browser
-   never calls them directly.
+   [`infrastructure.md`](infrastructure.md#the-agent-runtime-and-the-sandbox-boundary)). Only the sandbox reaches these
+   Python services; the browser never calls them directly.
 1. **The web tier** ([`apps/web/`](../../apps/web)) serves the curator UI and its BFF behind Google Cloud IAP. The BFF
    verifies the curator's IAP assertion, asks the auth service which Projects the curator may reach, reads and writes
    stored entities, and relays live session state between the browser and Anthropic.
@@ -68,7 +68,7 @@ When a curator opens an Analysis in the workbench, three runtime tiers participa
 - **Working-document editor internals and span-anchor rebasing across document edits.** Those mechanics belong to the
   working-document and trace-schema designs.
 - **Infrastructure, runtime, and trace schemas owned by sibling docs.** IAP provisioning lives in
-  [`spike-infrastructure.md`](spike-infrastructure.md), coordinator execution lives in
+  [`infrastructure.md`](infrastructure.md#topology), coordinator execution lives in
   [`agent-runtime.md`](agent-runtime.md), and conversation turn rendering lives in
   [`conversation-view.md`](conversation-view.md).
 
@@ -78,11 +78,11 @@ When a curator opens an Analysis in the workbench, three runtime tiers participa
 
 Because the genomics data services are written in Python, a natural starting point is to build the web app in a Python
 full-stack framework (such as FastHTML, Reflex, NiceGUI, or HTMX) so the whole repository shares one language. That
-works while the UI only renders static markdown with display-only links. It breaks as soon as the Spike grows into the
+works while the UI only renders static markdown with display-only links. It breaks as soon as the UI grows into the
 co-scientist workbench: an editable working document, margin comments anchored to character spans, and a virtualized
 live-appending trace tree require high-frequency client state and React-first libraries (ProseMirror or Lexical,
 TanStack Virtual, and custom annotation layers). Wrapping those libraries inside a Python UI framework forces the team
-to maintain hand-rolled JavaScript bridges, turning the transition from the Spike to the workbench into a rewrite.
+to maintain hand-rolled JavaScript bridges, turning the growth into the workbench into a rewrite.
 
 We place the language boundary at the agent's data plane rather than at the browser. Python stays confined to the
 internal agent-facing services, whose implementation language is invisible to the web app. The web tier in
@@ -145,7 +145,7 @@ poll tick, relying solely on Anthropic's event log for historical traces fails t
 
 1. **Retention independence:** Curation traces must remain reproducible regardless of a beta API's log retention window.
 1. **Cross-session SQL analytics:** The token-cost dashboard and cross-case gap or verdict queries require relational
-   aggregation that `events.list` cannot serve ([`spike-infrastructure.md`](spike-infrastructure.md) §5).
+   aggregation that `events.list` cannot serve ([`cost-monitoring.md`](cost-monitoring.md)).
 1. **Entity joins:** Trace items must join directly against our own Cloud SQL tables, linking claims to tool calls,
    database versions, comment anchors, and deep links.
 
@@ -160,8 +160,8 @@ trace:
   only needs to be read once when the run stops. When Anthropic emits a `session.status_idle` or
   `session.status_terminated` webhook, a single `events.list` read is planned to project that telemetry into Cloud SQL.
   Because Anthropic cannot present a Google Cloud IAP credential, webhook delivery lands on the dispatcher's
-  HMAC-verified endpoint ([`sandbox-worker.md`](sandbox-worker.md),
-  [`spike-infrastructure.md`](spike-infrastructure.md)). The web tier exposes no webhook route.
+  HMAC-verified endpoint ([`sandbox-worker.md`](sandbox-worker.md), [`infrastructure.md`](infrastructure.md#topology)).
+  The web tier exposes no webhook route.
 
 In the UI, the trace renders as a virtualized, live-appending tree and timeline (coordinator → sub-agent threads → tool
 calls → emitted claims and gaps), with claims and verdicts cross-linked to the working document and ACMG grid cells.
@@ -171,7 +171,7 @@ calls → emitted claims and gaps), with claims and verdicts cross-linked to the
 ### Auth
 
 [`access-control.md`](access-control.md) decides the access model. Google Cloud IAP fronts the Cloud Run service
-([`spike-infrastructure.md`](spike-infrastructure.md) §2) and authenticates the caller, admitting any signed-in Google
+([`infrastructure.md`](infrastructure.md#topology)) and authenticates the caller, admitting any signed-in Google
 account. The auth service then decides what that caller may reach, from the deployment's ACL. Every request IAP forwards
 carries its signed assertion of the caller's email, whether the caller is a person signed in through a browser or a
 programmatic caller with a token signed by a service account.

@@ -14,7 +14,7 @@ these readings), [`curation-surface.md`](curation-surface.md) (the curator works
 [`svcv4-classification-widget.md`](svcv4-classification-widget.md) (the live scoring widget),
 [`run-review-loop.md`](run-review-loop.md) (the loop that evaluates classification runs against curator worksheets),
 [`literature-evidence-layer.md`](literature-evidence-layer.md) (the paper-derived evidence alongside curated sources),
-[`../PRODUCT.md`](../PRODUCT.md) (the product frame: §6 facts and judgement, §12 the Spike); terms in
+[`../PRODUCT.md`](../PRODUCT.md) (the product frame: §6 facts and judgement, §12 current scope); terms in
 [`../../GLOSSARY.md`](../../GLOSSARY.md).
 
 ## Overview

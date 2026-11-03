@@ -35,17 +35,19 @@ non-fast-forward and must merge or rebase. If a workspace ever shares an append-
 over time, appending lines to a log file makes concurrent edits commute under `.gitattributes` `merge=union` rules so
 that retries and merges succeed without human intervention.
 
-History in a sheaf repository is append-only, and nothing is ever deleted from the store. A ref may be created or
-fast-forwarded, never rewritten or removed, and uploaded packfiles stay in the bucket permanently. Every push also
-advances a reflog ref (`refs/sheaf/reflog`) in the same compare-and-swap, recording which commit was each ref's tip and
-when. On the agent's side, stock `git` owns the wire protocol: the agent clones and pushes against real
-`git upload-pack` and `git receive-pack` processes reached from the sandbox over postern's stream hatch. Sheaf syncs a
-bare mirror before each connection and runs a `pre-receive` hook that refuses pushes that rewrite history, modify
-protected paths, author commits or tags under another user's identity, carry object headers that git and the browser's
-git library parse differently, or add file paths the browser cannot read. To prevent a large repository from exhausting
-container memory on Cloud Run when hydrating a mirror, hydration will check the resident set against a size ceiling
-before fetching pack bytes (decided here, not yet built in `bare.py`). The [`themis/sheaf/`](../../themis/sheaf) package
-contains no Themis domain types and can be extracted into a standalone package if a second consumer appears.
+History in a sheaf repository is append-only, and sheaf itself never deletes from the store. A ref may be created or
+fast-forwarded, never rewritten or removed, and uploaded packfiles stay in the bucket for as long as the repository
+exists. A repository leaves the store only whole, when an operator erases its Analysis outside sheaf
+([`data-retention.md`](data-retention.md)). Every push also advances a reflog ref (`refs/sheaf/reflog`) in the same
+compare-and-swap, recording which commit was each ref's tip and when. On the agent's side, stock `git` owns the wire
+protocol: the agent clones and pushes against real `git upload-pack` and `git receive-pack` processes reached from the
+sandbox over postern's stream hatch. Sheaf syncs a bare mirror before each connection and runs a `pre-receive` hook that
+refuses pushes that rewrite history, modify protected paths, author commits or tags under another user's identity, carry
+object headers that git and the browser's git library parse differently, or add file paths the browser cannot read. To
+prevent a large repository from exhausting container memory on Cloud Run when hydrating a mirror, hydration will check
+the resident set against a size ceiling before fetching pack bytes (decided here, not yet built in `bare.py`). The
+[`themis/sheaf/`](../../themis/sheaf) package contains no Themis domain types and can be extracted into a standalone
+package if a second consumer appears.
 
 ## Background
 

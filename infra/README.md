@@ -1,8 +1,8 @@
 # infra
 
-Cloud infrastructure for Themis: a Pulumi program (Python), **one stack per environment** (`dev` now, `prod` later),
-each its own GCP project. Cloud-only — no application code (that's `apps/`). The same program runs every environment;
-all differences live in `Pulumi.<stack>.yaml`.
+Cloud infrastructure for Themis: a Pulumi program (Python), **one stack per environment** (`dev` and `prod`), each its
+own GCP project. Cloud-only — no application code (that's `apps/`). The same program runs every environment; all
+differences live in `Pulumi.<stack>.yaml`.
 
 ## Layout
 
@@ -87,7 +87,7 @@ have no store of their own. A deposit is an ordinary litcache paper in the full-
 (upload kind, institution-captured access), the standard OCR rendering as its markdown, so nothing downstream treats it
 as a special case. Its recovery path is not the version history but the mirror the PDFs live in, outside any repo — the
 deposit tool re-runs over it and rebuilds whatever the bucket lost
-([`supplied-literature.md`](../docs/runbooks/supplied-literature.md)).
+([`supplied-papers.md`](../docs/design/supplied-papers.md)).
 
 The **resources** bucket, `gs://cpg-themis-<env>-resources`, holds the reference data the Project's services and
 pipelines share: public upstream mirrors and the artifacts derived from them. One dataset per top-level prefix
@@ -187,16 +187,22 @@ stack's secrets are encrypted to. Then copy `Pulumi.dev.yaml` to `Pulumi.prod.ya
 `secretsprovider`. The `secure:` entries and `encryptedkey` don't carry over: they are wrapped to dev's key, so re-set
 each secret against the new stack (`pulumi config set --secret themis:<key>`). `themis:anthropicFederationRuleId` and
 the cost exporter's `themis:anthropicCostExporterServiceAccountId` / `…FederationRuleId` must not be copied at all — the
-real values only exist after the first `up`, so a copied one breaks loudly. Three are quiet instead, deploying clean
-onto a wrong outcome: `themis:enablePrScreenshotBucket`, because a copied `true` creates a world-readable bucket in an
-environment that has no review workflow to justify one; `themis:cluDerivesSessionTokens`, because a copied `true` lets
-whoever can impersonate `themis-clu` act as any live session in an environment whose sessions may be real; and
-`themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another environment's service account, so the convert
-worker deploys healthy and fails only when it first tries to transcribe. `themis:iapOauthClientId` (with its secret)
-names the OAuth client IAP signs people in through for one deployment, and each environment has its own.
-`themis:aclWriter` names the site's account that writes the ACL into the deployment's secret
-([`access-control.md`](../docs/runbooks/access-control.md)); a new environment's secret starts empty, so its first `up`
-deploys that secret alone. No program change; the full sequence is
+real values only exist after the first `up`, so a copied one breaks loudly. Every other Anthropic-side id except
+`themis:anthropicOrganizationId` belongs to dev's workspace and must not be copied either, because each environment has
+its own workspace ([`infrastructure.md`](../docs/design/infrastructure.md)): `themis:anthropicWorkspaceId`, the web
+tier's `themis:anthropicServiceAccountId`, `themis:anthropicWorkerServiceAccountId`,
+`themis:anthropicDeployServiceAccountId` / `…DeployFederationRuleId`, `themis:anthropicAgentId` and
+`themis:anthropicEnvironmentId`. Nor may dev's `themis:anthropicEnvironmentKey` or `themis:anthropicWebhookSigningKey`
+be re-set on the new stack: each belongs to dev's self-hosted environment and its webhook. Three are quiet instead,
+deploying clean onto a wrong outcome: `themis:enablePrScreenshotBucket`, because a copied `true` creates a
+world-readable bucket in an environment that has no review workflow to justify one; `themis:cluDerivesSessionTokens`,
+because a copied `true` lets whoever can impersonate `themis-clu` act as any live session in an environment whose
+sessions may be real; and `themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another environment's
+service account, so the convert worker deploys healthy and fails only when it first tries to transcribe.
+`themis:iapOauthClientId` (with its secret) names the OAuth client IAP signs people in through for one deployment, and
+each environment has its own. `themis:aclWriter` names the site's account that writes the ACL into the deployment's
+secret ([`access-control.md`](../docs/runbooks/access-control.md)); a new environment's secret starts empty, so its
+first `up` deploys that secret alone. The full sequence is
 [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development

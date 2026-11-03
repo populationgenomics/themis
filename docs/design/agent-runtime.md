@@ -6,8 +6,8 @@
 [`analysis-scenarios.md`](analysis-scenarios.md) (how a scenario's kickoff and agent definition fit together);
 [`conversation-view.md`](conversation-view.md) (how the workbench reads and projects a session's threads);
 [`security.md`](security.md) (why sandbox egress is bounded by destination-fixedness); [`deployment.md`](deployment.md)
-(confidential model configuration and deploy-time agent updates); [`spike-infrastructure.md`](spike-infrastructure.md)
-(the Spike's GCP project, image builds, and network boundaries); [`../PRODUCT.md`](../PRODUCT.md) (§4 tool layer, §6
+(confidential model configuration and deploy-time agent updates); [`infrastructure.md`](infrastructure.md) (each
+environment's GCP project, topology, and the sandbox boundary); [`../PRODUCT.md`](../PRODUCT.md) (§4 tool layer, §6
 facts and judgement, §7 workspace, §9 security, §11 evaluation).
 
 ## Overview
@@ -26,9 +26,9 @@ To emit structured output without dragging the web backend into a custom-tool ha
 its sandbox against generated gRPC stubs for our internal services, which validate the payloads against protobuf
 schemas, persist them, and record provenance.
 
-This split avoids building and operating our own loop, session store, and sub-agent scheduler during the Spike. The
-parts we do build — the internal gRPC services and the data-plane mediation — are independent of the agent runtime and
-carry over if we ever self-host orchestration.
+This split avoids building and operating our own loop, session store, and sub-agent scheduler. The parts we do build —
+the internal gRPC services and the data-plane mediation — are independent of the agent runtime and carry over if we ever
+self-host orchestration.
 
 ## Background
 
@@ -286,7 +286,7 @@ thread in a session runs this same model, making model selection a per-scenario 
 ### Configuration and session lifecycle
 
 The runtime separates control-plane declarations from data-plane sessions
-([`spike-infrastructure.md`](spike-infrastructure.md) §6, §8):
+([`infrastructure.md`](infrastructure.md#the-agent-runtime-and-the-sandbox-boundary)):
 
 - **Control plane.** Each scenario's agent is declared in version-controlled YAML under [`../../agents/`](../../agents)
   and applied as a whole by the deploy workflow through [`../../tools/agents/`](../../tools/agents). When custom skill
@@ -345,8 +345,9 @@ workbench to project, and turns trace and conversation extraction into brittle s
 
 Graph-based and declarative agent frameworks provide ready-made abstractions for state machines (LangGraph), prompt
 optimisation (DSPy), or evaluation harnesses (Inspect-AI). For the production runtime, LangGraph adds ceremony out of
-proportion to the Spike, DSPy's declarative-program model is premature, and Inspect-AI is evaluation-shaped rather than
-a production runtime (though Inspect-AI is the likely tool for the evaluation exploration rather than the runtime).
+proportion to what Themis needs, DSPy's declarative-program model is premature, and Inspect-AI is evaluation-shaped
+rather than a production runtime (though Inspect-AI is the likely tool for the evaluation exploration rather than the
+runtime).
 
 ## Open questions
 

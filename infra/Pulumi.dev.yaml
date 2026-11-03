@@ -1,10 +1,10 @@
-# Dev environment. Prod is the same program with a Pulumi.prod.yaml carrying
-# cpg-themis-prod's project, hostname, OAuth client, ACL writer, and KMS key — no program
-# change. State and KMS are isolated per environment.
+# Dev environment. Prod runs the same program from Pulumi.prod.yaml in cpg-themis-prod;
+# docs/design/infrastructure.md says what the two stacks set differently. State and KMS
+# are isolated per environment.
 #
 # gcpkms secrets provider (Cloud KMS key, IAM-gated). The wrapped data key
-# (`encryptedkey`) is generated on the first secret encryption against the key
-# created by bootstrap; no secrets are stored yet.
+# (`encryptedkey`) was generated on the first secret encryption against the key
+# created by bootstrap.
 secretsprovider: gcpkms://projects/cpg-themis-dev/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi
 config:
   gcp:project: cpg-themis-dev

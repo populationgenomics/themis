@@ -1,17 +1,17 @@
 # Runbook: bring up a fresh environment
 
-Stand up a Themis environment (`dev` now, `prod` later) from nothing. Two tiers: a one-time `bootstrap.sh` (the
-substrate Pulumi depends on), then `pulumi up` (everything else). Design:
-[`spike-infrastructure.md`](../design/spike-infrastructure.md), [`deployment.md`](../design/deployment.md). Program
-layout: [`infra/README.md`](../../infra/README.md).
+Stand up a Themis environment (`dev` or `prod`) from nothing. Two tiers: a one-time `bootstrap.sh` (the substrate Pulumi
+depends on), then `pulumi up` (everything else). Design: [`infrastructure.md`](../design/infrastructure.md),
+[`deployment.md`](../design/deployment.md). Program layout: [`infra/README.md`](../../infra/README.md).
 
-Examples below use `dev` / `cpg-themis-dev`; for prod substitute `prod` / `cpg-themis-prod` and run the same steps — no
-program change.
+Examples below use `dev` / `cpg-themis-dev`; for prod substitute `prod` / `cpg-themis-prod`. On an empty project the
+first bring-up below fails: it overrides only the web image, and the program looks up the running image of every other
+service and job. [`deployment.md`](../design/deployment.md#bringing-up-a-fresh-environment) describes the registry-first
+bring-up that replaces it.
 
 ## Prerequisites
 
-- The GCP project exists with billing linked (provisioned by central infra; the spike's `cpg-themis-dev` already carries
-  a budget).
+- The GCP project exists with billing linked (provisioned by central infra, with a budget).
 - You have **Owner** on the project (to run `bootstrap.sh`) and local `gcloud` ADC:
   `gcloud auth application-default login`.
 - The OAuth client IAP signs people in through exists and its id and secret are in the stack config. It is created by

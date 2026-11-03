@@ -2,8 +2,7 @@
 
 **Related:** [`deployment.md`](deployment.md) (deploy pipeline and ad-hoc branch deploys), [`services.md`](services.md)
 (where the migration runner sits in the service tree), [`proto.md`](proto.md) (wire and at-rest protobuf schemas, which
-carry no DDL), [`spike-infrastructure.md`](spike-infrastructure.md) (Cloud SQL database and forward-only schema in the
-shared dev environment)
+carry no DDL), [`infrastructure.md`](infrastructure.md) (the Cloud SQL database in each environment)
 
 ## Overview
 
@@ -248,10 +247,11 @@ workflow preflight step in `deploy.yml` have no local container test — they ar
 
 ### How it runs
 
-The deploy workflow ([`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)), triggered from `main` or
-`deployed/<env>`, authenticates as `themis-deploy@` via Workload Identity Federation, runs the read-only ledger
-preflight (`python -m themis.migrate --check`), builds and pushes the container images, runs `pulumi up`, and then runs
-`python -m themis.migrate` using the stack outputs from `pulumi up`.
+The deploy workflow ([`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)), started by each
+environment's deploy trigger ([`deployment.md`](deployment.md#deploy-triggers)), authenticates as `themis-deploy@` via
+Workload Identity Federation, runs the read-only ledger preflight (`python -m themis.migrate --check`), builds and
+pushes the container images, runs `pulumi up`, and then runs `python -m themis.migrate` using the stack outputs from
+`pulumi up`.
 
 Running migrations *after* `pulumi up` is required because `GRANT` migrations target IAM database users that `pulumi up`
 provisions; a service's database login must exist before a migration can grant privileges to it.
@@ -262,14 +262,20 @@ until the migration step completes — or, if the migration step fails, until th
 migrations must be additive by default, and application code reading a new table or column must tolerate its absence for
 at least one deploy window.
 
-An expand-and-contract sequence across multiple deploys (add the new column, write both, migrate readers, then drop the
-old column in a later deploy) requires maintaining a dual-schema compatibility path in every reader and writer, so it is
-worth declining while an environment is still disposable and worth paying once it is not. A single-step destructive
-migration is allowed only when the environments it will run against hold no data worth keeping and have no external
-users to disrupt, and when the owning design doc records which reads and writes fail during the deploy window and until
-when (for example, replacing `analyses.prompt` with `analyses.inputs NOT NULL` in
-[`analysis-scenarios.md`](analysis-scenarios.md), or the curation schema transitions in
-[`curation-surface.md`](curation-surface.md)).
+Removing or reshaping a column or table therefore takes an expand-and-contract sequence across several deploys. Each
+deploy rolls the new code out before its migrations run, so every step has to work against the schema on either side of
+it. The first deploy adds the new column, with code that tolerates its absence. The next writes both columns. A later
+one moves the readers over, and only the deploy after that drops the old column. The cost is a dual-schema compatibility
+path in every reader and writer until the last step, and the owning design doc names each step and what each reader and
+writer must tolerate during it.
+
+The cheaper alternative is a single migration that drops or rewrites in place. During the deploy window it breaks the
+readers still on the old schema, and once applied it cannot be undone, because the migration runner is forward-only.
+That is acceptable only where nothing worth keeping is at stake. It is not acceptable here, because every committed
+migration runs against prod, which is built to hold research data, the curators' work on it, and users who would see the
+breakage. One migration history serves dev and prod, and a step that is safe only on dev would still reach prod on its
+next deploy. So no new migration drops or rewrites in place. The destructive migrations already committed run on a fresh
+prod before it holds any data, where they change nothing.
 
 ### Identity and the ownership bootstrap
 

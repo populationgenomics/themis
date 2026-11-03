@@ -100,7 +100,7 @@ curator.
   instructions; expect prompts to thin as models improve.
 - **Build with users; open source** (not yet portability-optimised).
 
-## 7. Workspace, interaction & artifact model (north-star; MVP defers most)
+## 7. Workspace, interaction & artifact model (north-star; much of it still ahead)
 
 Workspace vocabulary mirrors Claude.ai's, deliberately (familiar to users and to Anthropic):
 
@@ -133,7 +133,7 @@ conversation, not one-shot. The system refines intent up front, works asynchrono
 **proactively flags roadblocks and asks for direction**, surfaces uncertainty in place, and preserves dead ends as
 first-class.
 
-Beyond MVP: hypothesis-vs-fact; flags + per-variant notes (as in seqr); cross-case variant memory (within-Project by
+Later: hypothesis-vs-fact; flags + per-variant notes (as in seqr); cross-case variant memory (within-Project by
 default); and the case-derived / variant-attached / public lines-of-evidence split.
 
 > Mechanics — branching, access rules, cross-Project exceptions, sample scope, Report versioning — live in
@@ -141,10 +141,11 @@ default); and the case-derived / variant-attached / public lines-of-evidence spl
 
 ## 8. Trajectory
 
-MVP (variant-led ACMG; §12) → **proband/case-led analysis** (full WGS + HPO + notes → candidates; pedigree / segregation
-/ phenotype-from-notes) **with an eval/benchmarking harness in parallel from the start** → deepen interactive steering
-and hypothesis mode → **cohort gene-discovery** (cross-cohort, phenotype-driven, matchmaking; a goal, not the first
-follow-on) → clinical hardening. Each new scenario is cheap: swap {guiding prompt, working-document outline, tools}.
+Variant-led ACMG classification (the building block; §12) → **proband/case-led analysis** (full WGS + HPO + notes →
+candidates; pedigree / segregation / phenotype-from-notes) **with an eval/benchmarking harness in parallel from the
+start** → deepen interactive steering and hypothesis mode → **cohort gene-discovery** (cross-cohort, phenotype-driven,
+matchmaking; a goal, not the first follow-on) → clinical hardening. Each new scenario is cheap: swap {guiding prompt,
+working-document outline, tools}.
 
 ## 9. Security & data governance (first-class)
 
@@ -158,10 +159,11 @@ them**.
   design** — per-tool permissions and data-flow, tightly-typed constrained tools (enums, not free-form strings), **local
   data over open-internet queries**. Not post-hoc output filtering.
 - **Self-hosted execution boundary:** execution + tools run inside CPG's network (self-hosted sandboxes; the agent
-  reaches our internal services in code mode); Anthropic does orchestration only; agent code-execution, filesystem, tool
-  calls and data never leave the boundary — critical because the agent runs code over raw genomic data. Deferrable for
-  the earliest MVP (public evidence sources, no patient data — §12), but required for the product. The UI is
-  auth-controlled but internet-reachable (not VPN-gated).
+  reaches our internal services in code mode); Anthropic does orchestration only; the agent's code execution, its
+  filesystem and its data access stay inside the boundary — critical because the agent runs code over raw genomic data.
+  What the model reads, tool results included, is part of the session at Anthropic
+  ([`docs/design/data-retention.md`](design/data-retention.md)). The UI is auth-controlled but internet-reachable (not
+  VPN-gated).
 - **Sensitivity tiers:** individual-variant public-DB lookups are low-risk; cohort-scale genomic data and
   PII/clinical-notes progressively tighten the surface.
 - **Tainted-data propagation** is real but secondary — the primary mitigation is leaving the agent nothing to exfiltrate
@@ -176,8 +178,9 @@ them**.
 **Themis is not:** a portable general-purpose curation suite; a public service; a regulated clinical tool (yet); a new
 variant-calling/pathogenicity pipeline.
 
-**Standalone for now:** no coupling to **Talos / Metamist / seqr / Analysis Runner** (import/export only); cohort-wide
-ops over Themis's _own_ store are expected.
+**Integration with CPG infrastructure:** the agent finds a Project's sample files through the site's sample registry,
+which at CPG is **Metamist** ([`docs/design/access-control.md`](design/access-control.md)). There is no coupling to
+**Talos / seqr / Analysis Runner** (import/export only); cohort-wide ops over Themis's _own_ store are expected.
 
 **Ecosystem:**
 
@@ -185,7 +188,8 @@ ops over Themis's _own_ store are expected.
 - **PanelApp** (Australia; forked from the Genomics England instance) — a gene-curation platform that feeds Talos.
 - **CaRDinal** — a CPG-managed, consented research cohort spanning several rare-disease datasets; the first whose
   datasets become Themis Projects (others may follow) (§3, §7).
-- **seqr / Metamist / Analysis Runner** — existing CPG infrastructure; possible later integration.
+- **Metamist** — CPG's sample registry; the agent resolves a Project's sample files through it (§10).
+- **seqr / Analysis Runner** — existing CPG infrastructure; possible later integration.
 
 ## 11. Bets & open questions
 
@@ -212,11 +216,20 @@ ops over Themis's _own_ store are expected.
 - **Model/orchestration dependency** — "thin, replaceable plumbing" is the hedge, but orchestration sits on Anthropic's
   side (§9); how real is the switching cost?
 - **Clinical patient-safety hardening** as we approach non-research cohorts (§9).
-- **When/whether to integrate CPG infra** (currently standalone; §10).
+- **How far to integrate CPG infra** beyond the sample registry (§10).
 
-## 12. Current slice — the MVP ("Spike")
+## 12. Current scope
 
-The product is intentionally narrowed to one slice first — the **Spike**: `(variant, free-text condition)` → a versioned
-ACMG-V4 report, from **public evidence sources** only (patient data is the sensitive input — §9), dog-fooded with CPG
-curators. Its concrete definition — scope, hybrid gather strategy, infrastructure, the exploration tickets — lives with
-the active work, not here: the **Spike epic** (`issues/epic-themis-spike.md`) and the design docs under `docs/design/`.
+Themis runs in two environments, each in its own cloud project. **dev** carries no CaRDinal data; it is where the team
+builds and demonstrates, on synthetic cases and CPG's open datasets. **prod** is built to hold **CaRDinal research
+data** (§3), and carries it once the conditions in [`docs/design/infrastructure.md`](design/infrastructure.md) are met.
+Themis stays research-only in both (§9, §10).
+
+An Analysis starts from one of three scenarios: a single variant, a family's case referral, or an exploratory question.
+Variant-led ACMG classification against the SVCv4 calculator is the building block the team gets right first; case
+analysis builds on it (§8).
+
+The environments and the conditions under which prod carries real data are in
+[`docs/design/infrastructure.md`](design/infrastructure.md). What prod keeps, for how long, and how a withdrawn consent
+is honoured are in [`docs/design/data-retention.md`](design/data-retention.md). The concrete design of each part lives
+in the other design docs under `docs/design/`.

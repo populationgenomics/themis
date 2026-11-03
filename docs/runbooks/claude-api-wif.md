@@ -1,10 +1,10 @@
 # Runbook: Claude API auth via Workload Identity Federation
 
 Seven workloads call the Claude API, and none of them holds a stored `ANTHROPIC_API_KEY` (see
-[`spike-infrastructure.md`](../design/spike-infrastructure.md) §4/§8). Each one exchanges an OIDC token from its own
-identity provider for a short-lived Anthropic token bound to a **service account** (svac) in the Anthropic org, under a
-**federation rule** that pins exactly that identity. The workloads fall into three paths by where their identity token
-comes from:
+[`infrastructure.md`](../design/infrastructure.md#one-project-one-stack-and-one-workspace-per-environment)). Each one
+exchanges an OIDC token from its own identity provider for a short-lived Anthropic token bound to a **service account**
+(svac) in the Anthropic org, under a **federation rule** that pins exactly that identity. The workloads fall into three
+paths by where their identity token comes from:
 
 - **Path A, GitHub Actions on `pull_request`:** the PR review (`internal-review.yml`) and the merge follow-ups
   (`internal-merge-followups.yml`).

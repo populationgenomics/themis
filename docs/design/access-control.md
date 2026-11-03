@@ -4,7 +4,7 @@
 [`security.md`](security.md) (the single default-on chokepoint every critical check follows);
 [`rpc-authorization.md`](rpc-authorization.md) (service callers, and the session token an agent's calls carry);
 [`frontend-framework.md`](frontend-framework.md) (the web tier these checks run in);
-[`spike-infrastructure.md`](spike-infrastructure.md) (the cloud setup around it).
+[`infrastructure.md`](infrastructure.md) (the cloud setup around it).
 
 ## Overview
 
@@ -436,11 +436,11 @@ stays in force, and the alert names the rule it broke.
 
 The last good copy lives in the memory of a running instance. An instance that starts while the latest version is
 invalid has nothing to fall back on and refuses to start, so if no instance is running when a bad version is added (the
-service scales to zero when idle), the next request finds the service down until the writer adds a valid one. An
-instance that refuses to start logs the same rejection that the alert matches on a running instance, so a refused cold
-start raises the alert too. Keeping an instance running at all times would close the gap, and so would a fallback at
-start to an earlier version, which the writer would then have to keep. Neither is worth its cost while the alert reaches
-the writer and a fix is one corrected version.
+service scales to zero when idle), the next request finds the service down until the writer adds a valid one. The alert
+reads a count of rejections the service records as a metric, and an instance that refuses to start records and exports
+its rejection before it exits, so a refused cold start raises the alert too. Keeping an instance running at all times
+would close the gap, and so would a fallback at start to an earlier version, which the writer would then have to keep.
+Neither is worth its cost while the alert reaches the writer and a fix is one corrected version.
 
 The cost is that a removal takes up to a minute to apply in normal operation, and cannot apply at all during an outage
 until the limit is reached; and that a bad version can stop the service outright when no instance holds a good copy.
@@ -552,7 +552,7 @@ the fixture's ACL is seeded the way the rest of the fixture is.
 - **Cloud Run handing the secret to the auth service.** Cloud Run can expose a secret's latest version to a container as
   an environment variable or a mounted file, so the service would need no Secret Manager client of its own. It lost
   because the read would then happen in the platform, outside the code that bounds a read's time, keeps the last good
-  copy when a read fails, and logs the line the alert matches (§One copy of the ACL, failing closed).
+  copy when a read fails, and counts the rejection the alert reads (§One copy of the ACL, failing closed).
 
 ## Open questions
 

@@ -292,9 +292,9 @@ Because the browser seam uses proto3-JSON ([`proto.md`](proto.md)), where the fi
 name prevents a future field from colliding on JSON keys just as reserving the number prevents binary tag collisions.
 
 Migration [`0008_analysis_inputs.sql`](../../themis/migrate/migrations/0008_analysis_inputs.sql) is destructive and
-creates a brief failing window during deployment. Both costs are accepted because the platform runs in a single
-pre-production environment with no live curator data worth preserving, matching the condition for destructive migrations
-in [`migrations.md`](migrations.md) §"How it runs":
+creates a brief failing window during deployment. Both costs were accepted for dev, which held no curator data worth
+preserving. [`migrations.md`](migrations.md) §"How it runs" allows no new migration of this kind; `0008` itself runs on
+a fresh prod before it holds any data, where it changes nothing. Its effects on dev:
 
 - **Rows deleted by `0008`:** `0008` deletes all rows from `session_context` first (because its foreign key to
   `analyses` has no `ON DELETE CASCADE`) and then deletes all rows from `analyses` rather than backfilling them, which

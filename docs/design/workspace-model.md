@@ -298,9 +298,9 @@ come from one copy of the ACL, so a change to it reaches people and agents at th
 - **Dead ends are signal** — ruled-out hypotheses and negative findings are first-class content in the Analysis /
   working document, not scrubbed.
 
-### Beyond the MVP
+### Target shape
 
-Not built in the initial slice, but part of the target shape the workspace model is designed to accommodate:
+Part of the target shape the workspace model is designed to accommodate, not built yet:
 
 - **Epistemic status on claims** — richer than a binary "hypothesis vs. fact" split (even "facts" in literature or
   clinical reports can be wrong); likely a progression (`working hypothesis` → `supported` → `established`) paired with
