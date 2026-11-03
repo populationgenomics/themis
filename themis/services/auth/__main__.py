@@ -37,7 +37,7 @@ from themis.services.auth import acl_holder, fixture
 from themis.services.auth import backend as auth_backend
 from themis.services.auth import servicer as servicer_mod
 from themis.telemetry import metrics as telemetry_metrics
-from themis.telemetry import rpc_metrics, serving, tracing
+from themis.telemetry import rpc_metrics, serving, startup, tracing
 
 # The Cloud Run service's name, the one Cloud Trace lists the spans under and the metrics' `job` label.
 SERVICE_NAME = 'themis-auth'
@@ -124,12 +124,15 @@ def _live_backend_from_env() -> auth_backend.AuthBackend:
     return live.LiveBackend(sessions, acl)
 
 
-async def _serve() -> None:
+async def _serve(clock: startup.StartupClock) -> None:
     backend = build_backend()
+    clock.step('backend built')
     limit = staleness_limit_seconds()
     operator = rules.operator_email(interceptor_mod.project_from_env())
     install_tracing()
+    clock.step('tracing installed')
     meter_provider = install_metrics()
+    clock.step('metrics installed')
     meter = telemetry_metrics.service_meter(meter_provider)
     try:
         acl = await acl_holder.AclHolder.load(
@@ -139,6 +142,7 @@ async def _serve() -> None:
             clock=time.monotonic,
             rejections=acl_holder.Rejections(meter),
         )
+        clock.step('ACL loaded')
         servicer = servicer_mod.Servicer(backend, acl, operator=operator)
         server = interceptor_mod.gated_server(
             build_authorizer(servicer), observers=[tracing.server_interceptor(), rpc_metrics.RpcMetrics(meter)]
@@ -150,6 +154,7 @@ async def _serve() -> None:
         health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
         server.add_insecure_port(f'[::]:{os.environ.get("PORT", "8080")}')  # TLS terminated by Cloud Run
         await server.start()
+        clock.step('server started')
         # The refresher only ends by raising: exit rather than serve a copy nothing refreshes.
         refresher = asyncio.create_task(acl.refresh_forever(acl_holder.REFRESH_INTERVAL_SECONDS))
         await serving.serve_until_stopped(server, watch=[refresher])
@@ -161,7 +166,8 @@ async def _serve() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.WARNING)
-    asyncio.run(_serve())
+    logging.getLogger(startup.__name__).setLevel(logging.INFO)
+    asyncio.run(_serve(startup.StartupClock()))
 
 
 if __name__ == '__main__':
