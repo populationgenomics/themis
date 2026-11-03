@@ -17,7 +17,7 @@ refuses that push.
 delete `refs/remotes/origin/*`, which is where the branches live. A fetch or push fails until
 `tools/sheaf_remote.py` serves again and `origin` is pointed at its URL.
 
-Run: ``uv run --group tools_sheaf python -m tools.clone_analysis --analysis-id <id> <dir>``. The
+Run: ``uv run --group tools_sheaf python -m tools.clone_analysis --project <project> --analysis-id <id> <dir>``. The
 caller needs what the two tools need: membership of the `themis-clu` group, and the grants that
 account holds (`docs/runbooks/hand-driving-a-service.md`).
 """
@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--analysis-id', required=True, help='the Analysis whose repository to clone')
     parser.add_argument('destination', type=pathlib.Path, help='where to clone to: absent, or an empty directory')
-    parser.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
+    parser.add_argument('--project', required=True, help='GCP project, e.g. cpg-themis-dev')
     parser.add_argument(
         '--service-url',
         default=None,

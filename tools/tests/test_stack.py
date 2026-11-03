@@ -3,8 +3,9 @@ from __future__ import annotations
 import pathlib
 
 import pytest
+import yaml
 
-from tools import clu, stack, web_app
+from tools import stack, web_app
 
 
 def _stack(infra: pathlib.Path, name: str, project: str, domain: str | None) -> None:
@@ -38,5 +39,15 @@ def test_a_project_without_exactly_one_stack_setting_the_value_is_refused(
         stack.value('proj', 'themis:domain', infra_dir=tmp_path)
 
 
-def test_the_committed_default_project_names_its_app() -> None:
-    assert web_app.origin(clu.DEFAULT_PROJECT).startswith('https://')
+def _committed_projects() -> list[str]:
+    infra = pathlib.Path(__file__).resolve().parents[2] / 'infra'
+    return [yaml.safe_load(path.read_text('utf-8'))['config']['gcp:project'] for path in infra.glob('Pulumi.*.yaml')]
+
+
+def test_the_project_has_committed_stacks() -> None:
+    assert _committed_projects()
+
+
+@pytest.mark.parametrize('project', _committed_projects())
+def test_every_committed_project_names_its_app(project: str) -> None:
+    assert web_app.origin(project).startswith('https://')

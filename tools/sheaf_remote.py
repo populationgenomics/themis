@@ -10,7 +10,8 @@ load balancer's IAP (`tools.operator_path`), and every call carries two tokens m
 IAP admits. Both are kept fresh in the token file beside the session token `tools/session_token.py`
 wrote there.
 
-Run: ``uv run --group tools_sheaf python -m tools.sheaf_remote --analysis-id <id> --session-token-file <path>``.
+Run: ``uv run --group tools_sheaf python -m tools.sheaf_remote --project <project> --analysis-id <id>
+--session-token-file <path>``.
 Stop it with Ctrl-C; both tokens are removed from the token file on the way out. The caller needs
 membership of the `themis-clu` group, which holds IAP access on the service's load-balancer backend.
 
@@ -215,7 +216,7 @@ def main() -> None:
         type=pathlib.Path,
         help='the token file tools/session_token.py wrote; the bearer is kept in it while this runs',
     )
-    parser.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
+    parser.add_argument('--project', required=True, help='GCP project, e.g. cpg-themis-dev')
     parser.add_argument(
         '--service-url',
         default=None,

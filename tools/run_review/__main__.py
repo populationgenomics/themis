@@ -1,6 +1,7 @@
 """`python -m tools.run_review`: prepare, run, render and list a round of the run-review loop.
 
-    uv run --group run_review python -m tools.run_review prepare --round 2026-10-05-0930 --workbench-project <id>
+    uv run --group run_review python -m tools.run_review prepare --round 2026-10-05-0930 --workbench-project <id> \
+        --project cpg-themis-dev
     uv run --group run_review python -m tools.run_review run --round 2026-10-05-0930 --anthropic-profile cpg-themis-dev
     uv run --group run_review python -m tools.run_review render --round 2026-10-05-0930
     uv run --group run_review python -m tools.run_review status --round 2026-10-05-0930
@@ -86,7 +87,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument(
         '--workbench-project', required=True, help="the Themis Project the round's Analyses are created in"
     )
-    prepare.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
+    prepare.add_argument('--project', required=True, help='GCP project, e.g. cpg-themis-dev')
     prepare.add_argument(
         '--deadline-minutes', type=int, default=120, help='when a run still going is interrupted (default: %(default)s)'
     )

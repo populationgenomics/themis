@@ -89,8 +89,8 @@ The instance refuses direct connections and a personal identity has no login, so
 connects as this account:
 
 ```bash
-uv run python -m tools.psql                      # interactive
-uv run python -m tools.psql -- -c 'select 1'     # one statement
+uv run python -m tools.psql --project cpg-themis-dev                      # interactive
+uv run python -m tools.psql --project cpg-themis-dev -- -c 'select 1'     # one statement
 ```
 
 The account is a member of the migrator role and a Cloud SQL IAM user is created `INHERIT`, so reading and writing rows
@@ -110,7 +110,7 @@ An Analysis's repository lives behind the `Sheaf` service, which scopes every ca
 name. To inspect one from a laptop, clone it in one command:
 
 ```bash
-uv run --group tools_sheaf python -m tools.clone_analysis --analysis-id "$ANALYSIS" ./"$ANALYSIS"
+uv run --group tools_sheaf python -m tools.clone_analysis --project cpg-themis-dev --analysis-id "$ANALYSIS" ./"$ANALYSIS"
 ```
 
 The tool derives the Analysis's session token into a file in a private temporary directory. It then serves a loopback
@@ -126,8 +126,8 @@ The clone's `origin` names the stopped server, so a fetch or a push from it fail
 running, which takes the two steps separately, in two terminals:
 
 ```bash
-uv run --group tools_sheaf python -m tools.session_token --analysis-id "$ANALYSIS" --session-token-file ~/.themis/sheaf-token.json
-uv run --group tools_sheaf python -m tools.sheaf_remote --analysis-id "$ANALYSIS" --session-token-file ~/.themis/sheaf-token.json
+uv run --group tools_sheaf python -m tools.session_token --project cpg-themis-dev --analysis-id "$ANALYSIS" --session-token-file ~/.themis/sheaf-token.json
+uv run --group tools_sheaf python -m tools.sheaf_remote --project cpg-themis-dev --analysis-id "$ANALYSIS" --session-token-file ~/.themis/sheaf-token.json
 git clone http://127.0.0.1:<port>/"$ANALYSIS"        # or `git remote set-url origin` on an existing clone
 ```
 

@@ -10,7 +10,7 @@ It connects as ``themis-clu`` by default: a personal identity has no database lo
 is the one anything else reaches the instance as (`infra/themis_infra/clu.py`). ``--as`` overrides
 it, and ``--as ''`` uses the caller's own principal.
 
-Run: ``uv run python -m tools.psql`` (add ``--project``, ``--as <sa>``, or pass ``psql`` args after
+Run: ``uv run python -m tools.psql --project <project>`` (add ``--as <sa>``, or pass ``psql`` args after
 ``--``, e.g. ``-- -c 'select 1'``). The login principal still needs both the project roles a
 connection requires (`roles/cloudsql.instanceUser` + `roles/cloudsql.client`) and the in-database
 GRANTs the migrations apply — the two are separate, so a connection can succeed and every table still
@@ -87,7 +87,7 @@ def _run(project: str, impersonate: str | None, psql_args: list[str]) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
+    parser.add_argument('--project', required=True, help='GCP project, e.g. cpg-themis-dev')
     parser.add_argument(
         '--as',
         dest='impersonate',

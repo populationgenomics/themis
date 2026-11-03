@@ -56,10 +56,6 @@ from themis.migrate import migrate
 
 _LOG = logging.getLogger('litcache.run_local')
 
-# The real seed dump (literature-cache.md §Seed source). Reading it needs only read
-# access under your own credentials — no Pulumi-provisioned grant.
-_DEFAULT_SOURCE_BUCKET = 'cpg-themis-dev-fulltext'
-
 # A throwaway container's credentials are not secrets; named once so the container
 # and its connections agree (and so no password literal trips the secrets linter).
 _THROWAWAY_DB = 'litcache'
@@ -212,8 +208,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         '--source-bucket',
-        default=_DEFAULT_SOURCE_BUCKET,
-        help='bucket holding the real ingest/ seed (default: %(default)s)',
+        default=None,
+        help='bucket holding the real ingest/ seed, read with your own access (default: <project>-fulltext)',
     )
     parser.add_argument('--seed-prefix', default='ingest/', help='seed prefix in both buckets (default: %(default)s)')
     parser.add_argument('--limit', type=int, default=100, help='papers to stage + ingest (default: %(default)s)')
@@ -245,6 +241,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help='papers the run may dead-letter before it is reported a failure (default: %(default)s)',
     )
     args = parser.parse_args(argv)
+    if args.source_bucket is None:
+        args.source_bucket = f'{args.project}-fulltext'
     if args.limit <= 0:
         parser.error('--limit must be positive')
     if args.direct_num_workers <= 0:

@@ -105,7 +105,22 @@ def test_status_names_the_rerun_for_runs_on_an_older_agent_version(
 
 
 def test_prepare_refuses_a_settle_period_below_the_floor(capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(['prepare', '--round', ROUND, '--workbench-project', 'p', '--settle-seconds', '60']) == 1
+    assert (
+        cli.main(
+            [
+                'prepare',
+                '--round',
+                ROUND,
+                '--workbench-project',
+                'p',
+                '--project',
+                'cpg-themis-dev',
+                '--settle-seconds',
+                '60',
+            ]
+        )
+        == 1
+    )
     assert '--settle-seconds is at least' in capsys.readouterr().err
 
 
@@ -120,7 +135,7 @@ def test_prepare_refuses_a_project_whose_stack_is_not_dev(
 
 def test_prepare_refuses_a_round_that_exists(rounds_root: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
     (rounds_root / ROUND).mkdir(parents=True)
-    assert cli.main(['prepare', '--round', ROUND, '--workbench-project', 'p']) == 1
+    assert cli.main(['prepare', '--round', ROUND, '--workbench-project', 'p', '--project', 'cpg-themis-dev']) == 1
     assert 'exists; name a new round' in capsys.readouterr().err
 
 

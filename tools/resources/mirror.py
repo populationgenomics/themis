@@ -7,7 +7,7 @@ artifact for a later pass, written to its own prefix and citing the entry id it 
 
 Run from the repo root, which ``python -m`` needs on ``sys.path`` to import ``tools``::
 
-    uv run --group resources python -m tools.resources.mirror [--project P] [--dry-run]
+    uv run --group resources python -m tools.resources.mirror --project P [--dry-run]
 
 Auth is the caller's own ``gcloud`` ADC.
 
@@ -51,7 +51,6 @@ import requests
 from google.cloud import storage
 
 _MANIFEST = pathlib.Path(__file__).resolve().parents[2] / 'resources' / 'reference.toml'
-_DEFAULT_PROJECT = 'cpg-themis-dev'
 _BUCKET_SUFFIX = 'resources'
 _PROVENANCE_SUFFIX = '.provenance.json'
 _CHUNK = 8 * 1024 * 1024
@@ -453,7 +452,7 @@ def _report(outcome: Outcome) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--project', default=_DEFAULT_PROJECT, help='GCP project owning the resources bucket')
+    parser.add_argument('--project', required=True, help='GCP project owning the resources bucket')
     parser.add_argument('--dry-run', action='store_true', help='report what would transfer, write nothing')
     parser.add_argument(
         '--only',

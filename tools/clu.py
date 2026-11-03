@@ -21,7 +21,6 @@ from google.auth import credentials as credentials_mod
 from google.auth import exceptions, impersonated_credentials, jwt
 from google.auth.transport import requests as auth_requests
 
-DEFAULT_PROJECT = 'cpg-themis-dev'
 REGION = 'australia-southeast1'
 SQL_INSTANCE = 'themis-sql'
 SQL_DATABASE = 'themis'

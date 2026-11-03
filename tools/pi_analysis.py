@@ -14,7 +14,7 @@ agreement across the two languages, so this tool is the only thing that should b
 Run:
 
     uv run --group tools_sheaf python -m tools.pi_analysis \\
-        --project-id <project> --prompt "..." --session-token-file <path>
+        --project <gcp-project> --project-id <project> --prompt "..." --session-token-file <path>
 
 `--dry-run` prints the ids and the statements without reaching KMS or the database. The caller needs
 membership of the `themis-clu` group, and the signing key's `signerVerifier`.
@@ -109,7 +109,7 @@ def main() -> None:
         '--session-token-file', required=True, type=pathlib.Path, help='where to write the token file (mode 0600)'
     )
     parser.add_argument('--created-by', default=None, help='the creator recorded on the row (default: the caller)')
-    parser.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
+    parser.add_argument('--project', required=True, help='GCP project, e.g. cpg-themis-dev')
     parser.add_argument('--key-version', default=None, help='the signing key version (default: the themis MAC key)')
     parser.add_argument(
         '--as',
@@ -174,7 +174,7 @@ def main() -> None:
     print(f'wrote its session token to {args.session_token_file}')
     print(
         'next: uv run --group tools_sheaf python -m tools.sheaf_remote '
-        f'--analysis-id {analysis_id} --session-token-file {args.session_token_file}'
+        f'--project {args.project} --analysis-id {analysis_id} --session-token-file {args.session_token_file}'
     )
 
 

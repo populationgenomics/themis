@@ -29,7 +29,7 @@ raises `DepositError` rather than a stack trace from inside a library.
 
 Run::
 
-    uv run --group litcache python -m tools.litcache.deposit paper.pdf \\
+    uv run --group litcache python -m tools.litcache.deposit paper.pdf --project cpg-themis-dev \\
         --id doi:10.1016/j.ajhg.2021.03.001 --id pmid:33811808 \\
         --licence 'https://creativecommons.org/licenses/by/4.0/' --licence-basis ASSERTED \\
         --title 'The title of the paper'
@@ -493,8 +493,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument('--bucket', default=None, help='the corpus bucket (default: <project>-fulltext)')
     parser.add_argument(
         '--project',
-        default=clu.DEFAULT_PROJECT,
-        help='GCP project the crosswalk, corpus and worker live in (default: %(default)s)',
+        required=True,
+        help='GCP project the crosswalk, corpus and worker live in',
     )
     args = parser.parse_args(argv)
     if args.bucket is None:

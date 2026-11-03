@@ -8,7 +8,8 @@ database and derives the token through the same KMS call, both as `themis-clu`, 
 `{"session_token": ..., "calling_as": "CALLING_AS_SELF"}` to a file only its owner can read — the file
 `tools/sheaf_remote.py` and `themis.clients.sheaf.store.RemoteStore` take.
 
-Run: ``uv run --group tools_sheaf python -m tools.session_token --analysis-id <id> --session-token-file <path>``.
+Run: ``uv run --group tools_sheaf python -m tools.session_token --project <project> --analysis-id <id>
+--session-token-file <path>``.
 The caller needs membership of the `themis-clu` group; the account needs `signerVerifier` on the
 signing key, which this tool does not check for — a missing grant fails with the KMS error as is.
 """
@@ -127,7 +128,7 @@ def main() -> None:
     parser.add_argument(
         '--session-token-file', required=True, type=pathlib.Path, help='where to write the token file (mode 0600)'
     )
-    parser.add_argument('--project', default=clu.DEFAULT_PROJECT, help='GCP project (default: %(default)s)')
+    parser.add_argument('--project', required=True, help='GCP project, e.g. cpg-themis-dev')
     parser.add_argument(
         '--key-version',
         default=None,

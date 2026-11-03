@@ -158,7 +158,7 @@ and the choice is whether to keep the crosswalk:
   window has rows pointing at nothing.
 
 ```sh
-uv run python -m tools.psql -- -c 'TRUNCATE litcache.crosswalk'   # themis-clu inherits the migrator's rights
+uv run python -m tools.psql --project cpg-themis-dev -- -c 'TRUNCATE litcache.crosswalk'   # themis-clu inherits the migrator's rights
 gcloud storage rm -r "gs://$FULLTEXT/papers"
 ```
 
