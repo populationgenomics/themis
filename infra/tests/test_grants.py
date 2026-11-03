@@ -14,32 +14,33 @@ from __future__ import annotations
 
 import collections
 import importlib.resources
-import inspect
 import pathlib
 import re
 
-import pulumi
+import pytest
 
-from themis_infra import capture, grants
+from themis_infra import capture
 
 # Provider types with `iam` in the name that are not grants.
 _NOT_A_BINDING = re.compile(r'(CustomRole|AuditConfig|MemberRemove)$')
 _TYPE_TOKEN = re.compile(r'@pulumi\.type_token\("(gcp:[^"]+)"\)')
 
 
-def _grant_classes() -> set[str]:
-    return {
-        name
-        for name, member in inspect.getmembers(grants, inspect.isclass)
-        if issubclass(member, pulumi.ComponentResource) and not name.startswith('_')
-    }
-
-
 def test_every_binding_is_a_capability(program: capture.Capture) -> None:
-    assert program.bindings, 'the program registered no IAM binding; the mocks are not running it'
-    grant_classes = _grant_classes()
-    loose = [b.urn for b in program.bindings if b.capability not in grant_classes]
-    assert not loose, 'IAM bindings outside a grants.* capability:\n' + '\n'.join(loose)
+    capture.check_bindings_are_capabilities(program)
+
+
+def test_a_binding_outside_a_capability_is_refused(program: capture.Capture) -> None:
+    loose = capture.Binding(
+        urn='urn:pulumi:dev::themis::gcp:projects/iAMMember:IAMMember::loose',
+        type_='gcp:projects/iAMMember:IAMMember',
+        capability=None,
+        member='serviceAccount:loose@p.iam.gserviceaccount.com',
+        role='roles/viewer',
+        target='p',
+    )
+    with pytest.raises(ValueError, match='::loose'):
+        capture.check_bindings_are_capabilities(program._replace(bindings=[*program.bindings, loose]))
 
 
 def test_no_two_bindings_grant_one_role_to_one_member_on_one_target(program: capture.Capture) -> None:

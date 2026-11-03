@@ -23,7 +23,7 @@ _QUOTED_NAME = re.compile(r'\{"([^"]+)"')
 # The cents-to-dollars division, as distinct from the per-million-tokens one.
 _CENTS_TO_DOLLARS = re.compile(r'/ 100(?!\d)')
 # Every read of a running total takes the newest sample within the stack's freshness window.
-_FRESHNESS_MINUTES = int(capture.dev_stack_config()['themis:costFreshnessMinutes'])
+_FRESHNESS_MINUTES = int(capture.stack_config('dev')['themis:costFreshnessMinutes'])
 _CURRENT_READ = re.compile(r'last_over_time\([^\[]+\[(\w+)\]')
 
 
@@ -57,7 +57,7 @@ def test_the_job_runs_the_report_entrypoint_over_the_rendered_queries(container:
     assert container['commands'] == ['python', '-m', 'themis.services.cost_exporter.report']
     envs = _envs(container)
     assert envs['THEMIS_COST_REPORT_QUERIES']['value'] == cost_report.report_json(freshness_minutes=_FRESHNESS_MINUTES)
-    assert envs['THEMIS_COST_REPORT_SLACK_CHANNEL_ID']['value'] == capture.dev_stack_config()['themis:slackChannelId']
+    assert envs['THEMIS_COST_REPORT_SLACK_CHANNEL_ID']['value'] == capture.stack_config('dev')['themis:slackChannelId']
 
 
 def test_the_message_links_the_dashboard_the_failure_page_links(

@@ -270,7 +270,7 @@ def _render_svg(source: pathlib.Path, svg: pathlib.Path) -> None:
 
 
 def main() -> None:
-    program = capture.capture_program()
+    program = capture.capture_program('dev')
     check_drawable(program)
     OUTPUT_DIR.mkdir(exist_ok=True)
     for view in VIEWS:

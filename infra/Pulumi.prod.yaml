@@ -17,6 +17,18 @@ config:
   themis:traceSampleRatio: "1.0"
   themis:workSweepScheduled: "false"
   themis:enablePrScreenshotBucket: "false"
+  themis:enableCiTelemetry: "false"
+  # Dev's shared-core, single-zone tier. It admits 25 connections, which the instance caps below share, so they
+  # match dev's.
+  themis:sqlTier: db-f1-micro
+  themis:sqlAvailabilityType: ZONAL
+  # Monday 03:00 Sydney summer time (02:00 in winter).
+  themis:sqlMaintenanceWindow: Sun 16:00 UTC
+  themis:authMinInstances: "0"
+  themis:authMaxInstances: "3"
+  themis:webMinInstances: "0"
+  themis:webMaxInstances: "2"
+  themis:evidenceMaxInstances: "2"
   # Starting at dev's tuning until prod's own spend has a baseline.
   themis:costSpikeAlertCents: "10000"
   themis:costSpikeWindowMinutes: "30"

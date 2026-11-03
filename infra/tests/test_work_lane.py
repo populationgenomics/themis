@@ -63,6 +63,6 @@ def test_the_worker_runs_a_request_as_long_as_a_task_may_take(program: capture.C
 
 def test_the_sweep_runs_on_its_schedule_only_where_the_stack_says_so(program: capture.Capture) -> None:
     # A pass can ask for paid transcriptions across the corpus, so an unscheduled stack's schedule is paused.
-    scheduled = capture.dev_stack_config()['themis:workSweepScheduled'] == 'true'
+    scheduled = capture.stack_config('dev')['themis:workSweepScheduled'] == 'true'
 
     assert _of_type(program, _SCHEDULER_TYPE)[_SWEEP_SCHEDULE]['paused'] is not scheduled

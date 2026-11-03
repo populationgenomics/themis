@@ -31,9 +31,6 @@ import pulumi_gcp as gcp
 
 from themis_infra import cloud_run, grants, sql
 
-# Each instance pools up to 5 Cloud SQL connections, so 2 hold at most 10 of db-f1-micro's 25 (auth holds 12).
-_MAX_INSTANCES = 2
-
 # The service's own name is also an input to its IAP-assertion audience, so it is a
 # literal rather than the resource's output, which the template cannot read.
 _SERVICE_NAME = 'themis-web'
@@ -200,6 +197,8 @@ class WebService(pulumi.ComponentResource):
         anthropic_workspace_id: str,
         project_number: pulumi.Input[str],
         trace_sample_ratio: float,
+        min_instances: int,
+        max_instances: int,
         iap_service_agent: pulumi.Input[str],
         routes: Sequence[Route | GrpcRoute],
         opts: pulumi.ResourceOptions | None = None,
@@ -272,9 +271,9 @@ class WebService(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
-                # Scale to zero — idle cost ≈ 0 at this traffic level.
+                # Each instance pools its own Cloud SQL connections (apps/web/src/server/pg.ts).
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
-                    min_instance_count=0, max_instance_count=_MAX_INSTANCES
+                    min_instance_count=min_instances, max_instance_count=max_instances
                 ),
                 # Direct VPC egress on the services network, all traffic, so the auth, evidence and sheaf services
                 # admit the BFF's calls at their run.app URLs (services_network.py).
@@ -450,11 +449,20 @@ class WebService(pulumi.ComponentResource):
             ],
             opts=child,
         )
+        # Without a policy the proxy gets GCP's default, which still admits TLS 1.0.
+        ssl_policy = gcp.compute.SSLPolicy(
+            f'{name}-tls',
+            project=project,
+            min_tls_version='TLS_1_2',
+            profile='MODERN',
+            opts=child,
+        )
         https_proxy = gcp.compute.TargetHttpsProxy(
             f'{name}-https-proxy',
             project=project,
             url_map=url_map.id,
             ssl_certificates=[certificate.id],
+            ssl_policy=ssl_policy.id,
             opts=child,
         )
         gcp.compute.GlobalForwardingRule(

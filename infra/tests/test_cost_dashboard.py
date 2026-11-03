@@ -14,7 +14,7 @@ from themis_infra import capture, claude_code_metrics, cost_metrics, cost_prices
 _DASHBOARD_CHAIN = ['themis:infra:CostDashboard', 'gcp:monitoring/dashboard:Dashboard']
 # Every read of a running total takes the newest sample within the stack's freshness window; a query's other range
 # is its window.
-_FRESHNESS_MINUTES = int(capture.dev_stack_config()['themis:costFreshnessMinutes'])
+_FRESHNESS_MINUTES = int(capture.stack_config('dev')['themis:costFreshnessMinutes'])
 _TOLERANCE = f'{_FRESHNESS_MINUTES}m'
 _GAUGE_READ = re.compile(r'(?:last|min)_over_time\([^\[]+\[(\w+)\](?: offset (\w+))?\)')
 # A metric name as it can appear in a query: a bare identifier that is not a call, or quoted inside the braces.

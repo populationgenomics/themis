@@ -10,13 +10,13 @@ See `docs/design/infrastructure.md`.
 
 from __future__ import annotations
 
+import dataclasses
+import re
 from collections.abc import Sequence
 
 import pulumi
 import pulumi_gcp as gcp
 
-# Smallest shared-core tier; Cloud SQL has no scale-to-zero.
-_TIER = 'db-f1-micro'
 _DATABASE_VERSION = 'POSTGRES_16'
 _DISK_SIZE_GB = 10
 _RETAINED_DAILY_BACKUPS = 30
@@ -26,6 +26,40 @@ _DATABASE_NAME = 'themis'
 # Cloud SQL IAM SA login names are the SA email without this domain suffix
 # (Postgres truncates the `.gserviceaccount.com` tail).
 _IAM_SA_EMAIL_SUFFIX = '.gserviceaccount.com'
+_AVAILABILITY_TYPES = frozenset({'ZONAL', 'REGIONAL'})
+_WEEKDAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
+_MAINTENANCE_WINDOW = re.compile(r'(?P<day>\w{3}) (?P<hour>[01]\d|2[0-3]):00 UTC')
+# The value that leaves the window unset, so Cloud SQL picks when to apply maintenance.
+ANY_MAINTENANCE_WINDOW = 'any'
+
+
+@dataclasses.dataclass(frozen=True)
+class MaintenanceWindow:
+    """The weekly hour in which Cloud SQL may restart the instance for maintenance."""
+
+    day: int
+    """Day of the week, 1 (Monday) to 7 (Sunday), as the Admin API numbers it."""
+    hour: int
+    """Hour of the day in UTC, 0 to 23."""
+
+
+def parse_maintenance_window(value: str) -> MaintenanceWindow | None:
+    """Parse a stack's maintenance window: `any`, or a weekday and an hour such as `Sun 16:00 UTC`.
+
+    Returns:
+        The window, or None for `any`.
+
+    Raises:
+        ValueError: If the value is neither.
+    """
+    if value == ANY_MAINTENANCE_WINDOW:
+        return None
+    match = _MAINTENANCE_WINDOW.fullmatch(value)
+    if match is None or match['day'] not in _WEEKDAYS:
+        raise ValueError(
+            f"maintenance window must be '{ANY_MAINTENANCE_WINDOW}' or like 'Sun 16:00 UTC', got {value!r}"
+        )
+    return MaintenanceWindow(day=_WEEKDAYS.index(match['day']) + 1, hour=int(match['hour']))
 
 
 class CloudSqlDatabase(pulumi.ComponentResource):
@@ -46,8 +80,29 @@ class CloudSqlDatabase(pulumi.ComponentResource):
         *,
         project: str,
         region: str,
+        tier: str,
+        availability_type: str,
+        maintenance_window: MaintenanceWindow | None,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
+        """Create the instance and its application database.
+
+        Args:
+            project: The GCP project.
+            region: The instance's region.
+            tier: The machine tier, such as `db-f1-micro` or `db-custom-1-3840`. A shared-core tier carries
+                no SLA, whatever its availability.
+            availability_type: `ZONAL`, or `REGIONAL` for a standby in a second zone.
+            maintenance_window: When Cloud SQL may restart the instance for maintenance; None lets it choose.
+            opts: Resource options.
+
+        Raises:
+            ValueError: If `availability_type` is neither `ZONAL` nor `REGIONAL`.
+        """
+        if availability_type not in _AVAILABILITY_TYPES:
+            raise ValueError(
+                f'availability_type must be one of {sorted(_AVAILABILITY_TYPES)}, got {availability_type!r}'
+            )
         super().__init__('themis:infra:CloudSqlDatabase', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
@@ -66,10 +121,16 @@ class CloudSqlDatabase(pulumi.ComponentResource):
                 # API-level guard: blocks an out-of-band `gcloud sql instances
                 # delete`, which the provider-level flag above does not.
                 deletion_protection_enabled=True,
-                tier=_TIER,
+                tier=tier,
                 edition='ENTERPRISE',
-                # Single zone, no HA — shared-core tiers can't do HA anyway.
-                availability_type='ZONAL',
+                availability_type=availability_type,
+                maintenance_window=(
+                    gcp.sql.DatabaseInstanceSettingsMaintenanceWindowArgs(
+                        day=maintenance_window.day, hour=maintenance_window.hour
+                    )
+                    if maintenance_window is not None
+                    else None
+                ),
                 disk_size=_DISK_SIZE_GB,
                 disk_autoresize=True,
                 # Enables IAM database authentication — the SA `sql.User`s below

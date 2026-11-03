@@ -11,7 +11,7 @@ from themis_infra import capture
 
 @pytest.fixture(scope='session')
 def program() -> capture.Capture:
-    return capture.capture_program()
+    return capture.capture_program('dev')
 
 
 def _top_level_terms(expression: str) -> list[str]:

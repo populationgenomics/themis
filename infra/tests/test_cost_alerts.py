@@ -59,7 +59,7 @@ def _promql_condition(policy: dict[str, object]) -> dict[str, object]:
 
 @pytest.fixture(scope='module')
 def config() -> dict[str, str]:
-    return capture.dev_stack_config()
+    return capture.stack_config('dev')
 
 
 @pytest.fixture(scope='module')

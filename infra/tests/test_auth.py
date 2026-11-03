@@ -68,7 +68,7 @@ def test_an_acl_writer_that_is_not_a_service_account_is_refused(writer: str) -> 
 
 
 def test_the_dev_stacks_acl_settings_are_accepted() -> None:
-    config = capture.dev_stack_config()
+    config = capture.stack_config('dev')
     auth.check_acl_writer(config['themis:aclWriter'])
     auth.check_acl_staleness_limit(int(config['themis:aclStalenessLimitSeconds']))
 
@@ -109,7 +109,7 @@ def _expected_acl_readers(program: capture.Capture) -> set[str]:
     """The auth service, the site's writer, and the deploy account, which administers every secret in the stack."""
     return {
         f'serviceAccount:themis-auth@{program.project}.iam.gserviceaccount.com',
-        f'serviceAccount:{capture.dev_stack_config()["themis:aclWriter"]}',
+        f'serviceAccount:{capture.stack_config("dev")["themis:aclWriter"]}',
         f'serviceAccount:{deploy_iam.deploy_sa_email(program.project)}',
     }
 
@@ -131,7 +131,7 @@ def test_a_project_wide_payload_reading_role_for_another_account_is_caught(progr
 
 
 def test_the_sites_writer_holds_nothing_beyond_the_secret_but_quota(program: capture.Capture) -> None:
-    writer = f'serviceAccount:{capture.dev_stack_config()["themis:aclWriter"]}'
+    writer = f'serviceAccount:{capture.stack_config("dev")["themis:aclWriter"]}'
     held = {(b.capability, b.target) for b in program.bindings if b.member == writer}
     assert held == {
         ('SecretReader', auth.ACL_SECRET_ID),

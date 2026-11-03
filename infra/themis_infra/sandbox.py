@@ -68,7 +68,8 @@ def session_token_signing_key(
         key_ring=key_ring.id,
         purpose='MAC',
         version_template=gcp.kms.CryptoKeyVersionTemplateArgs(algorithm='HMAC_SHA256'),
-        opts=opts,
+        # A replacement key derives every session's bearer anew, locking each live session out of the data plane.
+        opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(protect=True)),
     )
 
 

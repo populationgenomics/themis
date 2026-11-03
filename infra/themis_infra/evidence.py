@@ -61,10 +61,6 @@ GRPC_SERVICES = (
     'themis.rpc.vep.Vep',
 )
 
-# Crosswalk reads open unpooled Cloud SQL connections, as many per instance as its worker threads, so
-# the cap multiplies that against db-f1-micro's 25.
-_MAX_INSTANCES = 2
-
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:
     return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
@@ -102,6 +98,7 @@ class EvidenceService(pulumi.ComponentResource):
         convert_worker_url: pulumi.Input[str],
         convert_invoker_sa_email: pulumi.Input[str],
         openalex_api_key: secrets.StackSecret,
+        max_instances: int,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:EvidenceService', 'themis', None, opts)
@@ -180,8 +177,9 @@ class EvidenceService(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
+                # Crosswalk reads open unpooled Cloud SQL connections, one per worker thread of an instance.
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
-                    min_instance_count=0, max_instance_count=_MAX_INSTANCES
+                    min_instance_count=0, max_instance_count=max_instances
                 ),
                 # Direct VPC egress on the services network, all traffic: the public upstream hosts are
                 # reached through the services subnet's NAT.

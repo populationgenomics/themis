@@ -1,10 +1,10 @@
 """Run the Pulumi program under mocks and record what it grants.
 
-One run of `infra/__main__.py` against the dev stack's config with every opt-in switched on, no cloud
-access, yielding every resource the program registers plus two derived views: each IAM binding as
-(capability, member, role, target), and each Cloud Run workload with the service account it runs as,
-its ingress, and the networks it egresses on. The exhaustiveness test and the grants diagram both read
-from here, so the two cannot disagree about what the program does.
+One run of `infra/__main__.py` against a stack's config, no cloud access, yielding every resource the
+program registers plus two derived views: each IAM binding as (capability, member, role, target), and
+each Cloud Run workload with the service account it runs as, its ingress, and the networks it egresses
+on. The exhaustiveness test and the grants diagram both read dev's run, which turns on every opt-in, so
+the two cannot disagree about what the program does.
 
 The mocks synthesise the outputs the program reads off resources it creates. A service account's email
 follows GCP's form, `<account_id>@<project>.iam.gserviceaccount.com`, so two accounts that share a
@@ -14,9 +14,12 @@ Pulumi resource name (the web and auth runtime SAs are both `themis-runtime`) st
 from __future__ import annotations
 
 import asyncio
+import inspect
 import pathlib
 import re
 import runpy
+import sys
+from collections.abc import Mapping
 from typing import NamedTuple, override
 
 import pulumi
@@ -24,17 +27,20 @@ import yaml
 from pulumi.runtime import mocks
 from pulumi.runtime.proto import resource_pb2
 
+from themis_infra import grants
+
 _INFRA = pathlib.Path(__file__).resolve().parents[1]
 _PROGRAM = _INFRA / '__main__.py'
 _PROJECT = _INFRA / 'Pulumi.yaml'
-_DEV_STACK = _INFRA / 'Pulumi.dev.yaml'
 
 # Every IAM-binding resource type the GCP provider offers, by its type token's last segment.
 BINDING_TYPE = re.compile(r'^gcp:[^:]+:\w*(IAMMember|IamMember|IAMBinding|IamBinding|IAMPolicy|IamPolicy)$')
 GRANT_TYPE_PREFIX = 'themis:grants:'
-# The stack booleans that switch a grant on. Forced on so the run is the maximal program; a boolean not
-# named here fails the run until it is classified.
-_OPT_INS = frozenset({'themis:cluDerivesSessionTokens', 'themis:enablePrScreenshotBucket'})
+# The stack switches that add a grant: dev turns each on, so its run is the maximal program the grants rule and the
+# diagrams read, and prod keeps each off.
+OPT_INS = frozenset({'themis:cluDerivesSessionTokens', 'themis:enablePrScreenshotBucket', 'themis:enableCiTelemetry'})
+# The stack switches that add no grant, so neither the dev-on nor the prod-off rule applies.
+NON_GRANT_SWITCHES = frozenset({'themis:workSweepScheduled'})
 
 # The input that names what each binding type is over.
 _TARGET_INPUT = {
@@ -162,22 +168,69 @@ class _Monitor(mocks.MockMonitor):
         return response
 
 
-def dev_stack_config() -> dict[str, str]:
-    """The dev stack's config, every secret a placeholder and every opt-in on: what the captured program read."""
-    stack = yaml.safe_load(_DEV_STACK.read_text('utf-8'))
+def stack_files() -> list[pathlib.Path]:
+    """Every stack's config file in the project."""
+    return sorted(_INFRA.glob('Pulumi.*.yaml'))
+
+
+def check_switches_classified(config: Mapping[str, object], source: str) -> None:
+    """Refuse a stack switch that is neither an opt-in nor a known non-grant switch.
+
+    A switch is a value YAML reads as a boolean, or a string Pulumi reads as one (`true`, `false`, `True`,
+    `False`), which is how the stack files quote theirs. Classifying it decides whether dev must turn it on
+    and prod keep it off.
+
+    Raises:
+        ValueError: Naming the first unclassified switch and both sets it could join.
+    """
+    for key, value in config.items():
+        # Pulumi's boolean config reads both spellings.
+        is_switch = isinstance(value, bool) or value in ('true', 'false', 'True', 'False')
+        if is_switch and key not in OPT_INS | NON_GRANT_SWITCHES:
+            raise ValueError(
+                f'{source}: {key} is a switch in neither capture.OPT_INS {sorted(OPT_INS)} nor '
+                f'capture.NON_GRANT_SWITCHES {sorted(NON_GRANT_SWITCHES)}; add it to the set it belongs to'
+            )
+
+
+def stack_config(stack: str) -> dict[str, str]:
+    """A stack's config as the program reads it, every secret a placeholder.
+
+    Raises:
+        ValueError: See `check_switches_classified`.
+    """
+    file = _INFRA / f'Pulumi.{stack}.yaml'
+    raw = yaml.safe_load(file.read_text('utf-8'))['config']
+    check_switches_classified(raw, file.name)
     config = {}
-    for key, value in stack['config'].items():
+    for key, value in raw.items():
         if isinstance(value, dict):
             if set(value) != {'secure'}:
-                raise ValueError(f'{key}: unexpected structured config')
+                raise ValueError(f'{key}: unexpected structured config in {file.name}')
             config[key] = 'mock-secret'
         elif isinstance(value, bool):
-            if key not in _OPT_INS:
-                raise ValueError(f'{key}: a stack boolean the capture does not know to force on')
-            config[key] = 'true'
+            config[key] = str(value).lower()
         else:
             config[key] = str(value)
     return config
+
+
+def check_bindings_are_capabilities(program: Capture) -> None:
+    """Refuse an IAM binding that is not a child of a `grants` capability (docs/design/deployment.md).
+
+    Raises:
+        ValueError: If the run registered no binding at all, or names every binding outside a capability.
+    """
+    if not program.bindings:
+        raise ValueError('the program registered no IAM binding; the mocks are not running it')
+    capabilities = {
+        name
+        for name, member in inspect.getmembers(grants, inspect.isclass)
+        if issubclass(member, pulumi.ComponentResource) and not name.startswith('_')
+    }
+    loose = [binding.urn for binding in program.bindings if binding.capability not in capabilities]
+    if loose:
+        raise ValueError('IAM bindings outside a grants.* capability:\n' + '\n'.join(loose))
 
 
 def urn_type_chain(urn: str) -> list[str]:
@@ -285,12 +338,12 @@ def _workloads(resources: dict[str, mocks.MockMonitor.ResourceRegistration]) -> 
     return workloads
 
 
-def capture_program() -> Capture:
-    """Run the program once under mocks and return everything it registered.
+def capture_program(stack: str) -> Capture:
+    """Run the program once under mocks against `stack`'s config and return everything it registered.
 
     `set_mocks` configures Pulumi's process-global runtime, so one process runs one program.
     """
-    config = dev_stack_config()
+    config = stack_config(stack)
     program_mocks = _Mocks(config['gcp:project'])
     monitor = _Monitor(program_mocks)
     # The project name is the namespace `pulumi.Config()` reads `themis:*` keys under.
@@ -306,7 +359,7 @@ def capture_program() -> Capture:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        pulumi.runtime.set_mocks(program_mocks, project=project, stack='dev', monitor=monitor)
+        pulumi.runtime.set_mocks(program_mocks, project=project, stack=stack, monitor=monitor)
         pulumi.runtime.set_all_config(config)
         run()
     finally:
@@ -314,3 +367,8 @@ def capture_program() -> Capture:
         loop.close()
     resources = monitor.resources
     return Capture(config['gcp:project'], resources, _bindings(resources), _workloads(resources))
+
+
+if __name__ == '__main__':
+    # One stack per process: the per-stack check runs each stack file this way.
+    check_bindings_are_capabilities(capture_program(sys.argv[1]))

@@ -42,6 +42,20 @@ config:
   # The project's only public-read bucket, for PR review images. Opt-in per stack:
   # an environment that doesn't review code has no reason to expose one.
   themis:enablePrScreenshotBucket: "true"
+  # The identity the repository's Claude Code workflows write their token usage as; any run of the repository may take
+  # it, and every writer reports here.
+  themis:enableCiTelemetry: "true"
+  # Shared-core, single zone: dev carries no data worth an SLA. db-f1-micro admits 25 connections, which the
+  # instance caps below share.
+  themis:sqlTier: db-f1-micro
+  themis:sqlAvailabilityType: ZONAL
+  themis:sqlMaintenanceWindow: any
+  # Everything scales to zero; the first request after idle waits for a cold start.
+  themis:authMinInstances: "0"
+  themis:authMaxInstances: "3"
+  themis:webMinInstances: "0"
+  themis:webMaxInstances: "2"
+  themis:evidenceMaxInstances: "2"
   themis:semanticScholarApiKey:
     secure: v1:R9mnb/QAg1sWkuIY:Qa4GUnAvokKtLhkzwa1BRjuQlfbPiN6O0EGVvzK0XYNPQBYrKeDyB4UX8aB23eRebq232Hyju/xDX0OJQpvCzc4d9ag=
   themis:anthropicEnvironmentKey:

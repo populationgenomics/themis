@@ -25,9 +25,6 @@ import pulumi_gcp as gcp
 
 from themis_infra import cloud_run, grants, secrets, sql
 
-# Each instance pools up to 4 Cloud SQL connections, so 3 hold at most 12 of db-f1-micro's 25.
-_MAX_INSTANCES = 3
-
 _SERVICE_NAME = 'themis-auth'
 # The secret the site writes the ACL into, in the stack's own project.
 ACL_SECRET_ID = 'acl'  # noqa: S105 — the secret's name, not its value
@@ -196,6 +193,8 @@ class AuthService(pulumi.ComponentResource):
         acl_secret: AclSecret,
         acl_staleness_limit_seconds: int,
         trace_sample_ratio: float,
+        min_instances: int,
+        max_instances: int,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         """Provision the runtime SA's DB login and the service.
@@ -213,6 +212,9 @@ class AuthService(pulumi.ComponentResource):
             acl_staleness_limit_seconds: How long the service answers from its last good copy of the ACL while no
                 new copy loads, before it refuses every request.
             trace_sample_ratio: The fraction of requests traced.
+            min_instances: Instances kept warm while idle.
+            max_instances: The instance cap; each instance pools its own Cloud SQL connections
+                (themis/services/auth/cloudsql.py).
             opts: Resource options (dependency wiring).
 
         Raises:
@@ -258,10 +260,8 @@ class AuthService(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
-                # Scale to zero — idle cost ≈ 0 at the spike's traffic. The cap bounds the
-                # connections the auth pool can hold (themis/services/auth/cloudsql.py).
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
-                    min_instance_count=0, max_instance_count=_MAX_INSTANCES
+                    min_instance_count=min_instances, max_instance_count=max_instances
                 ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(

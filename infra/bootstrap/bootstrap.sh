@@ -165,8 +165,8 @@ done
 gcloud iam service-accounts add-iam-policy-binding "${PREVIEW_SA}" --project="${PROJECT}" \
   --role=roles/iam.workloadIdentityUser \
   --member="principalSet://iam.googleapis.com/${POOL_PATH}/attribute.event_name/pull_request" >/dev/null
-# The third account bound to this pool, the CI telemetry writer any run of the repo may take,
-# is not needed before Pulumi runs: themis_infra/ci_telemetry.py creates and binds it.
+# The third account bound to this pool, the CI telemetry writer any run of the repo may take, exists
+# only in a stack that opts in, and not before Pulumi runs: themis_infra/ci_telemetry.py creates and binds it.
 
 # create-oidc no-ops on an existing provider, so the mapping and condition are
 # re-applied here — otherwise an edit to either never reaches an environment

@@ -21,7 +21,7 @@ from themis_infra import capture, cost_report
 
 def _rendered() -> str:
     """The rendering as the dev stack's program emits it, its freshness tolerance from the stack's config."""
-    return cost_report.report_json(freshness_minutes=int(capture.dev_stack_config()['themis:costFreshnessMinutes']))
+    return cost_report.report_json(freshness_minutes=int(capture.stack_config('dev')['themis:costFreshnessMinutes']))
 
 
 def test_the_rendered_queries_round_trip() -> None:

@@ -17,6 +17,7 @@ from themis_infra import (
     auth,
     baseline,
     ci_telemetry,
+    cloud_run,
     clu,
     convert,
     cost,
@@ -133,6 +134,35 @@ trace_sample_ratio = config.require_float('traceSampleRatio')
 # Whether the full-text sweep runs on its schedule. Required, not defaulted: a pass can ask for paid transcriptions
 # across the whole corpus, so a stack decides.
 work_sweep_scheduled = config.require_bool('workSweepScheduled')
+# Whether the CI telemetry account exists (ci_telemetry.py). Required, not defaulted: any run of the repository may take
+# it, so a stack decides whether to offer one.
+ci_telemetry_enabled = config.require_bool('enableCiTelemetry')
+# The Cloud SQL instance's machine tier, its availability and when it may restart for maintenance. Required, not
+# defaulted: they set the environment's cost and how it fails, so a stack decides.
+sql_tier = config.require('sqlTier')
+sql_availability_type = config.require('sqlAvailabilityType')
+sql_maintenance_window = sql.parse_maintenance_window(config.require('sqlMaintenanceWindow'))
+# Instances kept warm and instance caps. Each instance of the auth service and the web app pools its own Cloud SQL
+# connections and each evidence instance opens one per worker thread, so their caps together must fit the tier's
+# connection limit. Required, not defaulted: both trade cost against latency or capacity, so a stack decides.
+auth_min_instances = config.require_int('authMinInstances')
+auth_max_instances = config.require_int('authMaxInstances')
+web_min_instances = config.require_int('webMinInstances')
+web_max_instances = config.require_int('webMaxInstances')
+evidence_max_instances = config.require_int('evidenceMaxInstances')
+cloud_run.check_instance_counts(
+    min_key='themis:authMinInstances',
+    min_instances=auth_min_instances,
+    max_key='themis:authMaxInstances',
+    max_instances=auth_max_instances,
+)
+cloud_run.check_instance_counts(
+    min_key='themis:webMinInstances',
+    min_instances=web_min_instances,
+    max_key='themis:webMaxInstances',
+    max_instances=web_max_instances,
+)
+cloud_run.check_instance_counts(max_key='themis:evidenceMaxInstances', max_instances=evidence_max_instances)
 if not 0 <= trace_sample_ratio <= 1:
     raise ValueError(f'themis:traceSampleRatio must be from 0 to 1, got {trace_sample_ratio}')
 
@@ -166,6 +196,9 @@ base = baseline.Baseline(project=project, region=region)
 database = sql.CloudSqlDatabase(
     project=project,
     region=region,
+    tier=sql_tier,
+    availability_type=sql_availability_type,
+    maintenance_window=sql_maintenance_window,
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 # The CI deploy SA as the migrations' owner — a Cloud SQL IAM DB user distinct
@@ -220,6 +253,8 @@ auth_service = auth.AuthService(
     acl_secret=acl_secret,
     acl_staleness_limit_seconds=acl_staleness_limit_seconds,
     trace_sample_ratio=trace_sample_ratio,
+    min_instances=auth_min_instances,
+    max_instances=auth_max_instances,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
 # Every caller of an internal-ingress service attaches here (Direct VPC egress): the web tier and the data-plane
@@ -322,6 +357,7 @@ evidence_service = evidence.EvidenceService(
     convert_worker_url=convert_worker.url,
     convert_invoker_sa_email=convert_invoker.service_account_email,
     openalex_api_key=openalex,
+    max_instances=evidence_max_instances,
     opts=pulumi.ResourceOptions(
         depends_on=[base, database, services_net, fulltext, resources, convert_queue, convert_worker, convert_invoker]
     ),
@@ -589,6 +625,8 @@ site = web.WebService(
     anthropic_workspace_id=anthropic_workspace_id,
     project_number=project_number,
     trace_sample_ratio=trace_sample_ratio,
+    min_instances=web_min_instances,
+    max_instances=web_max_instances,
     iap_service_agent=base.iap_service_agent,
     vpc_network=services_net.network.id,
     vpc_subnetwork=services_net.subnetwork.id,
@@ -764,11 +802,13 @@ cost_exporter = cost.CostExporter(
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 # The identity the repository's Claude Code workflows report each run's token usage and cost as.
-ci_telemetry_account = ci_telemetry.CiTelemetryAccount(
-    project=project,
-    project_number=project_number,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
-)
+if ci_telemetry_enabled:
+    ci_telemetry_account = ci_telemetry.CiTelemetryAccount(
+        project=project,
+        project_number=project_number,
+        opts=pulumi.ResourceOptions(depends_on=[base]),
+    )
+    pulumi.export('ci_telemetry_sa_email', ci_telemetry_account.service_account_email)
 # What reads the spend metrics: the dashboard over every producer, and the policies that page on them. Both are
 # Monitoring resources the deploy SA edits under `roles/monitoring.editor`.
 spend_dashboard = cost_dashboard.CostDashboard(
@@ -893,5 +933,4 @@ pulumi.export('cost_exporter_sa_email', cost_exporter.service_account_email)
 pulumi.export('cost_exporter_sa_unique_id', cost_exporter.service_account_unique_id)
 pulumi.export('cost_exporter_job_name', cost_exporter.job_name)
 # The account the Claude Code workflows' auth step names (.github/workflows/internal-*.yml).
-pulumi.export('ci_telemetry_sa_email', ci_telemetry_account.service_account_email)
 pulumi.export('cost_dashboard_url', spend_dashboard.console_url)

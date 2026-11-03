@@ -269,8 +269,8 @@ uv run --group dataflow python -m tools.litcache.launch_dataflow \
 Two things bound `--max-workers`. The write stage's OA fetches leave every worker in parallel, so the upstream sources
 see the fan-out. And each worker process holds one crosswalk connection for its lifetime
 ([`ingest_beam._MintConnection`](../../themis/litcache/ingest_beam.py)) — two per `n1-standard-2` — against a shared
-instance on the smallest tier ([`sql.py`](../../infra/themis_infra/sql.py); `db-f1-micro` allows 25) that the services
-also connect to. The resolution stage is unaffected by the flag (below).
+instance on the stack's tier (`themis:sqlTier` in its stack file; `db-f1-micro` allows 25) that the services also
+connect to. The resolution stage is unaffected by the flag (below).
 
 ### Watching it
 

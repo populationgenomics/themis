@@ -35,6 +35,29 @@ _STARTUP_BUDGET_SECONDS = 60
 _MAX_STARTUP_BUDGET_SECONDS = 600
 
 
+def check_instance_counts(
+    *, max_key: str, max_instances: int, min_key: str | None = None, min_instances: int = 0
+) -> None:
+    """Refuse a stack's instance counts for one service that Cloud Run would reject.
+
+    Args:
+        max_key: The config key the cap came from, for the error.
+        max_instances: The instance cap.
+        min_key: The config key the warm minimum came from, or None for a service that always scales to zero.
+        min_instances: The warm minimum.
+
+    Raises:
+        ValueError: If the minimum is negative, the cap is below one, or the minimum exceeds the cap.
+    """
+    if min_key is not None and min_instances < 0:
+        raise ValueError(f'{min_key} must not be negative, got {min_instances}')
+    # A cap of 0 is an unset field to the provider, and Cloud Run reads an unset cap as its default of 100.
+    if max_instances < 1:
+        raise ValueError(f'{max_key} must be at least 1, got {max_instances}')
+    if min_instances > max_instances:
+        raise ValueError(f'{min_key} ({min_instances}) must not exceed {max_key} ({max_instances})')
+
+
 def service_url(*, name: str, project_number: str, region: str) -> str:
     """The URL Cloud Run serves the service `name` at, built from the name, project number and region."""
     return f'https://{name}-{project_number}.{region}.run.app'
