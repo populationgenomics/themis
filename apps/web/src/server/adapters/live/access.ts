@@ -9,8 +9,11 @@ import { idTokenInterceptor } from "./id-token";
 // What a person may reach, as the auth service reads it from the ACL. The web tier calls as
 // itself, with its own ID token and no claim: it authenticated the person, and relays nobody's.
 
-/** How long one GetAccess may take. It sits on every request, twice, so a slow answer is a fault. */
-export const GET_ACCESS_DEADLINE_MS = 5_000;
+/**
+ * How long one GetAccess may take: long enough for the auth service to start from zero instances,
+ * which takes several seconds, so the first request after an idle spell waits rather than fails.
+ */
+export const GET_ACCESS_DEADLINE_MS = 30_000;
 
 export class LiveAccess implements AccessPort {
   constructor(
