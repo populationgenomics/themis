@@ -1,0 +1,52 @@
+# Prod environment, in cpg-themis-prod; docs/design/infrastructure.md says what it sets
+# differently from dev. Every value reading `placeholder` is one prod does not have yet
+# (the OAuth client, the prod Anthropic workspace with its identities and agent, the prod
+# Slack app, the literature API keys); docs/runbooks/fresh-environment.md says which must
+# be real before which `up`. Never copy an Anthropic id or a secret from Pulumi.dev.yaml.
+secretsprovider: gcpkms://projects/cpg-themis-prod/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi
+encryptedkey: CiQA5bDmk3dOwfxEI7KtGiasAU9K+RslRPC1a3u+MZsrbToPcf4SSQAE9QQEMhwhvla42enjcgB/zmTbONTPnhXxy5TPYIKgL/e1R2v0Vmod+ypzfcznsYyKMJKorFuCZSuPgzlYRjhPzXpucQ7072Q=
+config:
+  gcp:project: cpg-themis-prod
+  gcp:region: australia-southeast1
+  themis:domain: themis.populationgenomics.org.au
+  themis:aclWriter: pulumi@cpg-common.iam.gserviceaccount.com
+  themis:aclStalenessLimitSeconds: "1800"
+  # Shared with dev: the same operators administer both projects (docs/design/access-control.md).
+  themis:cluGroup: themis-clu@populationgenomics.org.au
+  themis:cluDerivesSessionTokens: "false"
+  themis:traceSampleRatio: "1.0"
+  themis:workSweepScheduled: "false"
+  themis:enablePrScreenshotBucket: "false"
+  # Starting at dev's tuning until prod's own spend has a baseline.
+  themis:costSpikeAlertCents: "10000"
+  themis:costSpikeWindowMinutes: "30"
+  themis:costFreshnessMinutes: "25"
+  themis:anthropicOrganizationId: e10fa9c3-34d4-42e7-a1ac-1d13dc023d88
+  themis:iapOauthClientId: placeholder
+  themis:anthropicEnvironmentId: placeholder
+  themis:anthropicAgentId: placeholder
+  themis:anthropicFederationRuleId: placeholder
+  themis:anthropicServiceAccountId: placeholder
+  themis:anthropicWorkspaceId: placeholder
+  themis:anthropicWorkerFederationRuleId: placeholder
+  themis:anthropicWorkerServiceAccountId: placeholder
+  themis:anthropicCostExporterFederationRuleId: placeholder
+  themis:anthropicCostExporterServiceAccountId: placeholder
+  themis:anthropicDeployFederationRuleId: placeholder
+  themis:anthropicDeployServiceAccountId: placeholder
+  themis:slackChannel: placeholder
+  themis:slackChannelId: placeholder
+  themis:iapOauthClientSecret:
+    secure: v1:WWfHhS1GsmV2Vscm:LRHevnMG5K/myGDAhMYkw98R3Q/nNHj4GRuO
+  themis:semanticScholarApiKey:
+    secure: v1:ELgZYKvLGHuPZY4w:/+Mzzy/dg4RmXns9qnZ999T2HXsk3OK3KPiP
+  themis:openalexApiKey:
+    secure: v1:kLjJP/dBsWkc0ScB:paW1YXWWGB9/zW6QojJXEazLYAKFNG5p0MHS
+  themis:anthropicEnvironmentKey:
+    secure: v1:rinbxh5rfjS+cus3:OIBQ++eygVwFmaM/keGuga5GVsoutGP4zeZO
+  themis:anthropicWebhookSigningKey:
+    secure: v1:o+Rus9vsaX4IofVT:husoPxXa0/9XKRrZsTKZnFlMz+xBu7oPemcS
+  themis:slackBotToken:
+    secure: v1:q37qt+NMKyn58ZcC:ahU1oiAkCVZl9TfTxYlhAjVbZK9antVwi22I
+  themis:anthropicAgentModelId:
+    secure: v1:LWn58HO0J+eyGLLt:2wlLz/ei8TnO7RdbA6XWH8PFRq85uOud8UAo

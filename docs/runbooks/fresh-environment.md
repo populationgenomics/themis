@@ -200,6 +200,18 @@ points a name at an IP; a CNAME can't). The Google-managed TLS certificate stays
 resolves, then goes `ACTIVE` (minutes to ~an hour). The IP is `protect`ed and stable, so it's safe to hand out before
 the cert is live.
 
+The address depends on nothing else in the program, so it can be reserved right after bootstrap and the stack's
+`stack init`, long before the first bring-up, which lets the DNS request run in parallel. The program is still evaluated
+in full, so every image override has to be set even though no service is created:
+
+```sh
+for v in CONVERT_WORKER WEB AUTH HELLO GENE_DISEASE_REFRESH DISPATCHER SANDBOX_WORKER EVIDENCE SHEAF COST_EXPORTER; do
+  export "THEMIS_${v}_IMAGE=gcr.io/cloudrun/hello"
+done
+pulumi up --stack <env> --target 'urn:pulumi:<env>::themis::gcp:compute/globalAddress:GlobalAddress::themis-ip'
+gcloud compute addresses describe themis-ip --global --project=<project> --format='value(address)'
+```
+
 ## 4. Hand off to CI
 
 Once bootstrap + the first bring-up are done, CI owns deploys: PRs get a read-only preview comment; `deploy` builds the

@@ -14,9 +14,10 @@ The web tier attaches to the services network with Direct VPC egress, because th
 auth, evidence and sheaf services it calls take only internal traffic.
 
 The load balancer needs a stable address before DNS can point at it, so the
-component reserves a global static IP and exposes it as `ip_address`; the
-hostname's A record is added out of band (see ../README.md). Until the record
-resolves, the managed certificate stays PROVISIONING.
+environment's global static IP is reserved on its own (`reserve_address`) and
+handed to the component, which exposes it as `ip_address`; the hostname's A
+record is added out of band (see ../README.md). Until the record resolves, the
+managed certificate stays PROVISIONING.
 """
 
 from __future__ import annotations
@@ -122,6 +123,33 @@ def check_routes(routes: Sequence[Route | GrpcRoute]) -> None:
         raise ValueError(f'exact route paths under a gRPC route prefix: {shadowed}')
 
 
+def reserve_address(*, project: str) -> gcp.compute.GlobalAddress:
+    """Reserve the environment's global static IP, which the hostname's A record points at.
+
+    It has no dependency on any other resource in the program (the Compute API is enabled by
+    bootstrap), so a fresh environment can reserve it with a targeted `up` before anything else
+    exists, and hand the IP to DNS early.
+    """
+    # The A record points here, so the IP must stay constant across deploys: `protect` turns an
+    # accidental destroy or replace into a loud error, and the explicit name lets the address be
+    # recovered by `pulumi import` if state is ever lost. The alias maps the URN the address has as
+    # a child of the web service onto this one, so a stack whose state holds it there renames the
+    # entry rather than recreating the address.
+    return gcp.compute.GlobalAddress(
+        'themis-ip',
+        project=project,
+        name='themis-ip',
+        address_type='EXTERNAL',
+        opts=pulumi.ResourceOptions(
+            protect=True,
+            aliases=[
+                f'urn:pulumi:{pulumi.get_stack()}::{pulumi.get_project()}::'
+                'themis:infra:WebService$gcp:compute/globalAddress:GlobalAddress::themis-ip'
+            ],
+        ),
+    )
+
+
 class WebService(pulumi.ComponentResource):
     """Cloud Run web service with IAP, fronted by an external HTTPS LB.
 
@@ -149,6 +177,7 @@ class WebService(pulumi.ComponentResource):
         project: str,
         region: str,
         domain: str,
+        address: gcp.compute.GlobalAddress,
         image: pulumi.Input[str],
         sql_instance: gcp.sql.DatabaseInstance,
         sql_connection_name: pulumi.Input[str],
@@ -342,6 +371,7 @@ class WebService(pulumi.ComponentResource):
             project=project,
             region=region,
             domain=domain,
+            address=address,
             routes=routes,
             child=child,
         )
@@ -364,28 +394,15 @@ class WebService(pulumi.ComponentResource):
         project: str,
         region: str,
         domain: str,
+        address: gcp.compute.GlobalAddress,
         routes: Sequence[Route | GrpcRoute],
         child: pulumi.ResourceOptions,
     ) -> pulumi.Output[str]:
         """Build the external HTTPS load balancer chain.
 
         Returns:
-            The reserved global IP.
+            The address's IP.
         """
-        # The environment's DNS A record (added out of band) points at this IP,
-        # so it must stay constant across deploys. `protect` makes Pulumi refuse
-        # to delete it — turning an accidental destroy or replace into a loud
-        # error rather than a silent address swap — and the explicit name lets
-        # it be recovered by `pulumi import` if state is ever lost. None of its
-        # replace-triggering fields change on a normal `up`/`refresh`.
-        address = gcp.compute.GlobalAddress(
-            f'{name}-ip',
-            project=project,
-            name=f'{name}-ip',
-            address_type='EXTERNAL',
-            opts=pulumi.ResourceOptions.merge(child, pulumi.ResourceOptions(protect=True)),
-        )
-
         neg = gcp.compute.RegionNetworkEndpointGroup(
             f'{name}-neg',
             project=project,

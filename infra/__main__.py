@@ -568,6 +568,7 @@ site = web.WebService(
     project=project,
     region=region,
     domain=domain,
+    address=web.reserve_address(project=project),
     image=_image(_WEB_IMAGE_ENV, lambda: _live_service_image('themis-web')),
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
