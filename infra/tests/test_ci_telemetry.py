@@ -40,7 +40,8 @@ def test_only_the_repository_may_take_the_account(program: capture.Capture) -> N
 
 def _steps(workflow: pathlib.Path) -> list[dict[str, object]]:
     jobs = yaml.safe_load(workflow.read_text('utf-8'))['jobs']
-    return [step for job in jobs.values() for step in job['steps']]
+    # A job that calls a reusable workflow (`uses:` at job level) has no steps of its own.
+    return [step for job in jobs.values() if 'uses' not in job for step in job['steps']]
 
 
 def _uses(step: dict[str, object], action: str) -> bool:

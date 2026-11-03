@@ -199,6 +199,11 @@ if [[ -n "$(gcloud compute networks list --project="${PROJECT}" --filter=name=de
   echo "The default network still exists in ${PROJECT}; re-run bootstrap.sh to delete it." >&2
   exit 1
 fi
+# Enabling Compute grants its default service account Editor on the whole project. Every Themis workload runs as an
+# account of its own, so nothing needs it.
+delete_if_present gcloud projects remove-iam-policy-binding "${PROJECT}" \
+  --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" --role=roles/editor \
+  --condition=None
 
 cat <<EOF
 
@@ -208,6 +213,5 @@ Next (first bring-up — see docs/runbooks/fresh-environment.md):
   cd infra
   pulumi login "gs://${STATE_BUCKET}"
   pulumi stack init ${PROJECT##*-}    # 'dev' / 'prod' from the project suffix
-  THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up
-  pulumi stack output lb_ip           # hand this IP to IT for the A record
+  uv run python -m tools.bring_up --project ${PROJECT}
 EOF

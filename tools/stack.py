@@ -14,12 +14,7 @@ import yaml
 _INFRA_DIR = pathlib.Path(__file__).resolve().parents[1] / 'infra'
 
 
-def config(project: str, *, infra_dir: pathlib.Path = _INFRA_DIR) -> dict[str, object]:
-    """The `config` mapping of the one stack file whose `gcp:project` is `project`.
-
-    Raises:
-        ValueError: If no stack file, or more than one, names `project`.
-    """
+def _stack_file(project: str, infra_dir: pathlib.Path) -> tuple[pathlib.Path, dict[str, object]]:
     found: list[tuple[pathlib.Path, dict[str, object]]] = []
     for path in sorted(infra_dir.glob('Pulumi.*.yaml')):
         document = yaml.safe_load(path.read_text('utf-8'))
@@ -29,7 +24,26 @@ def config(project: str, *, infra_dir: pathlib.Path = _INFRA_DIR) -> dict[str, o
     if len(found) != 1:
         named = [str(path) for path, _ in found]
         raise ValueError(f'expected one Pulumi stack file in {infra_dir} with gcp:project {project!r}, found {named}')
-    return found[0][1]
+    return found[0]
+
+
+def name(project: str, *, infra_dir: pathlib.Path = _INFRA_DIR) -> str:
+    """The name of the stack deployed in `project`: `prod` for `Pulumi.prod.yaml`.
+
+    Raises:
+        ValueError: If no stack file, or more than one, names `project`.
+    """
+    path, _ = _stack_file(project, infra_dir)
+    return path.name.removeprefix('Pulumi.').removesuffix('.yaml')
+
+
+def config(project: str, *, infra_dir: pathlib.Path = _INFRA_DIR) -> dict[str, object]:
+    """The `config` mapping of the one stack file whose `gcp:project` is `project`.
+
+    Raises:
+        ValueError: If no stack file, or more than one, names `project`.
+    """
+    return _stack_file(project, infra_dir)[1]
 
 
 def value(project: str, key: str, *, infra_dir: pathlib.Path = _INFRA_DIR) -> str:

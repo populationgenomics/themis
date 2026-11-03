@@ -8,6 +8,8 @@ on:
     types: [opened, ready_for_review, synchronize]
   push:
     branches: [main]
+  # The deploy workflow calls this before a prod deploy, on the commit it deploys (deploy.yml).
+  workflow_call:
 
 jobs:
   web:

@@ -58,50 +58,59 @@ prints are already wired into `.github/workflows/{deploy,preview}.yml`.
 
 ## 2. First bring-up (once per environment)
 
-The registry is created by the program, so the first `pulumi up` uses a public placeholder image — that one `up` creates
-the registry *and* brings the edge up running the placeholder; later deploys push real images to that registry.
+A fresh environment comes up through `tools.bring_up`, run once by an Owner from a laptop. The order it follows, and
+why, is in [`deployment.md`](../design/deployment.md#bringing-up-a-fresh-environment). In short: the registry and the
+ACL secret first, the images built by the deploy workflow dispatched in its images-only mode, the gene-disease dumps
+written once, the site's ACL waited for, then the full `up` as the Owner, and a full deploy through the workflow, which
+applies the migrations. Every step checks its own result first, so a run that stops resumes where it stopped. The tool
+refuses a stack the deploy workflow has already updated, which is every environment past its first bring-up.
 
-The auth service refuses to start without a valid ACL, and the secret the site writes the ACL into is one the program
-creates, so the bring-up runs in three steps. A first `up` limited to the project's baseline, the auth service's account
-and the ACL secret creates the secret, the account, and the grants on the secret: the site's writer may manage and read
-its versions, and the account may read them. The site then deploys and adds the ACL's first version. Only then does the
-full `up` below run, so the auth service finds a valid ACL when it first starts, and its read grant has long applied.
+Before the run, every key the program reads must hold its real value except those
+[§3](#3-values-that-only-exist-after-the-first-up) lists: `preview` stops at the first `config.require*` the stack does
+not satisfy. These come from outside the repo:
 
-A few of the required keys name values this same `up` produces, or registrations that can only follow it, so they carry
-placeholders for this one run — [§3](#3-values-that-only-exist-after-the-first-up). Every other key the program reads
-must already hold its real value: `preview` stops at the first `config.require*` the stack does not satisfy, before
-anything is created. Three of them are external registrations. One is the OAuth client, `themis:iapOauthClientId` and
-`themis:iapOauthClientSecret`, from the prerequisites above. `themis:openalexApiKey` is the API key of an OpenAlex
-account, which every litcache lookup of a work sends; set it with `pulumi config set --secret themis:openalexApiKey`.
-The third is `themis:slackBotToken`, the bot token of the Slack app the spend monitor's notifications and morning report
-post through ([`cost-monitoring.md`](../design/cost-monitoring.md)). Create the app in the Slack workspace with the bot
-scopes `chat:write` and `files:write` (the report's chart is a file upload), install it, invite it to the channel
-`themis:slackChannel` names — a file upload needs the bot in the channel whatever the channel's visibility — set
-`themis:slackChannelId` to that channel's id, and set the token with `pulumi config set --secret themis:slackBotToken`.
+- The OAuth client IAP signs people in through, `themis:iapOauthClientId` and `themis:iapOauthClientSecret`
+  ([`access-control.md`](access-control.md)). The tool stops before the full `up` while the client id is a placeholder.
+- The Anthropic workspace and the deploy account's svac and rule (round 1 of [`claude-api-wif.md`](claude-api-wif.md)),
+  plus the self-hosted environment and its key, the agent, and the webhook. The webhook's URL,
+  `https://<domain>/webhooks/anthropic`, is known as soon as the hostname is chosen, so it can be registered before the
+  run; its signing key goes into `themis:anthropicWebhookSigningKey`.
+- `themis:openalexApiKey` and `themis:semanticScholarApiKey`, the literature APIs' keys; set each with
+  `pulumi config set --secret`.
+- The environment's Slack app and its two channels: `themis:slackChannel` and `themis:slackChannelId` for spend,
+  `themis:alertsSlackChannel` for operational alerts, the bot token as `themis:slackBotToken`. The app needs the bot
+  scopes `chat:write` and `files:write` (the morning report uploads its chart), and the bot has to be invited to both
+  channels, since Slack refuses a post from a bot that is not in the channel and Cloud Monitoring does not report it.
+- The site's ACL config for the environment, naming `projects/<project>/secrets/acl` as its target. The site can deploy
+  it as soon as the tool's first step has created the secret; the tool waits for the first version.
 
 ```sh
 cd infra
-pulumi login gs://cpg-themis-dev-pulumi-state
-# Pass the secrets provider explicitly at init — `stack init` does not read it
-# from the committed Pulumi.dev.yaml; without it Pulumi falls back to passphrase.
-pulumi stack init dev \
-  --secrets-provider="gcpkms://projects/cpg-themis-dev/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi"
-# The ACL secret and the auth service's account first, with the baseline that enables Secret Manager; pass the same
-# image overrides as the full up.
-THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up \
-  --target 'urn:pulumi:dev::themis::themis:infra:Baseline**' \
-  --target 'urn:pulumi:dev::themis::themis:infra:AclSecret**' \
-  --target 'urn:pulumi:dev::themis::gcp:serviceaccount/account:Account::themis-auth-runtime'
-pulumi stack output acl_secret   # projects/cpg-themis-dev/secrets/acl
-# …the site deploys and adds the ACL's first version; check it is there:
-gcloud secrets versions list acl --project cpg-themis-dev
-THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi preview   # review the plan
-THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up
+pulumi login gs://cpg-themis-prod-pulumi-state
+# Pass the secrets provider explicitly at init: `stack init` does not read it from the committed stack file, and
+# without it Pulumi falls back to a passphrase.
+pulumi stack init prod \
+  --secrets-provider="gcpkms://projects/cpg-themis-prod/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi"
+cd ..
+uv run python -m tools.bring_up --project cpg-themis-prod
 ```
 
-An existing environment whose stack does not yet hold the ACL secret takes the same three steps, with the targeted `up`
-limited to the last two targets. Its baseline exists already, and targeting it would make Pulumi stop on any resource
-that depends on it and that the program no longer declares.
+The images-only and the full deploy are dispatched on `main`, so the tool needs `gh` signed in as someone who may
+dispatch workflows, and it refuses to run from anything but a clean checkout of `main`'s head: the program it applies
+and the images the workflow builds come from the same commit. Prod is deployed only by dispatching `deploy.yml` on
+`main`; a merge does not deploy it. Every prod run, the images-only one included, first runs lint, the tests, the web
+checks and both schema checks on that commit, and deploys only if they pass, so a dispatch takes as long as the slowest
+of them on top of the deploy.
+
+An existing environment whose stack does not yet hold the ACL secret takes a targeted `up` of the secret and the auth
+service's account alone, then waits for the site's first version before the next deploy. Its baseline exists already,
+and targeting it would make Pulumi stop on any resource that depends on it and that the program no longer declares:
+
+```sh
+THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up \
+  --target 'urn:pulumi:dev::themis::themis:infra:AclSecret**' \
+  --target 'urn:pulumi:dev::themis::gcp:serviceaccount/account:Account::themis-auth-runtime'
+```
 
 ### When the ACL secret is re-created
 
@@ -119,12 +128,13 @@ the mirror). Requires the operator KMS grant from the prerequisites above.
 Some of what the program requires, the program itself produces — circular by construction, so a fresh environment cannot
 declare it up front. The first `up` runs against placeholders; each real value is then read from a stack output (or
 registered against one) and set, and a second `up` applies it. What each one feeds is inert or fails loudly until then —
-the table says which — and on a first bring-up neither costs anything: the edge is still serving the placeholder image.
+the table says which. On a first bring-up nobody uses the environment yet, so none of it costs anything.
 
-| Key                                                                                            | Real value                                                                                                                                                   | Inert until set                                                                                    |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| `themis:anthropicFederationRuleId`                                                             | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B                | The BFF cannot mint a Managed-Agents token.                                                        |
-| `themis:anthropicCostExporterServiceAccountId`, `themis:anthropicCostExporterFederationRuleId` | The svac and rule registered together against `pulumi stack output cost_exporter_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the cost exporter | The cost exporter fails every scheduled run at the token exchange, so the spend gauge stays empty. |
+| Key                                                                                            | Real value                                                                                                                                                     | Inert until set                                                                                        |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `themis:anthropicFederationRuleId`                                                             | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B                  | The BFF cannot mint a Managed-Agents token.                                                            |
+| `themis:anthropicCostExporterServiceAccountId`, `themis:anthropicCostExporterFederationRuleId` | The svac and rule registered together against `pulumi stack output cost_exporter_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the cost exporter   | The cost exporter fails every scheduled run at the token exchange, so the spend gauge stays empty.     |
+| `themis:anthropicWorkerServiceAccountId`, `themis:anthropicWorkerFederationRuleId`             | The svac and rule registered together against `pulumi stack output convert_worker_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the convert worker | The convert worker fails each paper's transcription at the token exchange, and Cloud Tasks retries it. |
 
 One grant is the site's to make against an account the first `up` creates, and is no stack config at all: read on the
 datasets the ACL names as Projects for `pulumi stack output sandbox_job_sa_email`, the account that mounts their files
@@ -132,9 +142,7 @@ into the agent's sandbox.
 
 Any non-empty string serves as the placeholder; neither the program nor the app parses these beyond requiring them. The
 remaining `themis:anthropic*` ids are set for real from the start: the web app's svac, the org and the workspace are
-Anthropic-side entities that exist before any GCP service account does; `themis:anthropicWorkerFederationRuleId` pins a
-service account hand-created ahead of the program (§ Adopting a service account created ahead of the program), so its
-rule can be registered before the first `up`; and the deploy workflow's svac and rule
+Anthropic-side entities that exist before any GCP service account does; and the deploy workflow's svac and rule
 (`themis:anthropicDeployServiceAccountId`, `themis:anthropicDeployFederationRuleId` —
 [`claude-api-wif.md`](claude-api-wif.md), the deploy workflow) pin the deploy SA, which bootstrap creates, so they too
 precede the first `up`. While either deploy id is a placeholder, the deploy's agent step fails at the token exchange
@@ -144,7 +152,9 @@ after the stack has applied, and the agent's declaration is applied by hand.
 pulumi config set themis:anthropicFederationRuleId fdrl_...   # from the Anthropic console
 pulumi config set themis:anthropicCostExporterServiceAccountId svac_...
 pulumi config set themis:anthropicCostExporterFederationRuleId fdrl_...
-pulumi up
+pulumi config set themis:anthropicWorkerServiceAccountId svac_...
+pulumi config set themis:anthropicWorkerFederationRuleId fdrl_...
+# Commit the stack file, then dispatch deploy.yml on main for the environment.
 ```
 
 Never copy these values from another environment's `Pulumi.<stack>.yaml`. A copied federation rule is pinned to another

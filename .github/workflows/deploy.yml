@@ -1,45 +1,108 @@
 name: deploy
+# tools/bring_up.py finds the run it dispatched by this title.
+run-name: deploy ${{ inputs.environment || 'dev' }}${{ inputs.images_only && ' (images only)' || '' }}
 
-# Deploys to dev: check the migration ledger against this tree, build the service images,
-# push to Artifact Registry, then `pulumi up`, apply migrations, and apply the agent's
-# declaration on the Anthropic side. Two ways in — push `deployed/dev`, or dispatch on
-# `main` — and merging to `main` is neither, so it deploys nothing
-# (docs/design/deployment.md, "Deploy trigger"). Authenticates as the deploy SA via WIF,
-# whose binding admits this workflow read from those two refs; a GitHub ruleset over `deployed/*`
-# bypasses only for the repository-admin role, which is what limits who can deploy
-# unreviewed code. PRs never reach this — they get a read-only preview (preview.yml).
+# Deploys an environment: check the migration ledger against this tree, build the service images,
+# push to the environment's Artifact Registry, then `pulumi up`, apply migrations, and apply the agent's
+# declaration on the Anthropic side (docs/design/deployment.md, "Deploy triggers").
+# - dev: push `deployed/dev`, or dispatch on `main`; merging to `main` is neither, so it deploys nothing.
+# - prod: dispatch on `main` only, and only once lint, tests, web and both schema checks pass on the
+#   commit it deploys (`main`'s required checks are not strict, so two green PRs can merge into a red
+#   `main`). With `images_only` the run builds and pushes the images and stops, the registry-first step
+#   of a first bring-up (tools/bring_up.py); it is gated too, since the bring-up puts those images live.
+#   The check jobs hold no `id-token` permission: this workflow's `workflow_ref` would admit them.
+# Authenticates as the environment's deploy SA via WIF, whose binding admits this workflow read from the
+# refs the environment deploys from; a GitHub ruleset over `deployed/*` bypasses only for the
+# repository-admin role, which is what limits who can deploy unreviewed code to dev. PRs never reach
+# this — they get a read-only preview (preview.yml).
 on:
   push:
     branches: ['deployed/dev']
   workflow_dispatch:
+    inputs:
+      environment:
+        description: The environment to deploy
+        type: choice
+        options: [dev, prod]
+        default: dev
+      images_only:
+        description: Build and push the images, then stop (a first bring-up's registry-first step)
+        type: boolean
+        default: false
 
 concurrency:
-  group: themis-deploy-dev
+  group: themis-deploy-${{ inputs.environment || 'dev' }}
   cancel-in-progress: false
 
 jobs:
+  lint:
+    if: inputs.environment == 'prod'
+    uses: ./.github/workflows/lint.yml
+    permissions:
+      contents: read
+  tests:
+    if: inputs.environment == 'prod'
+    uses: ./.github/workflows/tests.yml
+    permissions:
+      contents: read
+  web:
+    if: inputs.environment == 'prod'
+    uses: ./.github/workflows/web.yml
+    permissions:
+      contents: read
+  schema-compat:
+    if: inputs.environment == 'prod'
+    uses: ./.github/workflows/schema-compat.yml
+    permissions:
+      contents: read
+  schema-freshness:
+    if: inputs.environment == 'prod'
+    uses: ./.github/workflows/schema-freshness.yml
+    permissions:
+      contents: read
+
   deploy:
+    needs: [lint, tests, web, schema-compat, schema-freshness]
     # Never run on the public mirror (themis); the deploy SA's WIF is scoped to
     # themis-internal regardless, but this keeps the gate intrinsic to the
     # workflow rather than relying on Actions being disabled on the mirror.
-    if: github.repository == 'populationgenomics/themis-internal'
+    # The checks run only for prod; dev's are skipped, which must not skip the deploy.
+    if: |
+      !cancelled()
+      && github.repository == 'populationgenomics/themis-internal'
+      && (inputs.environment != 'prod' || (
+        needs.lint.result == 'success' && needs.tests.result == 'success' && needs.web.result == 'success'
+        && needs.schema-compat.result == 'success' && needs.schema-freshness.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     env:
-      IMAGE_PREFIX: australia-southeast1-docker.pkg.dev/cpg-themis-dev/themis
-      PULUMI_BACKEND_URL: gs://cpg-themis-dev-pulumi-state
-      PULUMI_STACK_NAME: dev
+      ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+      IMAGES_ONLY: ${{ inputs.images_only || false }}
     steps:
-      # The dispatch UI offers every ref, but the deploy SA's WIF binding admits
-      # this workflow from only these two — refuse here so a wrong pick fails legibly instead of as
-      # an impersonation error six steps in.
-      - name: Refuse an undeployable ref
-        if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deployed/dev'
+      # The dispatch UI offers every ref, but each deploy SA's WIF binding admits this workflow from
+      # only the refs its environment deploys from — refuse here so a wrong pick fails legibly instead
+      # of as an impersonation error six steps in.
+      - name: Resolve the environment
         run: |
-          echo "::error::deploy runs only on main or deployed/dev; got ${GITHUB_REF}"
-          exit 1
+          case "${ENVIRONMENT}" in
+            dev) PROJECT=cpg-themis-dev; PROJECT_NUMBER=698160839187; REFS='refs/heads/main refs/heads/deployed/dev' ;;
+            prod) PROJECT=cpg-themis-prod; PROJECT_NUMBER=186726836905; REFS='refs/heads/main' ;;
+            *) echo "::error::no environment ${ENVIRONMENT}"; exit 1 ;;
+          esac
+          if [[ " ${REFS} " != *" ${GITHUB_REF} "* ]]; then
+            echo "::error::deploy to ${ENVIRONMENT} runs only on ${REFS}; got ${GITHUB_REF}"
+            exit 1
+          fi
+          {
+            echo "PROJECT=${PROJECT}"
+            echo "WIF_PROVIDER=projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/providers/github"
+            echo "DEPLOY_SA=themis-deploy@${PROJECT}.iam.gserviceaccount.com"
+            echo "IMAGE_PREFIX=australia-southeast1-docker.pkg.dev/${PROJECT}/themis"
+            echo "PULUMI_BACKEND_URL=gs://${PROJECT}-pulumi-state"
+            echo "PULUMI_STACK_NAME=${ENVIRONMENT}"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.2
         with:
@@ -48,9 +111,9 @@ jobs:
       - id: gcp
         uses: google-github-actions/auth@v3
         with:
-          project_id: cpg-themis-dev
-          workload_identity_provider: projects/698160839187/locations/global/workloadIdentityPools/github/providers/github
-          service_account: themis-deploy@cpg-themis-dev.iam.gserviceaccount.com
+          project_id: ${{ env.PROJECT }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
       - uses: google-github-actions/setup-gcloud@v3
       # Installs the CLI only (no command), for the ledger preflight below.
       - uses: pulumi/actions@v7
@@ -61,6 +124,7 @@ jobs:
       # (exit 1) stops the deploy; a ledger the check could not read (exit 3) is a warning,
       # since the deploy may be the one that repairs the login.
       - name: Check the migration ledger against the tree
+        if: env.IMAGES_ONLY != 'true'
         run: |
           OUTPUTS="$(pulumi stack output --stack "${PULUMI_STACK_NAME}" --json --cwd infra)"
           if [[ "$(jq 'length' <<< "${OUTPUTS}")" == 0 ]]; then
@@ -102,6 +166,7 @@ jobs:
           done <<< "${IMAGES}"
       - uses: pulumi/actions@v7
         id: pulumi
+        if: env.IMAGES_ONLY != 'true'
         with:
           command: up
           stack-name: ${{ env.PULUMI_STACK_NAME }}
@@ -111,6 +176,7 @@ jobs:
       # after the stack has attached the auth SA as a DB user (the SELECT grant's
       # target). Connects through the connector with the job's WIF credentials.
       - name: Apply database migrations
+        if: env.IMAGES_ONLY != 'true'
         env:
           THEMIS_SQL_CONNECTION_NAME: ${{ steps.pulumi.outputs.sql_connection_name }}
           THEMIS_SQL_DATABASE: ${{ steps.pulumi.outputs.sql_database }}
@@ -125,15 +191,17 @@ jobs:
       # stack and the agent.
       - uses: google-github-actions/auth@v3
         id: anthropic_identity
+        if: env.IMAGES_ONLY != 'true'
         with:
-          project_id: cpg-themis-dev
-          workload_identity_provider: projects/698160839187/locations/global/workloadIdentityPools/github/providers/github
-          service_account: themis-deploy@cpg-themis-dev.iam.gserviceaccount.com
+          project_id: ${{ env.PROJECT }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
           token_format: id_token
           id_token_audience: https://api.anthropic.com
           id_token_include_email: true
           create_credentials_file: false
       - name: Apply the agent declaration
+        if: env.IMAGES_ONLY != 'true'
         env:
           ANTHROPIC_IDENTITY_TOKEN: ${{ steps.anthropic_identity.outputs.id_token }}
           ANTHROPIC_FEDERATION_RULE_ID: ${{ steps.pulumi.outputs.anthropic_deploy_federation_rule_id }}

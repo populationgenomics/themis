@@ -7,12 +7,13 @@ from collections.abc import Callable
 
 import pytest
 
-from tools import clone_analysis, pi_analysis, psql, session_token, sheaf_remote
+from tools import bring_up, clone_analysis, pi_analysis, psql, session_token, sheaf_remote
 from tools.litcache import deposit, run_local
 from tools.resources import mirror
 from tools.run_review import __main__ as run_review
 
 _TOOLS: list[tuple[str, Callable[[], object], list[str]]] = [
+    ('bring_up', bring_up.main, []),
     ('clone_analysis', clone_analysis.main, []),
     ('pi_analysis', pi_analysis.main, []),
     ('psql', psql.main, []),
