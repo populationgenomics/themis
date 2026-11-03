@@ -1,9 +1,10 @@
 name: images
 
-# Builds every service image without pushing — the only check that the Dockerfiles
-# still build, since deploy.yml (the sole place they are built for real) does not run
-# on merge. No registry, no WIF, no cloud state. The image set is read from
-# .github/images.json, the same list deploy.yml builds from.
+# Builds every service image without pushing, on every merge: it reports whether each
+# `main` commit's Dockerfiles build, including a commit that prod's deploy (deploy.yml)
+# never builds because its checks failed or a later merge replaced its run. No registry,
+# no WIF, no cloud state. The image set is read from .github/images.json, the same list
+# deploy.yml builds from.
 on:
   push:
     branches: [main]

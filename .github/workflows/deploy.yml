@@ -1,15 +1,17 @@
 name: deploy
-# tools/bring_up.py finds the run it dispatched by this title.
-run-name: deploy ${{ inputs.environment || 'dev' }}${{ inputs.images_only && ' (images only)' || '' }}
+# tools/bring_up.py finds the run it dispatched by this title. The environment expression is the
+# `environment` job's below, and the concurrency group's: the three must agree.
+run-name: deploy ${{ inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}${{ inputs.images_only && ' (images only)' || '' }}
 
 # Deploys an environment: check the migration ledger against this tree, build the service images,
 # push to the environment's Artifact Registry, then `pulumi up`, apply migrations, and apply the agent's
 # declaration on the Anthropic side (docs/design/deployment.md, "Deploy triggers").
-# - dev: push `deployed/dev`, or dispatch on `main`; merging to `main` is neither, so it deploys nothing.
-# - prod: dispatch on `main` only, and only once lint, tests, web and both schema checks pass on the
-#   commit it deploys (`main`'s required checks are not strict, so two green PRs can merge into a red
-#   `main`). With `images_only` the run builds and pushes the images and stops, the registry-first step
-#   of a first bring-up (tools/bring_up.py); it is gated too, since the bring-up puts those images live.
+# - dev: push `deployed/dev`, or dispatch on `main`; merging to `main` is neither.
+# - prod: every push to `main` (a merge), or a dispatch on `main` to redeploy, and only once lint,
+#   tests, web and both schema checks pass on the commit it deploys (`main`'s required checks are not
+#   strict, so two green PRs can merge into a red `main`). With `images_only` a dispatched run builds
+#   and pushes the images and stops, the registry-first step of a first bring-up (tools/bring_up.py);
+#   it is gated too, since the bring-up puts those images live.
 #   The check jobs hold no `id-token` permission: this workflow's `workflow_ref` would admit them.
 # Authenticates as the environment's deploy SA via WIF, whose binding admits this workflow read from the
 # refs the environment deploys from; a GitHub ruleset over `deployed/*` bypasses only for the
@@ -17,7 +19,7 @@ run-name: deploy ${{ inputs.environment || 'dev' }}${{ inputs.images_only && ' (
 # this — they get a read-only preview (preview.yml).
 on:
   push:
-    branches: ['deployed/dev']
+    branches: ['deployed/dev', 'main']
   workflow_dispatch:
     inputs:
       environment:
@@ -31,46 +33,84 @@ on:
         default: false
 
 concurrency:
-  group: themis-deploy-${{ inputs.environment || 'dev' }}
+  group: themis-deploy-${{ inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
   cancel-in-progress: false
 
 jobs:
+  # The run's environment: the dispatch's choice, else the pushed branch's (`main` deploys prod,
+  # `deployed/dev` dev), and its project. Never on the public mirror (themis); the deploy SA's WIF is
+  # scoped to themis-internal regardless, but this keeps the gate intrinsic to the workflow.
+  environment:
+    if: github.repository == 'populationgenomics/themis-internal'
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      name: ${{ steps.pick.outputs.name }}
+      project: ${{ steps.pick.outputs.project }}
+      project_number: ${{ steps.pick.outputs.project_number }}
+    steps:
+      # The dispatch UI offers every ref, but each deploy SA's WIF binding admits this workflow from
+      # only the refs its environment deploys from: refuse here, before the checks, so a wrong pick
+      # fails legibly instead of as an impersonation error in the deploy.
+      - id: pick
+        env:
+          NAME: ${{ inputs.environment || (github.ref == 'refs/heads/main' && 'prod' || 'dev') }}
+        run: |
+          case "${NAME}" in
+            dev) PROJECT=cpg-themis-dev; PROJECT_NUMBER=698160839187; REFS='refs/heads/main refs/heads/deployed/dev' ;;
+            prod) PROJECT=cpg-themis-prod; PROJECT_NUMBER=186726836905; REFS='refs/heads/main' ;;
+            *) echo "::error::no environment ${NAME}"; exit 1 ;;
+          esac
+          if [[ " ${REFS} " != *" ${GITHUB_REF} "* ]]; then
+            echo "::error::deploy to ${NAME} runs only on ${REFS}; got ${GITHUB_REF}"
+            exit 1
+          fi
+          {
+            echo "name=${NAME}"
+            echo "project=${PROJECT}"
+            echo "project_number=${PROJECT_NUMBER}"
+          } >> "$GITHUB_OUTPUT"
+
   lint:
-    if: inputs.environment == 'prod'
+    needs: environment
+    if: needs.environment.outputs.name == 'prod'
     uses: ./.github/workflows/lint.yml
     permissions:
       contents: read
   tests:
-    if: inputs.environment == 'prod'
+    needs: environment
+    if: needs.environment.outputs.name == 'prod'
     uses: ./.github/workflows/tests.yml
     permissions:
       contents: read
   web:
-    if: inputs.environment == 'prod'
+    needs: environment
+    if: needs.environment.outputs.name == 'prod'
     uses: ./.github/workflows/web.yml
     permissions:
       contents: read
   schema-compat:
-    if: inputs.environment == 'prod'
+    needs: environment
+    if: needs.environment.outputs.name == 'prod'
     uses: ./.github/workflows/schema-compat.yml
     permissions:
       contents: read
   schema-freshness:
-    if: inputs.environment == 'prod'
+    needs: environment
+    if: needs.environment.outputs.name == 'prod'
     uses: ./.github/workflows/schema-freshness.yml
     permissions:
       contents: read
 
   deploy:
-    needs: [lint, tests, web, schema-compat, schema-freshness]
-    # Never run on the public mirror (themis); the deploy SA's WIF is scoped to
-    # themis-internal regardless, but this keeps the gate intrinsic to the
-    # workflow rather than relying on Actions being disabled on the mirror.
+    needs: [environment, lint, tests, web, schema-compat, schema-freshness]
+    # The `environment` job refuses the public mirror and a ref its environment does not deploy from.
     # The checks run only for prod; dev's are skipped, which must not skip the deploy.
     if: |
       !cancelled()
       && github.repository == 'populationgenomics/themis-internal'
-      && (inputs.environment != 'prod' || (
+      && needs.environment.result == 'success'
+      && (needs.environment.outputs.name != 'prod' || (
         needs.lint.result == 'success' && needs.tests.result == 'success' && needs.web.result == 'success'
         && needs.schema-compat.result == 'success' && needs.schema-freshness.result == 'success'))
     runs-on: ubuntu-latest
@@ -78,25 +118,14 @@ jobs:
       id-token: write
       contents: read
     env:
-      ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+      ENVIRONMENT: ${{ needs.environment.outputs.name }}
+      PROJECT: ${{ needs.environment.outputs.project }}
+      PROJECT_NUMBER: ${{ needs.environment.outputs.project_number }}
       IMAGES_ONLY: ${{ inputs.images_only || false }}
     steps:
-      # The dispatch UI offers every ref, but each deploy SA's WIF binding admits this workflow from
-      # only the refs its environment deploys from — refuse here so a wrong pick fails legibly instead
-      # of as an impersonation error six steps in.
       - name: Resolve the environment
         run: |
-          case "${ENVIRONMENT}" in
-            dev) PROJECT=cpg-themis-dev; PROJECT_NUMBER=698160839187; REFS='refs/heads/main refs/heads/deployed/dev' ;;
-            prod) PROJECT=cpg-themis-prod; PROJECT_NUMBER=186726836905; REFS='refs/heads/main' ;;
-            *) echo "::error::no environment ${ENVIRONMENT}"; exit 1 ;;
-          esac
-          if [[ " ${REFS} " != *" ${GITHUB_REF} "* ]]; then
-            echo "::error::deploy to ${ENVIRONMENT} runs only on ${REFS}; got ${GITHUB_REF}"
-            exit 1
-          fi
           {
-            echo "PROJECT=${PROJECT}"
             echo "WIF_PROVIDER=projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/github/providers/github"
             echo "DEPLOY_SA=themis-deploy@${PROJECT}.iam.gserviceaccount.com"
             echo "IMAGE_PREFIX=australia-southeast1-docker.pkg.dev/${PROJECT}/themis"

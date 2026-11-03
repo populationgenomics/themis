@@ -99,10 +99,10 @@ uv run python -m tools.bring_up --project cpg-themis-prod
 
 The images-only and the full deploy are dispatched on `main`, so the tool needs `gh` signed in as someone who may
 dispatch workflows, and it refuses to run from anything but a clean checkout of `main`'s head: the program it applies
-and the images the workflow builds come from the same commit. Prod is deployed only by dispatching `deploy.yml` on
-`main`; a merge does not deploy it. Every prod run, the images-only one included, first runs lint, the tests, the web
-checks and both schema checks on that commit, and deploys only if they pass, so a dispatch takes as long as the slowest
-of them on top of the deploy.
+and the images the workflow builds come from the same commit. Every merge to `main` deploys prod, so hold merges while
+the tool runs: a merge would start a full deploy ahead of the step the tool is on. Every prod run, the images-only one
+included, first runs lint, the tests, the web checks and both schema checks on that commit, and deploys only if they
+pass, so a dispatch takes as long as the slowest of them on top of the deploy.
 
 An existing environment whose stack does not yet hold the ACL secret takes a targeted `up` of the secret and the auth
 service's account alone, then waits for the site's first version before the next deploy. Its baseline exists already,
