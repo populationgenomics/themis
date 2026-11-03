@@ -74,7 +74,12 @@ def tick_seconds(program: capture.Capture) -> int:
 
 @pytest.fixture(scope='module')
 def channel(program: capture.Capture) -> dict[str, object]:
-    [only] = _of_type(program, _CHANNEL_TYPE).values()
+    """The spend monitor's channel: the one its own component declares."""
+    [only] = [
+        _mapping(registration.state)
+        for urn, registration in program.resources.items()
+        if capture.urn_type_chain(urn) == ['themis:infra:CostAlerts', _CHANNEL_TYPE]
+    ]
     return only
 
 

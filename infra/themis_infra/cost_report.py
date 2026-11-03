@@ -24,7 +24,7 @@ import json
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cost_promql, grants, secrets
+from themis_infra import alerts, cost_promql, grants, secrets
 
 JOB_NAME = 'themis-cost-report'
 # Every morning, Sydney time; the window is the trailing 24 hours from the run.
@@ -37,10 +37,6 @@ _JOB_TIMEOUT_MARGIN_SECONDS = 120
 # The day's figures are read at one instant over this window; the chart's series over this one, hour by hour.
 _DAY = '24h'
 _HOUR = '1h'
-# Cloud Run's count of finished executions by `result`, a delta written as each execution ends; summed over a window
-# that covers one run and its timeout.
-_COMPLETED_EXECUTIONS = 'run.googleapis.com/job/completed_execution_count'
-_FAILURE_WINDOW_SECONDS = 3600
 
 
 def report_queries(*, freshness_minutes: int) -> dict[str, dict[str, str]]:
@@ -227,32 +223,7 @@ class CostReport(pulumi.ComponentResource):
             display_name='Themis cost: morning report failed',
             combiner='OR',
             severity='ERROR',
-            conditions=[
-                gcp.monitoring.AlertPolicyConditionArgs(
-                    display_name=f'A {JOB_NAME} execution failed in the last {_FAILURE_WINDOW_SECONDS // 60} min',
-                    condition_threshold=gcp.monitoring.AlertPolicyConditionConditionThresholdArgs(
-                        filter=(
-                            f'metric.type="{_COMPLETED_EXECUTIONS}" AND resource.type="cloud_run_job"'
-                            f' AND resource.labels.job_name="{JOB_NAME}" AND metric.labels.result="failed"'
-                        ),
-                        comparison='COMPARISON_GT',
-                        threshold_value=0,
-                        # A missing-data setting is refused with a zero duration, and Monitoring takes whole minutes;
-                        # one minute inside an hour-long aligned window changes nothing about when a failure pages.
-                        duration='60s',
-                        aggregations=[
-                            gcp.monitoring.AlertPolicyConditionConditionThresholdAggregationArgs(
-                                alignment_period=f'{_FAILURE_WINDOW_SECONDS}s',
-                                per_series_aligner='ALIGN_SUM',
-                                cross_series_reducer='REDUCE_SUM',
-                            )
-                        ],
-                        # The count is written only when an execution ends, so the series is empty most of the day; an
-                        # empty window closes the incident, and the next failure opens — and pages — a new one.
-                        evaluation_missing_data='EVALUATION_MISSING_DATA_INACTIVE',
-                    ),
-                )
-            ],
+            conditions=[alerts.failed_execution_condition(JOB_NAME)],
             notification_channels=[slack_notification_channel],
             alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=['OPENED']),
             documentation=gcp.monitoring.AlertPolicyDocumentationArgs(

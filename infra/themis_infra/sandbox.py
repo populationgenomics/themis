@@ -197,8 +197,13 @@ class DispatcherService(pulumi.ComponentResource):
         self.backend_service = _dispatcher_backend(
             project=project, region=region, service=service, enforce=enforce_source_range, child=child
         )
+        self.service_name = service.name
         self.register_outputs(
-            {'service_account_email': self.service_account_email, 'backend_service': self.backend_service}
+            {
+                'service_account_email': self.service_account_email,
+                'backend_service': self.backend_service,
+                'service_name': self.service_name,
+            }
         )
 
 

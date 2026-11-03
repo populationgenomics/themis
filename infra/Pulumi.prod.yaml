@@ -1,8 +1,8 @@
 # Prod environment, in cpg-themis-prod; docs/design/infrastructure.md says what it sets
 # differently from dev. Every value reading `placeholder` is one prod does not have yet
-# (the OAuth client, the prod Anthropic workspace with its identities and agent, the prod
-# Slack app, the literature API keys); docs/runbooks/fresh-environment.md says which must
-# be real before which `up`. Never copy an Anthropic id or a secret from Pulumi.dev.yaml.
+# (the OAuth client, the prod Anthropic workspace with its identities and agent, the
+# literature API keys); docs/runbooks/fresh-environment.md says which must be real before
+# which `up`. Never copy an Anthropic id or a secret from Pulumi.dev.yaml.
 secretsprovider: gcpkms://projects/cpg-themis-prod/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi
 encryptedkey: CiQA5bDmk3dOwfxEI7KtGiasAU9K+RslRPC1a3u+MZsrbToPcf4SSQAE9QQEMhwhvla42enjcgB/zmTbONTPnhXxy5TPYIKgL/e1R2v0Vmod+ypzfcznsYyKMJKorFuCZSuPgzlYRjhPzXpucQ7072Q=
 config:
@@ -46,8 +46,10 @@ config:
   themis:anthropicCostExporterServiceAccountId: placeholder
   themis:anthropicDeployFederationRuleId: placeholder
   themis:anthropicDeployServiceAccountId: placeholder
-  themis:slackChannel: placeholder
-  themis:slackChannelId: placeholder
+  themis:slackChannel: '#themis-prod-cost'
+  themis:slackChannelId: C0CDCKP5QUW
+  # The operational alerts' channel; the same Slack app posts to both (docs/design/infrastructure.md, Alerting).
+  themis:alertsSlackChannel: '#themis-prod-alerts'
   themis:iapOauthClientSecret:
     secure: v1:WWfHhS1GsmV2Vscm:LRHevnMG5K/myGDAhMYkw98R3Q/nNHj4GRuO
   themis:semanticScholarApiKey:
@@ -59,6 +61,6 @@ config:
   themis:anthropicWebhookSigningKey:
     secure: v1:o+Rus9vsaX4IofVT:husoPxXa0/9XKRrZsTKZnFlMz+xBu7oPemcS
   themis:slackBotToken:
-    secure: v1:q37qt+NMKyn58ZcC:ahU1oiAkCVZl9TfTxYlhAjVbZK9antVwi22I
+    secure: v1:nY3/SWczWXn0FDRl:vFXA0feurOOprYybHoAS3tD/1Yf/gMoKsbIDWS8OSFn3QL+gsIlMh/GGhs8MFAqiwy0zzOhRTo+tCtzsgClFf1ZdU2QMqR4ATVg=
   themis:anthropicAgentModelId:
     secure: v1:LWn58HO0J+eyGLLt:2wlLz/ei8TnO7RdbA6XWH8PFRq85uOud8UAo

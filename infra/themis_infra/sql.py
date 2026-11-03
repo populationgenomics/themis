@@ -72,6 +72,28 @@ def parse_maintenance_window(value: str) -> MaintenanceWindow | None:
     return MaintenanceWindow(day=_WEEKDAYS.index(match['day']) + 1, hour=int(match['hour']))
 
 
+# Cloud SQL for PostgreSQL's default `max_connections` (docs/postgres/flags): fixed for the shared-core tiers, by memory
+# for the others. The program sets no `max_connections` flag, so the default is the instance's limit.
+_SHARED_CORE_MAX_CONNECTIONS = {'db-f1-micro': 25, 'db-g1-small': 50}
+_MAX_CONNECTIONS_BY_MEMORY_MB = ((122880, 1000), (61440, 800), (30720, 600), (15360, 500), (7680, 400), (6144, 200))
+_CUSTOM_TIER = re.compile(r'db-custom-(?P<cpus>\d+)-(?P<memory_mb>\d+)')
+
+
+def max_connections(tier: str) -> int:
+    """The number of connections a tier admits by default.
+
+    Raises:
+        ValueError: For a tier whose memory the name does not give (only shared-core and `db-custom-*` tiers are known).
+    """
+    if tier in _SHARED_CORE_MAX_CONNECTIONS:
+        return _SHARED_CORE_MAX_CONNECTIONS[tier]
+    match = _CUSTOM_TIER.fullmatch(tier)
+    if match is None:
+        raise ValueError(f'no known connection limit for tier {tier!r}')
+    memory_mb = int(match['memory_mb'])
+    return next((limit for floor, limit in _MAX_CONNECTIONS_BY_MEMORY_MB if memory_mb >= floor), 100)
+
+
 class CloudSqlDatabase(pulumi.ComponentResource):
     """A Postgres instance with IAM auth, daily backups, and 7-day PITR.
 

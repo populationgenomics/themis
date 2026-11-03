@@ -14,6 +14,7 @@ import pulumi
 import pulumi_gcp as gcp
 
 from themis_infra import (
+    alerts,
     audit,
     auth,
     baseline,
@@ -118,6 +119,8 @@ anthropic_deploy_service_account_id = config.require('anthropicDeployServiceAcco
 slack_channel = config.require('slackChannel')
 slack_channel_id = config.require('slackChannelId')
 slack_bot_token = config.require_secret('slackBotToken')
+# The operational alerts' Slack channel, by name; the same app posts there (docs/design/infrastructure.md, Alerting).
+alerts_slack_channel = config.require('alertsSlackChannel')
 cost_spike_alert_cents = config.require_int('costSpikeAlertCents')
 cost_spike_window_minutes = config.require_int('costSpikeWindowMinutes')
 cost_freshness_minutes = config.require_int('costFreshnessMinutes')
@@ -832,10 +835,31 @@ spend_alerts = cost_alerts.CostAlerts(
     dashboard_url=spend_dashboard.console_url,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
+operational_alerts = alerts.OperationalAlerts(
+    project=project,
+    region=region,
+    slack_channel=alerts_slack_channel,
+    slack_bot_token=slack_bot_token,
+    # The cost report's own failure alert posts to the spend channel; the exporter's failures also stop its heartbeat.
+    jobs=[sandbox_job.job_name, gene_disease_refresh_job.name, work_sweep.job_name, cost_exporter.job_name],
+    # The services a curator's request or an agent's session goes through; the convert worker answers 5xx on purpose,
+    # so Cloud Tasks retries the conversion.
+    services=[
+        site.service_name,
+        auth_service.service_name,
+        evidence_service.service_name,
+        sheaf_service.service_name,
+        dispatcher_service.service_name,
+    ],
+    sql_instance=database.instance_name,
+    sql_tier_connections=sql.max_connections(sql_tier),
+    domain=domain,
+    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
+)
 auth.acl_rejection_alert(
     project=project,
     region=region,
-    notification_channel=spend_alerts.notification_channel_name,
+    notification_channel=operational_alerts.notification_channel_name,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
 cost_report.CostReport(

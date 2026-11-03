@@ -90,6 +90,8 @@ config:
   # it. The bot token of the Slack app that posts to the channel is `themis:slackBotToken`, encrypted.
   themis:slackChannel: "#themis-dev-cost"
   themis:slackChannelId: C0BVCG38L14
+  # The operational alerts' channel; the same Slack app posts to both (docs/design/infrastructure.md, Alerting).
+  themis:alertsSlackChannel: "#themis-dev-alerts"
   themis:slackBotToken:
     secure: v1:92S9qybuELcCA6Iw:qXhCmv75AtauZWSvwaX1j4BGF1dypezI+QM6qn5iaXOQ1oKZKeZ3ZjxHIBMhi2S3TJSAo19vwPWR4rTeGORSzKokH13b5zxq7og=
   themis:costSpikeAlertCents: "10000"
