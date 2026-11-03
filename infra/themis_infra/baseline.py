@@ -7,10 +7,8 @@ modules (`web`, and database/storage/audit as they land) depend on a single
 `Baseline` rather than each re-enabling services.
 
 Log retention is here for the same reason: it is a property of the environment,
-not of any one service. The window is set to match the audit-log bucket rather
-than the 30-day default, so a question asked months later about what a service
-sent upstream (`docs/design/security.md`, the timing residual) can still be
-answered from the record.
+not of any one service. `_Default` keeps what it held before `audit` routed new
+entries to the regional bucket, for the same window as that bucket.
 
 IAP's service agent is here because every IAP-protected resource in the project calls
 Cloud Run as that one identity: the web service, and each operator backend in front of
@@ -46,7 +44,7 @@ _REQUIRED_SERVICES = (
 )
 
 # What `_Required` holds admin-activity audit logs for; no reason to keep the rest for less.
-_LOG_RETENTION_DAYS = 400
+LOG_RETENTION_DAYS = 400
 
 
 class Baseline(pulumi.ComponentResource):
@@ -106,7 +104,7 @@ class Baseline(pulumi.ComponentResource):
             project=project,
             location='global',  # `_Default` is a global bucket; a regional location would not address it
             bucket_id='_Default',
-            retention_days=_LOG_RETENTION_DAYS,
+            retention_days=LOG_RETENTION_DAYS,
             opts=services_ready,
         )
 

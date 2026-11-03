@@ -93,7 +93,8 @@ Moving dev's webhook from the dispatcher's run.app URL onto the load balancer:
    Anthropic's range) in the enforced column, with the preview column empty:
 
    ```sh
-   gcloud logging read --project cpg-themis-dev --freshness 1d \
+   gcloud logging read --project cpg-themis-dev --bucket themis-logs --location australia-southeast1 --view _AllLogs \
+     --freshness 1d \
      'resource.type="http_load_balancer" AND resource.labels.backend_service_name:"themis-dispatcher-backend" AND httpRequest.userAgent:"Claude-Platform"' \
      --format 'table(timestamp, httpRequest.remoteIp, httpRequest.status, jsonPayload.enforcedSecurityPolicy.priority, jsonPayload.previewSecurityPolicy.priority)'
    ```
@@ -102,7 +103,8 @@ Moving dev's webhook from the dispatcher's run.app URL onto the load balancer:
    `Claude-Platform` user agent never should:
 
    ```sh
-   gcloud logging read --project cpg-themis-dev --freshness 1d \
+   gcloud logging read --project cpg-themis-dev --bucket themis-logs --location australia-southeast1 --view _AllLogs \
+     --freshness 1d \
      'resource.type="http_load_balancer" AND resource.labels.backend_service_name:"themis-dispatcher-backend" AND jsonPayload.previewSecurityPolicy.priority=2000' \
      --format 'table(timestamp, httpRequest.remoteIp, httpRequest.userAgent, httpRequest.status)'
    ```

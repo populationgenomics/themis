@@ -23,7 +23,7 @@ import re
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cloud_run, grants, secrets, sql
+from themis_infra import audit, cloud_run, grants, secrets, sql
 
 _SERVICE_NAME = 'themis-auth'
 # The secret the site writes the ACL into, in the stack's own project.
@@ -311,6 +311,7 @@ class AuthService(pulumi.ComponentResource):
 def acl_rejection_alert(
     *,
     project: str,
+    region: str,
     notification_channel: pulumi.Input[str],
     opts: pulumi.ResourceOptions | None = None,
 ) -> gcp.monitoring.AlertPolicy:
@@ -322,6 +323,7 @@ def acl_rejection_alert(
 
     Args:
         project: The GCP project the service logs to.
+        region: Where the project's regional log bucket is.
         notification_channel: The Monitoring notification channel the incident posts to.
         opts: Resource options (dependency wiring).
     """
@@ -354,7 +356,8 @@ def acl_rejection_alert(
                 f'broke one of the rules the service checks. The log line, which starts `{ACL_REJECTED}`, names the '
                 f'cause. The service answers from its last good copy until the staleness limit '
                 f'(`themis:aclStalenessLimitSeconds`), then refuses everyone until a valid version loads. Its logs: '
-                f"`gcloud logging read '{log_filter}' --project {project} --limit 5`. "
+                f"`gcloud logging read '{log_filter}' --project {project} --bucket {audit.LOG_BUCKET_ID} "
+                f'--location {region} --view _AllLogs --limit 5`. '
                 f'Runbook: `docs/runbooks/access-control.md`.'
             ),
         ),

@@ -32,7 +32,7 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/iam.serviceAccountAdmin',
     'roles/iam.serviceAccountUser',
     'roles/iap.admin',  # the web service's IAP policy and its OAuth-client settings
-    'roles/logging.configWriter',  # retention on the _Default log bucket (baseline.py) is a buckets.create/update
+    'roles/logging.configWriter',  # log buckets and their retention (baseline.py, audit.py) and the _Default sink
     'roles/monitoring.editor',  # the workspace-spend monitor's dashboard and alert policies
     'roles/run.admin',
     'roles/secretmanager.admin',

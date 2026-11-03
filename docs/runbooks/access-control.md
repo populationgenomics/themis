@@ -143,7 +143,7 @@ The log line says what went wrong:
 ```sh
 gcloud logging read \
   'resource.type="cloud_run_revision" AND resource.labels.service_name="themis-auth" AND "acl rejected:"' \
-  --project cpg-themis-dev --limit 5
+  --project cpg-themis-dev --bucket themis-logs --location australia-southeast1 --view _AllLogs --limit 5
 ```
 
 A broken rule is the writer's to fix: correct the records it generates the ACL from, and let it add a new version.

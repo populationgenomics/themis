@@ -14,6 +14,7 @@ import pulumi
 import pulumi_gcp as gcp
 
 from themis_infra import (
+    audit,
     auth,
     baseline,
     ci_telemetry,
@@ -193,6 +194,7 @@ def _live_job_image(job_name: str, container_name: str) -> str:
 deploy = grants.DeployAccountBuilder(project=project, prior=grants.Prior('themis-deploy'))
 
 base = baseline.Baseline(project=project, region=region)
+audit.Audit(project=project, region=region, opts=pulumi.ResourceOptions(depends_on=[base]))
 database = sql.CloudSqlDatabase(
     project=project,
     region=region,
@@ -832,6 +834,7 @@ spend_alerts = cost_alerts.CostAlerts(
 )
 auth.acl_rejection_alert(
     project=project,
+    region=region,
     notification_channel=spend_alerts.notification_channel_name,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )

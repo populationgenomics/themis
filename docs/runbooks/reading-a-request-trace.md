@@ -25,6 +25,9 @@ Cloud Run writes the trace id on every request log entry it records, and each se
 receives, so the request logs of all the hops a request made carry the same id. The quickest way in is from one of those
 entries: open the request in the Logs Explorer, and the entry's `trace` field links to the trace in Cloud Trace.
 
+The request logs live in the environment's regional log bucket, `themis-logs`, which the Logs Explorer does not search
+by default: under **Refine scope**, choose **Log view** and select `themis-logs/_AllLogs`.
+
 To look for traces directly, open the
 [Trace Explorer](https://console.cloud.google.com/traces/explorer?project=cpg-themis-dev) and filter on the span name
 (an rpc's spans are named for its method path, such as `/themis.rpc.sheaf.Sheaf/ReadRefDoc`) or on the service name

@@ -31,6 +31,16 @@ _WEEKDAYS = ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')
 _MAINTENANCE_WINDOW = re.compile(r'(?P<day>\w{3}) (?P<hour>[01]\d|2[0-3]):00 UTC')
 # The value that leaves the window unset, so Cloud SQL picks when to apply maintenance.
 ANY_MAINTENANCE_WINDOW = 'any'
+# pgAudit records every statement every role runs, with the values bound into it: without them a parameterised read
+# says only that some row was read. Its entries go out through Cloud SQL's Data Access audit log (`audit.py`). The
+# extension itself is created by a migration; changing `cloudsql.enable_pgaudit` restarts the instance.
+PGAUDIT_FLAGS = {
+    'cloudsql.enable_pgaudit': 'on',
+    'pgaudit.log': 'all',
+    'pgaudit.log_parameter': 'on',
+    # Cloud SQL can replace a statement's literals with placeholders; the record keeps them.
+    'cloudsql.pgaudit_mask_literals': 'off',
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -139,6 +149,10 @@ class CloudSqlDatabase(pulumi.ComponentResource):
                     gcp.sql.DatabaseInstanceSettingsDatabaseFlagArgs(
                         name='cloudsql.iam_authentication',
                         value='on',
+                    ),
+                    *(
+                        gcp.sql.DatabaseInstanceSettingsDatabaseFlagArgs(name=name, value=value)
+                        for name, value in PGAUDIT_FLAGS.items()
                     ),
                 ],
                 backup_configuration=gcp.sql.DatabaseInstanceSettingsBackupConfigurationArgs(
