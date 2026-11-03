@@ -37,12 +37,12 @@ config:
   themis:iapOauthClientId: 186726836905-ef9tdonvichfria4jtp4ivms7ig8o0oc.apps.googleusercontent.com
   themis:anthropicEnvironmentId: env_01RtnNG6AuY1QGyPaFE8rAWd
   themis:anthropicAgentId: placeholder
-  themis:anthropicFederationRuleId: placeholder
+  themis:anthropicFederationRuleId: fdrl_016aq62XA92FhCzC83ZQKn74
   themis:anthropicServiceAccountId: svac_01PZt4ebM139BEgC6siJ3SdR
   themis:anthropicWorkspaceId: wrkspc_01AXDCXV8JPE3m5J3KnEeFGh
-  themis:anthropicWorkerFederationRuleId: placeholder
+  themis:anthropicWorkerFederationRuleId: fdrl_01B7CPoNxK2Lqdguw5LmboAQ
   themis:anthropicWorkerServiceAccountId: svac_01XcUM233gL7enrV7SbNmzam
-  themis:anthropicCostExporterFederationRuleId: placeholder
+  themis:anthropicCostExporterFederationRuleId: fdrl_01HbjqUxqUMijVmjADEY4rNr
   themis:anthropicCostExporterServiceAccountId: svac_019L24VAP6TDCE3ZUtXM2pTc
   themis:anthropicDeployFederationRuleId: fdrl_014LT6sFCLSrGYgaZvggdGHq
   themis:anthropicDeployServiceAccountId: svac_01StP31ShVgUcHX69cQTwXpa
