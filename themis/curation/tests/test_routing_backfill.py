@@ -13,11 +13,11 @@ from collections.abc import Iterator, Mapping
 
 import pg8000.dbapi
 import pytest
-import testcontainers.postgres
 
 from themis.curation import routing_backfill
 from themis.curation.models import curation_pb2
 from themis.migrate import cloudsql, migrate
+from themis.testing import postgres as postgres_db
 
 _MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[2] / 'migrate' / 'migrations'
 # GRANT needs its grantee to exist; in the deploy these are Cloud SQL IAM users.
@@ -146,9 +146,8 @@ class _Database:
 
 
 @pytest.fixture
-def database(docker_daemon: None) -> Iterator[_Database]:
-    del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
-    with testcontainers.postgres.PostgresContainer('postgres:16-alpine') as postgres:
+def database(postgres_image: str) -> Iterator[_Database]:
+    with postgres_db.container(postgres_image) as postgres:
         conn = pg8000.dbapi.connect(
             user=postgres.username,
             password=postgres.password,

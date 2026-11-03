@@ -24,6 +24,7 @@ import pytest
 import testcontainers.postgres
 
 from themis.migrate import migrate
+from themis.testing import postgres as postgres_db
 
 _MIGRATIONS = pathlib.Path(__file__).resolve().parents[2] / 'themis' / 'migrate' / 'migrations'
 
@@ -47,12 +48,9 @@ def _apply_migration(conn: pg8000.dbapi.Connection, name: str) -> None:
 
 
 @pytest.fixture(scope='session')
-def postgres_container(docker_daemon: None) -> Iterator[testcontainers.postgres.PostgresContainer]:
+def postgres_container(postgres_image: str) -> Iterator[testcontainers.postgres.PostgresContainer]:
     """A session-lived Postgres holding `litcache.crosswalk`."""
-    del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
-    with testcontainers.postgres.PostgresContainer(
-        'postgres:16', username='test', password='test', dbname='litcache'
-    ) as container:
+    with postgres_db.container(postgres_image, username='test', password='test', dbname='litcache') as container:
         with contextlib.closing(_connect(container)) as conn:
             _apply_migration(conn, 'litcache_crosswalk')
         yield container

@@ -40,6 +40,7 @@ updates:
       - /apps/web
       - /themis/services/*
       - /themis/services/evidence/gene_disease
+      - /themis/testing/postgres-image
       - /tools/litcache
     schedule:
       interval: weekly

@@ -17,6 +17,7 @@ import pytest
 import testcontainers.postgres
 
 from themis.migrate import migrate
+from themis.testing import postgres as postgres_db
 
 _MIGRATIONS = pathlib.Path(__file__).resolve().parents[3] / 'themis' / 'migrate' / 'migrations'
 
@@ -40,11 +41,8 @@ def _apply_litcache_migration(conn: pg8000.dbapi.Connection) -> None:
 
 
 @pytest.fixture(scope='session')
-def postgres_container(docker_daemon: None) -> Iterator[testcontainers.postgres.PostgresContainer]:
-    del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
-    with testcontainers.postgres.PostgresContainer(
-        'postgres:16', username='test', password='test', dbname='litcache'
-    ) as container:
+def postgres_container(postgres_image: str) -> Iterator[testcontainers.postgres.PostgresContainer]:
+    with postgres_db.container(postgres_image, username='test', password='test', dbname='litcache') as container:
         with contextlib.closing(_connect(container)) as conn:
             _apply_litcache_migration(conn)
         yield container

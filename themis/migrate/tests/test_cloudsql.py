@@ -22,6 +22,7 @@ import testcontainers.postgres
 from themis.common import sql
 from themis.migrate import __main__ as entry
 from themis.migrate import cloudsql, config, migrate
+from themis.testing import postgres as postgres_db
 
 _MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'migrations'
 
@@ -33,9 +34,8 @@ _PRE_HASH_LEDGER = (
 
 
 @pytest.fixture
-def postgres(docker_daemon: None) -> Iterator[testcontainers.postgres.PostgresContainer]:
-    del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
-    with testcontainers.postgres.PostgresContainer('postgres:16-alpine') as container:
+def postgres(postgres_image: str) -> Iterator[testcontainers.postgres.PostgresContainer]:
+    with postgres_db.container(postgres_image) as container:
         yield container
 
 

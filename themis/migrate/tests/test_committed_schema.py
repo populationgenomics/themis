@@ -13,9 +13,9 @@ from collections.abc import Iterator
 
 import pg8000.dbapi
 import pytest
-import testcontainers.postgres
 
 from themis.migrate import cloudsql, migrate
+from themis.testing import postgres as postgres_db
 
 _MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[1] / 'migrations'
 
@@ -47,10 +47,9 @@ _VARIANT_WITH_CLINICAL_CONTEXT = (
 
 
 @pytest.fixture
-def migrated(docker_daemon: None) -> Iterator[pg8000.dbapi.Connection]:
+def migrated(postgres_image: str) -> Iterator[pg8000.dbapi.Connection]:
     """A throwaway Postgres carrying every committed migration."""
-    del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
-    with testcontainers.postgres.PostgresContainer('postgres:16-alpine') as postgres:
+    with postgres_db.container(postgres_image) as postgres:
         conn = pg8000.dbapi.connect(
             user=postgres.username,
             password=postgres.password,

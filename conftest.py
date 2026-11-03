@@ -36,7 +36,7 @@ from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.testing import docker_env
 
-pytest_plugins = ('themis.testing.litcache_db',)
+pytest_plugins = ('themis.testing.litcache_db', 'themis.testing.postgres')
 
 _READY_TIMEOUT_S = 30
 

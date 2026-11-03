@@ -9,13 +9,13 @@ from collections.abc import Iterator, Mapping
 
 import pg8000.dbapi
 import pytest
-import testcontainers.postgres
 
 from themis.curation import rows
 from themis.curation.models import curation_pb2
 from themis.evidence.models import evidence_pb2
 from themis.migrate import cloudsql, migrate
 from themis.svcv4.models import svcv4_pb2
+from themis.testing import postgres as postgres_db
 from tools.run_review import rounds
 from tools.run_review.tests import curation_rows
 from tools.run_review.variant_classification import reference
@@ -27,9 +27,8 @@ _LOGINS: Mapping[str, str] = dict.fromkeys(
 
 
 @pytest.fixture
-def curation_db(docker_daemon: None) -> Iterator[pg8000.dbapi.Connection]:
-    del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
-    with testcontainers.postgres.PostgresContainer('postgres:16-alpine') as postgres:
+def curation_db(postgres_image: str) -> Iterator[pg8000.dbapi.Connection]:
+    with postgres_db.container(postgres_image) as postgres:
         conn = pg8000.dbapi.connect(
             user=postgres.username,
             password=postgres.password,

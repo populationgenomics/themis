@@ -26,8 +26,9 @@ _SYNC_GROUP = re.compile(r'--group\s+([\w-]+)')
 # the program reads, which is what `test_declared_envs_are_the_overrides_the_program_reads`
 # pins. Images under `tools/` are operator tooling with no deployed service behind them —
 # the Dataflow worker reaches its job through `--sdk-image`, not an override — so they have
-# no env to declare and are built out of band.
-_UNDEPLOYED_PREFIX = 'tools/'
+# no env to declare and are built out of band. Images under `themis/testing/` are built by the
+# tests that start them.
+_UNDEPLOYED_PREFIXES = ('tools/', 'themis/testing/')
 
 # The runtimes an entry may declare. `test_image_contents.py` decides whether to walk an image's
 # imports from this key rather than inferring it from the Dockerfile, so a missing or misspelt one
@@ -48,7 +49,7 @@ def _tracked_dockerfiles() -> set[str]:
         text=True,
         check=True,
     )
-    return {f for f in listed.stdout.split() if not f.startswith(_UNDEPLOYED_PREFIX)}
+    return {f for f in listed.stdout.split() if not f.startswith(_UNDEPLOYED_PREFIXES)}
 
 
 def test_every_tracked_dockerfile_is_declared() -> None:

@@ -26,6 +26,7 @@ from opentelemetry.sdk.trace.export import in_memory_span_exporter
 from themis.common import sql, sql_pool
 from themis.services.auth import backend as auth_backend
 from themis.services.auth import cloudsql
+from themis.testing import postgres as postgres_db
 
 _POOLED_APP = 'auth-pool-under-test'
 _SETTLE_TIMEOUT_S = 10
@@ -34,9 +35,8 @@ _TRACER = trace.get_tracer(__name__)
 
 
 @pytest.fixture(scope='module')
-def postgres(docker_daemon: None) -> Iterator[testcontainers.postgres.PostgresContainer]:
-    del docker_daemon  # gate on a reachable Docker daemon (shared fixture)
-    with testcontainers.postgres.PostgresContainer('postgres:16-alpine') as container:
+def postgres(postgres_image: str) -> Iterator[testcontainers.postgres.PostgresContainer]:
+    with postgres_db.container(postgres_image) as container:
         yield container
 
 
@@ -258,7 +258,8 @@ def test_a_silent_connection_times_out_and_is_replaced(
     backend = make_backend(io_timeout_s=_SHORT_TIMEOUT_S)
     asyncio.run(backend.resolve('tok-1'))
     ((stopped, _),) = admin.pooled()
-    postgres.exec(['kill', '-STOP', str(stopped)])
+    paused = postgres.exec(['kill', '-STOP', str(stopped)])
+    assert paused.exit_code == 0, paused.output
     # In a thread of its own: a resolve that never times out would otherwise hang the test.
     with futures.ThreadPoolExecutor(max_workers=1) as executor:
         try:
