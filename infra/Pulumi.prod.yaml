@@ -1,8 +1,8 @@
 # Prod environment, in cpg-themis-prod; docs/design/infrastructure.md says what it sets
-# differently from dev. Every value reading `placeholder` is one prod does not have yet
-# (the OAuth client, the prod Anthropic workspace with its identities and agent, the
-# literature API keys); docs/runbooks/fresh-environment.md says which must be real before
-# which `up`. Never copy an Anthropic id or a secret from Pulumi.dev.yaml.
+# differently from dev. Every value reading `placeholder` is one prod does not have yet;
+# docs/runbooks/fresh-environment.md says which must be real before which `up`. Never copy an
+# Anthropic id from Pulumi.dev.yaml. The Semantic Scholar key is dev's, shared deliberately:
+# only the bulk literature ingest reads it.
 secretsprovider: gcpkms://projects/cpg-themis-prod/locations/australia-southeast1/keyRings/themis/cryptoKeys/pulumi
 encryptedkey: CiQA5bDmk3dOwfxEI7KtGiasAU9K+RslRPC1a3u+MZsrbToPcf4SSQAE9QQEMhwhvla42enjcgB/zmTbONTPnhXxy5TPYIKgL/e1R2v0Vmod+ypzfcznsYyKMJKorFuCZSuPgzlYRjhPzXpucQ7072Q=
 config:
@@ -34,33 +34,33 @@ config:
   themis:costSpikeWindowMinutes: "30"
   themis:costFreshnessMinutes: "25"
   themis:anthropicOrganizationId: e10fa9c3-34d4-42e7-a1ac-1d13dc023d88
-  themis:iapOauthClientId: placeholder
-  themis:anthropicEnvironmentId: placeholder
+  themis:iapOauthClientId: 186726836905-ef9tdonvichfria4jtp4ivms7ig8o0oc.apps.googleusercontent.com
+  themis:anthropicEnvironmentId: env_01RtnNG6AuY1QGyPaFE8rAWd
   themis:anthropicAgentId: placeholder
   themis:anthropicFederationRuleId: placeholder
-  themis:anthropicServiceAccountId: placeholder
-  themis:anthropicWorkspaceId: placeholder
+  themis:anthropicServiceAccountId: svac_01PZt4ebM139BEgC6siJ3SdR
+  themis:anthropicWorkspaceId: wrkspc_01AXDCXV8JPE3m5J3KnEeFGh
   themis:anthropicWorkerFederationRuleId: placeholder
-  themis:anthropicWorkerServiceAccountId: placeholder
+  themis:anthropicWorkerServiceAccountId: svac_01XcUM233gL7enrV7SbNmzam
   themis:anthropicCostExporterFederationRuleId: placeholder
-  themis:anthropicCostExporterServiceAccountId: placeholder
-  themis:anthropicDeployFederationRuleId: placeholder
-  themis:anthropicDeployServiceAccountId: placeholder
+  themis:anthropicCostExporterServiceAccountId: svac_019L24VAP6TDCE3ZUtXM2pTc
+  themis:anthropicDeployFederationRuleId: fdrl_014LT6sFCLSrGYgaZvggdGHq
+  themis:anthropicDeployServiceAccountId: svac_01StP31ShVgUcHX69cQTwXpa
   themis:slackChannel: '#themis-prod-cost'
   themis:slackChannelId: C0CDCKP5QUW
   # The operational alerts' channel; the same Slack app posts to both (docs/design/infrastructure.md, Alerting).
   themis:alertsSlackChannel: '#themis-prod-alerts'
   themis:iapOauthClientSecret:
-    secure: v1:WWfHhS1GsmV2Vscm:LRHevnMG5K/myGDAhMYkw98R3Q/nNHj4GRuO
+    secure: v1:AMGWHmmLy3cCpGZy:hLWMZ3RjznHj6MBcTVWsQsJe+wW7tIybVp+GNugCX+YEOJhMXfFiOtaBt3qtizJ5yMaT
   themis:semanticScholarApiKey:
-    secure: v1:ELgZYKvLGHuPZY4w:/+Mzzy/dg4RmXns9qnZ999T2HXsk3OK3KPiP
+    secure: v1:m8s8oXP6EA+qr9Mc:85/cFDh9Yohyn5Y3SCH1l7+omHncxK+h1DV+t3SHa3lz7OZotCj5XzDScxPAUi1zPY7mAXAyQqiPi5DY7ZkQnwmcO44=
   themis:openalexApiKey:
-    secure: v1:kLjJP/dBsWkc0ScB:paW1YXWWGB9/zW6QojJXEazLYAKFNG5p0MHS
+    secure: v1:I+urSFk6Xy88njee:7npBsz6onhBjzPNo5AS08rTjlNDDbmc/Eowu/666x6voIkRAx3k=
   themis:anthropicEnvironmentKey:
-    secure: v1:rinbxh5rfjS+cus3:OIBQ++eygVwFmaM/keGuga5GVsoutGP4zeZO
+    secure: v1:T3wuCvJ5+XXWiNKj:YGev9KwWVcR4pvlvHE2slFL56raSnom2y2MLAhMp6081FrNfiZns/arEBuZxwk6qWUPQNHkb+OZJc4ySY3cbL51daXNwMbNOHpVxO8Kry5r0L4JfdS2MchTUH7c+HHRevqRz/1DpOmXUHSNJtOvgf2b9m8xZz3mZIMYuIw==
   themis:anthropicWebhookSigningKey:
-    secure: v1:o+Rus9vsaX4IofVT:husoPxXa0/9XKRrZsTKZnFlMz+xBu7oPemcS
+    secure: v1:tODy4gVIT9af2raK:Zb8u9Lxcgywwqh8zA3RhPyLEszyVByq8Ko0QNOy9/E5QndzJ0kGlIZF+EDKIUeru1VJcdehxMLnhcDWWHMdIIK6X
   themis:slackBotToken:
     secure: v1:nY3/SWczWXn0FDRl:vFXA0feurOOprYybHoAS3tD/1Yf/gMoKsbIDWS8OSFn3QL+gsIlMh/GGhs8MFAqiwy0zzOhRTo+tCtzsgClFf1ZdU2QMqR4ATVg=
   themis:anthropicAgentModelId:
-    secure: v1:LWn58HO0J+eyGLLt:2wlLz/ei8TnO7RdbA6XWH8PFRq85uOud8UAo
+    secure: v1:p0LRsF0Rwdx0ahKa:TYLd1TSYkGlKeIrjIijnbkYz+NyIjV/FNYZcBt6V0Q==
