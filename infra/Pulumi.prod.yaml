@@ -36,7 +36,7 @@ config:
   themis:anthropicOrganizationId: e10fa9c3-34d4-42e7-a1ac-1d13dc023d88
   themis:iapOauthClientId: 186726836905-ef9tdonvichfria4jtp4ivms7ig8o0oc.apps.googleusercontent.com
   themis:anthropicEnvironmentId: env_01RtnNG6AuY1QGyPaFE8rAWd
-  themis:anthropicAgentId: placeholder
+  themis:anthropicAgentId: agent_019nEq7seUCyXNYMZx1CJSCZ
   themis:anthropicSkillIds:
     classifying-sequence-variants: skill_01CY8hPcGoch6Ji42WeWSnZp
   themis:anthropicFederationRuleId: fdrl_016aq62XA92FhCzC83ZQKn74
