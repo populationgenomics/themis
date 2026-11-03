@@ -34,11 +34,16 @@ Manual steps around the Pulumi-managed sandbox (self-hosted-sandbox.md). The inf
    prompt, tools, skills and roster. An agent carries no environment — a session binds the two — so create it in the
    workspace that owns the environment. `tools.agents` reads the declaration and makes the calls. It authenticates
    through the SDK's credential resolution, which after `ant auth login` is the CLI's profile, and takes the model id
-   from the environment, since the id is confidential stack config rather than the yaml's:
+   from the environment, since the id is confidential stack config rather than the yaml's. A skill belongs to one
+   workspace, so first create each custom skill the declaration names in this workspace and record its id in the stack's
+   `themis:anthropicSkillIds`, keyed by its directory:
 
    ```sh
+   SKILL_ID=$(uv run --group agents python -m tools.agents create-skill agents/skills/classifying-sequence-variants)
+   (cd infra && pulumi config set --stack dev --path 'themis:anthropicSkillIds.classifying-sequence-variants' "$SKILL_ID")
    export THEMIS_AGENT_MODEL_ID=$(cd infra && pulumi config get --stack dev themis:anthropicAgentModelId)
-   uv run --group agents python -m tools.agents create agents/svcv4-classifier.agent.yaml   # publishes its skills; prints the agent id
+   SKILL_IDS=$(cd infra && pulumi config get --stack dev themis:anthropicSkillIds)
+   uv run --group agents python -m tools.agents create agents/svcv4-classifier.agent.yaml --skill-ids "$SKILL_IDS"   # prints the agent id
    ```
 
    Record the printed `agent_…` id as `pulumi config set --stack dev themis:anthropicAgentId "$AGENT_ID"`; the BFF reads
@@ -151,8 +156,9 @@ people, so its contents never enter this repo.
   ```sh
   export THEMIS_AGENT_MODEL_ID=$(cd infra && pulumi config get --stack dev themis:anthropicAgentModelId)
   AGENT_ID=$(cd infra && pulumi config get --stack dev themis:anthropicAgentId)
-  uv run --group agents python -m tools.agents diff agents/svcv4-classifier.agent.yaml --agent-id "$AGENT_ID"   # read-only
-  uv run --group agents python -m tools.agents apply agents/svcv4-classifier.agent.yaml --agent-id "$AGENT_ID"
+  SKILL_IDS=$(cd infra && pulumi config get --stack dev themis:anthropicSkillIds)
+  uv run --group agents python -m tools.agents diff agents/svcv4-classifier.agent.yaml --agent-id "$AGENT_ID" --skill-ids "$SKILL_IDS"   # read-only
+  uv run --group agents python -m tools.agents apply agents/svcv4-classifier.agent.yaml --agent-id "$AGENT_ID" --skill-ids "$SKILL_IDS"
   ```
 
   A session pins the agent version at creation, so a running Analysis keeps the old prompt: create a fresh one to
@@ -167,8 +173,9 @@ people, so its contents never enter this repo.
   (`custom:<skill_id>@<version>`).
 
 - **Adding a custom skill** — write its files under a new `agents/skills/<directory>`, then
-  `uv run --group agents python -m tools.agents create-skill agents/skills/<directory>`: it creates the skill with the
-  directory as its first version and prints the `skill_…` id, which goes into the agent's yaml as a `custom` entry with
+  `uv run --group agents python -m tools.agents create-skill agents/skills/<directory>` once in each environment's
+  workspace: it creates the skill with the directory as its first version and prints the `skill_…` id, which goes into
+  that stack's `themis:anthropicSkillIds` under the directory's name. The agent's yaml names it as a `custom` entry with
   `directory: <directory>`. Then apply the agent.
 
 - **Replacing the agent** — only when the superseded agent must stay separately addressable: create it from the config,

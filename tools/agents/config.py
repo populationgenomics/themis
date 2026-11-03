@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import pathlib
 import subprocess
 import typing
@@ -21,6 +22,7 @@ SKILLS_DIR = AGENTS_DIR / 'skills'
 SKILL_FILE = 'SKILL.md'
 # The model id the declaration is applied with; the stack's encrypted `themis:anthropicAgentModelId`, never the yaml's.
 MODEL_ID_ENV = 'THEMIS_AGENT_MODEL_ID'
+_SKILL_ID_PREFIX = 'skill_'
 
 _AGENT_KEYS = frozenset({'name', 'model', 'system', 'description', 'tools', 'skills', 'multiagent'})
 _SKILL_TYPES = frozenset({'anthropic', 'custom'})
@@ -37,7 +39,10 @@ class ConfigError(ValueError):
 
 @dataclasses.dataclass(frozen=True)
 class DirectorySkill:
-    """A custom skill the repo holds, published from `agents/skills/<directory>` when its content moves."""
+    """A custom skill the repo holds, published from `agents/skills/<directory>` when its content moves.
+
+    `skill_id` is the stack's: a skill belongs to one workspace, so each environment has its own.
+    """
 
     skill_id: str
     directory: str
@@ -51,8 +56,8 @@ class DirectorySkill:
 class AgentConfig:
     """One `agents/<name>.agent.yaml`, read and checked.
 
-    `skills` holds the entries as written: a pinned one carries its `version`, a directory one its
-    `directory`, and `directory_skills` names the latter for publishing.
+    `skills` holds the entries as written: an Anthropic skill carries its `skill_id` and `version`, a
+    custom one its `directory`, and `directory_skills` binds the latter to a stack's skill ids.
     """
 
     path: pathlib.Path
@@ -64,13 +69,25 @@ class AgentConfig:
     skills: list[dict[str, object]]
     multiagent: dict[str, object] | None
 
-    @property
-    def directory_skills(self) -> tuple[DirectorySkill, ...]:
+    def directory_skills(self, skill_ids: Mapping[str, str]) -> tuple[DirectorySkill, ...]:
+        """Each custom skill the declaration holds, under the id `skill_ids` gives its directory.
+
+        Raises:
+            ConfigError: If `skill_ids` names no id for one of the declaration's directories.
+        """
+        missing = [directory for directory in self.skill_directories if directory not in skill_ids]
+        if missing:
+            raise ConfigError(
+                f'{self.path}: no skill id for {missing} in this stack: create the skill in its workspace '
+                '(`tools.agents create-skill`) and add the id to themis:anthropicSkillIds'
+            )
         return tuple(
-            DirectorySkill(skill_id=str(entry['skill_id']), directory=str(entry['directory']))
-            for entry in self.skills
-            if 'directory' in entry
+            DirectorySkill(skill_id=skill_ids[directory], directory=directory) for directory in self.skill_directories
         )
+
+    @property
+    def skill_directories(self) -> tuple[str, ...]:
+        return tuple(str(entry['directory']) for entry in self.skills if entry['type'] == 'custom')
 
 
 def load(path: pathlib.Path) -> AgentConfig:
@@ -170,24 +187,19 @@ def _tool(entry: dict[str, object], path: pathlib.Path) -> dict[str, object]:
 
 
 def _skill(entry: Mapping[str, object], path: pathlib.Path) -> dict[str, object]:
-    """One `skills` entry: a type, a skill id, and one pin.
+    """One `skills` entry: an Anthropic skill by its id and a pinned `version`, or a custom skill by its `directory`.
 
-    The pin is a `version` string, or — for a custom skill the repo holds — the `directory` under
-    agents/skills/ whose content is published and pinned at apply.
+    A custom skill names no id: its id differs per workspace and is the stack's (`parse_skill_ids`).
+    Its directory under agents/skills/ is published and pinned at apply.
     """
     kind = entry.get('type')
-    if kind not in _SKILL_TYPES:
-        raise ConfigError(f'{path}: a skill `type` is one of {sorted(_SKILL_TYPES)}, got {kind!r}')
-    skill_id = _required_str(entry, 'skill_id', path)
-    allowed = {'type', 'skill_id', 'version'} | ({'directory'} if kind == 'custom' else set())
-    unknown = sorted(set(entry) - allowed)
-    if unknown:
-        raise ConfigError(f'{path}: skill {skill_id}: unknown keys {unknown}')
-    has_version, has_directory = 'version' in entry, 'directory' in entry
-    if has_version == has_directory:
-        pins = 'a `version` or a `directory`' if kind == 'custom' else 'a `version`'
-        raise ConfigError(f'{path}: skill {skill_id} is pinned by exactly one of {pins}')
-    if has_version:
+    if kind == 'anthropic':
+        skill_id = _required_str(entry, 'skill_id', path)
+        unknown = sorted(set(entry) - {'type', 'skill_id', 'version'})
+        if unknown:
+            raise ConfigError(f'{path}: skill {skill_id}: unknown keys {unknown}')
+        if 'version' not in entry:
+            raise ConfigError(f'{path}: skill {skill_id} is pinned by a `version`')
         if not isinstance(entry['version'], str):
             raise ConfigError(
                 f'{path}: skill {skill_id}: `version` is a string, got {entry["version"]!r} — quote it; '
@@ -198,13 +210,54 @@ def _skill(entry: Mapping[str, object], path: pathlib.Path) -> dict[str, object]
             raise ConfigError(
                 f'{path}: skill {skill_id} is pinned to `latest`, which moves the deployed body with no change here'
             )
-    else:
-        directory = _required_str(entry, 'directory', path)
-        if pathlib.PurePosixPath(directory).name != directory or directory in ('.', '..'):
+    elif kind == 'custom':
+        if 'skill_id' in entry:
             raise ConfigError(
-                f'{path}: skill {skill_id}: `directory` is one name under agents/skills/, got {directory!r}'
+                f'{path}: a custom skill names its `directory`, not a `skill_id`: its id differs per workspace '
+                'and is stack config (themis:anthropicSkillIds)'
             )
+        unknown = sorted(set(entry) - {'type', 'directory'})
+        if unknown:
+            raise ConfigError(f'{path}: custom skill: unknown keys {unknown}; it names only its `directory`')
+        directory = _required_str(entry, 'directory', path)
+        if not _is_one_name(directory):
+            raise ConfigError(f'{path}: custom skill: `directory` is one name under agents/skills/, got {directory!r}')
+    else:
+        raise ConfigError(f'{path}: a skill `type` is one of {sorted(_SKILL_TYPES)}, got {kind!r}')
     return dict(entry)
+
+
+def _is_one_name(directory: str) -> bool:
+    return pathlib.PurePosixPath(directory).name == directory and directory not in ('.', '..')
+
+
+def parse_skill_ids(text: str) -> dict[str, str]:
+    """A stack's custom skill ids, from the JSON object its `anthropic_skill_ids` output holds.
+
+    The object maps each directory under agents/skills/ to the id of the skill created from it in
+    the stack's workspace. It may name directories a given declaration does not hold.
+
+    Raises:
+        ConfigError: If `text` is not a JSON object of directory names to `skill_…` ids, names a
+            directory agents/skills/ does not hold, or gives two directories one skill.
+    """
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ConfigError(f'the skill ids are not JSON: {e}') from e
+    if not isinstance(raw, dict):
+        raise ConfigError(f'the skill ids are a JSON object of directory to skill id, got {raw!r}')
+    skill_ids: dict[str, str] = {}
+    for directory, skill_id in raw.items():
+        if not isinstance(skill_id, str) or not skill_id.startswith(_SKILL_ID_PREFIX):
+            raise ConfigError(f'the skill id for {directory!r} is not a `{_SKILL_ID_PREFIX}…` id: {skill_id!r}')
+        if not _is_one_name(directory) or not (SKILLS_DIR / directory).is_dir():
+            raise ConfigError(f'the skill ids name {directory!r}, which is not a directory under {SKILLS_DIR}')
+        skill_ids[directory] = skill_id
+    shared = sorted({skill_id for skill_id in skill_ids.values() if list(skill_ids.values()).count(skill_id) > 1})
+    if shared:
+        raise ConfigError(f'the skill ids give one skill to two directories: {shared}')
+    return skill_ids
 
 
 def read_skill(directory: pathlib.Path) -> SkillFiles:

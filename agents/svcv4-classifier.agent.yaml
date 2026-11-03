@@ -16,17 +16,15 @@ multiagent:
 # The capability lives in the attached skill; `system` only routes to it — description-triggering alone does not
 # reliably route a classification request to the skill.
 system: Use the classifying-sequence-variants skill for variant classification requests.
-# Every skill the agent carries is listed here: the list is sent whole, so one left out is detached. A skill the repo
-# holds names its directory under agents/skills/; `apply` publishes the directory when its content moved and pins the
-# agent to that version. Any other is pinned by a `version` string (`latest` is refused, since it would move the
-# deployed body with no change here).
+# Every skill the agent carries is listed here: the list is sent whole, so one left out is detached. A custom skill
+# names its directory under agents/skills/; `apply` publishes the directory when its content moved and pins the agent
+# to that version. Its id is per workspace, so it is stack config (`themis:anthropicSkillIds`). An Anthropic skill is
+# pinned by a `version` string (`latest` is refused, since it would move the deployed body with no change here).
 skills:
   - type: anthropic
     skill_id: pdf
     version: "20260709"
   - type: custom
-    # Server-assigned when the skill is created, once (`tools.agents create-skill`); there is no name-based addressing.
-    skill_id: skill_01MYJGLbkKRETy17gFiZAfPW
     directory: classifying-sequence-variants
 tools:
   # The prebuilt `agent_toolset_20260401`, default-deny: a tool is on only where `configs` enables it, and

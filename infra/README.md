@@ -191,18 +191,18 @@ real values only exist after the first `up`, so a copied one breaks loudly. Ever
 `themis:anthropicOrganizationId` belongs to dev's workspace and must not be copied either, because each environment has
 its own workspace ([`infrastructure.md`](../docs/design/infrastructure.md)): `themis:anthropicWorkspaceId`, the web
 tier's `themis:anthropicServiceAccountId`, `themis:anthropicWorkerServiceAccountId`,
-`themis:anthropicDeployServiceAccountId` / `…DeployFederationRuleId`, `themis:anthropicAgentId` and
-`themis:anthropicEnvironmentId`. Nor may dev's `themis:anthropicEnvironmentKey` or `themis:anthropicWebhookSigningKey`
-be re-set on the new stack: each belongs to dev's self-hosted environment and its webhook. Three are quiet instead,
-deploying clean onto a wrong outcome: `themis:enablePrScreenshotBucket`, because a copied `true` creates a
-world-readable bucket in an environment that has no review workflow to justify one; `themis:cluDerivesSessionTokens`,
-because a copied `true` lets whoever can impersonate `themis-clu` act as any live session in an environment whose
-sessions may be real; and `themis:anthropicWorkerFederationRuleId`, whose rule is pinned to another environment's
-service account, so the convert worker deploys healthy and fails only when it first tries to transcribe.
-`themis:iapOauthClientId` (with its secret) names the OAuth client IAP signs people in through for one deployment, and
-each environment has its own. `themis:aclWriter` names the site's account that writes the ACL into the deployment's
-secret ([`access-control.md`](../docs/runbooks/access-control.md)); a new environment's secret starts empty, so its
-first `up` deploys that secret alone. The full sequence is
+`themis:anthropicDeployServiceAccountId` / `…DeployFederationRuleId`, `themis:anthropicAgentId`,
+`themis:anthropicSkillIds` and `themis:anthropicEnvironmentId`. Nor may dev's `themis:anthropicEnvironmentKey` or
+`themis:anthropicWebhookSigningKey` be re-set on the new stack: each belongs to dev's self-hosted environment and its
+webhook. Three are quiet instead, deploying clean onto a wrong outcome: `themis:enablePrScreenshotBucket`, because a
+copied `true` creates a world-readable bucket in an environment that has no review workflow to justify one;
+`themis:cluDerivesSessionTokens`, because a copied `true` lets whoever can impersonate `themis-clu` act as any live
+session in an environment whose sessions may be real; and `themis:anthropicWorkerFederationRuleId`, whose rule is pinned
+to another environment's service account, so the convert worker deploys healthy and fails only when it first tries to
+transcribe. `themis:iapOauthClientId` (with its secret) names the OAuth client IAP signs people in through for one
+deployment, and each environment has its own. `themis:aclWriter` names the site's account that writes the ACL into the
+deployment's secret ([`access-control.md`](../docs/runbooks/access-control.md)); a new environment's secret starts
+empty, so its first `up` deploys that secret alone. The full sequence is
 [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development

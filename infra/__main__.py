@@ -91,6 +91,9 @@ anthropic_environment_key = config.require_secret('anthropicEnvironmentKey')
 anthropic_webhook_signing_key = config.require_secret('anthropicWebhookSigningKey')
 anthropic_environment_id = config.require('anthropicEnvironmentId')
 anthropic_agent_id = config.require('anthropicAgentId')
+# Each custom skill directory under agents/skills/ to its skill in this stack's workspace; `tools.agents` checks the
+# ids against the declaration when it applies them from the exported output.
+anthropic_skill_ids = config.require_object('anthropicSkillIds')
 # The model the agent runs: confidential config (docs/design/deployment.md, "Confidential config"), so encrypted here
 # and never in the agent's tracked declaration; `tools.agents` applies it from the exported output.
 anthropic_agent_model_id = config.require_secret('anthropicAgentModelId')
@@ -929,9 +932,10 @@ pulumi.export('anthropic_environment_key_secret_id', anthropic_environment_key_s
 pulumi.export('anthropic_webhook_signing_key_secret_id', anthropic_webhook_signing_key_secret.secret.secret_id)
 # The model the agent declaration is applied with; a secret output, as the config it comes from.
 pulumi.export('anthropic_agent_model_id', anthropic_agent_model_id)
-# What the deploy workflow's agent step reads: the agent it applies the declaration to, and the identity it
-# federates into the workspace as.
+# What the deploy workflow's agent step reads: the agent it applies the declaration to, the skills the declaration
+# names, and the identity it federates into the workspace as.
 pulumi.export('anthropic_agent_id', anthropic_agent_id)
+pulumi.export('anthropic_skill_ids', anthropic_skill_ids)
 pulumi.export('anthropic_organization_id', anthropic_organization_id)
 pulumi.export('anthropic_workspace_id', anthropic_workspace_id)
 pulumi.export('anthropic_deploy_federation_rule_id', anthropic_deploy_federation_rule_id)

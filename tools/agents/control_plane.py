@@ -112,8 +112,12 @@ class Pending:
 
 @dataclasses.dataclass(frozen=True)
 class Resolution:
-    """The declaration against an agent's records: what is pinned already, what has to be published first."""
+    """The declaration against an agent's records: what is pinned already, what has to be published first.
 
+    `skill_ids` holds each directory's id in the stack's workspace.
+    """
+
+    skill_ids: dict[str, str]
     records: dict[str, SkillRecord]
     pending: tuple[Pending, ...]
     stale_keys: tuple[str, ...]
@@ -135,19 +139,21 @@ class Applied:
     published: tuple[Published, ...]
 
 
-def resolve(config: config_mod.AgentConfig, metadata: Mapping[str, str]) -> Resolution:
+def resolve(config: config_mod.AgentConfig, skill_ids: Mapping[str, str], metadata: Mapping[str, str]) -> Resolution:
     """Read every directory skill and settle it against the agent's records.
 
-    A directory whose record names its skill and holds its digest keeps its recorded version; any
-    other is pending. A record for a directory the declaration no longer holds is stale.
+    A directory whose record names the stack's skill for it and holds its digest keeps its recorded
+    version; any other is pending. A record for a directory the declaration no longer holds is stale.
 
     Raises:
         ControlPlaneError: If a record under `skill:` is not in the record's shape.
-        config_mod.ConfigError: If a directory is not one skill.
+        config_mod.ConfigError: If `skill_ids` lacks one of the declaration's directories, or a
+            directory is not one skill.
     """
+    skills = config.directory_skills(skill_ids)
     records: dict[str, SkillRecord] = {}
     pending: list[Pending] = []
-    for skill in config.directory_skills:
+    for skill in skills:
         files = config_mod.read_skill(skill.path)
         digest = config_mod.digest(files)
         key = record_key(skill.directory)
@@ -156,7 +162,7 @@ def resolve(config: config_mod.AgentConfig, metadata: Mapping[str, str]) -> Reso
             records[skill.directory] = record
         else:
             pending.append(Pending(skill=skill, files=files, digest=digest))
-    declared = {skill.directory for skill in config.directory_skills}
+    declared = {skill.directory for skill in skills}
     stale = tuple(
         sorted(
             key
@@ -164,7 +170,12 @@ def resolve(config: config_mod.AgentConfig, metadata: Mapping[str, str]) -> Reso
             if key.startswith(_RECORD_PREFIX) and key.removeprefix(_RECORD_PREFIX) not in declared
         )
     )
-    return Resolution(records=records, pending=tuple(pending), stale_keys=stale)
+    return Resolution(
+        skill_ids={skill.directory: skill.skill_id for skill in skills},
+        records=records,
+        pending=tuple(pending),
+        stale_keys=stale,
+    )
 
 
 def publish(resolution: Resolution, client: anthropic.Anthropic) -> tuple[dict[str, SkillRecord], list[Published]]:
@@ -204,23 +215,23 @@ def publish(resolution: Resolution, client: anthropic.Anthropic) -> tuple[dict[s
 def agent_params(
     config: config_mod.AgentConfig,
     model_id: str,
+    resolution: Resolution,
     records: Mapping[str, SkillRecord],
-    stale_keys: Sequence[str] = (),
 ) -> AgentParams:
-    """The declaration on `model_id`, every directory skill pinned to its record.
+    """The declaration on `model_id`, every directory skill under the stack's id, pinned to its record.
 
     A directory skill without a record reads as unpublished, in the pin and in its metadata value.
     """
     skills: list[dict[str, object]] = []
-    metadata: dict[str, str | None] = dict.fromkeys(stale_keys)
+    metadata: dict[str, str | None] = dict.fromkeys(resolution.stale_keys)
     for entry in config.skills:
-        if 'directory' in entry:
+        if entry['type'] == 'custom':
             directory = str(entry['directory'])
             record = records.get(directory)
             skills.append(
                 {
                     'type': 'custom',
-                    'skill_id': entry['skill_id'],
+                    'skill_id': resolution.skill_ids[directory],
                     'version': record.version if record is not None else _UNPUBLISHED,
                 }
             )
@@ -240,11 +251,12 @@ def agent_params(
 
 
 def create(
-    config: config_mod.AgentConfig, model_id: str, client: anthropic.Anthropic
+    config: config_mod.AgentConfig, model_id: str, skill_ids: Mapping[str, str], client: anthropic.Anthropic
 ) -> beta_types.BetaManagedAgentsAgent:
     """Publish every directory skill, then create the agent the declaration describes, its records with it."""
-    records, _ = publish(resolve(config, {}), client)
-    params = agent_params(config, model_id, records)
+    resolution = resolve(config, skill_ids, {})
+    records, _ = publish(resolution, client)
+    params = agent_params(config, model_id, resolution, records)
     return client.beta.agents.create(
         name=params.name,
         model=params.model,
@@ -258,16 +270,22 @@ def create(
     )
 
 
-def apply(config: config_mod.AgentConfig, model_id: str, client: anthropic.Anthropic, agent_id: str) -> Applied:
+def apply(
+    config: config_mod.AgentConfig,
+    model_id: str,
+    skill_ids: Mapping[str, str],
+    client: anthropic.Anthropic,
+    agent_id: str,
+) -> Applied:
     """Publish what moved, then update `agent_id` to the declaration, whole.
 
     Sent without a `version`, the update is last-write-wins — the declaration is the truth, whatever
     the agent held — and the API creates a new agent version only when a field changed.
     """
     before = client.beta.agents.retrieve(agent_id)
-    resolution = resolve(config, before.metadata)
+    resolution = resolve(config, skill_ids, before.metadata)
     records, published = publish(resolution, client)
-    params = agent_params(config, model_id, records, resolution.stale_keys)
+    params = agent_params(config, model_id, resolution, records)
     after = client.beta.agents.update(
         agent_id,
         name=params.name,
@@ -284,7 +302,7 @@ def apply(config: config_mod.AgentConfig, model_id: str, client: anthropic.Anthr
 
 
 def create_skill(directory: pathlib.Path, client: anthropic.Anthropic) -> str:
-    """Create a skill from `directory`, its content the first version, and return its id for the declaration."""
+    """Create a skill from `directory`, its content the first version, and return its id for the stack's config."""
     files = config_mod.read_skill(directory)
     skill = client.beta.skills.create(
         files=config_mod.upload_files(directory.name, files), display_title=directory.name
@@ -292,7 +310,13 @@ def create_skill(directory: pathlib.Path, client: anthropic.Anthropic) -> str:
     return skill.id
 
 
-def diff(config: config_mod.AgentConfig, model_id: str, client: anthropic.Anthropic, agent_id: str) -> str:
+def diff(
+    config: config_mod.AgentConfig,
+    model_id: str,
+    skill_ids: Mapping[str, str],
+    client: anthropic.Anthropic,
+    agent_id: str,
+) -> str:
     """A unified diff from the agent as deployed to the declaration, over what the declaration says. Read-only.
 
     A directory skill whose content the agent does not run yet shows as unpublished. The deployed
@@ -303,8 +327,8 @@ def diff(config: config_mod.AgentConfig, model_id: str, client: anthropic.Anthro
     declaration stays, since that is a difference. Empty means no difference.
     """
     deployed = client.beta.agents.retrieve(agent_id)
-    resolution = resolve(config, deployed.metadata)
-    desired = agent_params(config, model_id, resolution.records, resolution.stale_keys).as_dict()
+    resolution = resolve(config, skill_ids, deployed.metadata)
+    desired = agent_params(config, model_id, resolution, resolution.records).as_dict()
     projected = _project(deployed.model_dump(), desired, agent_id)
     return ''.join(
         difflib.unified_diff(

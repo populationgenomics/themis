@@ -295,7 +295,11 @@ The deploy account is one of the accounts that CI runs take in each project, eac
 The deploy step that applies the agent declaration signs in to Anthropic as the same deploy account, federated into its
 environment's Anthropic workspace under a rule that pins that account
 ([`../runbooks/claude-api-wif.md`](../runbooks/claude-api-wif.md)). One binding therefore gates both the cloud stack and
-the agent. Each environment has a workspace of its own ([`infrastructure.md`](infrastructure.md)).
+the agent. Each environment has a workspace of its own ([`infrastructure.md`](infrastructure.md)), and an Anthropic
+token sees only its own workspace's resources: a lookup of `dev`'s classification skill with a `prod` token returns "not
+found". The agent declaration therefore names each custom skill by its directory under `agents/skills/`, and each
+stack's config maps that directory to the skill created from it in the stack's workspace (`themis:anthropicSkillIds`),
+the way it holds the agent's id. Adding a custom skill means creating it once in every workspace.
 
 ### Previews against both stacks
 
@@ -535,8 +539,3 @@ as `themis-clu` in both projects, so a silent default is the likeliest way to ru
   `prod`, guarded by a ruleset in the way `deployed/dev` already is, which would put a person between the merge and the
   deploy. GitHub's own required reviewers for deployments would do the same, but on a private repository they need the
   Enterprise plan, and the organisation is on Team.
-- Whether the agent's skills can be shared across workspaces. The agent declaration names its skills by id in a tracked
-  file. An Anthropic token sees only the resources of its own workspace, so a skill created in `dev`'s workspace is
-  presumably invisible from `prod`'s, though Anthropic's reference does not say so for skills. One lookup of `dev`'s
-  skill id with a `prod` token settles it. If it holds, the skill ids become per-stack input to the agent tooling, as
-  the agent id already is.

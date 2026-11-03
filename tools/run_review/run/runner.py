@@ -109,8 +109,8 @@ class Deps:
     now: Callable[[], datetime.datetime]
     sleep: Callable[[float], None]
     log: Callable[[str], None]
-    # The skills this repository publishes, by skill id, with their directories (`provenance.declared_skills`).
-    our_skills: Mapping[str, str]
+    # The skill directories this repository publishes (`provenance.declared_directories`).
+    our_skills: frozenset[str]
     # What a read of the log or an interrupt may raise that is worth trying again at the next poll.
     transient: tuple[type[Exception], ...]
     # What `create_analysis` raises when the app never received the request or refused it outright, so

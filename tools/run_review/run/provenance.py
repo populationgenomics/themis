@@ -2,8 +2,9 @@
 
 The session holds a snapshot of the agent taken at creation, with its version, its model settings and
 each skill pinned to a version. The snapshot carries no metadata, so the commit a skill was published from is read from
-the agent's metadata at that version, where `tools.agents` records it. Which skills are ours is read
-from the declarations under `agents/`: every skill one of them publishes from a directory. Nothing the
+the agent's metadata at that version, where `tools.agents` records it, by the directory each was published
+from. Every custom skill is ours: the directories it may come from are the ones the declarations under
+`agents/` publish. A skill id differs per workspace, so the record is what ties one to a directory. Nothing the
 session or the agent holds names the build of the sandbox worker, the classification library or the
 evidence services the run called, so provenance cannot record them.
 """
@@ -41,41 +42,36 @@ class Provenance:
     skills: tuple[Skill, ...]
 
 
-def declared_skills(agents_dir: pathlib.Path = config.AGENTS_DIR) -> dict[str, str]:
-    """The skills this repository publishes, by skill id, each with the directory it is published from.
+def declared_directories(agents_dir: pathlib.Path = config.AGENTS_DIR) -> frozenset[str]:
+    """The skill directories this repository's declarations publish.
 
     Raises:
-        ProvenanceError: If a declaration does not load, or two publish one skill from different directories.
+        ProvenanceError: If a declaration does not load.
     """
-    ours: dict[str, str] = {}
+    ours: set[str] = set()
     for path in sorted(agents_dir.glob('*.agent.yaml')):
         try:
-            declared = config.load(path).directory_skills
+            ours.update(config.load(path).skill_directories)
         except config.ConfigError as e:
             raise ProvenanceError(str(e)) from e
-        for skill in declared:
-            if ours.setdefault(skill.skill_id, skill.directory) != skill.directory:
-                raise ProvenanceError(
-                    f'{skill.skill_id} is published from both {ours[skill.skill_id]!r} and {skill.directory!r}'
-                )
-    return ours
+    return frozenset(ours)
 
 
 def read(
     snapshot: Mapping[str, object],
     metadata_at: Callable[[str, int], Mapping[str, str]],
-    ours: Mapping[str, str],
+    ours: frozenset[str],
 ) -> Provenance:
     """The provenance of a session from its agent snapshot and the agent's metadata at the snapshot's version.
 
     Args:
         snapshot: The session's `agent`, as the API returns it.
         metadata_at: Reads the agent's metadata at an id and a version.
-        ours: The skills this repository publishes, by skill id, with their directories (`declared_skills`).
+        ours: The skill directories this repository publishes (`declared_directories`).
 
     Raises:
-        ProvenanceError: If the snapshot lacks its id, version or skills, a skill record is malformed, a skill of
-            ours has no record or one naming another directory or version, or a custom skill is not one of ours.
+        ProvenanceError: If the snapshot lacks its id, version or skills, a skill record is malformed, or a custom
+            skill has no record, or one naming a directory not of ours or another version.
     """
     agent_id, version, skills = snapshot.get('id'), snapshot.get('version'), snapshot.get('skills')
     model = snapshot.get('model')
@@ -100,7 +96,7 @@ def read(
 def _skill(
     entry: object,
     records: Mapping[str, tuple[str, control_plane.SkillRecord]],
-    ours: Mapping[str, str],
+    ours: frozenset[str],
     where: str,
 ) -> Skill:
     if not isinstance(entry, Mapping):
@@ -108,22 +104,18 @@ def _skill(
     kind, skill_id, version = entry.get('type'), entry.get('skill_id'), entry.get('version')
     if not isinstance(kind, str) or not isinstance(skill_id, str) or not isinstance(version, str):
         raise ProvenanceError(f'a pinned skill names no type, skill_id and version: {dict(entry)}')
-    if skill_id not in ours:
-        if kind != 'anthropic':
-            raise ProvenanceError(
-                f'{where} pins the {kind} skill {skill_id}, which no declaration under agents/ publishes from a '
-                'directory, so no commit can be named for it'
-            )
+    if kind == 'anthropic':
         return Skill(type=kind, skill_id=skill_id, version=version, directory=None, commit=None)
+    if kind != 'custom':
+        raise ProvenanceError(f'{where} pins {skill_id} of type {kind!r}, neither anthropic nor custom')
     if skill_id not in records:
         raise ProvenanceError(
-            f'{where} pins {skill_id}, which agents/skills/{ours[skill_id]} publishes, and holds no record of it'
+            f'{where} pins the custom skill {skill_id} and holds no record of it, so no commit can be named for it'
         )
     directory, record = records[skill_id]
-    if directory != ours[skill_id]:
+    if directory not in ours:
         raise ProvenanceError(
-            f'{where} records {skill_id} as published from {directory!r}; the declarations publish it from '
-            f'{ours[skill_id]!r}'
+            f'{where} records {skill_id} as published from {directory!r}, which no declaration under agents/ publishes'
         )
     if record.version != version:
         raise ProvenanceError(

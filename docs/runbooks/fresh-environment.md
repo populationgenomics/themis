@@ -73,9 +73,10 @@ not satisfy. These come from outside the repo:
 - The OAuth client IAP signs people in through, `themis:iapOauthClientId` and `themis:iapOauthClientSecret`
   ([`access-control.md`](access-control.md)). The tool stops before the full `up` while the client id is a placeholder.
 - The Anthropic workspace and the deploy account's svac and rule (round 1 of [`claude-api-wif.md`](claude-api-wif.md)),
-  plus the self-hosted environment and its key, the agent, and the webhook. The webhook's URL,
-  `https://<domain>/webhooks/anthropic`, is known as soon as the hostname is chosen, so it can be registered before the
-  run; its signing key goes into `themis:anthropicWebhookSigningKey`.
+  plus the self-hosted environment and its key, each custom skill (`tools.agents create-skill`, its id in
+  `themis:anthropicSkillIds`), the agent, and the webhook. The webhook's URL, `https://<domain>/webhooks/anthropic`, is
+  known as soon as the hostname is chosen, so it can be registered before the run; its signing key goes into
+  `themis:anthropicWebhookSigningKey`.
 - `themis:openalexApiKey` and `themis:semanticScholarApiKey`, the literature APIs' keys; set each with
   `pulumi config set --secret`.
 - The environment's Slack app and its two channels: `themis:slackChannel` and `themis:slackChannelId` for spend,

@@ -205,7 +205,7 @@ def _run(args: argparse.Namespace) -> int:
     _check_workspace(client, settings.gcp_project, args.anthropic_profile)
     web = web_app.Workbench(settings.web_origin, settings.service_account)
     web.list_analyses(settings.workbench_project)
-    our_skills = provenance.declared_skills()
+    our_skills = provenance.declared_directories()
     try:
         timing = runner.Timing(deadline=settings.deadline, settle=settings.settle, poll_every=_POLL_EVERY)
     except ValueError as e:

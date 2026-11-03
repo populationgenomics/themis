@@ -195,7 +195,7 @@ class Harness:
             now=self.clock.now,
             sleep=self.clock.sleep,
             log=self.logged.append,
-            our_skills={'s': 'classifying'},
+            our_skills=frozenset({'classifying'}),
             transient=(UnreachableError,),
             rejected=(RefusedError,),
         )

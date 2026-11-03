@@ -9,7 +9,7 @@ from tools.run_review.run import provenance
 
 COMMIT = 'c' * 40
 DIGEST = 'sha256:' + 'd' * 64
-OURS = {'skill_ours': 'classifying'}
+OURS = frozenset({'classifying'})
 SNAPSHOT = {
     'id': 'agent_1',
     'version': 36,
@@ -41,21 +41,25 @@ def test_each_skill_we_publish_is_traced_to_the_commit_it_came_from() -> None:
 
 
 @pytest.mark.parametrize(
-    ('metadata', 'ours', 'reason'),
+    ('metadata', 'reason'),
     [
-        ({'skill:classifying': f'skill_ours@16 {DIGEST} {COMMIT}'}, OURS, 'pinned skill_ours at 17'),
-        ({'skill:classifying': 'skill_ours@17'}, OURS, 'not a skill record'),
-        ({}, OURS, 'holds no record of it'),
-        ({'skill:renamed': f'skill_ours@17 {DIGEST} {COMMIT}'}, OURS, "published from 'renamed'"),
-        ({}, {}, 'pins the custom skill skill_ours, which no declaration'),
+        ({'skill:classifying': f'skill_ours@16 {DIGEST} {COMMIT}'}, 'pinned skill_ours at 17'),
+        ({'skill:classifying': 'skill_ours@17'}, 'not a skill record'),
+        ({}, 'holds no record of it'),
+        ({'skill:classifying': f'skill_other@17 {DIGEST} {COMMIT}'}, 'holds no record of it'),
+        ({'skill:renamed': f'skill_ours@17 {DIGEST} {COMMIT}'}, "published from 'renamed', which no declaration"),
     ],
-    ids=['other version', 'malformed record', 'ours without a record', 'other directory', 'custom and not ours'],
+    ids=['other version', 'malformed record', 'no record', 'record of another skill', 'not our directory'],
 )
-def test_a_skill_that_cannot_be_traced_is_refused(
-    metadata: Mapping[str, str], ours: Mapping[str, str], reason: str
-) -> None:
+def test_a_skill_that_cannot_be_traced_is_refused(metadata: Mapping[str, str], reason: str) -> None:
     with pytest.raises(provenance.ProvenanceError, match=reason):
-        provenance.read(SNAPSHOT, _at_snapshot(metadata), ours)
+        provenance.read(SNAPSHOT, _at_snapshot(metadata), OURS)
+
+
+def test_a_skill_of_a_type_neither_anthropic_nor_custom_is_refused() -> None:
+    snapshot = {**SNAPSHOT, 'skills': [{'type': 'other', 'skill_id': 's', 'version': '1'}]}
+    with pytest.raises(provenance.ProvenanceError, match="type 'other'"):
+        provenance.read(snapshot, _at_snapshot({}), OURS)
 
 
 def test_a_snapshot_without_a_version_is_refused_before_any_metadata_is_read() -> None:
@@ -69,17 +73,16 @@ def test_a_snapshot_without_a_model_is_refused() -> None:
         provenance.read(snapshot, _at_snapshot({}), OURS)
 
 
-def test_the_declarations_name_the_skills_this_repository_publishes() -> None:
-    # Every directory skill a committed declaration names is one of ours; the property holds for any set.
-    ours = provenance.declared_skills()
+def test_the_declarations_name_the_skill_directories_this_repository_publishes() -> None:
+    # Every directory a committed declaration names is one of ours; the property holds for any set.
+    ours = provenance.declared_directories()
     assert ours
-    assert all(directory and '/' not in directory for directory in ours.values())
+    assert all(directory and '/' not in directory for directory in ours)
 
 
-def test_one_skill_published_from_two_directories_is_refused(tmp_path: pathlib.Path) -> None:
-    for name, directory in (('a', 'one'), ('b', 'two')):
+def test_directories_are_gathered_across_declarations(tmp_path: pathlib.Path) -> None:
+    for name, directory in (('a', 'one'), ('b', 'two'), ('c', 'one')):
         (tmp_path / f'{name}.agent.yaml').write_text(
-            f'name: {name}\nskills:\n  - type: custom\n    skill_id: skill_x\n    directory: {directory}\n', 'utf-8'
+            f'name: {name}\nskills:\n  - type: custom\n    directory: {directory}\n', 'utf-8'
         )
-    with pytest.raises(provenance.ProvenanceError, match='published from both'):
-        provenance.declared_skills(tmp_path)
+    assert provenance.declared_directories(tmp_path) == {'one', 'two'}

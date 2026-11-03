@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import pathlib
 import re
 import runpy
@@ -41,6 +42,8 @@ GRANT_TYPE_PREFIX = 'themis:grants:'
 OPT_INS = frozenset({'themis:cluDerivesSessionTokens', 'themis:enablePrScreenshotBucket', 'themis:enableCiTelemetry'})
 # The stack switches that add no grant, so neither the dev-on nor the prod-off rule applies.
 NON_GRANT_SWITCHES = frozenset({'themis:workSweepScheduled'})
+# The keys whose value is an object; any other structured value is a secret's `secure` envelope.
+OBJECT_KEYS = frozenset({'themis:anthropicSkillIds'})
 
 # The input that names what each binding type is over.
 _TARGET_INPUT = {
@@ -197,16 +200,27 @@ def stack_config(stack: str) -> dict[str, str]:
     """A stack's config as the program reads it, every secret a placeholder.
 
     Raises:
-        ValueError: See `check_switches_classified`.
+        ValueError: See `config_values`.
     """
     file = _INFRA / f'Pulumi.{stack}.yaml'
-    raw = yaml.safe_load(file.read_text('utf-8'))['config']
-    check_switches_classified(raw, file.name)
+    return config_values(yaml.safe_load(file.read_text('utf-8'))['config'], file.name)
+
+
+def config_values(raw: Mapping[str, object], source: str) -> dict[str, str]:
+    """A stack file's config values as the program reads them: an object as JSON, every secret a placeholder.
+
+    Raises:
+        ValueError: If a value outside `OBJECT_KEYS` is structured and not a secret, or see
+            `check_switches_classified`.
+    """
+    check_switches_classified(raw, source)
     config = {}
     for key, value in raw.items():
-        if isinstance(value, dict):
-            if set(value) != {'secure'}:
-                raise ValueError(f'{key}: unexpected structured config in {file.name}')
+        if key in OBJECT_KEYS:
+            config[key] = json.dumps(value)  # how Pulumi hands an object value to the program
+        elif isinstance(value, dict | list):
+            if not isinstance(value, dict) or set(value) != {'secure'}:
+                raise ValueError(f'{key}: unexpected structured config in {source}')
             config[key] = 'mock-secret'
         elif isinstance(value, bool):
             config[key] = str(value).lower()

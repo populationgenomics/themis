@@ -292,8 +292,10 @@ The runtime separates control-plane declarations from data-plane sessions
   and applied as a whole by the deploy workflow through [`../../tools/agents/`](../../tools/agents). When custom skill
   directories under `agents/skills/` change, `tools/agents` publishes a new immutable skill version, pins the Agent
   resource to that version, and records the content digest and git commit in the Agent's metadata so unchanged deploys
-  are no-ops. The `self_hosted` Environment resource
-  ([`../../agents/selfhosted.environment.yaml`](../../agents/selfhosted.environment.yaml)) is created once out of band.
+  are no-ops. A skill's id belongs to one Anthropic workspace, so each stack maps the skill directories to its own ids
+  (`themis:anthropicSkillIds`), as it holds its own agent id ([`deployment.md`](deployment.md)). The `self_hosted`
+  Environment resource ([`../../agents/selfhosted.environment.yaml`](../../agents/selfhosted.environment.yaml)) is
+  created once out of band.
 - **Data plane.** The web backend creates and drives a Session per Analysis through the Anthropic SDK
   ([`managed-agents.md`](managed-agents.md)), while the self-hosted sandbox worker claims and executes the session's
   sandbox work ([`sandbox-worker.md`](sandbox-worker.md)).

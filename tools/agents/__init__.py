@@ -1,4 +1,4 @@
-"""An agent as the repo declares it, applied to the Managed Agents control plane.
+r"""An agent as the repo declares it, applied to the Managed Agents control plane.
 
 An agent — its model, system prompt, tools, skills and roster — is a control-plane resource, and
 `agents/<name>.agent.yaml` is its declaration: `apply` sends every field the declaration can carry,
@@ -9,7 +9,11 @@ when its content is not what the agent runs, and pins the agent to that version;
 content, so the next apply can tell. `apply` publishes only a directory `HEAD` holds as it stands, so
 it changes the skill and the agent only when a commit did.
 
-    uv run --group agents python -m tools.agents apply agents/svcv4-classifier.agent.yaml --agent-id agent_…
+    SKILL_IDS="$(pulumi stack output --stack dev --cwd infra --json anthropic_skill_ids)"
+    uv run --group agents python -m tools.agents apply agents/svcv4-classifier.agent.yaml \
+        --agent-id agent_… --skill-ids "$SKILL_IDS"
+
+A skill belongs to one Anthropic workspace, so a custom skill's id is the stack's, as the agent's is.
 
 Credentials are the SDK's own resolution: the `ant` CLI's login profile on a laptop, the workload
 identity federation variables in CI (`docs/runbooks/claude-api-wif.md`).

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import pathlib
 import subprocess
 import types
@@ -10,6 +11,7 @@ import typing
 
 import anthropic
 import pytest
+import yaml
 from anthropic.lib import credentials as anthropic_credentials
 from anthropic.types.beta import agent_update_params
 
@@ -17,10 +19,14 @@ from tools.agents import __main__ as cli
 from tools.agents import config, control_plane
 
 _DECLARATIONS = sorted(config.AGENTS_DIR.glob('*.agent.yaml'))
+_STACK_FILES = sorted((config.REPO_ROOT / 'infra').glob('Pulumi.*.yaml'))
 _BODY = '---\nname: a-skill\ndescription: d\n---\ntext\n'
 _MINIMAL = 'name: an agent\n'
 _MODEL = 'claude-test-1'
 _COMMIT = 'c0ffee' * 6 + 'c0ff'
+# The stack's skill ids for the `_declared` declaration.
+_IDS = {'a': 'skill_a'}
+_IDS_JSON = '{"a": "skill_a"}'
 _TOOLSET = 'tools:\n  - type: agent_toolset_20260401\n    default_config:\n      enabled: false\n    configs:\n'
 
 
@@ -60,12 +66,21 @@ def test_there_is_a_declaration_to_hold() -> None:
     assert _DECLARATIONS, 'no agents/*.agent.yaml found'
 
 
+@pytest.mark.parametrize('stack_file', _STACK_FILES, ids=[path.name for path in _STACK_FILES])
+def test_every_stack_names_a_skill_for_each_declared_directory(stack_file: pathlib.Path) -> None:
+    """A stack without an id for a declared directory would fail its deploy at the agent step, after `pulumi up`."""
+    stack_config = yaml.safe_load(stack_file.read_text('utf-8'))['config']
+    skill_ids = config.parse_skill_ids(json.dumps(stack_config['themis:anthropicSkillIds']))
+    for path in _DECLARATIONS:
+        config.load(path).directory_skills(skill_ids)
+
+
 @pytest.mark.parametrize('path', _DECLARATIONS, ids=[path.stem for path in _DECLARATIONS])
 def test_every_declaration_loads_and_its_directory_skills_are_one_skill_each(path: pathlib.Path) -> None:
     """`read_skill` raises on a directory that is not one skill — no SKILL.md, a hidden path, a symlink."""
     declaration = config.load(path)
-    for skill in declaration.directory_skills:
-        assert config.read_skill(skill.path)
+    for directory in declaration.skill_directories:
+        assert config.read_skill(config.SKILLS_DIR / directory)
 
 
 def test_a_minimal_declaration_loads(tmp_path: pathlib.Path) -> None:
@@ -92,17 +107,19 @@ def test_a_minimal_declaration_loads(tmp_path: pathlib.Path) -> None:
         (_MINIMAL + _TOOLSET + '      - enabled: true\n', '`name`'),
         (_MINIMAL + _TOOLSET.removesuffix('    configs:\n') + '    configs: read\n', '`configs` is a list'),
         (_MINIMAL + 'skills:\n  - type: other\n    skill_id: s\n    version: "1"\n', 'skill `type`'),
-        (_MINIMAL + 'skills:\n  - type: anthropic\n    skill_id: pdf\n', 'exactly one of a `version`'),
+        (_MINIMAL + 'skills:\n  - type: anthropic\n    skill_id: pdf\n', 'pinned by a `version`'),
+        (_MINIMAL + 'skills:\n  - type: anthropic\n    version: "1"\n', '`skill_id`'),
         (_MINIMAL + 'skills:\n  - type: anthropic\n    skill_id: pdf\n    directory: d\n', 'unknown keys'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n', 'exactly one of a `version` or a `directory`'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    version: "1"\n    directory: d\n', 'exactly one'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    version: 1788413284061808\n', 'quote it'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    version: ""\n', '`version`'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    version: latest\n', '`latest`'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    directory: ""\n', '`directory`'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    directory: a/b\n', 'one name under'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    directory: /tmp/a\n', 'one name under'),
-        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    directory: ..\n', 'one name under'),
+        (_MINIMAL + 'skills:\n  - type: anthropic\n    skill_id: pdf\n    version: 20260709\n', 'quote it'),
+        (_MINIMAL + 'skills:\n  - type: anthropic\n    skill_id: pdf\n    version: ""\n', '`version`'),
+        (_MINIMAL + 'skills:\n  - type: anthropic\n    skill_id: pdf\n    version: latest\n', '`latest`'),
+        (_MINIMAL + 'skills:\n  - type: custom\n    skill_id: s\n    directory: d\n', 'not a `skill_id`'),
+        (_MINIMAL + 'skills:\n  - type: custom\n    directory: d\n    version: "1"\n', 'unknown keys'),
+        (_MINIMAL + 'skills:\n  - type: custom\n', '`directory`'),
+        (_MINIMAL + 'skills:\n  - type: custom\n    directory: ""\n', '`directory`'),
+        (_MINIMAL + 'skills:\n  - type: custom\n    directory: a/b\n', 'one name under'),
+        (_MINIMAL + 'skills:\n  - type: custom\n    directory: /tmp/a\n', 'one name under'),
+        (_MINIMAL + 'skills:\n  - type: custom\n    directory: ..\n', 'one name under'),
     ],
     ids=[
         'not-a-mapping',
@@ -121,12 +138,14 @@ def test_a_minimal_declaration_loads(tmp_path: pathlib.Path) -> None:
         'toolset-configs-not-a-list',
         'skill-type',
         'anthropic-skill-unpinned',
+        'anthropic-skill-without-an-id',
         'anthropic-skill-with-directory',
-        'custom-skill-unpinned',
-        'custom-skill-pinned-twice',
         'version-as-integer',
         'version-empty',
         'version-latest',
+        'custom-skill-with-an-id',
+        'custom-skill-with-a-version',
+        'custom-skill-without-a-directory',
         'directory-empty',
         'directory-nested',
         'directory-absolute',
@@ -138,15 +157,58 @@ def test_a_declaration_outside_the_shape_is_refused(tmp_path: pathlib.Path, text
         config.load(_declaration(tmp_path, text))
 
 
-def test_directory_skills_are_the_custom_entries_pinned_by_directory(tmp_path: pathlib.Path) -> None:
+def test_directory_skills_are_the_custom_entries_under_the_stacks_ids(tmp_path: pathlib.Path) -> None:
     text = _MINIMAL + (
-        'skills:\n'
-        '  - type: anthropic\n    skill_id: pdf\n    version: "20260709"\n'
-        '  - type: custom\n    skill_id: skill_a\n    directory: a\n'
-        '  - type: custom\n    skill_id: skill_b\n    version: "7"\n'
+        'skills:\n  - type: anthropic\n    skill_id: pdf\n    version: "20260709"\n  - type: custom\n    directory: a\n'
     )
     declaration = config.load(_declaration(tmp_path, text))
-    assert declaration.directory_skills == (config.DirectorySkill(skill_id='skill_a', directory='a'),)
+    assert declaration.skill_directories == ('a',)
+    assert declaration.directory_skills({'a': 'skill_a', 'other': 'skill_o'}) == (
+        config.DirectorySkill(skill_id='skill_a', directory='a'),
+    )
+    with pytest.raises(config.ConfigError, match=r"no skill id for \['a'\] in this stack"):
+        declaration.directory_skills({'other': 'skill_o'})
+
+
+@pytest.mark.parametrize(
+    ('text', 'match'),
+    [
+        ('not json', 'not JSON'),
+        ('["a"]', 'a JSON object'),
+        ('{"a": 3}', 'not a `skill_…` id'),
+        ('{"a": "placeholder"}', 'not a `skill_…` id'),
+        ('{"missing": "skill_m"}', "'missing', which is not a directory"),
+        ('{"a/b": "skill_m"}', "'a/b', which is not a directory"),
+        ('{"..": "skill_m"}', "'..', which is not a directory"),
+        ('{"a": "skill_s", "b": "skill_s"}', "one skill to two directories: \\['skill_s'\\]"),
+    ],
+    ids=[
+        'not-json',
+        'not-an-object',
+        'id-not-a-string',
+        'placeholder',
+        'unknown-directory',
+        'nested',
+        'parent',
+        'one-skill-twice',
+    ],
+)
+def test_skill_ids_outside_the_shape_are_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, text: str, match: str
+) -> None:
+    monkeypatch.setattr(config, 'SKILLS_DIR', tmp_path / 'skills')
+    _write_skill(tmp_path / 'skills' / 'a')
+    _write_skill(tmp_path / 'skills' / 'b')
+    with pytest.raises(config.ConfigError, match=match):
+        config.parse_skill_ids(text)
+
+
+def test_skill_ids_name_directories_under_agents_skills(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    monkeypatch.setattr(config, 'SKILLS_DIR', tmp_path / 'skills')
+    _write_skill(tmp_path / 'skills' / 'a')
+    assert config.parse_skill_ids('{"a": "skill_a"}') == {'a': 'skill_a'}
 
 
 # --- a skill directory's content ---
@@ -382,7 +444,7 @@ def _declared(monkeypatch: pytest.MonkeyPatch, repo: pathlib.Path) -> config.Age
         'system: use the skill\n'
         'skills:\n'
         '  - type: anthropic\n    skill_id: pdf\n    version: "20260709"\n'
-        '  - type: custom\n    skill_id: skill_a\n    directory: a\n'
+        '  - type: custom\n    directory: a\n'
         'multiagent:\n  type: coordinator\n  agents:\n    - type: self\n'
     )
     declaration = config.load(_declaration(repo, text))
@@ -403,8 +465,8 @@ def test_create_and_apply_send_every_field_the_declaration_carries(
     client, agents, _ = _fake_client()
     carried = {field.name for field in dataclasses.fields(control_plane.AgentParams)}
 
-    created = control_plane.create(declaration, _MODEL, client)
-    control_plane.apply(declaration, _MODEL, client, created.id)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
+    control_plane.apply(declaration, _MODEL, _IDS, client, created.id)
 
     assert agents.sent == [carried, carried]
 
@@ -415,7 +477,7 @@ def test_create_publishes_every_directory_skill_and_records_it(
     declaration = _declared(monkeypatch, repo)
     client, agents, skills = _fake_client()
 
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
 
     assert skills.versions.created[0][0] == 'skill_a'
     assert [name for name, _ in skills.versions.created[0][1]] == ['a/SKILL.md']
@@ -441,9 +503,9 @@ def test_apply_publishes_nothing_and_leaves_the_version_when_nothing_moved(
 ) -> None:
     declaration = _declared(monkeypatch, repo)
     client, _, skills = _fake_client()
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
 
-    applied = control_plane.apply(declaration, _MODEL, client, created.id)
+    applied = control_plane.apply(declaration, _MODEL, _IDS, client, created.id)
 
     assert applied.published == ()
     assert (applied.before, applied.after) == (1, 1)
@@ -455,11 +517,11 @@ def test_apply_publishes_a_directory_whose_content_moved_and_pins_the_new_versio
 ) -> None:
     declaration = _declared(monkeypatch, repo)
     client, agents, skills = _fake_client()
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
     (config.SKILLS_DIR / 'a' / config.SKILL_FILE).write_text('---\nname: a-skill\ndescription: d\n---\nmore\n', 'utf-8')
     head = _commit(repo)
 
-    applied = control_plane.apply(declaration, _MODEL, client, created.id)
+    applied = control_plane.apply(declaration, _MODEL, _IDS, client, created.id)
 
     assert [item.directory for item in applied.published] == ['a']
     assert _record(agents, created.id, 'a').commit == head
@@ -469,7 +531,7 @@ def test_apply_publishes_a_directory_whose_content_moved_and_pins_the_new_versio
     assert skills_sent[1] == {'type': 'custom', 'skill_id': 'skill_a', 'version': '1000002'}
     assert _record(agents, created.id, 'a').version == '1000002'
     # And the moved content is now what the agent runs, so a second apply publishes nothing.
-    again = control_plane.apply(declaration, _MODEL, client, created.id)
+    again = control_plane.apply(declaration, _MODEL, _IDS, client, created.id)
     assert again.published == ()
     assert (again.before, again.after) == (2, 2)
 
@@ -510,11 +572,11 @@ def test_apply_refuses_a_skill_directory_no_commit_holds_before_uploading_anythi
     """A version published from the working tree would pin the agent to content no commit holds."""
     declaration = _declared(monkeypatch, repo)
     client, agents, skills = _fake_client()
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
     change(config.SKILLS_DIR / 'a')
 
     with pytest.raises(config.ConfigError, match='commit them first'):
-        control_plane.apply(declaration, _MODEL, client, created.id)
+        control_plane.apply(declaration, _MODEL, _IDS, client, created.id)
 
     assert len(skills.versions.created) == 1
     assert agents.versions[created.id] == 1
@@ -529,7 +591,7 @@ def test_a_committed_directory_publishes_with_an_ignored_file_beside_it(
     cache.mkdir()
     (cache / 'x.cpython-313.pyc').write_bytes(b'\x00')
 
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
 
     assert _record(agents, created.id, 'a').commit != ''
 
@@ -539,18 +601,14 @@ def test_one_dirty_directory_stops_every_upload(monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr(config, 'SKILLS_DIR', repo / 'skills')
     _write_skill(repo / 'skills' / 'a')
     _write_skill(repo / 'skills' / 'b')
-    text = _MINIMAL + (
-        'skills:\n'
-        '  - type: custom\n    skill_id: skill_a\n    directory: a\n'
-        '  - type: custom\n    skill_id: skill_b\n    directory: b\n'
-    )
+    text = _MINIMAL + ('skills:\n  - type: custom\n    directory: a\n  - type: custom\n    directory: b\n')
     declaration = config.load(_declaration(repo, text))
     _commit(repo)
     _add_untracked(repo / 'skills' / 'b')
     client, _, skills = _fake_client()
 
     with pytest.raises(config.ConfigError, match='commit them first'):
-        control_plane.create(declaration, _MODEL, client)
+        control_plane.create(declaration, _MODEL, {'a': 'skill_a', 'b': 'skill_b'}, client)
 
     assert skills.versions.created == []
 
@@ -558,14 +616,14 @@ def test_one_dirty_directory_stops_every_upload(monkeypatch: pytest.MonkeyPatch,
 def test_apply_publishes_again_when_the_record_names_another_skill(
     monkeypatch: pytest.MonkeyPatch, repo: pathlib.Path
 ) -> None:
-    """The yaml moved the directory to a new skill container; the version recorded belongs to the old one."""
+    """The stack names a new skill for the directory; the version recorded belongs to the old one."""
     declaration = _declared(monkeypatch, repo)
     client, agents, skills = _fake_client()
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
     metadata = typing.cast('dict[str, str]', agents.agents[created.id]['metadata'])
     metadata['skill:a'] = metadata['skill:a'].replace('skill_a@', 'skill_old@')
 
-    applied = control_plane.apply(declaration, _MODEL, client, created.id)
+    applied = control_plane.apply(declaration, _MODEL, _IDS, client, created.id)
 
     assert len(applied.published) == 1
     assert skills.versions.created[-1][0] == 'skill_a'
@@ -576,12 +634,12 @@ def test_apply_deletes_the_record_of_a_directory_the_declaration_dropped(
 ) -> None:
     declaration = _declared(monkeypatch, repo)
     client, agents, _ = _fake_client()
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
     metadata = typing.cast('dict[str, str]', agents.agents[created.id]['metadata'])
     metadata['skill:dropped'] = f'skill_x@1 sha256:ab {_COMMIT}'
     metadata['owner'] = 'kept'  # a key that is not a skill record is not the declaration's to touch
 
-    control_plane.apply(declaration, _MODEL, client, created.id)
+    control_plane.apply(declaration, _MODEL, _IDS, client, created.id)
 
     assert set(typing.cast('dict[str, str]', agents.agents[created.id]['metadata'])) == {'skill:a', 'owner'}
 
@@ -589,10 +647,10 @@ def test_apply_deletes_the_record_of_a_directory_the_declaration_dropped(
 def test_apply_refuses_a_record_it_cannot_read(monkeypatch: pytest.MonkeyPatch, repo: pathlib.Path) -> None:
     declaration = _declared(monkeypatch, repo)
     client, agents, _ = _fake_client()
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
     typing.cast('dict[str, str]', agents.agents[created.id]['metadata'])['skill:a'] = 'edited by hand'
     with pytest.raises(control_plane.ControlPlaneError, match='not a skill record'):
-        control_plane.apply(declaration, _MODEL, client, created.id)
+        control_plane.apply(declaration, _MODEL, _IDS, client, created.id)
 
 
 def test_publish_refuses_a_version_filed_under_another_folder(
@@ -606,7 +664,7 @@ def test_publish_refuses_a_version_filed_under_another_folder(
         lambda _skill_id, *, files: types.SimpleNamespace(id='v', version='1', directory='elsewhere', files=files),
     )
     with pytest.raises(control_plane.ControlPlaneError, match="'elsewhere'"):
-        control_plane.create(declaration, _MODEL, client)
+        control_plane.create(declaration, _MODEL, _IDS, client)
 
 
 def test_create_skill_uploads_the_directory_as_the_first_version_and_names_the_skill(repo: pathlib.Path) -> None:
@@ -624,8 +682,8 @@ def test_diff_is_empty_across_the_servers_defaults_and_expansions(
     """The server's view carries what the declaration does not say; none of it is a difference."""
     declaration = _declared(monkeypatch, repo)
     client, _, _ = _fake_client()
-    created = control_plane.create(declaration, _MODEL, client)
-    assert control_plane.diff(declaration, _MODEL, client, created.id) == ''
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
+    assert control_plane.diff(declaration, _MODEL, _IDS, client, created.id) == ''
 
 
 def test_diff_reports_a_moved_skill_as_unpublished_and_a_changed_field(
@@ -633,13 +691,13 @@ def test_diff_reports_a_moved_skill_as_unpublished_and_a_changed_field(
 ) -> None:
     declaration = _declared(monkeypatch, repo)
     client, agents, _ = _fake_client()
-    created = control_plane.create(declaration, _MODEL, client)
+    created = control_plane.create(declaration, _MODEL, _IDS, client)
     agents.agents[created.id]['system'] = 'an older prompt'
     extra = {'type': 'custom', 'skill_id': 'skill_extra', 'version': '9'}
     agents.agents[created.id]['skills'] = [*typing.cast('list[object]', agents.agents[created.id]['skills']), extra]
     (config.SKILLS_DIR / 'a' / config.SKILL_FILE).write_text('---\nname: a-skill\ndescription: d\n---\nmore\n', 'utf-8')
 
-    report = control_plane.diff(declaration, _MODEL, client, created.id)
+    report = control_plane.diff(declaration, _MODEL, _IDS, client, created.id)
 
     assert '-  "system": "an older prompt"' in report
     assert '+  "system": "use the skill"' in report
@@ -657,7 +715,7 @@ def test_the_command_refuses_to_run_without_the_model_id(
     monkeypatch.setattr(anthropic, 'Anthropic', lambda: client)
     monkeypatch.delenv(config.MODEL_ID_ENV, raising=False)
     with pytest.raises(SystemExit, match=f'{config.MODEL_ID_ENV} is unset'):
-        cli.main(['create', str(_declaration(tmp_path, _MINIMAL))])
+        cli.main(['create', str(_declaration(tmp_path, _MINIMAL)), '--skill-ids', '{}'])
 
 
 def test_the_command_refuses_to_run_with_no_credentials(
@@ -667,12 +725,17 @@ def test_the_command_refuses_to_run_with_no_credentials(
         anthropic, 'Anthropic', lambda: types.SimpleNamespace(api_key=None, auth_token=None, credentials=None)
     )
     with pytest.raises(SystemExit, match='no Anthropic credentials'):
-        cli.main(['apply', str(_declaration(tmp_path, _MINIMAL)), '--agent-id', 'agent_1'])
+        cli.main(['apply', str(_declaration(tmp_path, _MINIMAL)), '--agent-id', 'agent_1', '--skill-ids', '{}'])
+
+
+def test_the_command_refuses_empty_skill_ids(tmp_path: pathlib.Path) -> None:
+    with pytest.raises(SystemExit, match='--skill-ids is empty'):
+        cli.main(['create', str(_declaration(tmp_path, _MINIMAL)), '--skill-ids', ''])
 
 
 def test_the_command_refuses_an_empty_agent_id(tmp_path: pathlib.Path) -> None:
     with pytest.raises(SystemExit, match='--agent-id is empty'):
-        cli.main(['apply', str(_declaration(tmp_path, _MINIMAL)), '--agent-id', ''])
+        cli.main(['apply', str(_declaration(tmp_path, _MINIMAL)), '--agent-id', '', '--skill-ids', '{}'])
 
 
 def test_a_failed_token_exchange_names_the_rule_and_account_it_ran_under(
@@ -690,7 +753,7 @@ def test_a_failed_token_exchange_names_the_rule_and_account_it_ran_under(
     monkeypatch.setenv('ANTHROPIC_FEDERATION_RULE_ID', 'pending-registration')
     monkeypatch.setenv('ANTHROPIC_SERVICE_ACCOUNT_ID', 'pending-registration')
     with pytest.raises(SystemExit, match=r"rule 'pending-registration' for service account 'pending-registration'"):
-        cli.main(['apply', str(_declaration(tmp_path, _MINIMAL)), '--agent-id', 'agent_1'])
+        cli.main(['apply', str(_declaration(tmp_path, _MINIMAL)), '--agent-id', 'agent_1', '--skill-ids', '{}'])
 
 
 def test_the_command_creates_applies_and_reports(
@@ -701,20 +764,20 @@ def test_the_command_creates_applies_and_reports(
     monkeypatch.setattr(anthropic, 'Anthropic', lambda: client)
     monkeypatch.setenv(config.MODEL_ID_ENV, _MODEL)
 
-    assert cli.main(['create', str(declaration.path)]) == 0
+    assert cli.main(['create', str(declaration.path), '--skill-ids', _IDS_JSON]) == 0
     agent_id = capsys.readouterr().out.strip()
-    assert cli.main(['apply', str(declaration.path), '--agent-id', agent_id]) == 0
+    assert cli.main(['apply', str(declaration.path), '--agent-id', agent_id, '--skill-ids', _IDS_JSON]) == 0
     assert capsys.readouterr().out.strip() == f'{agent_id}: unchanged at v1'
     (config.SKILLS_DIR / 'a' / config.SKILL_FILE).write_text('---\nname: a-skill\ndescription: d\n---\nmore\n', 'utf-8')
     with pytest.raises(SystemExit, match='commit them first'):
-        cli.main(['apply', str(declaration.path), '--agent-id', agent_id])
+        cli.main(['apply', str(declaration.path), '--agent-id', agent_id, '--skill-ids', _IDS_JSON])
     _commit(repo)
-    assert cli.main(['apply', str(declaration.path), '--agent-id', agent_id]) == 0
+    assert cli.main(['apply', str(declaration.path), '--agent-id', agent_id, '--skill-ids', _IDS_JSON]) == 0
     assert capsys.readouterr().out.splitlines() == [
         'published agents/skills/a as version 1000002',
         f'{agent_id}: v1 -> v2',
     ]
-    assert cli.main(['diff', str(declaration.path), '--agent-id', agent_id]) == 0
+    assert cli.main(['diff', str(declaration.path), '--agent-id', agent_id, '--skill-ids', _IDS_JSON]) == 0
     assert capsys.readouterr().out.strip() == 'no difference over the declared fields'
 
 
@@ -723,4 +786,16 @@ def test_the_command_exits_naming_a_declaration_fault(monkeypatch: pytest.Monkey
     monkeypatch.setattr(anthropic, 'Anthropic', lambda: client)
     monkeypatch.setenv(config.MODEL_ID_ENV, _MODEL)
     with pytest.raises(SystemExit, match='`name`'):
-        cli.main(['create', str(_declaration(tmp_path, 'model: {}\n'))])
+        cli.main(['create', str(_declaration(tmp_path, 'model: {}\n')), '--skill-ids', '{}'])
+
+
+def test_the_command_exits_naming_a_directory_the_stack_has_no_skill_for(
+    monkeypatch: pytest.MonkeyPatch, repo: pathlib.Path
+) -> None:
+    declaration = _declared(monkeypatch, repo)
+    client, _, skills = _fake_client()
+    monkeypatch.setattr(anthropic, 'Anthropic', lambda: client)
+    monkeypatch.setenv(config.MODEL_ID_ENV, _MODEL)
+    with pytest.raises(SystemExit, match=r"no skill id for \['a'\]"):
+        cli.main(['create', str(declaration.path), '--skill-ids', '{}'])
+    assert skills.versions.created == []

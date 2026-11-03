@@ -65,6 +65,8 @@ config:
   themis:anthropicEnvironmentId: env_0151RnzYTzVpqjunmookpAwr
   # The Managed Agents agent the BFF opens sessions against.
   themis:anthropicAgentId: agent_01DcGE4w5BTrxL4Ay9pgu1H7
+  themis:anthropicSkillIds:
+    classifying-sequence-variants: skill_01MYJGLbkKRETy17gFiZAfPW
   # Anthropic Managed-Agents WIF (Path B) identifiers — plaintext, not credentials
   # (docs/runbooks/claude-api-wif.md).
   themis:anthropicFederationRuleId: fdrl_019dmRVVbye6txjip13uQTaj

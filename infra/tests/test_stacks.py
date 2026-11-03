@@ -52,3 +52,15 @@ def test_a_value_that_is_not_a_switch_needs_no_class() -> None:
     capture.check_switches_classified(
         {'themis:sqlTier': 'db-f1-micro', 'themis:authMaxInstances': '3'}, 'Pulumi.test.yaml'
     )
+
+
+def test_structured_config_outside_the_object_keys_is_refused() -> None:
+    # A misspelt `secure` envelope would otherwise reach the program as an object instead of a secret.
+    with pytest.raises(ValueError, match='themis:key: unexpected structured config'):
+        capture.config_values({'themis:key': {'secur': 'v1:x'}}, 'Pulumi.test.yaml')
+
+
+def test_an_object_key_reaches_the_program_as_json() -> None:
+    key = sorted(capture.OBJECT_KEYS)[0]
+    values = capture.config_values({key: {'a': 'b'}, 'themis:token': {'secure': 'v1:x'}}, 'Pulumi.test.yaml')
+    assert values == {key: '{"a": "b"}', 'themis:token': 'mock-secret'}

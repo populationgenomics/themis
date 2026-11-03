@@ -24,6 +24,11 @@ def _parser() -> argparse.ArgumentParser:
     ):
         subcommand = subcommands.add_parser(name, help=doc)
         subcommand.add_argument('declaration', type=pathlib.Path, help='an agents/<name>.agent.yaml')
+        subcommand.add_argument(
+            '--skill-ids',
+            required=True,
+            help="the stack's custom skill ids by directory, a JSON object (the anthropic_skill_ids stack output)",
+        )
         if name in ('apply', 'diff'):
             subcommand.add_argument('--agent-id', required=True, help='the deployed agent (themis:anthropicAgentId)')
     create_skill = subcommands.add_parser(
@@ -61,17 +66,20 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if getattr(args, 'agent_id', None) == '':
         raise SystemExit('--agent-id is empty; the stack output or config it came from is unset')
+    if getattr(args, 'skill_ids', None) == '':
+        raise SystemExit('--skill-ids is empty; the stack output or config it came from is unset')
     try:
         client = _client()
         if args.command == 'create-skill':
             print(control_plane.create_skill(args.directory, client))
             return 0
         config = config_mod.load(args.declaration)
+        skill_ids = config_mod.parse_skill_ids(args.skill_ids)
         model_id = _model_id()
         if args.command == 'create':
-            print(control_plane.create(config, model_id, client).id)
+            print(control_plane.create(config, model_id, skill_ids, client).id)
         elif args.command == 'apply':
-            applied = control_plane.apply(config, model_id, client, args.agent_id)
+            applied = control_plane.apply(config, model_id, skill_ids, client, args.agent_id)
             for item in applied.published:
                 print(f'published agents/skills/{item.directory} as version {item.version}')
             if applied.after == applied.before:
@@ -79,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f'{applied.agent_id}: v{applied.before} -> v{applied.after}')
         else:
-            report = control_plane.diff(config, model_id, client, args.agent_id)
+            report = control_plane.diff(config, model_id, skill_ids, client, args.agent_id)
             sys.stdout.write(report or 'no difference over the declared fields\n')
     except (config_mod.ConfigError, control_plane.ControlPlaneError) as exc:
         raise SystemExit(str(exc)) from exc

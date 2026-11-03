@@ -209,11 +209,14 @@ jobs:
           ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ steps.pulumi.outputs.anthropic_deploy_service_account_id }}
           ANTHROPIC_WORKSPACE_ID: ${{ steps.pulumi.outputs.anthropic_workspace_id }}
           THEMIS_ANTHROPIC_AGENT_ID: ${{ steps.pulumi.outputs.anthropic_agent_id }}
+          # An object output; the action writes it as JSON.
+          THEMIS_AGENT_SKILL_IDS: ${{ steps.pulumi.outputs.anthropic_skill_ids }}
           # A secret output; the action masks it in the log.
           THEMIS_AGENT_MODEL_ID: ${{ steps.pulumi.outputs.anthropic_agent_model_id }}
         run: |-
           uv run --locked --group agents python -m tools.agents apply \
-            agents/svcv4-classifier.agent.yaml --agent-id "$THEMIS_ANTHROPIC_AGENT_ID"
+            agents/svcv4-classifier.agent.yaml --agent-id "$THEMIS_ANTHROPIC_AGENT_ID" \
+            --skill-ids "$THEMIS_AGENT_SKILL_IDS"
       # A run that failed or was cancelled once signed in records one point, as the deploy account, that the
       # deploy-failure alert pages on (infra/themis_infra/alerts.py); a failure before the sign-in shows in the
       # run list only.
