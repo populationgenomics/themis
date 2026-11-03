@@ -10,7 +10,7 @@ import re
 
 import pytest
 
-from themis_infra import capture, cost, cost_alerts, cost_metrics, cost_prices, cost_promql
+from themis_infra import capture, cost, cost_alerts, cost_metrics, cost_prices, cost_promql, promql
 
 _CHANNEL_TYPE = 'gcp:monitoring/notificationChannel:NotificationChannel'
 _POLICY_TYPE = 'gcp:monitoring/alertPolicy:AlertPolicy'
@@ -202,7 +202,7 @@ def test_the_unpriced_condition_is_usage_on_a_model_outside_the_table(policies: 
     query = str(_promql_condition(unpriced)['query'])
     assert cost_metrics.REQUEST_TOKENS in query
     # The table's models, and only those, are what the matcher excludes.
-    assert cost_promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.LIST_PRICES_CENTS_PER_MTOK) in query
+    assert promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.LIST_PRICES_CENTS_PER_MTOK) in query
     assert query.endswith(') > 0'), query
     assert _promql_condition(unpriced)['duration'] == '0s'
     assert _sequence(_mapping(unpriced['alertStrategy'])['notificationPrompts']) == ['OPENED']

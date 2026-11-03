@@ -7,9 +7,13 @@ import logging
 from typing import override
 
 import pytest
+from opentelemetry.sdk import metrics as sdk_metrics
+from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.services.auth import acl, acl_holder
 from themis.services.auth.tests import harness
+from themis.telemetry import operational_names
+from themis.testing import in_memory_metrics
 
 _LIMIT = harness.STALENESS_LIMIT_SECONDS
 _REJECTED = 'acl rejected: '
@@ -20,13 +24,27 @@ def _without_project(project_id: str) -> bytes:
     return harness.acl_version({**harness.ACL, 'projects': projects})
 
 
-async def _load(backend: harness.Backend, clock: harness.Clock) -> acl_holder.AclHolder:
+async def _load(
+    backend: harness.Backend, clock: harness.Clock, rejections: acl_holder.Rejections | None = None
+) -> acl_holder.AclHolder:
     return await acl_holder.AclHolder.load(
         backend.read_acl,
         read_timeout_seconds=harness.READ_TIMEOUT_SECONDS,
         staleness_limit_seconds=_LIMIT,
         clock=clock,
+        rejections=harness.uncounted() if rejections is None else rejections,
     )
+
+
+def _counted() -> tuple[acl_holder.Rejections, metrics_export.InMemoryMetricReader]:
+    reader = metrics_export.InMemoryMetricReader()
+    meter = sdk_metrics.MeterProvider(metric_readers=[reader]).get_meter('themis-test')
+    return acl_holder.Rejections(meter), reader
+
+
+def _counts(reader: metrics_export.InMemoryMetricReader) -> dict[str, int | float]:
+    series = in_memory_metrics.collected(reader)[operational_names.ACL_REJECTIONS]
+    return {dict(labels)[operational_names.REASON_LABEL]: value for labels, value in series.items()}
 
 
 def _rejections(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -58,26 +76,39 @@ def test_a_valid_version_is_swapped_in_whole() -> None:
     assert set(asyncio.run(run()).projects) == {'epi'}
 
 
+def test_every_reason_is_counted_from_zero() -> None:
+    rejections, reader = _counted()
+    asyncio.run(_load(harness.Backend({}, harness.acl_version()), harness.Clock(), rejections))
+    assert _counts(reader) == {reason.value: 0 for reason in operational_names.AclRejectionReason}
+
+
 @pytest.mark.parametrize(
-    'content',
+    ('content', 'reason'),
     [
-        pytest.param(_without_project('asd').replace(b'"format": 1', b'"format": 9'), id='invalid'),
-        pytest.param(OSError('secret unreachable'), id='unreadable'),
-        pytest.param(b'[' * 100_000, id='undecodable'),
+        pytest.param(
+            _without_project('asd').replace(b'"format": 1', b'"format": 9'),
+            operational_names.AclRejectionReason.INVALID,
+            id='invalid',
+        ),
+        pytest.param(OSError('secret unreachable'), operational_names.AclRejectionReason.UNREADABLE, id='unreadable'),
+        pytest.param(b'[' * 100_000, operational_names.AclRejectionReason.INVALID, id='undecodable'),
     ],
 )
-def test_a_failed_version_keeps_the_last_good_copy_and_is_logged_at_error(
-    content: bytes | Exception, caplog: pytest.LogCaptureFixture
+def test_a_failed_version_keeps_the_last_good_copy_and_is_counted_and_logged(
+    content: bytes | Exception, reason: operational_names.AclRejectionReason, caplog: pytest.LogCaptureFixture
 ) -> None:
+    rejections, reader = _counted()
+
     async def run() -> acl.Snapshot:
         backend = harness.Backend({}, harness.acl_version())
-        holder = await _load(backend, harness.Clock())
+        holder = await _load(backend, harness.Clock(), rejections)
         backend.acl = content
         await holder.refresh()
         return holder.current()
 
     assert set(asyncio.run(run()).projects) == {'asd', 'epi'}
     assert [r.levelno for r in _rejections(caplog)] == [logging.ERROR]
+    assert _counts(reader)[reason.value] == 1
 
 
 def test_the_last_good_copy_serves_until_the_limit_is_passed_and_again_once_a_version_loads() -> None:
@@ -140,6 +171,7 @@ def test_the_refresher_keeps_refreshing_through_failures() -> None:
 
 def test_a_read_past_the_timeout_is_abandoned_and_keeps_the_last_good_copy(caplog: pytest.LogCaptureFixture) -> None:
     hang = False
+    rejections, reader = _counted()
 
     class _Hanging(harness.Backend):
         @override
@@ -155,6 +187,7 @@ def test_a_read_past_the_timeout_is_abandoned_and_keeps_the_last_good_copy(caplo
             read_timeout_seconds=0.01,
             staleness_limit_seconds=_LIMIT,
             clock=harness.Clock(),
+            rejections=rejections,
         )
         hang = True
         await holder.refresh()
@@ -162,3 +195,4 @@ def test_a_read_past_the_timeout_is_abandoned_and_keeps_the_last_good_copy(caplo
 
     assert set(asyncio.run(run()).projects) == {'asd', 'epi'}
     assert [r.levelno for r in _rejections(caplog)] == [logging.ERROR]
+    assert _counts(reader)[operational_names.AclRejectionReason.TIMEOUT.value] == 1

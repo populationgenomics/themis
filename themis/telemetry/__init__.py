@@ -8,5 +8,7 @@ every producer writes under, and `request_tokens`
 the counter a direct Messages API caller feeds. Tokens are the unit throughout; dollars are derived at
 query time, except where the provider computes them (`docs/design/cost-monitoring.md`). `tracing` builds
 the trace pipeline a service's rpcs are recorded through, one trace per request across the services it
-reaches, read in Cloud Trace.
+reaches, read in Cloud Trace. `operational_names` is the vocabulary of operational alerting, `rpc_metrics`
+the interceptor a gRPC server records each call's duration and final status through, and `serving` the loop
+that stops a server on SIGTERM so its telemetry is exported before Cloud Run kills the process.
 """

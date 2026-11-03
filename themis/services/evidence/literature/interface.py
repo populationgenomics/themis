@@ -19,9 +19,8 @@ async def register(server: grpc.aio.Server, deps: deps_mod.Deps) -> None:
     Args:
         server: The image's server, not yet started.
         deps: The image's collaborators. `deps.stack` owns the live backend's GCS client and Cloud
-            SQL connector for as long as the server runs — nothing runs a service's SIGTERM to
-            ground, so in practice it unwinds only when a later interface fails to build (see
-            `__main__`) — and `deps.http_client` is what it calls the upstream indexes on.
+            SQL connector for as long as the server runs, unwinding once it stops (see `__main__`),
+            and `deps.http_client` is what it calls the upstream indexes on.
             Admission is not this interface's: the server `deps.authorizer` gates carries the auth
             interceptor, and each rpc's contract says who it admits (rpc-authorization.md).
     """

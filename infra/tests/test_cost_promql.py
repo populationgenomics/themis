@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 import pytest
 
-from themis_infra import claude_code_metrics, cost_metrics, cost_prices, cost_promql
+from themis_infra import claude_code_metrics, cost_metrics, cost_prices, cost_promql, promql
 
 # The freshness window every read of a running total tolerates as staleness; the tests' windows exceed it.
 _FRESHNESS = 30
@@ -113,17 +113,17 @@ def test_silence_is_absence_over_the_whole_metric() -> None:
 
 
 def test_a_dotted_model_id_is_matched_literally() -> None:
-    assert cost_promql.not_among('model', ['claude-3.5', 'c']) == 'model!~"^(c|claude-3\\\\.5)$"'
-    assert cost_promql.equals('model', 'claude-3.5') == 'model="claude-3.5"'
+    assert promql.not_among('model', ['claude-3.5', 'c']) == 'model!~"^(c|claude-3\\\\.5)$"'
+    assert promql.equals('model', 'claude-3.5') == 'model="claude-3.5"'
 
 
 @pytest.mark.parametrize('value', _AWKWARD_VALUES)
 def test_matchers_survive_both_escaping_layers(value: str) -> None:
     # Decoded as PromQL decodes the string, the equality matcher is the value itself and the RE2 accepts it — and
     # nothing that differs by a metacharacter's reading.
-    [equal] = re.findall(r'^model=(".*")$', cost_promql.equals('model', value))
+    [equal] = re.findall(r'^model=(".*")$', promql.equals('model', value))
     assert _decode_string_literal(equal) == value
-    [literal] = re.findall(r'^model!~(".*")$', cost_promql.not_among('model', [value, 'other']))
+    [literal] = re.findall(r'^model!~(".*")$', promql.not_among('model', [value, 'other']))
     regex = re.compile(_decode_string_literal(literal))
     assert regex.fullmatch(value)
     assert regex.fullmatch('other')

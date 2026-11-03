@@ -7,8 +7,10 @@ Secret Manager secret ``projects/<project>/secrets/<secret>`` that ``THEMIS_ACL_
 ``fixture.py``). ``THEMIS_ACL_STALENESS_LIMIT_SECONDS``, an integer above the refresh interval plus the
 read timeout, is how long the last good copy of the ACL is answered from once new versions stop loading.
 The ``cloudsql`` backend is traced, at the ratio ``THEMIS_TRACE_SAMPLE_RATIO`` names
-(``themis/telemetry/tracing.py``); the fixture backend never reads it and reaches no cloud. ``PORT`` is the
-Cloud Run convention. A ``grpc.health.v1`` health service reports SERVING alongside.
+(``themis/telemetry/tracing.py``), and records each call's duration and status and each refused ACL
+version as metrics; the fixture backend never reads the ratio, records nothing and reaches no cloud. On
+SIGTERM the server stops and both are exported before the process ends. ``PORT`` is the Cloud Run
+convention. A ``grpc.health.v1`` health service reports SERVING alongside.
 
 The server is built through ``interceptor.gated_server``, so ``GetAccess`` admits only the callers its
 contract names. The gate verifies callers as ``THEMIS_AUTHORIZER_BACKEND`` selects (``http`` against the
@@ -26,6 +28,7 @@ import os
 import time
 
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
+from opentelemetry.sdk import metrics as sdk_metrics
 
 from themis.clients.auth import interceptor as interceptor_mod
 from themis.clients.auth import rules
@@ -33,9 +36,10 @@ from themis.rpc import auth_pb2_grpc
 from themis.services.auth import acl_holder, fixture
 from themis.services.auth import backend as auth_backend
 from themis.services.auth import servicer as servicer_mod
-from themis.telemetry import tracing
+from themis.telemetry import metrics as telemetry_metrics
+from themis.telemetry import rpc_metrics, serving, tracing
 
-# The Cloud Run service's name, the one Cloud Trace lists the spans under.
+# The Cloud Run service's name, the one Cloud Trace lists the spans under and the metrics' `job` label.
 SERVICE_NAME = 'themis-auth'
 STALENESS_LIMIT_VAR = 'THEMIS_ACL_STALENESS_LIMIT_SECONDS'
 _ACL_SECRET_VAR = 'THEMIS_ACL_SECRET'  # noqa: S105 — the variable's name, not a secret
@@ -80,6 +84,13 @@ def install_tracing() -> None:
         tracing.install_from_env(SERVICE_NAME)
 
 
+def install_metrics() -> sdk_metrics.MeterProvider | None:
+    """The meter provider for the ``cloudsql`` backend; any other backend records nothing."""
+    if os.environ.get('THEMIS_BACKEND') == 'cloudsql':
+        return telemetry_metrics.service_meter_provider(SERVICE_NAME)
+    return None
+
+
 def build_authorizer(servicer: servicer_mod.Servicer) -> interceptor_mod.Authorizer:
     return interceptor_mod.authorizer_resolving_through(
         servicer_mod.in_process_session_resolver(servicer), fixture_callers_var=_FIXTURE_CALLERS_VAR
@@ -118,30 +129,34 @@ async def _serve() -> None:
     limit = staleness_limit_seconds()
     operator = rules.operator_email(interceptor_mod.project_from_env())
     install_tracing()
-    acl = await acl_holder.AclHolder.load(
-        backend.read_acl,
-        read_timeout_seconds=auth_backend.ACL_READ_TIMEOUT_SECONDS,
-        staleness_limit_seconds=limit,
-        clock=time.monotonic,
-    )
-    servicer = servicer_mod.Servicer(backend, acl, operator=operator)
-    server = interceptor_mod.gated_server(build_authorizer(servicer), observers=[tracing.server_interceptor()])
-    auth_pb2_grpc.add_AuthServicer_to_server(servicer, server)
-    # grpc_health ships no py.typed; `health.aio` is a runtime re-export pyright can't see.
-    health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]
-    await health_servicer.set('', health_pb2.HealthCheckResponse.SERVING)
-    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
-    server.add_insecure_port(f'[::]:{os.environ.get("PORT", "8080")}')  # TLS terminated by Cloud Run
-    await server.start()
-    refresher = asyncio.create_task(acl.refresh_forever(acl_holder.REFRESH_INTERVAL_SECONDS))
-    termination = asyncio.create_task(server.wait_for_termination())
+    meter_provider = install_metrics()
+    meter = telemetry_metrics.service_meter(meter_provider)
     try:
-        done, _ = await asyncio.wait({refresher, termination}, return_when=asyncio.FIRST_COMPLETED)
-        if refresher in done:
-            refresher.result()  # it only ends by raising: exit rather than serve a copy nothing refreshes
+        acl = await acl_holder.AclHolder.load(
+            backend.read_acl,
+            read_timeout_seconds=auth_backend.ACL_READ_TIMEOUT_SECONDS,
+            staleness_limit_seconds=limit,
+            clock=time.monotonic,
+            rejections=acl_holder.Rejections(meter),
+        )
+        servicer = servicer_mod.Servicer(backend, acl, operator=operator)
+        server = interceptor_mod.gated_server(
+            build_authorizer(servicer), observers=[tracing.server_interceptor(), rpc_metrics.RpcMetrics(meter)]
+        )
+        auth_pb2_grpc.add_AuthServicer_to_server(servicer, server)
+        # grpc_health ships no py.typed; `health.aio` is a runtime re-export pyright can't see.
+        health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]
+        await health_servicer.set('', health_pb2.HealthCheckResponse.SERVING)
+        health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+        server.add_insecure_port(f'[::]:{os.environ.get("PORT", "8080")}')  # TLS terminated by Cloud Run
+        await server.start()
+        # The refresher only ends by raising: exit rather than serve a copy nothing refreshes.
+        refresher = asyncio.create_task(acl.refresh_forever(acl_holder.REFRESH_INTERVAL_SECONDS))
+        await serving.serve_until_stopped(server, watch=[refresher])
     finally:
-        refresher.cancel()
-        await server.stop(None)
+        if meter_provider is not None:
+            meter_provider.shutdown(timeout_millis=serving.FLUSH_TIMEOUT.total_seconds() * 1000)
+        tracing.flush(serving.FLUSH_TIMEOUT)
 
 
 def main() -> None:

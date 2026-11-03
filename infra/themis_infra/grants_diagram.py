@@ -84,6 +84,7 @@ VIEWS = (
                 'SessionBearerDeriver',
                 'TelemetryWriter',
                 'TraceWriter',
+                'ServiceTelemetry',
                 'MetricReader',
             }
         ),
@@ -112,6 +113,7 @@ _FIXED_TARGET_LABEL = {
     'DatabaseConnector': 'Cloud SQL, project-wide',
     'TelemetryWriter': 'Cloud Monitoring, project-wide',
     'TraceWriter': 'Cloud Trace, project-wide',
+    'ServiceTelemetry': 'Cloud Monitoring and Cloud Trace, project-wide',
     'MetricReader': 'Cloud Monitoring, project-wide',
     'DeployAccountBuilder': 'project',
     'DataflowWorker': 'project',

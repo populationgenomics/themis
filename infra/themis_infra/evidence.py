@@ -165,6 +165,8 @@ class EvidenceService(pulumi.ComponentResource):
             target='openalex-api-key',
             opts=child,
         )
+        # The rpc metric each call records; the service records no spans.
+        grants.TelemetryWriter('themis-evidence', member=member, project=project, opts=child)
 
         service = gcp.cloudrunv2.Service(
             'themis-evidence-service',

@@ -28,15 +28,10 @@ from __future__ import annotations
 
 import enum
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 
-from themis_infra import claude_code_metrics, cost_metrics, cost_prices
+from themis_infra import claude_code_metrics, cost_metrics, cost_prices, promql
 
-_LEGACY_NAME = re.compile(r'^[A-Za-z_:][A-Za-z0-9_:]*$')
-# RE2's metacharacters, escaped before the value is escaped again as a string.
-_REGEX_METACHARACTER = re.compile(r'([.^$*+?()\[\]{}|\\])')
-# What a PromQL double-quoted string escapes.
-_STRING_ESCAPE = re.compile(r'([\\"])')
 # A PromQL duration of one unit, as the windows here are written.
 _DURATION = re.compile(r'^(\d+)([smhdw])$')
 _UNIT_SECONDS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86_400, 'w': 604_800}
@@ -99,38 +94,13 @@ def seconds(duration: str) -> int:
 
 
 def selector(name: str, *matchers: str) -> str:
-    """The series of a spend metric, narrowed by label matchers (`agent="x"`, or a dashboard template variable).
-
-    A name classic PromQL cannot parse — Claude Code's dotted names — moves inside the braces, quoted: the UTF-8
-    form Monitoring documents for OTLP-ingested names.
+    """The series of a spend metric, narrowed by label matchers (`promql.equals`, or a dashboard template variable).
 
     Raises:
         KeyError: `name` is not one of the spend metrics.
     """
     kind(name)
-    if _LEGACY_NAME.match(name):
-        return name + ('{' + ', '.join(matchers) + '}' if matchers else '')
-    return '{' + ', '.join((f'"{name}"', *matchers)) + '}'
-
-
-def _string_literal(value: str) -> str:
-    """`value` as a PromQL double-quoted string."""
-    return '"' + _STRING_ESCAPE.sub(r'\\\1', value) + '"'
-
-
-def equals(label: str, value: str) -> str:
-    """A matcher for one label value."""
-    return f'{label}={_string_literal(value)}'
-
-
-def not_among(label: str, values: Iterable[str]) -> str:
-    """A matcher for a label value outside a fixed set: an anchored RE2 alternation of the values.
-
-    Two layers of escaping, RE2's first and the string's second, so a value's metacharacter reaches RE2 escaped and
-    a backslash or quote in it survives the string.
-    """
-    alternatives = '|'.join(_REGEX_METACHARACTER.sub(r'\\\1', value) for value in sorted(values))
-    return f'{label}!~{_string_literal(f"^({alternatives})$")}'
+    return promql.selector(name, *matchers)
 
 
 def _aggregate(operator: str, expression: str, by: Sequence[str] = ()) -> str:
@@ -264,11 +234,11 @@ def total(terms: Sequence[str]) -> str:
 
 def _model_cents(model: str, duration: str) -> str:
     """One model's convert spend over `duration`, in cents: each token type's increase at its list price, summed."""
-    of_model = equals(cost_metrics.MODEL_LABEL, model)
+    of_model = promql.equals(cost_metrics.MODEL_LABEL, model)
     priced = [
-        f'{increase(cost_metrics.REQUEST_TOKENS, duration, of_model, equals(cost_metrics.TYPE_LABEL, token_type))}'
-        f' * {cents}'
+        f'{increase(cost_metrics.REQUEST_TOKENS, duration, of_model, of_type)} * {cents}'
         for token_type, cents in cost_prices.LIST_PRICES_CENTS_PER_MTOK[model].items()
+        for of_type in [promql.equals(cost_metrics.TYPE_LABEL, token_type)]
     ]
     return f'{total(priced)} / {_TOKENS_PER_MTOK}'
 
@@ -297,7 +267,7 @@ def convert_cents_by_model(duration: str) -> str:
 
 def unpriced_request_tokens(duration: str) -> str:
     """Request tokens over `duration`, by model and type, for every model the price table has no row for."""
-    outside_table = not_among(cost_metrics.MODEL_LABEL, cost_prices.LIST_PRICES_CENTS_PER_MTOK)
+    outside_table = promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.LIST_PRICES_CENTS_PER_MTOK)
     key = (cost_metrics.MODEL_LABEL, cost_metrics.TYPE_LABEL)
     return increase(cost_metrics.REQUEST_TOKENS, duration, outside_table, by=key)
 

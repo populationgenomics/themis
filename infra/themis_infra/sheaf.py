@@ -137,7 +137,7 @@ class SheafService(pulumi.ComponentResource):
             target='repositories',
             opts=child,
         )
-        grants.TraceWriter(
+        grants.ServiceTelemetry(
             'themis-sheaf', member=grants.service_account(service_account.email), project=project, opts=child
         )
 

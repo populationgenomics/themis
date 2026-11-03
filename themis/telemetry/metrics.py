@@ -18,11 +18,13 @@ from collections.abc import Iterable, Mapping
 from typing import override
 
 import google.auth.credentials
+from opentelemetry import metrics as api_metrics
 from opentelemetry.exporter.otlp.proto.grpc import metric_exporter as otlp_grpc
+from opentelemetry.sdk import metrics as sdk_metrics
 from opentelemetry.sdk import resources
 from opentelemetry.sdk.metrics import export as metrics_export
 
-from themis.telemetry import telemetry_api
+from themis.telemetry import names, telemetry_api
 
 # Resource attribute keys: OpenTelemetry's semantic conventions.
 CLOUD_REGION = 'cloud.region'
@@ -37,6 +39,10 @@ HOST_ID = 'host.id'
 # The API's fallback chains for the two labels it drops a point without, in its order.
 _LOCATION_ATTRIBUTES = ('location', CLOUD_AVAILABILITY_ZONE, CLOUD_REGION)
 _INSTANCE_ATTRIBUTES = ('instance', SERVICE_INSTANCE_ID, FAAS_INSTANCE, K8S_POD_NAME, HOST_ID)
+
+# A long-running service's export cadence, and how long one export may take.
+_SERVICE_EXPORT_INTERVAL = datetime.timedelta(seconds=60)
+_SERVICE_EXPORT_TIMEOUT = datetime.timedelta(seconds=30)
 
 
 class ResourceError(ValueError):
@@ -101,6 +107,47 @@ def telemetry_api_exporter(
         credentials=telemetry_api.channel_credentials(credentials),
         timeout=timeout.total_seconds(),
     )
+
+
+def service_meter_provider(
+    service_name: str, *, detectors: Iterable[resources.ResourceDetector] | None = None
+) -> sdk_metrics.MeterProvider:
+    """A long-running service's meter provider: the Telemetry API exporter on a periodic reader, placed by detection.
+
+    It exports every minute off the request path, so a failed export is logged by the SDK and never fails a request.
+    The caller owns it, and shuts it down as the process stops, which exports what the last interval recorded.
+
+    Args:
+        service_name: The service's name — the series' `job` label.
+        detectors: Resource detectors to run; `telemetry_api.google_cloud_detectors()`, the Cloud Run service's, when
+            omitted. On Cloud Run they read the region and instance off the metadata server and the name off
+            `K_SERVICE`.
+
+    Raises:
+        google.auth.exceptions.DefaultCredentialsError: No Application Default Credentials are configured.
+        ValueError: The credentials name no project.
+        ResourceError: The detectors place no location or instance, so every point would be dropped; a revision
+            that cannot be placed fails its startup here instead.
+    """
+    credentials, project = telemetry_api.application_default_credentials()
+    resource = workload_resource(
+        project=project,
+        service_name=service_name,
+        detectors=telemetry_api.google_cloud_detectors() if detectors is None else detectors,
+    )
+    reader = metrics_export.PeriodicExportingMetricReader(
+        telemetry_api_exporter(credentials, timeout=_SERVICE_EXPORT_TIMEOUT),
+        export_interval_millis=_SERVICE_EXPORT_INTERVAL.total_seconds() * 1000,
+        export_timeout_millis=_SERVICE_EXPORT_TIMEOUT.total_seconds() * 1000,
+    )
+    return sdk_metrics.MeterProvider(metric_readers=[reader], resource=resource)
+
+
+def service_meter(provider: sdk_metrics.MeterProvider | None) -> api_metrics.Meter:
+    """The meter a service records through: `provider`'s, or one that records nothing where there is no provider."""
+    if provider is None:
+        return api_metrics.NoOpMeter(names.METER_NAME)
+    return provider.get_meter(names.METER_NAME)
 
 
 class OneShotReader(metrics_export.MetricReader):

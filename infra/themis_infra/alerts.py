@@ -1,8 +1,10 @@
 """Operational alerting: the environment's alerts channel and the policies that page it.
 
 The failures a curator would otherwise find first (docs/design/infrastructure.md, Alerting): a Job execution that
-failed, a service answering 5xx or slowly, a saturated database, and a certificate that stopped renewing. Every policy
-posts to the alerts channel, which is separate from the spend monitor's channel (`cost_alerts.CostAlerts`).
+failed, a service answering 5xx, a saturated database, a certificate that stopped renewing, a gRPC call ending in a
+server fault, a version of the ACL the auth service refused, and a deploy that failed. Every policy posts to the alerts
+channel, which is separate from the spend monitor's channel (`cost_alerts.CostAlerts`). The last three read metrics
+the services and the deploy write through OpenTelemetry (`operational_metrics`); the rest read the platform's.
 
 - `failed_execution_condition` — a failed execution of one Cloud Run Job; the cost report's own failure alert uses it.
 - `OperationalAlerts` — the alerts channel and the operational policies.
@@ -15,7 +17,8 @@ from collections.abc import Sequence
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import audit
+from themis_infra import audit, promql
+from themis_infra import operational_metrics as metrics
 
 # Written once per execution as it ends, labelled with its result.
 COMPLETED_EXECUTIONS = 'run.googleapis.com/job/completed_execution_count'
@@ -31,6 +34,12 @@ _SQL_SUSTAINED = '900s'
 # The share of the tier's connection limit in use that pages, before the services start failing to connect.
 _SQL_CONNECTION_SHARE = 0.8
 _CERTIFICATE_PERIOD = '900s'
+# The statuses a server returns for its own fault, not the caller's.
+_SERVER_FAULTS = ('INTERNAL', 'UNKNOWN', 'UNAVAILABLE', 'DATA_LOSS')
+# The services export every minute, so a PromQL policy has nothing newer to read between.
+_PROMQL_EVALUATION = '60s'
+_ACL_WINDOW = '1h'
+_DEPLOY_WINDOW = '10m'
 # A managed certificate renews about 30 days before it expires; still under this many days means renewal is failing.
 _CERTIFICATE_DAYS_LEFT = 14
 # A check failing this long means the hostname no longer reaches the load balancer with a valid certificate; longer
@@ -38,6 +47,16 @@ _CERTIFICATE_DAYS_LEFT = 14
 _CERTIFICATE_UNREACHABLE = '7200s'
 # Uptime checks run from several regions; more than one failing rules out a single checker's fault.
 _CHECK_REGIONS_FAILING = 1
+
+
+def _promql(query: str) -> gcp.monitoring.AlertPolicyConditionConditionPrometheusQueryLanguageArgs:
+    return gcp.monitoring.AlertPolicyConditionConditionPrometheusQueryLanguageArgs(
+        query=query,
+        evaluation_interval=_PROMQL_EVALUATION,
+        duration='0s',
+        # The policies are declared with the producers, before the first point on a fresh environment.
+        disable_metric_validation=True,
+    )
 
 
 def failed_execution_condition(job_name: pulumi.Input[str]) -> gcp.monitoring.AlertPolicyConditionArgs:
@@ -74,9 +93,6 @@ def failed_execution_condition(job_name: pulumi.Input[str]) -> gcp.monitoring.Al
 
 class OperationalAlerts(pulumi.ComponentResource):
     """The environment's alerts channel, and a policy for each failure a curator would otherwise find first."""
-
-    notification_channel_name: pulumi.Output[str]
-    """The alerts channel's resource name, for a policy declared elsewhere."""
 
     def __init__(
         self,
@@ -118,7 +134,6 @@ class OperationalAlerts(pulumi.ComponentResource):
             sensitive_labels=gcp.monitoring.NotificationChannelSensitiveLabelsArgs(auth_token=slack_bot_token),
             opts=child,
         )
-        self.notification_channel_name = channel.name
 
         def policy(
             name: str,
@@ -128,6 +143,7 @@ class OperationalAlerts(pulumi.ComponentResource):
             subject: str,
             content: pulumi.Input[str],
             alert_strategy: gcp.monitoring.AlertPolicyAlertStrategyArgs | None = None,
+            aliases: Sequence[pulumi.Alias] = (),
         ) -> None:
             gcp.monitoring.AlertPolicy(
                 name,
@@ -142,7 +158,7 @@ class OperationalAlerts(pulumi.ComponentResource):
                 documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                     mime_type='text/markdown', subject=subject, content=content
                 ),
-                opts=child,
+                opts=pulumi.ResourceOptions(parent=self, aliases=list(aliases)),
             )
 
         policy(
@@ -195,11 +211,83 @@ class OperationalAlerts(pulumi.ComponentResource):
             content=(
                 'One Cloud Run service returned server errors repeatedly; the incident names it. For a gRPC service '
                 '(auth, evidence, sheaf) this sees transport-level failures only: an application error travels as a '
-                'non-OK status in the trailers of an HTTP 200. Its logs: '
+                'non-OK status in the trailers of an HTTP 200, which the server-fault policy counts instead. Its logs: '
                 '`gcloud logging read \'resource.type="cloud_run_revision" '
                 'AND resource.labels.service_name="<service>" AND severity>=ERROR\' '
                 f'--project {project} --bucket {audit.LOG_BUCKET_ID} --location {region} --view _AllLogs --limit 20`. '
                 'Runbook: `docs/runbooks/reading-a-request-trace.md`.'
+            ),
+        )
+
+        faults = promql.selector(
+            f'{metrics.RPC_SERVER_CALL_DURATION}_count',
+            promql.among(metrics.RPC_RESPONSE_STATUS_CODE_LABEL, _SERVER_FAULTS),
+        )
+        window = f'{_SERVER_ERROR_WINDOW_SECONDS // 60}m'
+        policy(
+            'themis-rpc-server-faults',
+            display_name='Themis: a service is failing calls',
+            conditions=[
+                gcp.monitoring.AlertPolicyConditionArgs(
+                    display_name=(
+                        f'More than {_SERVER_ERRORS_PER_WINDOW} calls to one service ended in a server fault in '
+                        f'{_SERVER_ERROR_WINDOW_SECONDS // 60} min'
+                    ),
+                    condition_prometheus_query_language=_promql(
+                        f'sum by (job) (increase({faults}[{window}])) > {_SERVER_ERRORS_PER_WINDOW}'
+                    ),
+                )
+            ],
+            subject='Themis: a service is failing calls',
+            content=(
+                f'Calls to one gRPC service ended in {", ".join(_SERVER_FAULTS)}; the incident names the service as '
+                f'`job`. The method and status of each failed call are labels on `{metrics.RPC_SERVER_CALL_DURATION}`, '
+                f'in Metrics Explorer. Its logs: `gcloud logging read \'resource.type="cloud_run_revision" '
+                'AND resource.labels.service_name="<service>" AND severity>=ERROR\' '
+                f'--project {project} --bucket {audit.LOG_BUCKET_ID} --location {region} --view _AllLogs --limit 20`.'
+            ),
+        )
+
+        policy(
+            'themis-auth-acl-rejected',
+            display_name='Themis auth: ACL rejected',
+            conditions=[
+                gcp.monitoring.AlertPolicyConditionArgs(
+                    display_name='The auth service rejected the ACL',
+                    condition_prometheus_query_language=_promql(
+                        f'sum(increase({metrics.ACL_REJECTIONS}[{_ACL_WINDOW}])) > 0'
+                    ),
+                )
+            ],
+            subject='Themis: the auth service rejected the ACL',
+            content=(
+                'The auth service could not use the latest version of the ACL: it was unreadable, or it broke one of '
+                f'the rules the service checks. `{metrics.ACL_REJECTIONS}` counts it by `{metrics.REASON_LABEL}`, and '
+                "the service's ERROR log line, which starts `acl rejected:`, names the rule. The service answers "
+                'from its last good copy until the staleness limit (`themis:aclStalenessLimitSeconds`), then refuses '
+                'everyone until a valid version loads. Runbook: `docs/runbooks/access-control.md`.'
+            ),
+            # The policy predates the alerts component, as a top-level resource of the same name.
+            aliases=[pulumi.Alias(parent=None)],
+        )
+
+        policy(
+            'themis-deploy-failed',
+            display_name='Themis: a deploy failed',
+            conditions=[
+                gcp.monitoring.AlertPolicyConditionArgs(
+                    display_name='A deploy run failed or was cancelled',
+                    condition_prometheus_query_language=_promql(
+                        f'max by (instance) (max_over_time({metrics.DEPLOY_FAILED}[{_DEPLOY_WINDOW}])) > 0'
+                    ),
+                )
+            ],
+            subject='Themis: a deploy failed',
+            content=(
+                'A run of the deploy workflow failed or was cancelled after it signed in to Google Cloud; the incident '
+                'names the run as `instance`, its id and attempt. The run, and which step failed: '
+                '`gh run view <run id> --repo populationgenomics/themis-internal`. A failure before the sign-in shows '
+                "in the workflow's run list only."
             ),
         )
 
@@ -345,4 +433,4 @@ class OperationalAlerts(pulumi.ComponentResource):
             ),
         )
 
-        self.register_outputs({'notification_channel_name': self.notification_channel_name})
+        self.register_outputs({})

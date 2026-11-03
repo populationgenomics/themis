@@ -45,7 +45,8 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --locked --group infra --python 3.13
-      - uses: google-github-actions/auth@v3
+      - id: gcp
+        uses: google-github-actions/auth@v3
         with:
           project_id: cpg-themis-dev
           workload_identity_provider: projects/698160839187/locations/global/workloadIdentityPools/github/providers/github
@@ -145,3 +146,11 @@ jobs:
         run: |-
           uv run --locked --group agents python -m tools.agents apply \
             agents/svcv4-classifier.agent.yaml --agent-id "$THEMIS_ANTHROPIC_AGENT_ID"
+      # A run that failed or was cancelled once signed in records one point, as the deploy account, that the
+      # deploy-failure alert pages on (infra/themis_infra/alerts.py); a failure before the sign-in shows in the
+      # run list only.
+      - name: Record the failure
+        if: (failure() || cancelled()) && steps.gcp.outcome == 'success'
+        run: |-
+          uv run --locked --group telemetry python -m themis.telemetry.deploy_failure \
+            --region australia-southeast1 --run "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"

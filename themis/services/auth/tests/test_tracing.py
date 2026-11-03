@@ -51,6 +51,7 @@ def _resolve_through(backend: auth_backend.AuthBackend) -> None:
             read_timeout_seconds=harness.READ_TIMEOUT_SECONDS,
             staleness_limit_seconds=harness.STALENESS_LIMIT_SECONDS,
             clock=harness.Clock(),
+            rejections=harness.uncounted(),
         )
         servicer = servicer_mod.Servicer(backend, acl, operator=harness.OPERATOR)
         async with in_process_grpc.serving(

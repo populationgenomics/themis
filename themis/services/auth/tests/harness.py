@@ -14,6 +14,8 @@ import json
 from collections.abc import AsyncIterator, Mapping
 from typing import override
 
+from opentelemetry import metrics
+
 from themis.clients.auth import interceptor as interceptor_mod
 from themis.clients.auth import rules
 from themis.rpc import auth_pb2_grpc
@@ -88,6 +90,11 @@ class Backend(auth_backend.AuthBackend):
         return self.acl
 
 
+def uncounted() -> acl_holder.Rejections:
+    """Rejections counted on a meter that records nothing, for a test that does not read them."""
+    return acl_holder.Rejections(metrics.NoOpMeter('themis-test'))
+
+
 @dataclasses.dataclass(frozen=True)
 class Served:
     stub: auth_pb2_grpc.AuthAsyncStub
@@ -107,6 +114,7 @@ async def serving() -> AsyncIterator[Served]:
         read_timeout_seconds=READ_TIMEOUT_SECONDS,
         staleness_limit_seconds=STALENESS_LIMIT_SECONDS,
         clock=clock,
+        rejections=uncounted(),
     )
     servicer = servicer_mod.Servicer(backend, acl, operator=OPERATOR)
     authorizer = dataclasses.replace(

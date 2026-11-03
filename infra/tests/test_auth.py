@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from collections.abc import Iterable
 
 import pytest
@@ -24,23 +22,6 @@ def test_the_program_knows_the_services_refresh_timing() -> None:
     # The program validates the staleness limit against its own copies: the Pulumi runtime cannot import the service.
     assert auth.ACL_REFRESH_INTERVAL_SECONDS == acl_holder.REFRESH_INTERVAL_SECONDS
     assert auth.ACL_READ_TIMEOUT_SECONDS == auth_backend.ACL_READ_TIMEOUT_SECONDS
-
-
-def test_the_alert_matches_the_prefix_of_every_rejection_the_service_logs() -> None:
-    assert auth.ACL_REJECTED == acl_holder.REJECTED
-
-
-def test_the_alert_matches_the_line_the_service_logs_on_a_rejection(caplog: pytest.LogCaptureFixture) -> None:
-    async def unreadable() -> bytes:
-        raise OSError('secret unreachable')
-
-    with caplog.at_level(logging.ERROR), pytest.raises(SystemExit):
-        asyncio.run(
-            acl_holder.AclHolder.load(
-                unreadable, read_timeout_seconds=1, staleness_limit_seconds=_FLOOR + 1, clock=lambda: 0.0
-            )
-        )
-    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith(auth.ACL_REJECTED)]
 
 
 def test_a_staleness_limit_within_one_refresh_and_read_is_refused() -> None:

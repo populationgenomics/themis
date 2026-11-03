@@ -144,6 +144,17 @@ def install_from_env(service_name: str, *, detectors: Iterable[resources.Resourc
     trace.set_tracer_provider(provider)
 
 
+def flush(timeout: datetime.timedelta) -> None:
+    """Export the spans the installed provider still holds, within `timeout`; a no-op where none is installed.
+
+    A flush, not a shutdown: the batch processor's shutdown waits out the exporter's own timeout, which would not fit
+    in the seconds Cloud Run leaves a stopping instance.
+    """
+    provider = trace.get_tracer_provider()
+    if isinstance(provider, sdk_trace.TracerProvider):
+        provider.force_flush(timeout_millis=int(timeout.total_seconds() * 1000))
+
+
 def server_interceptor() -> grpc.aio.ServerInterceptor:
     """The interceptor that opens a server span for each incoming rpc, continuing the caller's trace.
 

@@ -42,8 +42,8 @@ class Deps:
         http_client: The client every live upstream call is issued on, held open for the server's
             lifetime by `stack`. It reaches only the hosts `upstreams.destinations` admits.
         stack: Owns whatever an interface's own adapter holds open for the server's lifetime — the
-            GCS client and Cloud SQL connector `literature` builds. Nothing in the data
-            plane handles SIGTERM, so it unwinds on a startup failure, not on a Cloud Run stop.
+            GCS client and Cloud SQL connector `literature` builds. It unwinds once the server has
+            stopped: on a Cloud Run stop, or on a startup failure.
     """
 
     authorizer: interceptor_mod.Authorizer

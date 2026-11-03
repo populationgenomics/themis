@@ -782,6 +782,48 @@ class TraceWriter(_Capability):
         self.register_outputs({})
 
 
+class ServiceTelemetry(_Capability):
+    """May write points to any metric and spans into any trace in the project, list its time series, and use its quota.
+
+    `TelemetryWriter` and `TraceWriter` together, as one capability: both rely on the one `serviceUsageConsumer`
+    binding, which is not authoritative, so held as two capabilities it would be two resources over one binding, and
+    deleting either would revoke it for both. What each part reaches is as `TelemetryWriter` and `TraceWriter` say.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        project: str,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        """Grant `member` the Telemetry API's metrics and traces roles, and its quota role, on the project.
+
+        Args:
+            holder: A slug for the holder, for resource names: `<holder>-telemetry-metrics-writer`,
+                `<holder>-telemetry-traces-writer`, `<holder>-service-usage-consumer`.
+            member: The holder's IAM member string.
+            project: The GCP project the points and spans are written to.
+            opts: Resource options (dependency wiring).
+        """
+        # A holder that held `TraceWriter` keeps its two bindings: the alias carries them over as they are.
+        super().__init__(
+            f'{holder}-writes-telemetry-and-traces',
+            pulumi.ResourceOptions.merge(
+                opts,
+                pulumi.ResourceOptions(
+                    aliases=[pulumi.Alias(type_='themis:grants:TraceWriter', name=f'{holder}-writes-traces')]
+                ),
+            ),
+        )
+        for slug, role in dict([*_TELEMETRY_WRITE_ROLES, *_TRACE_WRITE_ROLES]).items():
+            gcp.projects.IAMMember(
+                f'{holder}-{slug}', project=project, role=role, member=member, opts=self._binding(None)
+            )
+        self.register_outputs({})
+
+
 class MetricReader(_Capability):
     """May read every metric and time series in the project, and list its alerting and dashboard configuration.
 

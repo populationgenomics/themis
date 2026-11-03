@@ -49,6 +49,8 @@ COPY themis/clients/id_token.py ./themis/clients/id_token.py
 # The interfaces share the library's SVCv4 vocabularies rather than copying them: the 50-nt NMD rule,
 # the P/LP classification terms and gold-star range, the gene-disease validity classes.
 COPY themis/svcv4 ./themis/svcv4
+# The metrics pipeline the server records each call through, and the loop that stops it on SIGTERM.
+COPY themis/telemetry ./themis/telemetry
 COPY themis/services/evidence ./themis/services/evidence
 # -x skips the venv's site-packages, which uv compiled at install.
 RUN python -m compileall -q -x /site-packages/ /app

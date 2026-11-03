@@ -11,9 +11,8 @@ first revision starts. Ingress is internal-only, so every caller (the web tier, 
 resolves sessions) attaches to the services VPC; each holds `run.invoker` on it, granted in the program entrypoint,
 and the admission interceptor decides which rpcs each may call. The interceptor checks the audience of every
 caller's ID token against the URL `cloud_run.service_url` builds, the one every caller is handed. The service writes
-its spans to Cloud Trace at the stack's sample ratio.
-
-`acl_rejection_alert` pages when the service refuses a version of the ACL.
+its spans to Cloud Trace at the stack's sample ratio, and each call's duration and status, and each version of the
+ACL it refuses, as metrics; the operational alerts read them (`alerts.OperationalAlerts`).
 """
 
 from __future__ import annotations
@@ -23,14 +22,11 @@ import re
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import audit, cloud_run, grants, secrets, sql
+from themis_infra import cloud_run, grants, secrets, sql
 
 _SERVICE_NAME = 'themis-auth'
 # The secret the site writes the ACL into, in the stack's own project.
 ACL_SECRET_ID = 'acl'  # noqa: S105 — the secret's name, not its value
-# What the service's log line starts with, at ERROR, when a version of the ACL is unreadable or breaks a rule
-# (themis/services/auth/acl_holder.py, which the program cannot import).
-ACL_REJECTED = 'acl rejected:'
 # A service account's email: the site's writer is automation, named as the stack names every principal, by address.
 _SERVICE_ACCOUNT_EMAIL = re.compile(r'[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9.-]*\.gserviceaccount\.com')
 # How often the service re-reads the ACL, and the longest one read may take (themis/services/auth/acl_holder.py
@@ -243,7 +239,7 @@ class AuthService(pulumi.ComponentResource):
             opts=child,
         )
         self.db_user = db_user.name
-        grants.TraceWriter(
+        grants.ServiceTelemetry(
             'themis-auth', member=grants.service_account(service_account.email), project=project, opts=child
         )
 
@@ -306,60 +302,3 @@ class AuthService(pulumi.ComponentResource):
                 'url': self.url,
             }
         )
-
-
-def acl_rejection_alert(
-    *,
-    project: str,
-    region: str,
-    notification_channel: pulumi.Input[str],
-    opts: pulumi.ResourceOptions | None = None,
-) -> gcp.monitoring.AlertPolicy:
-    """Page when the auth service refuses a version of the ACL: the site's writer added one it cannot use.
-
-    A log-match condition on the service's own rejection line, which names the rule the version broke. The
-    service keeps answering from its last good copy until the staleness limit, so the alert is the warning
-    that a refusal of everyone is coming.
-
-    Args:
-        project: The GCP project the service logs to.
-        region: Where the project's regional log bucket is.
-        notification_channel: The Monitoring notification channel the incident posts to.
-        opts: Resource options (dependency wiring).
-    """
-    log_filter = (
-        f'resource.type="cloud_run_revision" AND resource.labels.service_name="{_SERVICE_NAME}" AND "{ACL_REJECTED}"'
-    )
-    return gcp.monitoring.AlertPolicy(
-        'themis-auth-acl-rejected',
-        project=project,
-        display_name='Themis auth: ACL rejected',
-        combiner='OR',
-        severity='ERROR',
-        conditions=[
-            gcp.monitoring.AlertPolicyConditionArgs(
-                display_name='The auth service rejected the ACL',
-                condition_matched_log=gcp.monitoring.AlertPolicyConditionConditionMatchedLogArgs(filter=log_filter),
-            )
-        ],
-        notification_channels=[notification_channel],
-        # A log-match condition needs a rate limit: a bad version is logged again at every refresh, once a minute.
-        alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(
-            notification_rate_limit=gcp.monitoring.AlertPolicyAlertStrategyNotificationRateLimitArgs(period='3600s'),
-            auto_close='86400s',
-        ),
-        documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
-            mime_type='text/markdown',
-            subject='Themis: the auth service rejected the ACL',
-            content=(
-                f'The `{_SERVICE_NAME}` service could not use the latest version of the ACL: it was unreadable, or it '
-                f'broke one of the rules the service checks. The log line, which starts `{ACL_REJECTED}`, names the '
-                f'cause. The service answers from its last good copy until the staleness limit '
-                f'(`themis:aclStalenessLimitSeconds`), then refuses everyone until a valid version loads. Its logs: '
-                f"`gcloud logging read '{log_filter}' --project {project} --bucket {audit.LOG_BUCKET_ID} "
-                f'--location {region} --view _AllLogs --limit 5`. '
-                f'Runbook: `docs/runbooks/access-control.md`.'
-            ),
-        ),
-        opts=opts,
-    )

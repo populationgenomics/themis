@@ -835,7 +835,7 @@ spend_alerts = cost_alerts.CostAlerts(
     dashboard_url=spend_dashboard.console_url,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
-operational_alerts = alerts.OperationalAlerts(
+alerts.OperationalAlerts(
     project=project,
     region=region,
     slack_channel=alerts_slack_channel,
@@ -854,12 +854,6 @@ operational_alerts = alerts.OperationalAlerts(
     sql_instance=database.instance_name,
     sql_tier_connections=sql.max_connections(sql_tier),
     domain=domain,
-    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
-)
-auth.acl_rejection_alert(
-    project=project,
-    region=region,
-    notification_channel=operational_alerts.notification_channel_name,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
 cost_report.CostReport(

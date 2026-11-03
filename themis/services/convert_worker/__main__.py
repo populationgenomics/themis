@@ -25,14 +25,13 @@ from aiohttp import web
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage
 from opentelemetry.sdk import metrics as sdk_metrics
-from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.clients import anthropic_wif
 from themis.litcache import anthropic_ocr, ocr
 from themis.litcache import produce as produce_mod
 from themis.services.convert_worker import handler as handler_mod
 from themis.telemetry import metrics as telemetry_metrics
-from themis.telemetry import names, request_tokens, telemetry_api
+from themis.telemetry import names, request_tokens
 
 _BUCKET: web.AppKey[storage.Bucket] = web.AppKey('bucket', storage.Bucket)
 _CONVERT_PDF: web.AppKey[ocr.PdfConverter] = web.AppKey('convert_pdf')
@@ -40,8 +39,6 @@ _METER_PROVIDER: web.AppKey[sdk_metrics.MeterProvider] = web.AppKey('meter_provi
 
 # The series' `job` label; the Cloud Run service's name.
 _SERVICE_NAME = 'themis-convert-worker'
-_EXPORT_INTERVAL = datetime.timedelta(seconds=60)
-_EXPORT_TIMEOUT = datetime.timedelta(seconds=30)
 # Cloud Run allows an instance ten seconds after SIGTERM; the final export has to fit inside them.
 _SHUTDOWN_TIMEOUT = datetime.timedelta(seconds=8)
 
@@ -100,22 +97,8 @@ def _credentials_from_env() -> anthropic_ocr.CredentialsFactory:
 
 
 def _meter_provider() -> sdk_metrics.MeterProvider:
-    """The worker's metrics pipeline: the Telemetry API exporter on a periodic reader, placed by detection.
-
-    On Cloud Run the GCP detector reads the region and instance off the metadata server and the service
-    name off `K_SERVICE`; a revision the detector cannot place fails its startup probe here rather than
-    have every point it writes dropped.
-    """
-    credentials, project = telemetry_api.application_default_credentials()
-    resource = telemetry_metrics.workload_resource(
-        project=project, service_name=_SERVICE_NAME, detectors=telemetry_api.google_cloud_detectors()
-    )
-    reader = metrics_export.PeriodicExportingMetricReader(
-        telemetry_metrics.telemetry_api_exporter(credentials, timeout=_EXPORT_TIMEOUT),
-        export_interval_millis=_EXPORT_INTERVAL.total_seconds() * 1000,
-        export_timeout_millis=_EXPORT_TIMEOUT.total_seconds() * 1000,
-    )
-    return sdk_metrics.MeterProvider(metric_readers=[reader], resource=resource)
+    """The worker's metrics pipeline; a revision the detector cannot place fails its startup probe here."""
+    return telemetry_metrics.service_meter_provider(_SERVICE_NAME)
 
 
 async def _on_startup(app: web.Application) -> None:
