@@ -48,10 +48,13 @@ This is the only standing human grant on the key; revoke it to off-board an oper
 PROJECT=cpg-themis-dev infra/bootstrap/bootstrap.sh
 ```
 
-Creates: the per-environment state bucket, the KMS key, the GitHub WIF pool + `themis-deploy` (write, deployable refs) /
-`themis-preview` (read-only, PRs) service accounts, and network hardening (drops the default VPC + its permissive
-rules). Idempotent. The deploy/preview SA emails and the WIF provider path it prints are already wired into
-`.github/workflows/{deploy,preview}.yml`.
+`PROJECT` is required; the script has no default project. It creates the per-environment state bucket, the KMS key, the
+GitHub WIF pool, the `themis-deploy` service account (write; only the deploy workflow read from `main`, or from an
+enabled ad-hoc branch, may take it; the script removes any branch-scoped binding an earlier bootstrap left) and the
+`themis-preview` service account (read-only; pull requests, with a custom role holding only the program's lookups), and
+network hardening (drops the default VPC + its permissive rules). Idempotent: it passes over anything that already
+exists or is already gone, and stops on any other error. The deploy/preview SA emails and the WIF provider path it
+prints are already wired into `.github/workflows/{deploy,preview}.yml`.
 
 ## 2. First bring-up (once per environment)
 
@@ -235,7 +238,7 @@ manual, in this order (member first: while the member exists, the ruleset is the
 gcloud iam service-accounts remove-iam-policy-binding \
   themis-deploy@cpg-themis-dev.iam.gserviceaccount.com \
   --project=cpg-themis-dev --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/github/attribute.ref/refs/heads/deployed/dev"
+  --member="principalSet://iam.googleapis.com/projects/<project-number>/locations/global/workloadIdentityPools/github/attribute.workflow_ref/populationgenomics/themis-internal/.github/workflows/deploy.yml@refs/heads/deployed/dev"
 git push origin --delete deployed/dev
 ```
 

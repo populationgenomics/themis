@@ -5,7 +5,7 @@ name: deploy
 # declaration on the Anthropic side. Two ways in — push `deployed/dev`, or dispatch on
 # `main` — and merging to `main` is neither, so it deploys nothing
 # (docs/design/deployment.md, "Deploy trigger"). Authenticates as the deploy SA via WIF,
-# whose binding accepts exactly these two refs; a GitHub ruleset over `deployed/*`
+# whose binding admits this workflow read from those two refs; a GitHub ruleset over `deployed/*`
 # bypasses only for the repository-admin role, which is what limits who can deploy
 # unreviewed code. PRs never reach this — they get a read-only preview (preview.yml).
 on:
@@ -32,8 +32,8 @@ jobs:
       PULUMI_BACKEND_URL: gs://cpg-themis-dev-pulumi-state
       PULUMI_STACK_NAME: dev
     steps:
-      # The dispatch UI offers every ref, but the deploy SA's WIF binding accepts
-      # only these two — refuse here so a wrong pick fails legibly instead of as
+      # The dispatch UI offers every ref, but the deploy SA's WIF binding admits
+      # this workflow from only these two — refuse here so a wrong pick fails legibly instead of as
       # an impersonation error six steps in.
       - name: Refuse an undeployable ref
         if: github.ref != 'refs/heads/main' && github.ref != 'refs/heads/deployed/dev'
