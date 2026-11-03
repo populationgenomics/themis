@@ -51,8 +51,9 @@ PROJECT=cpg-themis-dev infra/bootstrap/bootstrap.sh
 `PROJECT` is required; the script has no default project. It creates the per-environment state bucket, the KMS key, the
 GitHub WIF pool, the `themis-deploy` service account (write; only the deploy workflow read from `main`, or from an
 enabled ad-hoc branch, may take it; the script removes any branch-scoped binding an earlier bootstrap left) and the
-`themis-preview` service account (read-only; pull requests, with a custom role holding only the program's lookups), and
-network hardening (drops the default VPC + its permissive rules). Idempotent: it passes over anything that already
+`themis-preview` service account (read-only; only the preview workflow, whatever triggers it, may take it, and the
+script removes the binding that admitted every pull-request workflow; a custom role holds only the program's lookups),
+and network hardening (drops the default VPC + its permissive rules). Idempotent: it passes over anything that already
 exists or is already gone, and stops on any other error. The deploy/preview SA emails and the WIF provider path it
 prints are already wired into `.github/workflows/{deploy,preview}.yml`.
 

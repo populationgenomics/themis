@@ -22,6 +22,10 @@ REPO='populationgenomics/themis-internal'
 # OIDC token's `workflow_ref` (`<repo>/<path>@<ref>`), so other workflows that
 # run on `main` are refused.
 DEPLOY_WORKFLOW="${REPO}/.github/workflows/deploy.yml"
+# The only workflow whose runs may impersonate the preview SA. A pull request's
+# token names it with that pull request's own merge ref, so the match is on the
+# file alone (`attribute.workflow`, mapped below).
+PREVIEW_WORKFLOW="${REPO}/.github/workflows/preview.yml"
 # Refs the deploy workflow may be read from. `main` carries reviewed code. The
 # ad-hoc branch is opt-in per environment and its whole gate is the GitHub
 # ruleset over it, so adding this member before that ruleset exists hands the
@@ -140,7 +144,9 @@ done
 # --- GitHub WIF: pool + OIDC provider, pinned to this repo --------------------
 create_if_absent gcloud iam workload-identity-pools create "${POOL}" --project="${PROJECT}" \
   --location=global --display-name='GitHub Actions'
-ATTRIBUTE_MAPPING='google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.event_name=assertion.event_name,attribute.workflow_ref=assertion.workflow_ref'
+# `attribute.workflow` is `workflow_ref` without its `@<ref>`; GitHub puts
+# `workflow_ref` on every token, so the mapping never meets a missing claim.
+ATTRIBUTE_MAPPING='google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.workflow_ref=assertion.workflow_ref,attribute.workflow=assertion.workflow_ref.split("@")[0]'
 ATTRIBUTE_CONDITION="assertion.repository == '${REPO}'"
 create_if_absent gcloud iam workload-identity-pools providers create-oidc "${PROVIDER}" \
   --project="${PROJECT}" --location=global --workload-identity-pool="${POOL}" \
@@ -161,10 +167,11 @@ for REF in "${DEPLOY_REFS[@]}"; do
     --role=roles/iam.workloadIdentityUser \
     --member="principalSet://iam.googleapis.com/${POOL_PATH}/attribute.workflow_ref/${DEPLOY_WORKFLOW}@${REF}" >/dev/null
 done
-# Preview SA: only pull_request-event tokens may impersonate it.
+# Preview SA: only the preview workflow may impersonate it, from whichever pull
+# request runs it; added before the mapping update for the same reason.
 gcloud iam service-accounts add-iam-policy-binding "${PREVIEW_SA}" --project="${PROJECT}" \
   --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/${POOL_PATH}/attribute.event_name/pull_request" >/dev/null
+  --member="principalSet://iam.googleapis.com/${POOL_PATH}/attribute.workflow/${PREVIEW_WORKFLOW}" >/dev/null
 # The third account bound to this pool, the CI telemetry writer any run of the repo may take, exists
 # only in a stack that opts in, and not before Pulumi runs: themis_infra/ci_telemetry.py creates and binds it.
 
@@ -186,6 +193,10 @@ while IFS= read -r MEMBER; do
   delete_if_present gcloud iam service-accounts remove-iam-policy-binding "${DEPLOY_SA}" --project="${PROJECT}" \
     --role=roles/iam.workloadIdentityUser --member="${MEMBER}"
 done <<< "${DEPLOY_SA_MEMBERS}"
+# The event-scoped preview member admitted every workflow a pull request starts.
+delete_if_present gcloud iam service-accounts remove-iam-policy-binding "${PREVIEW_SA}" --project="${PROJECT}" \
+  --role=roles/iam.workloadIdentityUser \
+  --member="principalSet://iam.googleapis.com/${POOL_PATH}/attribute.event_name/pull_request"
 
 # --- Network hardening: drop the auto-created default VPC and its permissive ---
 # default-allow-ssh/rdp/icmp/internal rules. The skeleton runs on Cloud Run +
