@@ -431,18 +431,19 @@ policies wired to the environment's Slack notification channel:
    first scheduled run has had a chance to complete. Because a dead exporter stops advancing session gauges—which would
    otherwise read as `$0.00` of new session spend—paging on missing heartbeats ensures exporter failures cannot
    masquerade as a quiet workspace.
-1. **Unpriced convert usage (`themis-cost-unpriced-usage`)**: Fires when `unpriced_request_tokens('1h') > 0`—that is,
-   when `themis_anthropic_request_tokens` records positive token usage in the last 1 hour under a `model` label not
+1. **Unpriced convert usage (`themis-cost-unpriced-usage`)**: Fires when `unpriced_request_tokens('7d') > 0`—that is,
+   when `themis_anthropic_request_tokens` records positive token usage in the last 7 days under a `model` label not
    listed in [`infra/themis_infra/cost_prices.py`](../../infra/themis_infra/cost_prices.py), ensuring a model upgrade in
    [`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py) cannot silently omit convert-worker
    spend from the dashboard and spike alert. The price table itself has no staleness guard: this alert catches a model
    ID outside the table, whereas a list price changed by Anthropic for an existing model ID goes unnoticed until someone
    edits the row (accepted because Anthropic ships a new model ID at a new price rather than repricing an existing ID,
-   and list price is already an approximation of the invoice).
-1. **Morning report job failure (`themis-cost-report-failed`)**: Watches
-   `run.googleapis.com/job/completed_execution_count` for `job_name="themis-cost-report"` with `result="failed"`.
+   and list price is already an approximation of the invoice). The window is seven days so that the incident stays open
+   until a deploy adds the missing row, rather than closing an hour after the last unpriced call.
+1. **Morning report job failure (`themis-cost-report-failed`)**: Fires when the latest run of `themis-cost-report`
+   failed, and closes when a later run succeeds ([`infrastructure.md`](infrastructure.md#when-an-incident-closes)).
    Because `themis-cost-report` intentionally stays silent on days with zero spend, a missing morning Slack message
-   cannot by itself distinguish a quiet day from a crashed job; alerting on failed job executions closes that gap.
+   cannot by itself distinguish a quiet day from a crashed job; alerting on its failed runs closes that gap.
 
 #### Morning Slack report
 

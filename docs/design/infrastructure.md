@@ -322,8 +322,7 @@ So the program adds Cloud Monitoring alert policies, in both stacks, for the fai
 first. Every policy reads a metric, never a log line: a log-match alert depends on the exact wording and severity a
 process happens to print, which nothing tests.
 
-- A failed execution of any Cloud Run job, the sandbox worker and the gene-disease refresh among them, using the pattern
-  the cost report job's own failure alert uses.
+- A failed run of any Cloud Run job, the sandbox worker and the gene-disease refresh among them.
 - Server errors from each service a curator's request or an agent's session passes through. For an HTTP service that is
   its 5xx count, which Cloud Run records. A gRPC service reports an application error as a status inside an HTTP 200, so
   Cloud Run sees only transport failures there. The gRPC services therefore record the standard OpenTelemetry RPC
@@ -331,9 +330,9 @@ process happens to print, which nothing tests.
   fault (`INTERNAL`, `UNKNOWN`, `UNAVAILABLE`, `DATA_LOSS`). A caller's mistake, such as `NOT_FOUND`, does not page.
 - Saturation of the Cloud SQL instance: CPU, disk and connections.
 - Expiry of the load balancer's certificate.
-- A rejected ACL, which the auth service counts as a metric.
-- A failed deploy. A deploy is a GitHub Actions run rather than a Cloud service, so its last step, which runs only when
-  an earlier one failed, records the failure as a metric point under the deploy account.
+- A rejected ACL. The auth service records the outcome of every attempt to load a version.
+- A failed deploy. A deploy is a GitHub Actions run rather than a Cloud service, so its last step records the run's
+  outcome, success or failure, as a metric point under the deploy account.
 
 Latency is deliberately not alerted on yet. For the services that stream (the web app's session events, sheaf's packs)
 Cloud Run's latency is a stream's lifetime rather than a measure of health.
@@ -343,6 +342,52 @@ operational alerts channel through that environment's Slack app, which keeps ope
 channel, and the ACL-rejection alert moves to the alerts channel as well. Slack refuses a post from a bot that has not
 been invited to the channel, and Cloud Monitoring does not report the refusal, so each channel is checked with a test
 notification when it is created.
+
+#### When an incident closes
+
+Cloud Monitoring opens an incident when a policy's condition starts to hold and closes it when the condition stops
+holding. A policy whose close means the failure is over posts to Slack on both, so the channel shows whether a failure
+still needs someone's attention.
+
+For a condition over a rate, such as a service answering 5xx or a saturated database, a close means that: the incident
+closes once the rate falls back. A job's failure is different, because it is an event rather than a rate. The obvious
+condition counts failed runs over a window, an hour say, and opens while the count is above zero. The incident then
+closes when the hour has passed, whatever happened since. On 4 November the cost exporter failed once at 18:00 UTC, its
+next run at 18:05 succeeded, and the incident stayed open until 19:06. A message on that close would have said only that
+an hour had gone by.
+
+So for a job that runs on a schedule, the condition is "the latest run failed": the policy compares the time of the
+job's last failed run with the time of its last successful one. The incident opens at a failure and closes after the
+next success. The comparison looks back seven and a half days, longer than the gap between two runs of the weekly
+gene-disease refresh.
+
+Looking back that far costs speed. Cloud Monitoring evaluates a policy less often the further back its query reads: as
+often as every 30 seconds up to 25 hours back, every 5 minutes up to 8 days back, and every hour or more beyond that
+([PromQL-based alerting policies](https://docs.cloud.google.com/monitoring/promql/promql-in-alerting)). These policies
+stay inside the 5-minute band, so an incident opens within five minutes of the failure that decides it. Monitoring
+closes it the larger of 270 seconds and two evaluation intervals after the condition last held, so about ten minutes
+after the run that resolves it.
+
+A job that runs on demand has no next run that repairs a failure. The sandbox worker runs once per agent session, so a
+later session's success says nothing about the session that lost its sandbox. Its policy keeps the event form, with a
+window just long enough for Monitoring to see the failure, and posts when it opens only. Failures of one job within
+about ten minutes share an incident, and the incident's text says how to list them. The work sweep, the job that reads
+the literature store and queues the papers still to convert for the convert worker, has its schedule paused in both
+stacks, so it runs only by hand and takes the same policy.
+
+A deploy and an ACL load take the "latest" form too. Every deploy records its outcome, so a failed deploy's incident
+closes when a later deploy succeeds. With the same seven-and-a-half-day look back, a failed deploy that no later deploy
+follows within that time closes without a recovery; since every merge deploys prod, a fix normally follows sooner. The
+auth service records, for each outcome of a load, the time it last happened. A value of 1 for "rejected" and 0 for
+"loaded" would not do: the auth service scales to zero, and a series that nothing writes any longer would read as the
+condition no longer holding. Times survive an instance that has stopped, so the policy can compare the latest refusal
+with the latest successful load across all instances.
+
+Cloud Run records two counts per job. The count of finished executions, which looks like the natural one, records only a
+few of them: over eight days in prod it saw 14 of the cost exporter's 351 successful runs. The count of finished task
+attempts records every attempt, so the policies read that. Every job runs a single task, so an attempt is a run. That
+has one consequence for a job that retries: the gene-disease refresh may retry once, so a failed first attempt opens an
+incident that its successful retry closes.
 
 ### Data prod starts with
 

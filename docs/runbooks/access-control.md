@@ -129,10 +129,11 @@ then delete the old one. The client accepts both while they coexist, so sign-ins
 
 The auth service checks every new version of the ACL before it uses it. A version it cannot read, or one that breaks a
 rule (an unknown `format`, an address with capitals, an unknown key, a duplicate entry, a Project without both lists or
-with nobody on either), is rejected whole, counted on the metric `themis_auth_acl_rejections` by reason, and logged at
-ERROR in a line that starts `acl rejected:` and names the cause. An alert on the count posts to the stack's alerts
-channel (`themis:alertsSlackChannel`); a starting service that refuses its first version exports the count as it exits,
-so a refused cold start raises it too.
+with nobody on either), is rejected whole and logged at ERROR in a line that starts `acl rejected:` and names the cause.
+The service records the time of every load attempt on the metric `themis_auth_acl_attempt_timestamp_seconds`, labelled
+with its outcome: `loaded`, or the reason for the rejection. An alert posts to the stack's alerts channel
+(`themis:alertsSlackChannel`) when the latest attempt was a rejection, and again when a later version loads; a starting
+service that refuses its first version exports its outcome as it exits, so a refused cold start raises it too.
 
 What a rejection does depends on whether the service already holds a good copy. A running service keeps answering from
 its last good copy until that copy is older than `themis:aclStalenessLimitSeconds` (30 minutes on dev), and from then on
