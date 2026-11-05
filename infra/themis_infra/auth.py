@@ -3,11 +3,10 @@
 Provisions the auth data-plane service for one environment — a runtime SA, an internal-ingress Cloud Run service,
 and the SA's Cloud SQL IAM DB-user login. The container runs the `cloudsql` backend, reaching `session_context`
 through the connector; that table's `SELECT` grant is applied by the migration (keyed on this login), not here. It
-reads the latest version of the ACL secret, which `AclSecret` creates in the stack's project and the site's writer
-fills (docs/design/access-control.md). Besides that writer and the deploy account, which administers every secret in
-the stack, the service's account is the only one that may read it. The account is `runtime_account`'s, created
-outside the service so that a fresh environment's first, targeted `up` grants it read long before the service's
-first revision starts. Ingress is internal-only, so every caller (the web tier, and each data-plane service that
+reads the latest version of the ACL secret `themis:aclSecret` names, which the site creates, writes and grants the
+service's account read on (docs/design/access-control.md); the stack creates nothing for it. The account is
+`runtime_account`'s, created outside the service so that a fresh environment's first, targeted `up` creates it before
+the site's grant names it. Ingress is internal-only, so every caller (the web tier, and each data-plane service that
 resolves sessions) attaches to the services VPC; each holds `run.invoker` on it, granted in the program entrypoint,
 and the admission interceptor decides which rpcs each may call. The interceptor checks the audience of every
 caller's ID token against the URL `cloud_run.service_url` builds, the one every caller is handed. The service writes
@@ -22,13 +21,11 @@ import re
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cloud_run, grants, secrets, sql
+from themis_infra import cloud_run, grants, sql
 
 _SERVICE_NAME = 'themis-auth'
-# The secret the site writes the ACL into, in the stack's own project.
-ACL_SECRET_ID = 'acl'  # noqa: S105 — the secret's name, not its value
-# A service account's email: the site's writer is automation, named as the stack names every principal, by address.
-_SERVICE_ACCOUNT_EMAIL = re.compile(r'[a-z0-9][a-z0-9-]*@[a-z0-9][a-z0-9.-]*\.gserviceaccount\.com')
+# A secret's resource name, its project by id or by number.
+_SECRET_NAME = re.compile(r'projects/([a-z][a-z0-9-]{4,28}[a-z0-9]|[1-9][0-9]*)/secrets/[A-Za-z0-9_-]{1,255}')
 # How often the service re-reads the ACL, and the longest one read may take (themis/services/auth/acl_holder.py
 # and backend.py, which the program cannot import). A staleness limit at or under their sum lets a copy go stale
 # before the next refresh replaces it.
@@ -40,16 +37,24 @@ def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateC
     return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
 
 
-def check_acl_writer(writer: str) -> None:
-    """Refuse an ACL writer that is not a service account's email.
+def check_acl_secret(name: str, *, project: str, project_number: str) -> None:
+    """Refuse an ACL secret that is not a secret in the deployment's own project, named by its resource name.
+
+    Args:
+        name: The secret's resource name, from `themis:aclSecret`.
+        project: The deployment's project id.
+        project_number: The deployment's project number; the name may give the project either way.
 
     Raises:
-        ValueError: If `writer` is not `<name>@<domain>.gserviceaccount.com`.
+        ValueError: If `name` is not `projects/<project>/secrets/<id>`, or names another project.
     """
-    if not _SERVICE_ACCOUNT_EMAIL.fullmatch(writer):
+    match = _SECRET_NAME.fullmatch(name)
+    if match is None:
         raise ValueError(
-            f"the ACL writer must be a service account's email, <name>@<domain>.gserviceaccount.com, got {writer!r}"
+            f"the ACL secret must be a secret's resource name, projects/<project>/secrets/<id>, got {name!r}"
         )
+    if match.group(1) not in (project, project_number):
+        raise ValueError(f"the ACL secret must be in the deployment's project, {project}, got {name!r}")
 
 
 def check_acl_staleness_limit(staleness_limit_seconds: int) -> None:
@@ -69,7 +74,7 @@ def check_acl_staleness_limit(staleness_limit_seconds: int) -> None:
 def runtime_account(*, project: str, opts: pulumi.ResourceOptions | None = None) -> gcp.serviceaccount.Account:
     """The auth service's runtime service account, `themis-auth`.
 
-    Top-level, so a fresh environment's targeted `up` creates it with `AclSecret`, ahead of the service.
+    Top-level, so a fresh environment's targeted `up` creates it before the site grants it read on the ACL secret.
     """
     return gcp.serviceaccount.Account(
         'themis-auth-runtime',
@@ -88,89 +93,8 @@ def runtime_account(*, project: str, opts: pulumi.ResourceOptions | None = None)
     )
 
 
-def _retain_on_delete(args: pulumi.ResourceTransformArgs) -> pulumi.ResourceTransformResult:
-    return pulumi.ResourceTransformResult(
-        args.props, pulumi.ResourceOptions.merge(args.opts, pulumi.ResourceOptions(retain_on_delete=True))
-    )
-
-
-class AclSecret(pulumi.ComponentResource):
-    """The secret the site writes the ACL into, empty until its writer adds a version, and the grants on it.
-
-    These grants let the writer manage the secret's versions and read them, and reach no other secret: it reads back
-    only what it writes. It may also bill API calls to the project (`grants.QuotaConsumer`).
-
-    A component of its own, so a fresh environment can deploy it alone (`docs/runbooks/fresh-environment.md`): the
-    auth service refuses to start until the site has added a valid version, and its read grant has to apply first.
-
-    Attributes:
-        secret_id: The secret's id, `ACL_SECRET_ID`.
-        name: The secret's resource name, `projects/<project>/secrets/<id>`, the one the site writes to.
-        reader_grant: The auth service's read grant, which its service waits on.
-    """
-
-    def __init__(
-        self,
-        *,
-        project: str,
-        region: str,
-        writer: str,
-        reader: gcp.serviceaccount.Account,
-        opts: pulumi.ResourceOptions | None = None,
-    ) -> None:
-        """Provision the secret, the writer's grants to manage and read its versions, and the reader's grant.
-
-        Args:
-            project: The GCP project, the deployment's own.
-            region: The single region the secret replicates to.
-            writer: The email of the site's service account that adds the ACL's versions.
-            reader: The auth service's runtime account (`runtime_account`).
-            opts: Resource options (dependency wiring).
-
-        Raises:
-            ValueError: See `check_acl_writer`.
-        """
-        check_acl_writer(writer)
-        # Retained, so removing these resources from the program drops them from state and leaves them in GCP.
-        retained = pulumi.ResourceOptions(transforms=[_retain_on_delete])
-        super().__init__('themis:infra:AclSecret', 'themis', None, pulumi.ResourceOptions.merge(opts, retained))
-        child = pulumi.ResourceOptions(parent=self)
-        secret = secrets.site_written_secret(ACL_SECRET_ID, project=project, region=region, opts=child)
-        writer_member = grants.service_account(writer)
-        grants.SecretVersionManager(
-            'site-acl-writer',
-            member=writer_member,
-            secret=secret.secret_id,
-            project=project,
-            target=ACL_SECRET_ID,
-            opts=child,
-        )
-        grants.SecretReader(
-            'site-acl-writer',
-            member=writer_member,
-            secret=secret.secret_id,
-            project=project,
-            target=ACL_SECRET_ID,
-            opts=child,
-        )
-        # A writer whose client bills each call to the resource's project (`user_project_override`) needs
-        # `serviceusage.services.use` here to read back a version it added.
-        grants.QuotaConsumer('site-acl-writer', member=writer_member, project=project, opts=child)
-        self.reader_grant = grants.SecretReader(
-            'themis-auth',
-            member=grants.service_account(reader.email),
-            secret=secret.secret_id,
-            project=project,
-            target=ACL_SECRET_ID,
-            opts=child,
-        )
-        self.secret_id = secret.secret_id
-        self.name = pulumi.Output.concat('projects/', project, '/secrets/', secret.secret_id)
-        self.register_outputs({'secret_id': self.secret_id, 'name': self.name})
-
-
 class AuthService(pulumi.ComponentResource):
-    """Cloud Run auth service (internal ingress) over Cloud SQL and the ACL secret.
+    """Cloud Run auth service (internal ingress) over Cloud SQL and the site's ACL secret.
 
     Attributes:
         service_account_email: The runtime SA's email.
@@ -193,7 +117,7 @@ class AuthService(pulumi.ComponentResource):
         sql_connection_name: pulumi.Input[str],
         sql_database: pulumi.Input[str],
         service_account: gcp.serviceaccount.Account,
-        acl_secret: AclSecret,
+        acl_secret: str,
         acl_staleness_limit_seconds: int,
         trace_sample_ratio: float,
         min_instances: int,
@@ -211,7 +135,8 @@ class AuthService(pulumi.ComponentResource):
             sql_connection_name: The instance's connection name, for the connector.
             sql_database: The application database.
             service_account: The runtime account (`runtime_account`).
-            acl_secret: The secret the site writes the ACL into, which grants `service_account` read.
+            acl_secret: The resource name of the secret the site writes the ACL into and grants `service_account`
+                read on.
             acl_staleness_limit_seconds: How long the service answers from its last good copy of the ACL while no
                 new copy loads, before it refuses every request.
             trace_sample_ratio: The fraction of requests traced.
@@ -221,8 +146,9 @@ class AuthService(pulumi.ComponentResource):
             opts: Resource options (dependency wiring).
 
         Raises:
-            ValueError: See `check_acl_staleness_limit`.
+            ValueError: See `check_acl_secret` and `check_acl_staleness_limit`.
         """
+        check_acl_secret(acl_secret, project=project, project_number=project_number)
         check_acl_staleness_limit(acl_staleness_limit_seconds)
         super().__init__('themis:infra:AuthService', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
@@ -280,7 +206,7 @@ class AuthService(pulumi.ComponentResource):
                             _env('THEMIS_SQL_CONNECTION_NAME', sql_connection_name),
                             _env('THEMIS_SQL_DATABASE', sql_database),
                             _env('THEMIS_DB_USER', db_user.name),
-                            _env('THEMIS_ACL_SECRET', acl_secret.name),
+                            _env('THEMIS_ACL_SECRET', acl_secret),
                             _env('THEMIS_ACL_STALENESS_LIMIT_SECONDS', str(acl_staleness_limit_seconds)),
                             _env('THEMIS_AUTHORIZER_BACKEND', 'http'),
                             _env('THEMIS_ID_TOKEN_AUDIENCE', url),
@@ -296,8 +222,7 @@ class AuthService(pulumi.ComponentResource):
                     )
                 ],
             ),
-            # A starting instance reads the ACL before it serves, so the read grant has to be in place first.
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[acl_secret.reader_grant]),
+            opts=child,
         )
         self.service_name = service.name
         self.url = cloud_run.reported_url(service, url)

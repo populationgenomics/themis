@@ -16,10 +16,9 @@ config:
   themis:iapOauthClientId: 698160839187-l1akell2vlqqgecn8jdj9a7dgljvl1pu.apps.googleusercontent.com
   themis:iapOauthClientSecret:
     secure: v1:lbqy/5mjDuEr9eJn:AuxN4RjhPCDo4aZlZZjVaBupvx96VaHfQ42TJ1lrOvPitn3kcVy1ab8dAHgaD8PPVUJs
-  # The site's service account that adds the ACL's versions to this stack's `acl` secret; at CPG, cpg-infrastructure's
-  # deploy account. The ACL lists each dataset Themis serves, as a Project, with its managers and curators. The stack's
-  # grants let the account manage and read that secret's versions, and reach no other secret.
-  themis:aclWriter: pulumi@cpg-common.iam.gserviceaccount.com
+  # The secret the site creates in this project, writes the ACL into, and grants the auth service read on; at CPG,
+  # cpg-infrastructure. The ACL lists each dataset Themis serves, as a Project, with its managers and curators.
+  themis:aclSecret: projects/cpg-themis-dev/secrets/acl
   # How long the auth service answers from its last good ACL while no new one loads, before it
   # refuses everyone: rides out a Secret Manager outage of up to half an hour.
   themis:aclStalenessLimitSeconds: "1800"

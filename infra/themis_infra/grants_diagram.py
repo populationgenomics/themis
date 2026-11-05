@@ -80,7 +80,6 @@ VIEWS = (
                 'PublicObjectReader',
                 'DatabaseConnector',
                 'SecretReader',
-                'SecretVersionManager',
                 'SessionBearerDeriver',
                 'TelemetryWriter',
                 'TraceWriter',
@@ -92,7 +91,7 @@ VIEWS = (
     ),
     View(
         'Platform',
-        frozenset({'DeployAccountBuilder', 'DataflowWorker', 'SubnetUser', 'RepositoryReader', 'QuotaConsumer'}),
+        frozenset({'DeployAccountBuilder', 'DataflowWorker', 'SubnetUser', 'RepositoryReader'}),
         direction='LR',
     ),
 )
@@ -117,7 +116,6 @@ _FIXED_TARGET_LABEL = {
     'MetricReader': 'Cloud Monitoring, project-wide',
     'DeployAccountBuilder': 'project',
     'DataflowWorker': 'project',
-    'QuotaConsumer': 'project quota',
 }
 
 _PRINCIPAL = 'principal'
@@ -188,7 +186,7 @@ def _target(binding: capture.Binding, project: str) -> _Node:
             return _Node(_RESOURCE, f'queue {target}')
         case 'BucketObjectReader' | 'BucketObjectReadWriter' | 'PublicObjectReader':
             return _Node(_RESOURCE, f'bucket {target.removeprefix(f"{project}-")}')
-        case 'SecretReader' | 'SecretVersionManager':
+        case 'SecretReader':
             return _Node(_RESOURCE, f'secret {target}')
         case str(capability) if capability in _FIXED_TARGET_LABEL:
             return _Node(_RESOURCE, _FIXED_TARGET_LABEL[capability])

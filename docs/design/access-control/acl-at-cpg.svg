@@ -133,8 +133,8 @@
     <text x="357" y="546">deployment's namespace:</text>
     <text x="357" y="564">dev test, prod main</text>
     <text class="t" x="357" y="600">Write</text>
-    <text x="357" y="620">a new ACL version, and</text>
-    <text x="357" y="638">the dataset read grants</text>
+    <text x="357" y="620">the secret, a new version;</text>
+    <text x="357" y="638">auth's and data read grants</text>
 
     <!-- col1 -> col2 -->
     <path class="arrow-site" marker-end="url(#ah-site)" d="M320 440 H343"/>
@@ -164,7 +164,7 @@
     <text class="m" x="552" y="446">  }</text>
     <text class="m" x="552" y="462">}</text>
     <text class="c" x="552" y="488">a role on any Project = admitted</text>
-    <text class="c" x="552" y="506">CPG writes versions; auth reads the latest</text>
+    <text class="c" x="552" y="506">CPG owns and writes it; auth reads latest</text>
 
     <rect class="gcp" x="540" y="560" width="280" height="148" rx="8"/>
     <text class="t" x="552" y="582">Datasets ds-a, ds-b, ds-c</text>

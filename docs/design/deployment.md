@@ -427,8 +427,8 @@ is encrypted config in the stack file. Where a workload reads it at run time, Pu
 its version and its reader's grant together, so a fresh `pulumi up` fills Secret Manager with no manual step. Rotating
 one means changing the encrypted config and running `pulumi up`. Some encrypted values feed a deploy-time setting
 instead, such as the sign-in client's secret, which goes to IAP's settings. The ACL is the exception to all of this: the
-site writes it into a secret the stack creates, and the stack never holds its value
-([`access-control.md`](access-control.md#the-site-writes-the-acl-into-a-secret-themis-owns)).
+site creates its secret and writes it, and the stack only names the secret in its config
+([`access-control.md`](access-control.md#the-site-owns-the-acls-secret)).
 
 Which model powers the agent is not a credential, but we treat it as confidential. Tracked files refer only to "frontier
 models" and never name a model. The model id is encrypted stack config, and the deploy passes it to the agent step,
@@ -483,13 +483,14 @@ and once, after the full `up`, for a whole deploy, which runs the migrations. Un
 environment's deploy runs only when dispatched; deploying every merge starts afterwards, so that no merge meets an
 environment that does not exist yet.
 
-The ACL secret comes before all of that. The auth service refuses to start without a valid ACL, and the site can only
-write the ACL into a secret that exists, so a targeted `up` of the secret and the auth service's account precedes the
-site's first write, and the bring-up waits for it
-([`access-control.md`](access-control.md#the-site-writes-the-acl-into-a-secret-themis-owns)). Anthropic's webhook, on
-the other hand, does not wait for the stack. Its URL is the environment's hostname followed by a fixed path, known from
-config before any `up`, so it can be registered as soon as the hostname is chosen. Deliveries start once DNS and the
-certificate are in place.
+Two accounts come before all of that. The site's deploy creates the ACL secret, writes the ACL into it, and grants read
+on it to the auth service's account and read on the datasets to the sandbox job's. Google Cloud refuses a grant to an
+account that does not exist, so the first targeted `up` creates both accounts, and the bring-up waits for the site's
+first version, because the auth service refuses to start without a valid ACL
+([`access-control.md`](access-control.md#the-site-owns-the-acls-secret)). Anthropic's webhook, on the other hand, does
+not wait for the stack. Its URL is the environment's hostname followed by a fixed path, known from config before any
+`up`, so it can be registered as soon as the hostname is chosen. Deliveries start once DNS and the certificate are in
+place.
 
 Some config values name things only the first `up` creates. Anthropic federation rules pin GCP service accounts, and the
 web app's, the cost exporter's and the convert worker's accounts are created by the program. Only an Anthropic org admin

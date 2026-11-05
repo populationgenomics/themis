@@ -16,7 +16,13 @@ from tools import bring_up, stack
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 _DEPLOY_WORKFLOW = _ROOT / '.github' / 'workflows' / 'deploy.yml'
-_ENV = bring_up.Environment(project='p', stack='prod', region='australia-southeast1', pulumi_project='themis')
+_ENV = bring_up.Environment(
+    project='p',
+    stack='prod',
+    region='australia-southeast1',
+    pulumi_project='themis',
+    acl_secret='projects/p/secrets/site-acl',
+)
 _MAIN = 'a' * 40
 _OLD = 'b' * 40
 _VALID_ACL = json.dumps({'format': 1, 'projects': {}}).encode('utf-8')
@@ -88,6 +94,7 @@ class _World(bring_up.Shell):
             self.refreshed = True
             return ''
         if command[:4] == ['gcloud', 'secrets', 'versions', 'access']:
+            assert f'--secret={_ENV.acl_secret}' in command
             version = self.acl.pop(0) if len(self.acl) > 1 else self.acl[0]
             if version is None:
                 raise bring_up.CommandError(command, 1, 'NOT_FOUND: Secret has no versions.')

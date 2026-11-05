@@ -19,19 +19,17 @@ The ACL is the latest version of a Secret Manager secret named `acl` in the depl
 | dev        | `projects/cpg-themis-dev/secrets/acl`  |
 | prod       | `projects/cpg-themis-prod/secrets/acl` |
 
-Themis's stack creates the secret with no version (`pulumi stack output acl_secret` prints its name) and never writes
-one. It grants read on the secret to the auth service's account, and the management and reading of its versions to the
-site's writer, the service account `themis:aclWriter` names; these grants reach no other secret. Themis's deploy account
-can read it too, as it can every secret in the stack, since it administers them all; `infra/tests/test_auth.py` fails
-when any other account gains a role that reads secrets. The site adds the ACL as a new version on every change, as
-compact JSON; Secret Manager refuses a version over 64 KiB. The repository holds only the writer's address, never a copy
-of the ACL, because the ACL names people.
+The site creates the secret, adds the ACL as a new version on every change, as compact JSON, and grants read on it to
+the auth service's account (`pulumi stack output auth_sa_email`). Themis's stack creates nothing for it:
+`themis:aclSecret` names the secret, and the auth service reads its latest version. Secret Manager refuses a version
+over 64 KiB. Themis's deploy account can read the secret too, since it administers every secret in the project;
+`infra/tests/test_auth.py` fails when any other Themis account gains a project-wide role that reads secrets, or when the
+stack itself grants anything on the ACL secret. The repository holds only the secret's name, never a copy of the ACL,
+because the ACL names people.
 
-A fresh deployment's secret has no version until the site writes one, and the auth service refuses to start without a
-valid ACL, so the stack deploys the secret and the auth service's account alone first
-([`fresh-environment.md`](fresh-environment.md#2-first-bring-up-once-per-environment)). The stack protects the secret: a
-re-created one is empty, and Themis admits nobody until the site's writer runs again, with a refresh
-([`fresh-environment.md`](fresh-environment.md#when-the-acl-secret-is-re-created)).
+A fresh deployment's auth service refuses to start without a valid ACL, and the site's grants name the auth service's
+and the sandbox job's accounts, so the stack deploys those accounts alone first, and the site deploys before the rest of
+the stack ([`fresh-environment.md`](fresh-environment.md#2-first-bring-up-once-per-environment)).
 
 ## Giving someone access
 
@@ -51,13 +49,10 @@ becomes a Project of the same name, its managers and curators those lists' peopl
 which of a dataset's two CPG namespaces the sandbox job's account, which mounts a sample's files into the agent's
 sandbox, reads: `test` (`cpg-<ds>-test` and Metamist project `<ds>-test`) for dev, `main` (`cpg-<ds>-main` and Metamist
 project `<ds>`) for prod. A test namespace can hold a real subset of participant data, so the allowlist, not the
-namespace, is what keeps dev to open datasets. `config-infrastructure.yaml` also names each deployment's `acl_secret`,
-`projects/cpg-themis-<env>/secrets/acl`, which the pipeline adds each new version to as CPG's deploy account,
-`pulumi@cpg-common.iam.gserviceaccount.com`. The deploy reads back each version it adds and bills that read to Themis's
-project, so Themis's stack also grants that account `roles/serviceusage.serviceUsageConsumer` there. The role lets it
-see the project's enabled APIs, quotas and list of monitoring time series, but read no data. Giving someone access is
-therefore a PR there. It takes effect once that pipeline has written a new version and the auth service has picked it
-up, which it checks for about once a minute.
+namespace, is what keeps dev to open datasets. The pipeline creates each deployment's secret,
+`projects/cpg-themis-<env>/secrets/acl`, adds each new version to it, and grants the deployment's auth service account
+read on it. Giving someone access is therefore a PR there. It takes effect once that pipeline has written a new version
+and the auth service has picked it up, which it checks for about once a minute.
 
 The whole path, from CPG's records to what a backend service may read, with made-up names:
 
@@ -153,7 +148,8 @@ A broken rule is the writer's to fix: correct the records it generates the ACL f
 Nothing in Themis needs changing or restarting, since the service loads the next valid version at its next check. A
 version it cannot read usually means the secret has no enabled version yet, or the service's read grant is missing;
 `gcloud secrets versions list acl --project cpg-themis-dev` shows the first, and the secret's IAM policy
-(`gcloud secrets get-iam-policy acl --project cpg-themis-dev`) should name `pulumi stack output auth_sa_email`.
+(`gcloud secrets get-iam-policy acl --project cpg-themis-dev`) should name `pulumi stack output auth_sa_email`. Both are
+the site's to fix.
 
 ## When someone cannot get in
 

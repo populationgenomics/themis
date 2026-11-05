@@ -71,9 +71,9 @@ domain = config.require('domain')
 # consent screen, so its id is plain config and its secret encrypted config.
 iap_oauth_client_id = config.require('iapOauthClientId')
 iap_oauth_client_secret = config.require_secret('iapOauthClientSecret')
-# The site's service account that writes the ACL into this stack's ACL secret (docs/design/access-control.md), and how
-# long the auth service trusts its last good copy while no new one loads.
-acl_writer = config.require('aclWriter')
+# The secret the site writes the ACL into (docs/design/access-control.md), and how long the auth service trusts its
+# last good copy while no new one loads.
+acl_secret = config.require('aclSecret')
 acl_staleness_limit_seconds = config.require_int('aclStalenessLimitSeconds')
 # Whether this environment hosts the public-read PR review screenshot bucket. Required, not
 # defaulted: a stack must decide, so no environment inherits a public bucket by omission.
@@ -238,17 +238,10 @@ automation_user = clu.AutomationUser(
     migrator_db_role=migrator_db_user.name,
     opts=pulumi.ResourceOptions(depends_on=[base, database, migrator_db_user]),
 )
-# The auth service's account and the ACL secret, deployed alone ahead of the rest on a fresh environment: the site adds
-# the ACL's first version, and the account's read grant applies, before the service first starts
-# (docs/runbooks/fresh-environment.md).
+# Deployed alone ahead of the rest on a fresh environment, so the site can grant them read, on the ACL secret and on
+# the datasets, before their workloads first start (docs/runbooks/fresh-environment.md).
 auth_account = auth.runtime_account(project=project, opts=pulumi.ResourceOptions(depends_on=[base]))
-acl_secret = auth.AclSecret(
-    project=project,
-    region=region,
-    writer=acl_writer,
-    reader=auth_account,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
-)
+sandbox_job_account = sandbox.job_account(project=project, opts=pulumi.ResourceOptions(depends_on=[base]))
 auth_service = auth.AuthService(
     project=project,
     project_number=project_number,
@@ -532,6 +525,7 @@ sandbox_job = sandbox.SandboxJob(
     project=project,
     region=region,
     worker_image=_image(_SANDBOX_WORKER_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'worker')),
+    service_account=sandbox_job_account,
     network=services_net.network.id,
     subnetwork=services_net.subnetwork.id,
     hello_url=hello_service.url,
@@ -905,8 +899,6 @@ pulumi.export('sql_database', database.database_name)
 pulumi.export('migrator_db_user', migrator_db_user.name)
 pulumi.export('auth_url', auth_service.url)
 pulumi.export('auth_sa_email', auth_service.service_account_email)
-# The secret the site's writer adds the ACL's versions to.
-pulumi.export('acl_secret', acl_secret.name)
 pulumi.export('hello_url', hello_service.url)
 pulumi.export('hello_sa_email', hello_service.service_account_email)
 pulumi.export('sheaf_url', sheaf_service.url)

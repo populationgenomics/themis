@@ -75,7 +75,7 @@ docs were accepted on the condition that the data is synthetic, and prod breaks 
 - Application code for the web tier and the agent, which [`frontend-framework.md`](frontend-framework.md) and
   [`agent-runtime.md`](agent-runtime.md) cover.
 - Authorization, roles and Project membership, which [`access-control.md`](access-control.md) and the application own.
-  The infrastructure provides the perimeter and the secret the ACL lives in.
+  The infrastructure provides the perimeter, and the site the secret the ACL lives in.
 - Multi-tenant isolation, and billing or onboarding for external customers.
 - Google Cloud Identity Platform for curators without a Google account. IAP admits any Google account, and a curator
   without one can register a Google account on their existing institutional email address, so a second identity provider
@@ -102,8 +102,9 @@ another project. Each environment owns one of each of the following:
 | Slack app, spend and alerts channels | a post shows which environment sent it, and dev's token cannot post into prod's channels |
 
 Some things are shared because they sit above the environments. The Anthropic organization holds both workspaces. The
-site's ACL writer is one account at CPG that writes into each environment's ACL secret. And one Google group decides who
-may impersonate each project's operator account, `themis-clu`, which [`access-control.md`](access-control.md) argues.
+site's deploy account, one account at CPG, creates and writes each environment's ACL secret. And one Google group
+decides who may impersonate each project's operator account, `themis-clu`, which
+[`access-control.md`](access-control.md) argues.
 
 The Anthropic workspace (`themis-dev`, `themis-prod`) holds the environment's agent, skills, self-hosted environment and
 sessions, and carries the environment's spend limit. Sharing one workspace between dev and prod would break the cost

@@ -1,8 +1,7 @@
-"""Secret Manager secrets: credentials the stack writes, and secrets a site writes into.
+"""Secret Manager secrets: credentials the stack writes.
 
 A credential with no keyless alternative arrives as `config.require_secret`, so the plaintext never enters the
-repo, and leaves as one secret whose latest version a Cloud Run container reads as env (`stack_secret`). A secret
-a site writes into is created empty, and the site's writer adds every version (`site_written_secret`). Who may
+repo, and leaves as one secret whose latest version a Cloud Run container reads as env (`stack_secret`). Who may
 read one is a `grants.SecretReader` where its consumer is wired. See `infra/README.md` (State and secrets).
 """
 
@@ -36,8 +35,10 @@ def stack_secret(
 ) -> StackSecret:
     """Provision one Secret Manager secret whose only version is `value`.
 
-    The secret is named and replicated as `_secret` describes. Rotating is updating the encrypted config
-    value, which replaces the version; consumers read `latest`.
+    The `secret_id` is unprefixed and the same in every environment: secret ids are project-scoped and each
+    environment is its own project, so a reader resolves the secret from a fixed name in its own project.
+    Replication is pinned to `region`, in-region with the rest of the stack. Rotating is updating the encrypted
+    config value, which replaces the version; consumers read `latest`.
 
     Args:
         secret_id: The secret's name (`anthropic-environment-key`); the Pulumi resource is `themis-<secret_id>`.
@@ -49,54 +50,7 @@ def stack_secret(
     Returns:
         The secret, and the version that carries `value`.
     """
-    secret = _secret(secret_id, project=project, region=region, opts=opts)
-    version = gcp.secretmanager.SecretVersion(
-        f'themis-{secret_id}-current',
-        secret=secret.id,
-        secret_data=value,
-        opts=pulumi.ResourceOptions(parent=secret),
-    )
-    return StackSecret(secret, version)
-
-
-def site_written_secret(
-    secret_id: str,
-    *,
-    project: str,
-    region: str,
-    opts: pulumi.ResourceOptions | None = None,
-) -> gcp.secretmanager.Secret:
-    """Provision one Secret Manager secret with no version: whoever is granted its versions writes them.
-
-    The secret is named and replicated as `_secret` describes.
-
-    Args:
-        secret_id: The secret's name (`acl`); the Pulumi resource is `themis-<secret_id>`.
-        project: The GCP project to create the secret in.
-        region: The single region the secret replicates to.
-        opts: Resource options (parent/dependency wiring).
-
-    Returns:
-        The secret.
-    """
-    return _secret(secret_id, project=project, region=region, opts=opts)
-
-
-def _secret(
-    secret_id: str,
-    *,
-    project: str,
-    region: str,
-    opts: pulumi.ResourceOptions | None,
-) -> gcp.secretmanager.Secret:
-    """One Secret Manager secret, with no version.
-
-    The `secret_id` is unprefixed and the same in every environment: secret ids are project-scoped and each
-    environment is its own project, so a reader resolves the secret from a fixed name in its own project.
-    Replication is pinned to `region`, in-region with the rest of the stack. The Pulumi resource is
-    `themis-<secret_id>`.
-    """
-    return gcp.secretmanager.Secret(
+    secret = gcp.secretmanager.Secret(
         f'themis-{secret_id}',
         project=project,
         secret_id=secret_id,
@@ -107,6 +61,13 @@ def _secret(
         ),
         opts=opts,
     )
+    version = gcp.secretmanager.SecretVersion(
+        f'themis-{secret_id}-current',
+        secret=secret.id,
+        secret_data=value,
+        opts=pulumi.ResourceOptions(parent=secret),
+    )
+    return StackSecret(secret, version)
 
 
 def secret_env(name: str, secret_id: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateContainerEnvArgs:

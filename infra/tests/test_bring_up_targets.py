@@ -8,7 +8,11 @@ from themis_infra import capture
 from tools import bring_up
 
 _DEV = bring_up.Environment(
-    project='cpg-themis-dev', stack='dev', region='australia-southeast1', pulumi_project='themis'
+    project='cpg-themis-dev',
+    stack='dev',
+    region='australia-southeast1',
+    pulumi_project='themis',
+    acl_secret='projects/cpg-themis-dev/secrets/acl',  # noqa: S106 — the secret's name, not its value
 )
 
 
@@ -31,3 +35,11 @@ def test_the_refresh_the_bring_up_runs_is_the_program_s_refresh_job(program: cap
     jobs = capture.of_type(program, 'gcp:cloudrunv2/job:Job')
     assert jobs
     assert bring_up.REFRESH_JOB in {job.state['name'] for job in jobs}
+
+
+@pytest.mark.parametrize('target', bring_up.first_targets(_DEV))
+def test_every_first_target_comes_with_its_parent(target: str) -> None:
+    # On a fresh stack, a targeted `up` refuses a resource whose parent component it does not also create.
+    chain = capture.urn_type_chain(target)
+    targeted = [other.removesuffix('**') for other in bring_up.first_targets(_DEV) if other != target]
+    assert len(chain) == 1 or '$'.join(chain[:-1]) in {'$'.join(capture.urn_type_chain(t)) for t in targeted}, target

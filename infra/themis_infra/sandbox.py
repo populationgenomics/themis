@@ -309,8 +309,28 @@ def _job_env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateT
     return gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs(name=name, value=value)
 
 
+def job_account(*, project: str, opts: pulumi.ResourceOptions | None = None) -> gcp.serviceaccount.Account:
+    """The sandbox job's runtime service account, `themis-sandbox-job`.
+
+    Top-level, so a fresh environment's targeted `up` creates it before the site grants it read on the datasets.
+    """
+    return gcp.serviceaccount.Account(
+        'themis-sandbox-job',
+        project=project,
+        account_id='themis-sandbox-job',
+        display_name='Themis sandbox job runtime',
+        opts=pulumi.ResourceOptions.merge(
+            opts,
+            # Aliased to its URN as `SandboxJob`'s child, so the account is kept, not replaced.
+            pulumi.ResourceOptions(
+                aliases=[pulumi.Alias(parent=pulumi.create_urn('themis', 'themis:infra:SandboxJob'))]
+            ),
+        ),
+    )
+
+
 class SandboxJob(pulumi.ComponentResource):
-    """The sandbox Cloud Run Job (one trusted worker container) and its invoke-only SA.
+    """The sandbox Cloud Run Job (one trusted worker container), running as the account it is given.
 
     One execution per spawn: the worker runs ``EnvironmentWorker.handle_item()`` for the claimed session
     and its exit-0 completes the execution. The worker is trusted — it holds the environment key and the
@@ -339,6 +359,7 @@ class SandboxJob(pulumi.ComponentResource):
         project: str,
         region: str,
         worker_image: pulumi.Input[str],
+        service_account: gcp.serviceaccount.Account,
         network: pulumi.Input[str],
         subnetwork: pulumi.Input[str],
         hello_url: pulumi.Input[str],
@@ -351,13 +372,6 @@ class SandboxJob(pulumi.ComponentResource):
         super().__init__('themis:infra:SandboxJob', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
-        service_account = gcp.serviceaccount.Account(
-            'themis-sandbox-job',
-            project=project,
-            account_id='themis-sandbox-job',
-            display_name='Themis sandbox job runtime',
-            opts=child,
-        )
         self.service_account_email = service_account.email
         grants.TraceWriter(
             'themis-sandbox', member=grants.service_account(service_account.email), project=project, opts=child

@@ -21,9 +21,9 @@ is not a Themis Project: one CPG project can cover several datasets, and each of
 Themis takes the outcome as one JSON document of access control lists, which this doc calls the ACL. It holds two lists
 for each Project, its managers and its curators, and a person who holds a role on at least one Project is admitted to
 the deployment. The ACL is the only thing Themis needs from the site, so a site can deploy Themis by producing that
-document with whatever tooling it already has. Themis provides the place it goes: a secret in the deployment's own cloud
-project, whose versions the site's writer may manage and read, and nothing else in the project. Each change at the site
-becomes a new version of that secret, and which of Themis's components may read it stays Themis's decision.
+document with whatever tooling it already has. The site also provides the place it goes: a secret that the site creates
+in the deployment's own cloud project and on which it grants read to Themis's auth service. Each change at the site
+becomes a new version of that secret.
 
 Checking who someone is and deciding what they may reach are separate jobs, and the design gives them to separate
 components. Google's Identity-Aware Proxy (IAP) authenticates. It stands in front of the web tier, admits any signed-in
@@ -410,6 +410,12 @@ The permissions follow from this flow:
   development deployment's ACL is not a Project there, and nothing in development mounts it. At CPG the allowlist is
   each deployment's `project_allowlist` of `projects.yaml` projects, and development's names only `cpg-open-datasets`,
   the project of CPG's open datasets.
+- **Within its tier, the worker reads only the dataset's primary bucket**, because that is where the sample registry
+  points. The worker finds files only through the registry, so a bucket that the registry never names would be read
+  access that nothing uses. At CPG, Metamist registers the outputs a case analysis needs in `cpg-<dataset>-<namespace>`:
+  CRAMs, gVCFs, the joint call and Talos's results. The namespace's `-analysis` bucket holds human-readable summaries,
+  and its `-tmp` bucket holds scratch files that expire after eight days. Data produced for Themis, such as per-family
+  exports from a joint call, is therefore written to the primary bucket and registered in Metamist.
 
 The mount acts for the Analysis, as the rest of the agent path does, and ignores who holds which role. Before each guest
 launch that binds a sample's files, the worker resolves its session again, so removing Project `validation` from the ACL
@@ -445,26 +451,27 @@ Neither is worth its cost while the alert reaches the writer and a fix is one co
 The cost is that a removal takes up to a minute to apply in normal operation, and cannot apply at all during an outage
 until the limit is reached; and that a bad version can stop the service outright when no instance holds a good copy.
 
-### The site writes the ACL into a secret Themis owns
+### The site owns the ACL's secret
 
 Themis never writes the ACL. The site's own provisioning writes it, for every deployment, because that tooling already
-knows who holds which approvals and can derive the ACL from its own records. The place the ACL goes is Themis's to
-provide. Each deployment's stack creates a Secret Manager secret named `acl` in the deployment's own cloud project, and
-writes no version of it. The stack grants read access on that one secret to the auth service's account. It grants the
-management and reading of the secret's versions to one account that the site names in the deployment's config, the
-site's writer. On every change, the writer adds the ACL as a new version of the secret, and the auth service reads the
-latest version through Secret Manager's API.
+knows who holds which approvals and can derive the ACL from its own records. The site also owns the place the ACL goes.
+It creates a Secret Manager secret in the deployment's own cloud project, adds each new ACL to it as a version, and
+grants the auth service's account read access on that one secret. Themis's stack creates nothing for the ACL: its config
+names the secret, and the auth service reads the latest version through Secret Manager's API.
 
-Themis owns the secret because who may read the ACL is a decision about Themis. The ACL names every person admitted to
-the deployment and the data each of them may see, and the auth service is meant to be the only Themis service that reads
-it (§Authorization in the auth service). The one other Themis account that can read it is the deploy account, which
-administers every secret in the stack as it administers the rest of the deployment. With the secret in Themis's project,
-who reads it is decided by grants in Themis's own infrastructure, where a reviewer of Themis sees them, and a test of
-the stack fails when any other account gains a role that reads secrets. The site's grant is narrow, and it is declared
-on Themis's side. The writer may add, read, disable and destroy the versions of this one secret, and nothing else in the
-project, so it reads only what it writes. The account that holds the grant is named in Themis's stack config, so a
-change of writer is a reviewed change to Themis's config. The writer needs to destroy versions as well as add them,
-because a writer that replaces the ACL on every run, as CPG's does, removes the version it replaced.
+The site owns the secret because that is how CPG, the first site, already hands configuration to the services it runs:
+its provisioning creates a secret for the service, writes it, and grants the service's account read on it. The ACL takes
+the same path, so it needs nothing from Themis's stack and nothing new from the site's reviewers. The rival design, in
+which Themis's stack creates the secret and grants the site's writer access to it, is under §Alternatives considered.
+
+The cost is that who may read the ACL is decided in the site's IAM policy, out of sight of anyone reviewing Themis. The
+auth service is meant to be the only Themis service that reads the ACL (§Authorization in the auth service). If the site
+also granted read to a second Themis account, say the web tier's while debugging, nothing in Themis would show it. What
+Themis's stack can still check is its own side: no Themis account other than the deploy account holds a role on the
+whole project that reads secrets. The deploy account does, because it administers the deployment, so it can read the ACL
+too. The site's own account needs rights in the deployment's project to create the secret, set its IAM policy and add
+versions. Themis's stack grants none of them, so the site arranges them itself, and they may reach further than this one
+secret.
 
 A secret version holds at most 64 KiB, and that bounds the ACL. In compact JSON, one role entry is an email address with
 its quotes and a comma: an institutional address such as `firstname.lastname@populationgenomics.org.au` takes 47 bytes
@@ -473,23 +480,20 @@ on each Project. Secret Manager refuses a larger version when the writer adds it
 fails at the site, where it can be fixed, and the auth service needs no size limit of its own. CPG's writer checks the
 size before it deploys, so the failure comes even earlier there.
 
-The cost is an ordering on a fresh deployment. The auth service refuses to start without a valid ACL, and the secret
-exists only once Themis's stack has created it. The first deploy therefore runs in three steps: a deploy of Themis's
-stack limited to the secret, the auth service's account and the grants on the secret, then the site's writer adding the
-first version, and then the rest of Themis's stack. Storage that the site owns would need no such ordering
-(§Alternatives considered). The stack also protects the secret against deletion, because a re-created secret starts
-empty and Themis admits nobody until the site's writer adds a version again.
+A fresh deployment has to be brought up in a fixed order. The site's deploy grants read to two of Themis's accounts: the
+auth service's on the secret, and the sandbox worker's on each Project's dataset. Google Cloud refuses a grant to an
+account that does not exist, so both accounts have to exist before the site's first deploy. The auth service in turn
+refuses to start without a valid ACL. The first deploy therefore runs in three steps: a deploy of Themis's stack limited
+to the two accounts, then the site's deploy, which creates the secret, adds the first version and makes both grants, and
+then the rest of Themis's stack.
 
 At CPG, cpg-infrastructure is the writer, and the figure at the top of the doc follows it. A CI check requires everyone
 on a dataset's Themis role lists to be on a `projects.yaml` project that holds the dataset, so nobody gets a role on
 data that project management has not approved them for. On merge, cpg-infrastructure resolves each deployment's ACL from
 the datasets of the projects that deployment may hold, and makes every dataset with a non-empty role list a Project. It
-adds the ACL, as compact JSON, as a new version of the secret that its config names for the deployment
-(`projects/cpg-themis-prod/secrets/acl` for production). It runs as CPG's deploy account, which each Themis stack names
-as its writer. The deploy reads back each version it adds and bills that read to Themis's project, so Themis's stack
-also grants CPG's deploy account the right to bill API calls there (`serviceUsageConsumer`), a role that lets it see the
-project's enabled APIs, quotas and list of monitoring time series, but read no data. CPG grants the auth service
-nothing.
+creates the deployment's secret in the deployment's project (`projects/cpg-themis-prod/secrets/acl` for production),
+adds the ACL to it as compact JSON, and grants the deployment's auth service account read on it, as it does for the
+configuration secrets of the other services it deploys.
 
 Each deployment has its own secret, and so its own ACL. Enabling a Project in development is therefore a separate
 decision from enabling it in production. That matters because development is the looser environment: an operator there
@@ -537,18 +541,20 @@ the fixture's ACL is seeded the way the rest of the fixture is.
 - **Signed access tokens minted by the auth service and verified by the web tier.** The web tier would need no call per
   request. It lost because token verification, refresh and key rotation would move into the web tier, and a removal
   would wait for the token to expire.
-- **The ACL in storage the site owns.** The site would write the ACL to a bucket or a secret in its own cloud project,
-  grant the deployment's auth service read access, and Themis's config would name the location. Themis's stack would
-  create nothing for the ACL, and a fresh deployment would need no ordering: the site writes first, and Themis's first
-  deploy finds the ACL in place. It lost because who may read the ACL would then be decided in the site's IAM policy,
-  out of sight of anyone reviewing Themis. A read grant that the site added to a second Themis account, say the web
-  tier's while debugging, would break the rule that the auth service is the only Themis service that reads it, and
-  nothing in Themis would show it (§The site writes the ACL into a secret Themis owns).
-- **A bucket in the deployment's project instead of a secret.** Themis's stack would create the bucket and grant the
-  site's writer write access to it. The ACL would then have no 64 KiB ceiling. It lost on the preference of CPG, the
-  first site. CPG's provisioning already hands configuration to its services as JSON secrets, so a secret is what its
-  tooling and its reviewers expect. CPG's software team also considers write access to a bucket easier to widen by
-  accident than access to one secret.
+- **Themis's stack owns the secret.** Each deployment's stack would create the secret, grant the auth service read on
+  it, and grant the site's writer the right to manage and read its versions. Who may read the ACL would then be decided
+  in Themis's own code, where a reviewer of Themis sees it, and a read grant to a second Themis account would show up in
+  a Themis diff. It lost because it departs from the pattern the site already uses for every other service's
+  configuration. It also needs grants from Themis's stack to the site's deploy account, which lives in another project.
+  Both designs need an ordered first deploy; this one only moves the secret into its first step. What it buys is smaller
+  than it looks, since Themis never had exclusive control of reading: its deploy account holds the Secret Manager admin
+  role on the whole project, so it can read any secret there and grant read to anyone, whichever side created the
+  secret.
+- **A bucket in the deployment's project instead of a secret.** The site would write the ACL to a bucket that it owns in
+  the deployment's project. The ACL would then have no 64 KiB ceiling. It lost on the preference of CPG, the first site.
+  CPG's provisioning already hands configuration to its services as JSON secrets, so a secret is what its tooling and
+  its reviewers expect. CPG's software team also considers write access to a bucket easier to widen by accident than
+  access to one secret.
 - **Cloud Run handing the secret to the auth service.** Cloud Run can expose a secret's latest version to a container as
   an environment variable or a mounted file, so the service would need no Secret Manager client of its own. It lost
   because the read would then happen in the platform, outside the code that bounds a read's time, keeps the last good

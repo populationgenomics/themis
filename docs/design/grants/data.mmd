@@ -2,73 +2,68 @@
 flowchart LR
     n0["allUsers"]
     n1["group themis-dev-access"]
-    n2["pulumi@cpg-common.iam.gserviceaccount.com"]
-    n3["themis-auth"]
-    n4["themis-ci-telemetry"]
-    n5["themis-clu"]
-    n6["themis-convert-worker"]
-    n7["themis-cost-exporter"]
-    n8["themis-cost-report"]
-    n9["themis-deploy"]
-    n10["themis-dispatcher"]
-    n11["themis-evidence"]
-    n12["themis-gene-disease-refresh"]
-    n13["themis-ingest"]
-    n14["themis-sandbox-job"]
-    n15["themis-sheaf"]
-    n16["themis-web"]
-    n17["themis-work-sweep"]
-    n18[("Cloud Monitoring and Cloud Trace, project-wide")]
-    n19[("Cloud Monitoring, project-wide")]
-    n20[("Cloud SQL, project-wide")]
-    n21[("Cloud Trace, project-wide")]
-    n22[("KMS session-token key")]
-    n23[("bucket fulltext")]
-    n24[("bucket litcache-scratch")]
-    n25[("bucket pr-screenshots")]
-    n26[("bucket resources")]
-    n27[("bucket sheaf-repositories")]
-    n28[("secret acl")]
-    n29[("secret anthropic-environment-key")]
-    n30[("secret anthropic-webhook-signing-key")]
-    n31[("secret openalex-api-key")]
-    n32[("secret semantic-scholar-api-key")]
-    n33[("secret slack-bot-token")]
-    n0 -->|PublicObjectReader| n25
-    n1 -->|BucketObjectReadWriter| n25
-    n2 -->|SecretReader| n28
-    n2 -->|SecretVersionManager| n28
-    n3 -->|DatabaseConnector| n20
-    n3 -->|SecretReader| n28
-    n3 -->|ServiceTelemetry| n18
-    n4 -->|TelemetryWriter| n19
-    n5 -->|DatabaseConnector| n20
-    n5 -->|SessionBearerDeriver| n22
-    n6 -->|BucketObjectReadWriter| n23
-    n6 -->|TelemetryWriter| n19
-    n7 -->|TelemetryWriter| n19
-    n8 -->|MetricReader| n19
-    n8 -->|SecretReader| n33
-    n9 -->|DatabaseConnector| n20
+    n2["themis-auth"]
+    n3["themis-ci-telemetry"]
+    n4["themis-clu"]
+    n5["themis-convert-worker"]
+    n6["themis-cost-exporter"]
+    n7["themis-cost-report"]
+    n8["themis-deploy"]
+    n9["themis-dispatcher"]
+    n10["themis-evidence"]
+    n11["themis-gene-disease-refresh"]
+    n12["themis-ingest"]
+    n13["themis-sandbox-job"]
+    n14["themis-sheaf"]
+    n15["themis-web"]
+    n16["themis-work-sweep"]
+    n17[("Cloud Monitoring and Cloud Trace, project-wide")]
+    n18[("Cloud Monitoring, project-wide")]
+    n19[("Cloud SQL, project-wide")]
+    n20[("Cloud Trace, project-wide")]
+    n21[("KMS session-token key")]
+    n22[("bucket fulltext")]
+    n23[("bucket litcache-scratch")]
+    n24[("bucket pr-screenshots")]
+    n25[("bucket resources")]
+    n26[("bucket sheaf-repositories")]
+    n27[("secret anthropic-environment-key")]
+    n28[("secret anthropic-webhook-signing-key")]
+    n29[("secret openalex-api-key")]
+    n30[("secret semantic-scholar-api-key")]
+    n31[("secret slack-bot-token")]
+    n0 -->|PublicObjectReader| n24
+    n1 -->|BucketObjectReadWriter| n24
+    n2 -->|DatabaseConnector| n19
+    n2 -->|ServiceTelemetry| n17
+    n3 -->|TelemetryWriter| n18
+    n4 -->|DatabaseConnector| n19
+    n4 -->|SessionBearerDeriver| n21
+    n5 -->|BucketObjectReadWriter| n22
+    n5 -->|TelemetryWriter| n18
+    n6 -->|TelemetryWriter| n18
+    n7 -->|MetricReader| n18
+    n7 -->|SecretReader| n31
+    n8 -->|DatabaseConnector| n19
+    n9 -->|SecretReader| n27
+    n9 -->|SecretReader| n28
+    n9 -->|SessionBearerDeriver| n21
+    n10 -->|BucketObjectReadWriter| n22
+    n10 -->|BucketObjectReader| n25
+    n10 -->|DatabaseConnector| n19
     n10 -->|SecretReader| n29
-    n10 -->|SecretReader| n30
-    n10 -->|SessionBearerDeriver| n22
-    n11 -->|BucketObjectReadWriter| n23
-    n11 -->|BucketObjectReader| n26
-    n11 -->|DatabaseConnector| n20
-    n11 -->|SecretReader| n31
-    n11 -->|TelemetryWriter| n19
-    n12 -->|BucketObjectReadWriter| n26
-    n13 -->|BucketObjectReadWriter| n23
-    n13 -->|BucketObjectReadWriter| n24
-    n13 -->|DatabaseConnector| n20
-    n13 -->|SecretReader| n31
-    n13 -->|SecretReader| n32
-    n14 -->|TraceWriter| n21
-    n15 -->|BucketObjectReadWriter| n27
-    n15 -->|ServiceTelemetry| n18
-    n16 -->|BucketObjectReader| n23
-    n16 -->|DatabaseConnector| n20
-    n16 -->|SessionBearerDeriver| n22
-    n16 -->|TraceWriter| n21
-    n17 -->|BucketObjectReader| n23
+    n10 -->|TelemetryWriter| n18
+    n11 -->|BucketObjectReadWriter| n25
+    n12 -->|BucketObjectReadWriter| n22
+    n12 -->|BucketObjectReadWriter| n23
+    n12 -->|DatabaseConnector| n19
+    n12 -->|SecretReader| n29
+    n12 -->|SecretReader| n30
+    n13 -->|TraceWriter| n20
+    n14 -->|BucketObjectReadWriter| n26
+    n14 -->|ServiceTelemetry| n17
+    n15 -->|BucketObjectReader| n22
+    n15 -->|DatabaseConnector| n19
+    n15 -->|SessionBearerDeriver| n21
+    n15 -->|TraceWriter| n20
+    n16 -->|BucketObjectReader| n22

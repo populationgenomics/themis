@@ -20,9 +20,9 @@ bring-up that replaces it.
 - The project allows an IAM grant to `allAuthenticatedUsers`, which the IAP grant on the web service is: if the
   organisation enforces Domain Restricted Sharing (`iam.allowedPolicyMemberDomains`), the `up` fails on that grant until
   the project has an exception (same section).
-- The site has a service account that will write the environment's ACL, and `themis:aclWriter` names it
-  ([`access-control.md`](access-control.md#where-the-acl-lives)). The site's writer is configured with the secret it
-  writes to, `projects/cpg-themis-dev/secrets/acl`, which only the first, targeted `up` creates (§2).
+- `themis:aclSecret` names the secret the site will create for the environment's ACL, `projects/<project>/secrets/acl`
+  ([`access-control.md`](access-control.md#where-the-acl-lives)). The site's account needs the rights to create it and
+  set its IAM policy in the project; Themis's stack does not grant them.
 - The `themis-clu` group exists — see [`hand-driving-a-service.md`](hand-driving-a-service.md). It must exist before
   `pulumi up` too: the impersonation binding names it, and GCP rejects a binding whose `group:` member does not resolve.
 
@@ -61,10 +61,11 @@ prints are already wired into `.github/workflows/{deploy,preview}.yml`.
 
 A fresh environment comes up through `tools.bring_up`, run once by an Owner from a laptop. The order it follows, and
 why, is in [`deployment.md`](../design/deployment.md#bringing-up-a-fresh-environment). In short: the registry and the
-ACL secret first, the images built by the deploy workflow dispatched in its images-only mode, the gene-disease dumps
-written once, the site's ACL waited for, then the full `up` as the Owner, and a full deploy through the workflow, which
-applies the migrations. Every step checks its own result first, so a run that stops resumes where it stopped. The tool
-refuses a stack the deploy workflow has already updated, which is every environment past its first bring-up.
+accounts the site grants read first, the images built by the deploy workflow dispatched in its images-only mode, the
+gene-disease dumps written once, the site's ACL waited for, then the full `up` as the Owner, and a full deploy through
+the workflow, which applies the migrations. Every step checks its own result first, so a run that stops resumes where it
+stopped. The tool refuses a stack the deploy workflow has already updated, which is every environment past its first
+bring-up.
 
 Before the run, every key the program reads must hold its real value except those
 [§3](#3-values-that-only-exist-after-the-first-up) lists: `preview` stops at the first `config.require*` the stack does
@@ -83,8 +84,10 @@ not satisfy. These come from outside the repo:
   `themis:alertsSlackChannel` for operational alerts, the bot token as `themis:slackBotToken`. The app needs the bot
   scopes `chat:write` and `files:write` (the morning report uploads its chart), and the bot has to be invited to both
   channels, since Slack refuses a post from a bot that is not in the channel and Cloud Monitoring does not report it.
-- The site's ACL config for the environment, naming `projects/<project>/secrets/acl` as its target. The site can deploy
-  it as soon as the tool's first step has created the secret; the tool waits for the first version.
+- The site's config for the environment: it creates `projects/<project>/secrets/acl`, writes the ACL into it, and grants
+  read on it to the auth service's account and read on the datasets to the sandbox job's. Google Cloud refuses a grant
+  to an account that does not exist, so the site deploys once the tool's first step has created both accounts; the tool
+  waits for the first version.
 
 ```sh
 cd infra
@@ -104,24 +107,6 @@ the tool runs: a merge would start a full deploy ahead of the step the tool is o
 included, first runs lint, the tests, the web checks and both schema checks on that commit, and deploys only if they
 pass, so a dispatch takes as long as the slowest of them on top of the deploy.
 
-An existing environment whose stack does not yet hold the ACL secret takes a targeted `up` of the secret and the auth
-service's account alone, then waits for the site's first version before the next deploy. Its baseline exists already,
-and targeting it would make Pulumi stop on any resource that depends on it and that the program no longer declares:
-
-```sh
-THEMIS_WEB_IMAGE=gcr.io/cloudrun/hello pulumi up \
-  --target 'urn:pulumi:dev::themis::themis:infra:AclSecret**' \
-  --target 'urn:pulumi:dev::themis::gcp:serviceaccount/account:Account::themis-auth-runtime'
-```
-
-### When the ACL secret is re-created
-
-The stack protects the secret, so a `destroy`, or a change that would replace it, stops until someone unprotects it
-(`pulumi state unprotect`). If the secret is re-created anyway, for instance in a rebuilt environment, it starts empty,
-and the auth service admits nobody until the site writes the ACL again. The site's writer must then run once with a
-refresh, so that it sees the empty secret: CPG's deploy does not refresh by default, so it assumes the version it wrote
-last still exists and writes nothing.
-
 `stack init` writes a generated `encryptedkey` line into `Pulumi.dev.yaml`; commit it (inert without KMS access, safe on
 the mirror). Requires the operator KMS grant from the prerequisites above.
 
@@ -137,10 +122,6 @@ the table says which. On a first bring-up nobody uses the environment yet, so no
 | `themis:anthropicFederationRuleId`                                                             | The rule registered in the Anthropic console against `pulumi stack output web_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md) Path B                  | The BFF cannot mint a Managed-Agents token.                                                            |
 | `themis:anthropicCostExporterServiceAccountId`, `themis:anthropicCostExporterFederationRuleId` | The svac and rule registered together against `pulumi stack output cost_exporter_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the cost exporter   | The cost exporter fails every scheduled run at the token exchange, so the spend gauge stays empty.     |
 | `themis:anthropicWorkerServiceAccountId`, `themis:anthropicWorkerFederationRuleId`             | The svac and rule registered together against `pulumi stack output convert_worker_sa_unique_id` — [`claude-api-wif.md`](claude-api-wif.md), the convert worker | The convert worker fails each paper's transcription at the token exchange, and Cloud Tasks retries it. |
-
-One grant is the site's to make against an account the first `up` creates, and is no stack config at all: read on the
-datasets the ACL names as Projects for `pulumi stack output sandbox_job_sa_email`, the account that mounts their files
-into the agent's sandbox.
 
 Any non-empty string serves as the placeholder; neither the program nor the app parses these beyond requiring them. The
 remaining `themis:anthropic*` ids are set for real from the start: the web app's svac, the org and the workspace are
@@ -271,5 +252,4 @@ Leave the ruleset in place: it costs nothing and keeps the branch un-creatable, 
 ## Tearing down
 
 The reserved IP is `protect`ed; `pulumi destroy` refuses until you clear the protection (deliberate — it guards the
-externally-bound address). The ACL secret is protected too, because a re-created one is empty until the site writes it
-again ([above](#when-the-acl-secret-is-re-created)).
+externally-bound address).

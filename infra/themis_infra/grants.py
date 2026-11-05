@@ -422,59 +422,6 @@ class SecretReader(_Capability):
         self.register_outputs({})
 
 
-class SecretVersionManager(_Capability):
-    """May add, disable, enable and destroy the versions of one Secret Manager secret, and read none of them.
-
-    The holder writes the secret's value but cannot read it back, and this grant reaches no other secret.
-    """
-
-    def __init__(
-        self,
-        holder: str,
-        *,
-        member: pulumi.Input[str],
-        secret: pulumi.Input[str],
-        project: str,
-        target: str,
-        opts: pulumi.ResourceOptions | None = None,
-    ) -> None:
-        name = f'{holder}-manages-versions-of-{target}'
-        super().__init__(name, opts)
-        gcp.secretmanager.SecretIamMember(
-            name,
-            project=project,
-            secret_id=secret,
-            role='roles/secretmanager.secretVersionManager',
-            member=member,
-            opts=self._binding(None),
-        )
-        self.register_outputs({})
-
-
-class QuotaConsumer(_Capability):
-    """May bill API calls to the project's quota, and see its enabled APIs, quotas and time series; reads no data.
-
-    `serviceUsageConsumer` is the `serviceusage.services.use` an API checks on the project a call bills its quota to.
-    It carries `serviceusage.services.get`/`list` and `serviceusage.quotas.get` besides, and
-    `monitoring.timeSeries.list` as for `TelemetryWriter`: the holder may list every series in the project, not read
-    their points.
-    """
-
-    def __init__(
-        self,
-        holder: str,
-        *,
-        member: pulumi.Input[str],
-        project: str,
-        opts: pulumi.ResourceOptions | None = None,
-    ) -> None:
-        name = f'{holder}-bills-quota'
-        super().__init__(name, opts)
-        slug, role = _SERVICE_USAGE_CONSUMER
-        gcp.projects.IAMMember(f'{holder}-{slug}', project=project, role=role, member=member, opts=self._binding(None))
-        self.register_outputs({})
-
-
 class TaskEnqueuer(_Capability):
     """May put tasks on one Cloud Tasks queue, choosing each task's target URL and body.
 

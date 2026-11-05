@@ -9,7 +9,8 @@ config:
   gcp:project: cpg-themis-prod
   gcp:region: australia-southeast1
   themis:domain: themis.populationgenomics.org.au
-  themis:aclWriter: pulumi@cpg-common.iam.gserviceaccount.com
+  # The site creates this secret, writes the ACL into it, and grants the auth service read on it.
+  themis:aclSecret: projects/cpg-themis-prod/secrets/acl
   themis:aclStalenessLimitSeconds: "1800"
   # Shared with dev: the same operators administer both projects (docs/design/access-control.md).
   themis:cluGroup: themis-clu@populationgenomics.org.au

@@ -4,9 +4,9 @@
 
 `docs/runbooks/fresh-environment.md` says what has to exist first and what follows;
 `docs/design/deployment.md` (Bringing up a fresh environment) why the steps run in this order. In short:
-the registry and the ACL secret first, the images built by the deploy workflow, the gene-disease dumps
-written once, the site's ACL waited for, then the full `up` as the Owner, and a full deploy through the
-workflow, which applies the migrations.
+the registry and the accounts the site grants read first, the images built by the deploy workflow, the
+gene-disease dumps written once, the site's ACL waited for, then the full `up` as the Owner, and a full
+deploy through the workflow, which applies the migrations.
 
 The program the Owner runs and the images the workflow builds come from one commit: the run refuses a
 checkout that is not a clean copy of `main`'s head. Every step either converges (the targeted `up`s, which
@@ -42,7 +42,6 @@ _PLACEHOLDER = 'placeholder'
 _PLACEHOLDER_IMAGE = 'gcr.io/cloudrun/hello'
 REFRESH_JOB = 'themis-gene-disease-refresh'
 # The Secret Manager secret the site writes each version of the ACL into.
-_ACL_NAME = 'acl'
 # The deploy workflow's step that applies the agent on the Anthropic side: it fails while the deploy
 # account's Anthropic identity is still a placeholder.
 AGENT_STEP = 'Apply the agent declaration'
@@ -132,6 +131,8 @@ class Environment:
     stack: str
     region: str
     pulumi_project: str
+    # the secret the site writes the ACL into, `themis:aclSecret`
+    acl_secret: str
 
     @property
     def backend(self) -> str:
@@ -151,20 +152,27 @@ def environment(project: str) -> Environment:
     """The environment `project` deploys, from its committed stack file."""
     region = stack.value(project, 'gcp:region')
     pulumi_project = yaml.safe_load((_INFRA / 'Pulumi.yaml').read_text('utf-8'))['name']
-    return Environment(project=project, stack=stack.name(project), region=region, pulumi_project=pulumi_project)
+    return Environment(
+        project=project,
+        stack=stack.name(project),
+        region=region,
+        pulumi_project=pulumi_project,
+        acl_secret=stack.value(project, 'themis:aclSecret'),
+    )
 
 
 def first_targets(env: Environment) -> list[str]:
-    """The registry and the ACL secret: everything a run needs before any image or the site's ACL exists.
+    """The registry and the accounts the site grants read: everything a run needs before any image or the ACL exists.
 
-    The registry depends on every API the baseline enables, so the whole baseline comes with it. The ACL
-    secret and the auth service's account go now so the site can write the ACL while the images build, and
-    the deploy account's registry role so the workflow can push them.
+    The registry depends on every API the baseline enables, so the whole baseline comes with it. The auth
+    service's and the sandbox job's accounts go now, because the site's deploy, which runs while the images
+    build, grants them read on the ACL secret and on the datasets. The deploy account's registry role goes
+    now so the workflow can push the images.
     """
     return [
         env.urn('themis:infra:Baseline'),
-        env.urn('themis:infra:AclSecret'),
         env.urn('gcp:serviceaccount/account:Account', 'themis-auth-runtime'),
+        env.urn('gcp:serviceaccount/account:Account', 'themis-sandbox-job'),
         env.urn('themis:grants:DeployAccountBuilder', 'themis-deploy-builds-the-project'),
         env.urn(
             'themis:grants:DeployAccountBuilder$gcp:projects/iAMMember:IAMMember',
@@ -225,7 +233,7 @@ class BringUp:
         self._refuse_a_deployed_stack()
         sha = self._checkout_is_main()
         self._targeted_up(first_targets(self._env), placeholder_images())
-        _say(f'The site can deploy the ACL into projects/{self._env.project}/secrets/{_ACL_NAME} now.')
+        _say(f'The site can deploy now: the ACL into {self._env.acl_secret}, and its grants.')
         self._images(sha)
         self._targeted_up(refresh_targets(self._env), built_images(self._env, sha))
         self._refresh()
@@ -308,8 +316,8 @@ class BringUp:
 
     def _wait_for_acl(self) -> None:
         """Wait for the version the auth service reads, the latest, and validate it the way the service does."""
-        secret = f'projects/{self._env.project}/secrets/{_ACL_NAME}'
-        access = ['gcloud', 'secrets', 'versions', 'access', 'latest', f'--secret={_ACL_NAME}']
+        secret = self._env.acl_secret
+        access = ['gcloud', 'secrets', 'versions', 'access', 'latest', f'--secret={secret}']
         waited = datetime.timedelta(0)
         while True:
             try:
@@ -440,7 +448,6 @@ The first bring-up of {project} is done. What follows is outside this tool:
 - Anthropic round 2: register the web app's, the cost exporter's and the convert worker's identities against
   the service accounts this bring-up created, set their ids in the stack file, and dispatch deploy.yml again
   (docs/runbooks/claude-api-wif.md).
-- The site grants `pulumi stack output sandbox_job_sa_email` read on the datasets the ACL names as Projects.
 - A second Owner who runs Pulumi locally needs encrypt and decrypt on the stack's KMS key
   (docs/runbooks/fresh-environment.md, Local-operator KMS access).
 """

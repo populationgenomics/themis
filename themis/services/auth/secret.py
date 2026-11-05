@@ -1,7 +1,7 @@
 """The ACL as a Secret Manager secret, the live backend's ACL source.
 
-The stack creates the secret in the deployment's own project and grants the auth service's account read on it; the
-site's writer adds each version. This module only reads the latest one.
+The site creates the secret in the deployment's own project, adds each version, and grants the auth service's account
+read on it. This module only reads the latest one.
 """
 
 from __future__ import annotations

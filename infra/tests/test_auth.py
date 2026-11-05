@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Iterable
 
 import pytest
@@ -11,7 +12,9 @@ from themis.services.auth import backend as auth_backend
 from themis_infra import auth, capture, deploy_iam
 
 _FLOOR = auth.ACL_REFRESH_INTERVAL_SECONDS + auth.ACL_READ_TIMEOUT_SECONDS
-_SECRET_BINDING = 'gcp:secretmanager/secretIamMember:SecretIamMember'  # noqa: S105 — a type token
+_SECRET_BINDING_PREFIX = 'gcp:secretmanager/'  # noqa: S105 — a type token's prefix
+_PROJECT = 'cpg-themis-dev'
+_PROJECT_NUMBER = '698160839187'
 _PROJECT_BINDING = 'gcp:projects/iAMMember:IAMMember'
 # The roles that carry `secretmanager.versions.access`, per https://docs.cloud.google.com/secret-manager/docs/access-control:
 # the two Secret Manager roles that list it, and `roles/owner`; `roles/editor` and `roles/viewer` do not carry it.
@@ -34,23 +37,49 @@ def test_a_staleness_limit_past_one_refresh_and_read_is_accepted() -> None:
 
 
 @pytest.mark.parametrize(
-    'writer',
+    'name',
     [
-        pytest.param('serviceAccount:pulumi@cpg-common.iam.gserviceaccount.com', id='an-iam-member-string'),
-        pytest.param('group:acl-writers@example.org', id='a-group'),
-        pytest.param('jane.roe@example.com', id='a-person'),
-        pytest.param('pulumi@gserviceaccount.com', id='no-project'),
-        pytest.param(' pulumi@cpg-common.iam.gserviceaccount.com', id='whitespace'),
+        pytest.param('projects/cpg-themis-dev/secrets/acl', id='project-id'),
+        pytest.param('projects/698160839187/secrets/acl', id='project-number'),
     ],
 )
-def test_an_acl_writer_that_is_not_a_service_account_is_refused(writer: str) -> None:
-    with pytest.raises(ValueError, match="service account's email"):
-        auth.check_acl_writer(writer)
+def test_an_acl_secret_named_by_its_resource_name_is_accepted(name: str) -> None:
+    auth.check_acl_secret(name, project=_PROJECT, project_number=_PROJECT_NUMBER)
 
 
-def test_the_dev_stacks_acl_settings_are_accepted() -> None:
-    config = capture.stack_config('dev')
-    auth.check_acl_writer(config['themis:aclWriter'])
+@pytest.mark.parametrize(
+    'name',
+    [
+        pytest.param('acl', id='bare-id'),
+        pytest.param('projects/cpg-themis-dev/secrets/acl/versions/latest', id='a-version'),
+        pytest.param('projects/cpg-themis-dev/secrets/', id='no-secret-id'),
+        pytest.param('projects/Cpg-Themis-Dev/secrets/acl', id='uppercase-project'),
+        pytest.param(' projects/cpg-themis-dev/secrets/acl', id='whitespace'),
+        pytest.param('projects/0/secrets/acl', id='project-number-zero'),
+    ],
+)
+def test_an_acl_secret_not_named_by_its_resource_name_is_refused(name: str) -> None:
+    with pytest.raises(ValueError, match="secret's resource name"):
+        auth.check_acl_secret(name, project=_PROJECT, project_number=_PROJECT_NUMBER)
+
+
+@pytest.mark.parametrize(
+    'name',
+    [
+        pytest.param('projects/cpg-themis-prod/secrets/acl', id='another-project-id'),
+        pytest.param('projects/111111111111/secrets/acl', id='another-project-number'),
+    ],
+)
+def test_an_acl_secret_in_another_project_is_refused(name: str) -> None:
+    with pytest.raises(ValueError, match="deployment's project"):
+        auth.check_acl_secret(name, project=_PROJECT, project_number=_PROJECT_NUMBER)
+
+
+@pytest.mark.parametrize('stack_file', capture.stack_files(), ids=lambda path: path.name)
+def test_every_stacks_acl_settings_are_accepted(stack_file: pathlib.Path) -> None:
+    config = capture.stack_config(stack_file.name.removeprefix('Pulumi.').removesuffix('.yaml'))
+    # The stack files name the project by id; the number is the program's lookup.
+    auth.check_acl_secret(config['themis:aclSecret'], project=config['gcp:project'], project_number='')
     auth.check_acl_staleness_limit(int(config['themis:aclStalenessLimitSeconds']))
 
 
@@ -73,30 +102,40 @@ def test_every_caller_dials_auth_at_the_audience_it_checks(program: capture.Capt
     assert all(url == audience for url in dialed.values()), f'auth checks {audience}, callers dial {dialed}'
 
 
-def _acl_readers(bindings: Iterable[capture.Binding], project: str) -> set[str]:
-    """Every member that can read the ACL's payload: by a grant on the secret, or by a project-wide role."""
+def test_the_auth_service_reads_the_configured_acl_secret(program: capture.Capture) -> None:
+    (service,) = [
+        workload
+        for workload in capture.of_type(program, 'gcp:cloudrunv2/service:Service')
+        if workload.state['name'] == 'themis-auth'
+    ]
+    assert _envs(service)['THEMIS_ACL_SECRET'] == capture.stack_config('dev')['themis:aclSecret']
+
+
+def test_the_stack_grants_nothing_on_the_acl_secret(program: capture.Capture) -> None:
+    name = capture.stack_config('dev')['themis:aclSecret']
+    on_acl = [
+        b.urn
+        for b in program.bindings
+        if b.type_.startswith(_SECRET_BINDING_PREFIX) and b.target in {name, name.rsplit('/', 1)[1]}
+    ]
+    assert not on_acl, 'bindings on the ACL secret:\n' + '\n'.join(on_acl)
+
+
+def _project_wide_secret_readers(bindings: Iterable[capture.Binding], project: str) -> set[str]:
+    """Every member that can read any secret's payload in the project, the ACL's included, by a project-wide role."""
     return {
         b.member
         for b in bindings
-        if b.role in _PAYLOAD_READING_ROLES
-        and (
-            (b.type_ == _SECRET_BINDING and b.target == auth.ACL_SECRET_ID)
-            or (b.type_ == _PROJECT_BINDING and b.target == project)
-        )
+        if b.type_ == _PROJECT_BINDING and b.target == project and b.role in _PAYLOAD_READING_ROLES
     }
 
 
-def _expected_acl_readers(program: capture.Capture) -> set[str]:
-    """The auth service, the site's writer, and the deploy account, which administers every secret in the stack."""
-    return {
-        f'serviceAccount:themis-auth@{program.project}.iam.gserviceaccount.com',
-        f'serviceAccount:{capture.stack_config("dev")["themis:aclWriter"]}',
-        f'serviceAccount:{deploy_iam.deploy_sa_email(program.project)}',
-    }
+def _deploy_account(program: capture.Capture) -> set[str]:
+    return {f'serviceAccount:{deploy_iam.deploy_sa_email(program.project)}'}
 
 
-def test_only_the_auth_service_the_sites_writer_and_the_deploy_account_read_the_acl(program: capture.Capture) -> None:
-    assert _acl_readers(program.bindings, program.project) == _expected_acl_readers(program)
+def test_only_the_deploy_account_reads_secrets_project_wide(program: capture.Capture) -> None:
+    assert _project_wide_secret_readers(program.bindings, program.project) == _deploy_account(program)
 
 
 def test_a_project_wide_payload_reading_role_for_another_account_is_caught(program: capture.Capture) -> None:
@@ -108,14 +147,4 @@ def test_a_project_wide_payload_reading_role_for_another_account_is_caught(progr
         role='roles/owner',
         target=program.project,
     )
-    assert _acl_readers([*program.bindings, intruder], program.project) != _expected_acl_readers(program)
-
-
-def test_the_sites_writer_holds_nothing_beyond_the_secret_but_quota(program: capture.Capture) -> None:
-    writer = f'serviceAccount:{capture.stack_config("dev")["themis:aclWriter"]}'
-    held = {(b.capability, b.target) for b in program.bindings if b.member == writer}
-    assert held == {
-        ('SecretReader', auth.ACL_SECRET_ID),
-        ('SecretVersionManager', auth.ACL_SECRET_ID),
-        ('QuotaConsumer', program.project),
-    }
+    assert _project_wide_secret_readers([*program.bindings, intruder], program.project) != _deploy_account(program)
