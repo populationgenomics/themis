@@ -838,13 +838,19 @@ spend_alerts = cost_alerts.CostAlerts(
     dashboard_url=spend_dashboard.console_url,
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
+# A paused sweep runs only by hand, so no later run is due to repair a failed one: it pages as an event.
+scheduled_jobs = [gene_disease_refresh_job.name, cost_exporter.job_name]
+unscheduled_jobs = [sandbox_job.job_name]
+(scheduled_jobs if work_sweep_scheduled else unscheduled_jobs).append(work_sweep.job_name)
 alerts.OperationalAlerts(
     project=project,
     region=region,
     slack_channel=alerts_slack_channel,
     slack_bot_token=slack_bot_token,
-    # The cost report's own failure alert posts to the spend channel; the exporter's failures also stop its heartbeat.
-    jobs=[sandbox_job.job_name, gene_disease_refresh_job.name, work_sweep.job_name, cost_exporter.job_name],
+    # The cost report's own latest-run alert posts to the spend channel; the exporter's failures also stop its
+    # heartbeat.
+    scheduled_jobs=scheduled_jobs,
+    unscheduled_jobs=unscheduled_jobs,
     # The services a curator's request or an agent's session goes through; the convert worker answers 5xx on purpose,
     # so Cloud Tasks retries the conversion.
     services=[

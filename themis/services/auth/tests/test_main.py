@@ -100,7 +100,7 @@ def test_an_invalid_fixture_acl_refuses_to_start(monkeypatch: pytest.MonkeyPatch
                 read_timeout_seconds=harness.READ_TIMEOUT_SECONDS,
                 staleness_limit_seconds=600,
                 clock=harness.Clock(),
-                rejections=harness.uncounted(),
+                outcomes=harness.unrecorded(),
             )
         )
 
@@ -189,7 +189,7 @@ def test_the_gate_resolves_sessions_in_process_and_needs_no_auth_url(monkeypatch
             read_timeout_seconds=harness.READ_TIMEOUT_SECONDS,
             staleness_limit_seconds=600,
             clock=harness.Clock(),
-            rejections=harness.uncounted(),
+            outcomes=harness.unrecorded(),
         )
         authorizer = main_mod.build_authorizer(servicer_mod.Servicer(backend, acl, operator=harness.OPERATOR))
         with pytest.raises(session_mod.UnresolvedSessionError):
@@ -214,7 +214,7 @@ def test_each_authorizer_input_is_required(monkeypatch: pytest.MonkeyPatch, miss
             read_timeout_seconds=harness.READ_TIMEOUT_SECONDS,
             staleness_limit_seconds=600,
             clock=harness.Clock(),
-            rejections=harness.uncounted(),
+            outcomes=harness.unrecorded(),
         )
         main_mod.build_authorizer(servicer_mod.Servicer(backend, acl, operator=harness.OPERATOR))
 

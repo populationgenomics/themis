@@ -1,18 +1,26 @@
 """Operational alerting: the environment's alerts channel and the policies that page it.
 
-The failures a curator would otherwise find first (docs/design/infrastructure.md, Alerting): a Job execution that
-failed, a service answering 5xx, a saturated database, a certificate that stopped renewing, a gRPC call ending in a
-server fault, a version of the ACL the auth service refused, and a deploy that failed. Every policy posts to the alerts
-channel, which is separate from the spend monitor's channel (`cost_alerts.CostAlerts`). The last three read metrics
-the services and the deploy write through OpenTelemetry (`operational_metrics`); the rest read the platform's.
+The failures a curator would otherwise find first (docs/design/infrastructure.md, Alerting): a scheduled Job whose
+latest run failed, a failed execution of a Job no schedule runs, a service answering 5xx, a saturated database, a
+certificate that stopped renewing, a gRPC call ending in a server fault, an ACL version the auth service refused, and a
+deploy that failed. Every policy posts to the alerts channel, which is separate from the spend monitor's channel
+(`cost_alerts.CostAlerts`). The server-fault, ACL and deploy policies read metrics the services and the deploy write
+through OpenTelemetry (`operational_metrics`); the rest read the platform's.
 
-- `failed_execution_condition` — a failed execution of one Cloud Run Job; the cost report's own failure alert uses it.
+Every policy but one is a state: it opens while something is wrong and closes once it is not, and both transitions
+notify. The policy on Jobs no schedule runs (the sandbox, one execution per agent session, and a paused sweep) is an
+event: no later run is due to repair a failed one, so a close would mean nothing, and it only opens. A state that a
+later event repairs (a Job's next run, the next deploy, the next ACL version) compares the time of the latest failure
+with the time of the latest success, so the incident outlasts the gap between the two.
+
+- `latest_run_failed` — the query that holds while a scheduled Job's latest run failed; the cost report's alert uses it.
 - `OperationalAlerts` — the alerts channel and the operational policies.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import datetime
+from collections.abc import Iterable, Sequence
 
 import pulumi
 import pulumi_gcp as gcp
@@ -20,11 +28,25 @@ import pulumi_gcp as gcp
 from themis_infra import audit, promql
 from themis_infra import operational_metrics as metrics
 
-# Written once per execution as it ends, labelled with its result.
-COMPLETED_EXECUTIONS = 'run.googleapis.com/job/completed_execution_count'
-# The count is written when an execution ends, so the window only sets how long an incident stays open, and so how
-# long a repeat failure stays inside the same incident rather than paging again.
-FAILURE_WINDOW_SECONDS = 3600
+# A state notifies as it opens and as it closes; an event only as it opens.
+STATE_PROMPTS = ('OPENED', 'CLOSED')
+EVENT_PROMPTS = ('OPENED',)
+
+# Cloud Run's count of finished task attempts, labelled by result. Every Themis Job runs one task, so its attempts are
+# its executions' runs, a retry included. Cloud Run's execution count is not read: it records only some executions.
+TASK_ATTEMPTS = 'run_googleapis_com:job_completed_task_attempt_count'
+JOB_NAME_LABEL = 'job_name'
+# The count's points end on whole minutes, so a one-minute step resolves each attempt to the minute it ended, as
+# exactly as the count can; a coarser step can put a failure and a later success in one step and tie them.
+_ATTEMPT_STEP = '1m'
+# How far back a Job's latest run, the latest ACL load and the latest deploy are looked for: longer than the weekly
+# refresh's gap between runs, and inside Monitoring's five-minute evaluation band (`promql.evaluation_floor`).
+# A deploy outcome is renewed only by the next deploy, so a failed one with no deploy after it closes after this long.
+_OUTCOME_LOOKBACK = '180h'
+# Cloud Run writes the count up to 180 s after the attempt ends and the policy evaluates every 60 s; the window holds a
+# failure for at least one evaluation after its point lands. Monitoring closes the incident 270 s or more after the
+# query last held and the count names no execution, so failures of one Job within about ten minutes share one incident.
+_EVENT_FAILURE_WINDOW = '5m'
 
 # More than this many 5xx responses from one service in one window pages.
 _SERVER_ERRORS_PER_WINDOW = 5
@@ -36,10 +58,9 @@ _SQL_CONNECTION_SHARE = 0.8
 _CERTIFICATE_PERIOD = '900s'
 # The statuses a server returns for its own fault, not the caller's.
 _SERVER_FAULTS = ('INTERNAL', 'UNKNOWN', 'UNAVAILABLE', 'DATA_LOSS')
-# The services export every minute, so a PromQL policy has nothing newer to read between.
-_PROMQL_EVALUATION = '60s'
-_ACL_WINDOW = '1h'
-_DEPLOY_WINDOW = '10m'
+# The services export every minute, so a PromQL policy has nothing newer to read between; a query reading further back
+# evaluates as often as Monitoring allows.
+_PROMQL_EVALUATION = datetime.timedelta(seconds=60)
 # A managed certificate renews about 30 days before it expires; still under this many days means renewal is failing.
 _CERTIFICATE_DAYS_LEFT = 14
 # A check failing this long means the hostname no longer reaches the load balancer with a valid certificate; longer
@@ -49,45 +70,77 @@ _CERTIFICATE_UNREACHABLE = '7200s'
 _CHECK_REGIONS_FAILING = 1
 
 
-def _promql(query: str) -> gcp.monitoring.AlertPolicyConditionConditionPrometheusQueryLanguageArgs:
+def _promql(
+    query: pulumi.Input[str], *, lookback: datetime.timedelta
+) -> gcp.monitoring.AlertPolicyConditionConditionPrometheusQueryLanguageArgs:
+    """A PromQL condition that holds as soon as `query` returns, its query reading `lookback` back."""
+    interval = max(_PROMQL_EVALUATION, promql.evaluation_floor(lookback))
     return gcp.monitoring.AlertPolicyConditionConditionPrometheusQueryLanguageArgs(
         query=query,
-        evaluation_interval=_PROMQL_EVALUATION,
+        evaluation_interval=f'{interval.total_seconds():.0f}s',
+        # Zero also because Monitoring refuses a retest window past `promql.RETEST_LOOKBACK_LIMIT`.
         duration='0s',
         # The policies are declared with the producers, before the first point on a fresh environment.
         disable_metric_validation=True,
     )
 
 
-def failed_execution_condition(job_name: pulumi.Input[str]) -> gcp.monitoring.AlertPolicyConditionArgs:
-    """A condition that fires when an execution of a Cloud Run Job ends failed, once per failure."""
+def _attempts(result: str, job_names: Iterable[str]) -> str:
+    return promql.selector(
+        TASK_ATTEMPTS,
+        promql.equals('monitored_resource', 'cloud_run_job'),
+        promql.among(JOB_NAME_LABEL, job_names),
+        promql.equals('result', result),
+    )
+
+
+def _last_attempt(result: str, job_names: Iterable[str]) -> str:
+    """Per Job, the end time of its latest attempt with `result` inside the lookback."""
+    ended = f'sum by ({JOB_NAME_LABEL}) (increase({_attempts(result, job_names)}[{_ATTEMPT_STEP}])) > 0'
+    return f'max by ({JOB_NAME_LABEL}) (max_over_time((timestamp({ended}))[{_OUTCOME_LOOKBACK}:{_ATTEMPT_STEP}]))'
+
+
+def latest_run_failed(job_names: Iterable[str]) -> str:
+    """A query that holds, per Job, while the latest run of one of `job_names` failed.
+
+    It holds while a Job's latest failed attempt is newer than its latest successful one, or the Job has failed with
+    no success inside the lookback; a later success closes it.
+
+    Raises:
+        ValueError: `job_names` is empty.
+    """
+    names = sorted(job_names)
+    if not names:
+        raise ValueError('a latest-run condition needs at least one Job')
+    failed, succeeded = _last_attempt('failed', names), _last_attempt('succeeded', names)
+    on = f'on ({JOB_NAME_LABEL})'
+    return f'({failed} - {on} {succeeded} > 0) or ({failed} unless {on} {succeeded})'
+
+
+def latest_run_failed_condition(job_names: Sequence[pulumi.Input[str]]) -> gcp.monitoring.AlertPolicyConditionArgs:
+    """A condition that holds, one incident per Job, while the latest run of one of `job_names` failed."""
     return gcp.monitoring.AlertPolicyConditionArgs(
-        display_name=pulumi.Output.format(
-            'A {0} execution failed in the last {1} min', job_name, FAILURE_WINDOW_SECONDS // 60
+        display_name="A scheduled Job's latest run failed",
+        condition_prometheus_query_language=_promql(
+            pulumi.Output.all(*job_names).apply(latest_run_failed),
+            lookback=promql.duration(_OUTCOME_LOOKBACK) + promql.duration(_ATTEMPT_STEP),
         ),
-        condition_threshold=gcp.monitoring.AlertPolicyConditionConditionThresholdArgs(
-            filter=pulumi.Output.format(
-                'metric.type="{0}" AND resource.type="cloud_run_job" AND resource.labels.job_name="{1}"'
-                ' AND metric.labels.result="failed"',
-                COMPLETED_EXECUTIONS,
-                job_name,
-            ),
-            comparison='COMPARISON_GT',
-            threshold_value=0,
-            # A missing-data setting is refused with a zero duration, and Monitoring takes whole minutes; one minute
-            # inside an hour-long aligned window changes nothing about when a failure pages.
-            duration='60s',
-            aggregations=[
-                gcp.monitoring.AlertPolicyConditionConditionThresholdAggregationArgs(
-                    alignment_period=f'{FAILURE_WINDOW_SECONDS}s',
-                    per_series_aligner='ALIGN_SUM',
-                    cross_series_reducer='REDUCE_SUM',
-                )
-            ],
-            # The count is written only when an execution ends, so the series is empty most of the time; an empty
-            # window closes the incident, and the next failure opens, and pages, a new one.
-            evaluation_missing_data='EVALUATION_MISSING_DATA_INACTIVE',
-        ),
+    )
+
+
+def _latest_outcome_failed(metric: str, *, outcome_label: str, success: str, lookback: str, by: str) -> str:
+    """A query that holds, per `by`, while `metric`'s latest failure is newer than its latest success.
+
+    `metric` is a gauge set to the Unix time of each outcome, labelled by it; with no success inside the lookback,
+    any failure holds.
+    """
+    failures = promql.selector(metric, promql.not_among(outcome_label, [success]))
+    successes = promql.selector(metric, promql.equals(outcome_label, success))
+    # `max_over_time`, not `last_over_time`: Monitoring's `last_over_time` returns nothing for a series last written
+    # hours earlier, and a timestamp only grows, so the two agree wherever both answer.
+    return (
+        f'max by ({by}) (max_over_time({failures}[{lookback}]))'
+        f' > scalar(max(max_over_time({successes}[{lookback}])) or vector(0))'
     )
 
 
@@ -101,7 +154,8 @@ class OperationalAlerts(pulumi.ComponentResource):
         region: str,
         slack_channel: str,
         slack_bot_token: pulumi.Input[str],
-        jobs: Sequence[pulumi.Input[str]],
+        scheduled_jobs: Sequence[pulumi.Input[str]],
+        unscheduled_jobs: Sequence[pulumi.Input[str]],
         services: Sequence[pulumi.Input[str]],
         sql_instance: pulumi.Input[str],
         sql_tier_connections: int,
@@ -112,16 +166,23 @@ class OperationalAlerts(pulumi.ComponentResource):
 
         Args:
             project: The project the policies watch.
-            region: Where the project's regional log bucket is.
+            region: Where the project's Jobs and its regional log bucket are.
             slack_channel: The alerts channel's name, `#` included.
             slack_bot_token: The bot token of the environment's Slack app, invited to the channel; a secret.
-            jobs: The Cloud Run Jobs whose failed executions page.
+            scheduled_jobs: The Cloud Run Jobs a schedule runs, whose latest run failing pages until one succeeds.
+            unscheduled_jobs: The Cloud Run Jobs no schedule runs (the sandbox, and a sweep whose schedule is
+                paused), whose failed executions page as they happen and never close with news.
             services: The Cloud Run services whose 5xx responses page.
             sql_instance: The Cloud SQL instance's name.
             sql_tier_connections: The connection limit of the instance's tier (`sql.max_connections`).
             domain: The hostname the load balancer's certificate covers.
             opts: Resource options (dependency wiring).
+
+        Raises:
+            ValueError: `scheduled_jobs` or `unscheduled_jobs` is empty.
         """
+        if not scheduled_jobs or not unscheduled_jobs:
+            raise ValueError('the operational alerts need at least one scheduled and one unscheduled Job')
         super().__init__('themis:infra:OperationalAlerts', 'themis', None, opts)
         child = pulumi.ResourceOptions(parent=self)
 
@@ -140,9 +201,9 @@ class OperationalAlerts(pulumi.ComponentResource):
             *,
             display_name: str,
             conditions: Sequence[gcp.monitoring.AlertPolicyConditionArgs],
+            notification_prompts: Sequence[str],
             subject: str,
             content: pulumi.Input[str],
-            alert_strategy: gcp.monitoring.AlertPolicyAlertStrategyArgs | None = None,
             aliases: Sequence[pulumi.Alias] = (),
         ) -> None:
             gcp.monitoring.AlertPolicy(
@@ -153,8 +214,9 @@ class OperationalAlerts(pulumi.ComponentResource):
                 severity='ERROR',
                 conditions=list(conditions),
                 notification_channels=[channel.name],
-                alert_strategy=alert_strategy
-                or gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=['OPENED']),
+                alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(
+                    notification_prompts=list(notification_prompts)
+                ),
                 documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                     mime_type='text/markdown', subject=subject, content=content
                 ),
@@ -163,14 +225,52 @@ class OperationalAlerts(pulumi.ComponentResource):
 
         policy(
             'themis-job-failed',
-            display_name='Themis: a Job execution failed',
-            conditions=[failed_execution_condition(job) for job in jobs],
-            subject='Themis: a Job execution failed',
+            display_name="Themis: a scheduled Job's latest run failed",
+            conditions=[latest_run_failed_condition(scheduled_jobs)],
+            notification_prompts=STATE_PROMPTS,
+            subject="Themis: a scheduled Job's latest run failed",
             content=(
-                'An execution of a Cloud Run Job ended failed; the condition names the Job. A failed sandbox execution '
-                'is a session whose agent lost its sandbox; a failed gene-disease refresh leaves the evidence service '
-                "on last week's dumps. The executions and their logs: `gcloud run jobs executions list --job <job> "
-                f'--project {project}`.'
+                'The latest run of a scheduled Cloud Run Job failed; the incident names the Job as '
+                f'`{JOB_NAME_LABEL}`, and closes about ten minutes after a later run, scheduled or by hand, that '
+                "succeeds. A failed gene-disease refresh leaves the evidence service on last week's dumps, a failed "
+                'sweep leaves papers unconverted until the next, and a failing cost exporter leaves the spend '
+                'dashboard stale. A Job that retries opens on a failed attempt and closes if the retry succeeds. Its '
+                'executions, and the logs of each: '
+                f'`gcloud run jobs executions list --job <job> --region {region} --project {project}`.'
+            ),
+        )
+
+        unscheduled_failures = pulumi.Output.all(*unscheduled_jobs).apply(
+            lambda names: (
+                f'sum by ({JOB_NAME_LABEL}) (increase({_attempts("failed", names)}[{_EVENT_FAILURE_WINDOW}])) > 0'
+            )
+        )
+        policy(
+            'themis-unscheduled-job-failed',
+            display_name='Themis: an execution of an unscheduled Job failed',
+            conditions=[
+                gcp.monitoring.AlertPolicyConditionArgs(
+                    display_name='An execution of a Job no schedule runs failed',
+                    condition_prometheus_query_language=_promql(
+                        unscheduled_failures, lookback=promql.duration(_EVENT_FAILURE_WINDOW)
+                    ),
+                )
+            ],
+            notification_prompts=EVENT_PROMPTS,
+            subject='Themis: an execution of an unscheduled Job failed',
+            content=(
+                'An execution of a Cloud Run Job that runs on demand or by hand failed; the incident names the Job '
+                f'as `{JOB_NAME_LABEL}`. A failed sandbox execution is one agent session that lost its sandbox; a '
+                'failed sweep run by hand left its papers unasked for. Each is a one-off that no later run repairs, so '
+                'the incident closes on its own a few minutes later, not when anything recovers. Failures of one Job '
+                'within about ten minutes share this one incident and this one message, so list them all: the '
+                'failed executions, newest first, are '
+                f'`gcloud run jobs executions list --job <job> --region {region} --project {project} '
+                "--filter='status.failedCount>0'`, and every one that ended in the minutes before this message and "
+                "until the incident closes belongs to it. An execution's logs say why it ended, and a sandbox "
+                "execution's name the session it served in a line `serving session <id>`: `gcloud logging read "
+                '\'labels."run.googleapis.com/execution_name"="<execution>"\' '
+                f'--project {project} --bucket {audit.LOG_BUCKET_ID} --location {region} --view _AllLogs`.'
             ),
         )
 
@@ -207,9 +307,12 @@ class OperationalAlerts(pulumi.ComponentResource):
                     ),
                 )
             ],
+            notification_prompts=STATE_PROMPTS,
             subject='Themis: a service is answering 5xx',
             content=(
-                'One Cloud Run service returned server errors repeatedly; the incident names it. For a gRPC service '
+                'One Cloud Run service returned server errors repeatedly; the incident names it, and closes once '
+                f'{_SERVER_ERROR_WINDOW_SECONDS // 60} minutes pass with no more than {_SERVER_ERRORS_PER_WINDOW}, '
+                'or with no traffic. For a gRPC service '
                 '(auth, evidence, sheaf) this sees transport-level failures only: an application error travels as a '
                 'non-OK status in the trailers of an HTTP 200, which the server-fault policy counts instead. Its logs: '
                 '`gcloud logging read \'resource.type="cloud_run_revision" '
@@ -234,60 +337,84 @@ class OperationalAlerts(pulumi.ComponentResource):
                         f'{_SERVER_ERROR_WINDOW_SECONDS // 60} min'
                     ),
                     condition_prometheus_query_language=_promql(
-                        f'sum by (job) (increase({faults}[{window}])) > {_SERVER_ERRORS_PER_WINDOW}'
+                        f'sum by (job) (increase({faults}[{window}])) > {_SERVER_ERRORS_PER_WINDOW}',
+                        lookback=promql.duration(window),
                     ),
                 )
             ],
+            notification_prompts=STATE_PROMPTS,
             subject='Themis: a service is failing calls',
             content=(
                 f'Calls to one gRPC service ended in {", ".join(_SERVER_FAULTS)}; the incident names the service as '
-                f'`job`. The method and status of each failed call are labels on `{metrics.RPC_SERVER_CALL_DURATION}`, '
-                f'in Metrics Explorer. Its logs: `gcloud logging read \'resource.type="cloud_run_revision" '
+                f'`job`, and closes once {_SERVER_ERROR_WINDOW_SECONDS // 60} minutes pass with no more than '
+                f'{_SERVER_ERRORS_PER_WINDOW}, or with no calls. The method and status of each failed call are '
+                f'labels on `{metrics.RPC_SERVER_CALL_DURATION}`, in Metrics Explorer. Its logs: '
+                '`gcloud logging read \'resource.type="cloud_run_revision" '
                 'AND resource.labels.service_name="<service>" AND severity>=ERROR\' '
                 f'--project {project} --bucket {audit.LOG_BUCKET_ID} --location {region} --view _AllLogs --limit 20`.'
             ),
         )
 
+        acl_rejected = _latest_outcome_failed(
+            metrics.ACL_ATTEMPT,
+            outcome_label=metrics.OUTCOME_LABEL,
+            success=metrics.ACL_LOADED,
+            lookback=_OUTCOME_LOOKBACK,
+            by=metrics.OUTCOME_LABEL,
+        )
         policy(
             'themis-auth-acl-rejected',
             display_name='Themis auth: ACL rejected',
             conditions=[
                 gcp.monitoring.AlertPolicyConditionArgs(
-                    display_name='The auth service rejected the ACL',
+                    display_name='The version of the ACL the auth service last tried to load was rejected',
                     condition_prometheus_query_language=_promql(
-                        f'sum(increase({metrics.ACL_REJECTIONS}[{_ACL_WINDOW}])) > 0'
+                        acl_rejected, lookback=promql.duration(_OUTCOME_LOOKBACK)
                     ),
                 )
             ],
+            notification_prompts=STATE_PROMPTS,
             subject='Themis: the auth service rejected the ACL',
             content=(
                 'The auth service could not use the latest version of the ACL: it was unreadable, or it broke one of '
-                f'the rules the service checks. `{metrics.ACL_REJECTIONS}` counts it by `{metrics.REASON_LABEL}`, and '
-                "the service's ERROR log line, which starts `acl rejected:`, names the rule. The service answers "
-                'from its last good copy until the staleness limit (`themis:aclStalenessLimitSeconds`), then refuses '
-                'everyone until a valid version loads. Runbook: `docs/runbooks/access-control.md`.'
+                f'the rules the service checks. The incident names why as `{metrics.OUTCOME_LABEL}`, and closes about '
+                "ten minutes after any instance loads a version cleanly; the service's ERROR log line, which starts "
+                '`acl rejected:`, names the rule. The service answers from its last good copy until the staleness '
+                'limit (`themis:aclStalenessLimitSeconds`), then refuses everyone until a valid version loads; an '
+                'instance that starts on a rejected version does not start at all. Runbook: '
+                '`docs/runbooks/access-control.md`.'
             ),
             # The policy predates the alerts component, as a top-level resource of the same name.
             aliases=[pulumi.Alias(parent=None)],
         )
 
+        deploy_failed = _latest_outcome_failed(
+            metrics.DEPLOY_FINISHED,
+            outcome_label=metrics.RESULT_LABEL,
+            success=metrics.DEPLOY_SUCCEEDED,
+            lookback=_OUTCOME_LOOKBACK,
+            by='instance',
+        )
         policy(
             'themis-deploy-failed',
             display_name='Themis: a deploy failed',
             conditions=[
                 gcp.monitoring.AlertPolicyConditionArgs(
-                    display_name='A deploy run failed or was cancelled',
+                    display_name='A deploy run failed or was cancelled since the last successful deploy',
                     condition_prometheus_query_language=_promql(
-                        f'max by (instance) (max_over_time({metrics.DEPLOY_FAILED}[{_DEPLOY_WINDOW}])) > 0'
+                        deploy_failed, lookback=promql.duration(_OUTCOME_LOOKBACK)
                     ),
                 )
             ],
+            notification_prompts=STATE_PROMPTS,
             subject='Themis: a deploy failed',
             content=(
-                'A run of the deploy workflow failed or was cancelled after it signed in to Google Cloud; the incident '
-                'names the run as `instance`, its id and attempt. The run, and which step failed: '
-                '`gh run view <run id> --repo populationgenomics/themis-internal`. A failure before the sign-in shows '
-                "in the workflow's run list only."
+                'A run of the deploy workflow failed or was cancelled after it signed in to Google Cloud, and no '
+                'deploy has succeeded since; the incident names the run as `instance`, its id and attempt, and closes '
+                'about ten minutes after the next successful deploy of this environment (a run that only builds the '
+                f'images does not count), or {_OUTCOME_LOOKBACK} after the failure if none comes. The run, and which '
+                'step failed: `gh run view <run id> --repo populationgenomics/themis-internal`. A failure before the '
+                "sign-in shows in the workflow's run list only."
             ),
         )
 
@@ -347,6 +474,7 @@ class OperationalAlerts(pulumi.ComponentResource):
                     'REDUCE_SUM',
                 ),
             ],
+            notification_prompts=STATE_PROMPTS,
             subject='Themis: the database is saturated',
             content=sql_content,
         )
@@ -422,6 +550,7 @@ class OperationalAlerts(pulumi.ComponentResource):
                     ),
                 ),
             ],
+            notification_prompts=STATE_PROMPTS,
             subject='Themis: the certificate is not renewing',
             content=(
                 f'Either fewer than {_CERTIFICATE_DAYS_LEFT} days are left on the Google-managed certificate for '

@@ -5,10 +5,14 @@ Every producer writes through the Telemetry API, so each metric is a native Prom
 semantic-convention name such as `rpc.server.call.duration`, or Claude Code's dotted names — takes the UTF-8 form
 Monitoring documents for OTLP-ingested series: the name moves inside the braces, quoted, and a label is quoted where it
 is matched.
+
+Monitoring also bounds how often a PromQL condition may be evaluated by how far back its query reads
+(`evaluation_floor`), and refuses a retest window once that reaches past `RETEST_LOOKBACK_LIMIT`.
 """
 
 from __future__ import annotations
 
+import datetime
 import re
 from collections.abc import Iterable
 
@@ -17,6 +21,24 @@ _LEGACY_NAME = re.compile(r'^[A-Za-z_:][A-Za-z0-9_:]*$')
 _REGEX_METACHARACTER = re.compile(r'([.^$*+?()\[\]{}|\\])')
 # What a PromQL double-quoted string escapes.
 _STRING_ESCAPE = re.compile(r'([\\"])')
+_DURATION = re.compile(r'(\d+)(ms|s|m|h|d|w|y)')
+_DURATION_UNITS = {
+    'ms': datetime.timedelta(milliseconds=1),
+    's': datetime.timedelta(seconds=1),
+    'm': datetime.timedelta(minutes=1),
+    'h': datetime.timedelta(hours=1),
+    'd': datetime.timedelta(days=1),
+    'w': datetime.timedelta(weeks=1),
+    'y': datetime.timedelta(days=365),
+}
+# Monitoring's shortest evaluation interval for a query reading back up to each lookback
+# (https://cloud.google.com/monitoring/promql/promql-in-alerting); past the last, an hour or more.
+_EVALUATION_FLOORS = (
+    (datetime.timedelta(hours=25), datetime.timedelta(seconds=30)),
+    (datetime.timedelta(days=8), datetime.timedelta(minutes=5)),
+)
+# A query reading back further than this takes no retest window: its condition's duration is zero.
+RETEST_LOOKBACK_LIMIT = _EVALUATION_FLOORS[0][0]
 
 
 def selector(name: str, *matchers: str) -> str:
@@ -57,3 +79,29 @@ def _label(label: str) -> str:
 def _string_literal(value: str) -> str:
     """`value` as a PromQL double-quoted string."""
     return '"' + _STRING_ESCAPE.sub(r'\\\1', value) + '"'
+
+
+def duration(text: str) -> datetime.timedelta:
+    """A PromQL duration (`5m`, `180h`, `1h30m`) as a timedelta.
+
+    Raises:
+        ValueError: `text` is not a PromQL duration.
+    """
+    if not text or _DURATION.sub('', text):
+        raise ValueError(f'not a PromQL duration: {text!r}')
+    return sum((int(count) * _DURATION_UNITS[unit] for count, unit in _DURATION.findall(text)), datetime.timedelta())
+
+
+def evaluation_floor(lookback: datetime.timedelta) -> datetime.timedelta:
+    """The shortest evaluation interval Monitoring accepts for a condition whose query reads `lookback` back.
+
+    Raises:
+        ValueError: `lookback` sits on the edge of a band, which Monitoring does not say which side it falls on, or
+            past eight days, where Monitoring evaluates hourly at best.
+    """
+    for edge, floor in _EVALUATION_FLOORS:
+        if lookback == edge:
+            raise ValueError(f'a {lookback} lookback is on the edge of an evaluation band; keep inside one')
+        if lookback < edge:
+            return floor
+    raise ValueError(f'a {lookback} lookback is past {_EVALUATION_FLOORS[-1][0]}, which evaluates hourly at best')

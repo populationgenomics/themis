@@ -13,10 +13,12 @@ RPC_METHOD_LABEL = 'rpc.method'
 RPC_RESPONSE_STATUS_CODE_LABEL = 'rpc.response.status_code'
 RPC_SYSTEM_GRPC = 'grpc'
 
-ACL_REJECTIONS = 'themis_auth_acl_rejections'
-REASON_LABEL = 'reason'
+# The time of each auth instance's latest attempt to load the ACL, by outcome: a clean load, or why it was refused.
+ACL_ATTEMPT = 'themis_auth_acl_attempt_timestamp_seconds'
+OUTCOME_LABEL = 'outcome'
+ACL_LOADED = 'loaded'
 
-DEPLOY_FAILED = 'themis_deploy_failed'
-
-# The `reason` label's values, in the producers' order.
-ACL_REJECTION_REASONS = ('timeout', 'unreadable', 'invalid')
+# The time each deploy run finished, by result.
+DEPLOY_FINISHED = 'themis_deploy_finished_timestamp_seconds'
+RESULT_LABEL = 'result'
+DEPLOY_SUCCEEDED = 'succeeded'

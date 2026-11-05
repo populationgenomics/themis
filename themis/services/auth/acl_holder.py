@@ -3,16 +3,19 @@
 The holder loads the ACL when the service starts and refuses to start without a valid version. It
 then re-reads the latest version every ``REFRESH_INTERVAL_SECONDS``, validates it, and swaps it in
 whole, so both rpcs answer from one consistent copy. A version that cannot be read or does not
-validate leaves the last good copy in force, is counted by reason on ``themis_auth_acl_rejections``
-(the series the alert reads), and is logged at ERROR as ``acl rejected: <reason>``, which names the
-rule it broke. Once the last good copy is older than the staleness limit, :meth:`AclHolder.current`
-raises :class:`StaleAclError` until a valid version loads.
+validate leaves the last good copy in force and is logged at ERROR as ``acl rejected: <reason>``,
+which names the rule it broke. Every attempt sets ``themis_auth_acl_attempt_timestamp_seconds`` to
+the time it ended, labelled with its outcome, so the alert can tell whether the latest attempt on any
+instance was refused, and an instance that scales to zero leaves its last outcome behind. Once the
+last good copy is older than the staleness limit, :meth:`AclHolder.current` raises
+:class:`StaleAclError` until a valid version loads.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 
 from opentelemetry import metrics
@@ -39,21 +42,26 @@ class _RejectedError(Exception):
     """A version of the ACL could not be read or did not validate; the message says which and why."""
 
 
-class Rejections:
-    """The `themis_auth_acl_rejections` counter over one meter: each refused version, by why it was refused."""
+class LoadOutcomes:
+    """The `themis_auth_acl_attempt_timestamp_seconds` gauge over one meter: when each outcome last happened."""
 
-    def __init__(self, meter: metrics.Meter) -> None:
-        self._counter = meter.create_counter(
-            operational_names.ACL_REJECTIONS, description='ACL versions the auth service refused, by reason.'
+    def __init__(self, meter: metrics.Meter, *, clock: Callable[[], float] = time.time) -> None:
+        """Create the gauge on `meter`.
+
+        Args:
+            meter: The meter the gauge is created on.
+            clock: Returns the Unix time an outcome is set to; the system clock outside tests. Instances compare
+                their outcomes by it, so it is wall time, never the holder's monotonic clock.
+        """
+        self._clock = clock
+        self._gauge = meter.create_gauge(
+            operational_names.ACL_ATTEMPT,
+            description='Unix time of the latest attempt to load the ACL, by outcome: loaded, or why it was refused.',
         )
-        # A counter carries its start time, so `increase` reads a series' first point exactly; the zeros are for the
-        # series to exist before any rejection, so a query over them shows a healthy service rather than no data.
-        for reason in operational_names.AclRejectionReason:
-            self._counter.add(0, {operational_names.REASON_LABEL: reason.value})
 
-    def count(self, reason: operational_names.AclRejectionReason) -> None:
-        """Count one refused version."""
-        self._counter.add(1, {operational_names.REASON_LABEL: reason.value})
+    def record(self, outcome: operational_names.AclLoadOutcome) -> None:
+        """Set `outcome`'s series to now."""
+        self._gauge.set(self._clock(), {operational_names.OUTCOME_LABEL: outcome.value})
 
 
 class AclHolder:
@@ -67,11 +75,11 @@ class AclHolder:
         read_timeout_seconds: float,
         staleness_limit_seconds: float,
         clock: Clock,
-        rejections: Rejections,
+        outcomes: LoadOutcomes,
     ) -> None:
         self._read = read
         self._read_timeout_seconds = read_timeout_seconds
-        self._rejections = rejections
+        self._outcomes = outcomes
         # One attribute, so a swap replaces the snapshot and its load time together.
         self._loaded = loaded
         self._staleness_limit_seconds = staleness_limit_seconds
@@ -85,7 +93,7 @@ class AclHolder:
         read_timeout_seconds: float,
         staleness_limit_seconds: float,
         clock: Clock,
-        rejections: Rejections,
+        outcomes: LoadOutcomes,
     ) -> AclHolder:
         """Read and validate the first version, or refuse to start.
 
@@ -95,13 +103,13 @@ class AclHolder:
             staleness_limit_seconds: How long the last good copy is answered from once versions stop
                 validating or being readable.
             clock: The time source the copy's age is measured on.
-            rejections: Where each refused version is counted.
+            outcomes: Where the outcome of each attempt is recorded.
 
         Raises:
             SystemExit: The first version cannot be read or does not validate; the message names why.
         """
         try:
-            snapshot = await _validated(read, read_timeout_seconds, rejections)
+            snapshot = await _validated(read, read_timeout_seconds, outcomes)
         except _RejectedError as e:
             raise SystemExit(f'{REJECTED} {e}') from e
         return cls(
@@ -110,7 +118,7 @@ class AclHolder:
             read_timeout_seconds=read_timeout_seconds,
             staleness_limit_seconds=staleness_limit_seconds,
             clock=clock,
-            rejections=rejections,
+            outcomes=outcomes,
         )
 
     def current(self) -> acl.Snapshot:
@@ -131,7 +139,7 @@ class AclHolder:
     async def refresh(self) -> None:
         """Read and validate the current version; swap it in, or keep the last good copy and log why not."""
         try:
-            snapshot = await _validated(self._read, self._read_timeout_seconds, self._rejections)
+            snapshot = await _validated(self._read, self._read_timeout_seconds, self._outcomes)
         except _RejectedError:
             return
         self._loaded = (snapshot, self._clock())
@@ -143,27 +151,28 @@ class AclHolder:
             await self.refresh()
 
 
-async def _validated(read: ReadAcl, timeout_seconds: float, rejections: Rejections) -> acl.Snapshot:
-    """The validated version ``read`` returns within ``timeout_seconds``.
+async def _validated(read: ReadAcl, timeout_seconds: float, outcomes: LoadOutcomes) -> acl.Snapshot:
+    """The validated version ``read`` returns within ``timeout_seconds``, its load recorded.
 
     Raises:
-        _RejectedError: It could not be read in time or did not validate, counted and logged at ERROR before
+        _RejectedError: It could not be read in time or did not validate, recorded and logged at ERROR before
             raising.
     """
-    reasons = operational_names.AclRejectionReason
     try:
         raw = await asyncio.wait_for(read(), timeout_seconds)
     except TimeoutError as e:
-        rejections.count(reasons.TIMEOUT)
+        outcomes.record(operational_names.AclLoadOutcome.TIMEOUT)
         _logger.error('%s no read finished within %g s', REJECTED, timeout_seconds)
         raise _RejectedError(f'no read finished within {timeout_seconds:g} s') from e
     except Exception as e:  # whatever the source raises: the refresher has to outlive any read failure
-        rejections.count(reasons.UNREADABLE)
+        outcomes.record(operational_names.AclLoadOutcome.UNREADABLE)
         _logger.exception('%s it could not be read: %s', REJECTED, e)
         raise _RejectedError(f'it could not be read: {e}') from e
     try:
-        return acl.parse(raw)
+        snapshot = acl.parse(raw)
     except acl.AclError as e:
-        rejections.count(reasons.INVALID)
+        outcomes.record(operational_names.AclLoadOutcome.INVALID)
         _logger.error('%s %s', REJECTED, e)
         raise _RejectedError(str(e)) from e
+    outcomes.record(operational_names.AclLoadOutcome.LOADED)
+    return snapshot

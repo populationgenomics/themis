@@ -90,9 +90,9 @@ class Backend(auth_backend.AuthBackend):
         return self.acl
 
 
-def uncounted() -> acl_holder.Rejections:
-    """Rejections counted on a meter that records nothing, for a test that does not read them."""
-    return acl_holder.Rejections(metrics.NoOpMeter('themis-test'))
+def unrecorded() -> acl_holder.LoadOutcomes:
+    """Load outcomes on a meter that records nothing, for a test that does not read them."""
+    return acl_holder.LoadOutcomes(metrics.NoOpMeter('themis-test'))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -114,7 +114,7 @@ async def serving() -> AsyncIterator[Served]:
         read_timeout_seconds=READ_TIMEOUT_SECONDS,
         staleness_limit_seconds=STALENESS_LIMIT_SECONDS,
         clock=clock,
-        rejections=uncounted(),
+        outcomes=unrecorded(),
     )
     servicer = servicer_mod.Servicer(backend, acl, operator=OPERATOR)
     authorizer = dataclasses.replace(

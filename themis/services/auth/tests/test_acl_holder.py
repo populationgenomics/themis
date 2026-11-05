@@ -1,4 +1,7 @@
-"""The one copy of the ACL: refused at start when invalid, swapped whole, kept on failure, refused once stale."""
+"""The one copy of the ACL: refused at start when invalid, swapped whole, kept on failure, refused once stale.
+
+Also: every attempt to load a version records when it ended and how, for the alert to compare across instances.
+"""
 
 from __future__ import annotations
 
@@ -25,26 +28,38 @@ def _without_project(project_id: str) -> bytes:
 
 
 async def _load(
-    backend: harness.Backend, clock: harness.Clock, rejections: acl_holder.Rejections | None = None
+    backend: harness.Backend, clock: harness.Clock, outcomes: acl_holder.LoadOutcomes | None = None
 ) -> acl_holder.AclHolder:
     return await acl_holder.AclHolder.load(
         backend.read_acl,
         read_timeout_seconds=harness.READ_TIMEOUT_SECONDS,
         staleness_limit_seconds=_LIMIT,
         clock=clock,
-        rejections=harness.uncounted() if rejections is None else rejections,
+        outcomes=harness.unrecorded() if outcomes is None else outcomes,
     )
 
 
-def _counted() -> tuple[acl_holder.Rejections, metrics_export.InMemoryMetricReader]:
+class _WallClock:
+    """A Unix-time source a test advances by hand, apart from the holder's monotonic clock."""
+
+    def __init__(self) -> None:
+        self.now = 1_800_000_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _recorded() -> tuple[acl_holder.LoadOutcomes, _WallClock, metrics_export.InMemoryMetricReader]:
     reader = metrics_export.InMemoryMetricReader()
     meter = sdk_metrics.MeterProvider(metric_readers=[reader]).get_meter('themis-test')
-    return acl_holder.Rejections(meter), reader
+    wall = _WallClock()
+    return acl_holder.LoadOutcomes(meter, clock=wall), wall, reader
 
 
-def _counts(reader: metrics_export.InMemoryMetricReader) -> dict[str, int | float]:
-    series = in_memory_metrics.collected(reader)[operational_names.ACL_REJECTIONS]
-    return {dict(labels)[operational_names.REASON_LABEL]: value for labels, value in series.items()}
+def _outcomes(reader: metrics_export.InMemoryMetricReader) -> dict[str, int | float]:
+    """When each outcome last happened, by outcome."""
+    series = in_memory_metrics.collected(reader)[operational_names.ACL_ATTEMPT]
+    return {dict(labels)[operational_names.OUTCOME_LABEL]: value for labels, value in series.items()}
 
 
 def _rejections(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -76,10 +91,45 @@ def test_a_valid_version_is_swapped_in_whole() -> None:
     assert set(asyncio.run(run()).projects) == {'epi'}
 
 
-def test_every_reason_is_counted_from_zero() -> None:
-    rejections, reader = _counted()
-    asyncio.run(_load(harness.Backend({}, harness.acl_version()), harness.Clock(), rejections))
-    assert _counts(reader) == {reason.value: 0 for reason in operational_names.AclRejectionReason}
+def test_a_clean_load_records_when_it_loaded() -> None:
+    outcomes, wall, reader = _recorded()
+    asyncio.run(_load(harness.Backend({}, harness.acl_version()), harness.Clock(), outcomes))
+    assert _outcomes(reader) == {operational_names.AclLoadOutcome.LOADED.value: wall.now}
+
+
+def test_a_version_refused_at_start_records_why_before_the_service_exits() -> None:
+    outcomes, wall, reader = _recorded()
+    backend = harness.Backend({}, b'{"format": 2}')
+    with pytest.raises(SystemExit):
+        asyncio.run(_load(backend, harness.Clock(), outcomes))
+    assert _outcomes(reader) == {operational_names.AclLoadOutcome.INVALID.value: wall.now}
+
+
+def test_a_later_clean_load_is_newer_than_the_refusal_before_it() -> None:
+    # The alert holds while a refusal is newer than every clean load; a later clean load is what closes it.
+    outcomes, wall, reader = _recorded()
+
+    async def run() -> None:
+        backend = harness.Backend({}, harness.acl_version())
+        holder = await _load(backend, harness.Clock(), outcomes)
+        backend.acl = OSError('secret unreachable')
+        wall.now += 60
+        await holder.refresh()
+        refused = _outcomes(reader)
+        assert (
+            refused[operational_names.AclLoadOutcome.UNREADABLE.value]
+            > refused[operational_names.AclLoadOutcome.LOADED.value]
+        )
+        backend.acl = harness.acl_version()
+        wall.now += 60
+        await holder.refresh()
+
+    asyncio.run(run())
+    loaded = _outcomes(reader)
+    assert (
+        loaded[operational_names.AclLoadOutcome.LOADED.value]
+        > loaded[operational_names.AclLoadOutcome.UNREADABLE.value]
+    )
 
 
 @pytest.mark.parametrize(
@@ -87,28 +137,29 @@ def test_every_reason_is_counted_from_zero() -> None:
     [
         pytest.param(
             _without_project('asd').replace(b'"format": 1', b'"format": 9'),
-            operational_names.AclRejectionReason.INVALID,
+            operational_names.AclLoadOutcome.INVALID,
             id='invalid',
         ),
-        pytest.param(OSError('secret unreachable'), operational_names.AclRejectionReason.UNREADABLE, id='unreadable'),
-        pytest.param(b'[' * 100_000, operational_names.AclRejectionReason.INVALID, id='undecodable'),
+        pytest.param(OSError('secret unreachable'), operational_names.AclLoadOutcome.UNREADABLE, id='unreadable'),
+        pytest.param(b'[' * 100_000, operational_names.AclLoadOutcome.INVALID, id='undecodable'),
     ],
 )
-def test_a_failed_version_keeps_the_last_good_copy_and_is_counted_and_logged(
-    content: bytes | Exception, reason: operational_names.AclRejectionReason, caplog: pytest.LogCaptureFixture
+def test_a_failed_version_keeps_the_last_good_copy_and_is_recorded_and_logged(
+    content: bytes | Exception, reason: operational_names.AclLoadOutcome, caplog: pytest.LogCaptureFixture
 ) -> None:
-    rejections, reader = _counted()
+    outcomes, wall, reader = _recorded()
 
     async def run() -> acl.Snapshot:
         backend = harness.Backend({}, harness.acl_version())
-        holder = await _load(backend, harness.Clock(), rejections)
+        holder = await _load(backend, harness.Clock(), outcomes)
         backend.acl = content
+        wall.now += 60
         await holder.refresh()
         return holder.current()
 
     assert set(asyncio.run(run()).projects) == {'asd', 'epi'}
     assert [r.levelno for r in _rejections(caplog)] == [logging.ERROR]
-    assert _counts(reader)[reason.value] == 1
+    assert _outcomes(reader)[reason.value] == wall.now
 
 
 def test_the_last_good_copy_serves_until_the_limit_is_passed_and_again_once_a_version_loads() -> None:
@@ -171,7 +222,7 @@ def test_the_refresher_keeps_refreshing_through_failures() -> None:
 
 def test_a_read_past_the_timeout_is_abandoned_and_keeps_the_last_good_copy(caplog: pytest.LogCaptureFixture) -> None:
     hang = False
-    rejections, reader = _counted()
+    outcomes, wall, reader = _recorded()
 
     class _Hanging(harness.Backend):
         @override
@@ -187,12 +238,13 @@ def test_a_read_past_the_timeout_is_abandoned_and_keeps_the_last_good_copy(caplo
             read_timeout_seconds=0.01,
             staleness_limit_seconds=_LIMIT,
             clock=harness.Clock(),
-            rejections=rejections,
+            outcomes=outcomes,
         )
         hang = True
+        wall.now += 60
         await holder.refresh()
         return holder.current()
 
     assert set(asyncio.run(run()).projects) == {'asd', 'epi'}
     assert [r.levelno for r in _rejections(caplog)] == [logging.ERROR]
-    assert _counts(reader)[operational_names.AclRejectionReason.TIMEOUT.value] == 1
+    assert _outcomes(reader)[operational_names.AclLoadOutcome.TIMEOUT.value] == wall.now

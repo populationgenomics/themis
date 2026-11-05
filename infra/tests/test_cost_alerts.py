@@ -139,7 +139,7 @@ def test_no_policy_renotifies_more_than_daily(policies: dict[str, dict[str, obje
         assert 'OPENED' in _sequence(strategy['notificationPrompts']), name
 
 
-def test_every_promql_condition_evaluates_at_the_tick_with_no_metric_validation(
+def test_every_promql_condition_evaluates_at_its_metrics_cadence_with_no_metric_validation(
     policies: dict[str, dict[str, object]], tick_seconds: int
 ) -> None:
     promql = [
@@ -149,7 +149,9 @@ def test_every_promql_condition_evaluates_at_the_tick_with_no_metric_validation(
     for name in promql:
         condition = _promql_condition(policies[name])
         interval = _seconds(str(condition['evaluationInterval']))
-        assert interval == tick_seconds, name
+        # The spend gauges change at the exporter's tick, so a query over them has nothing newer to read between.
+        if any(metric in str(condition['query']) for metric in cost_promql.METRICS):
+            assert interval == tick_seconds, name
         assert interval % 30 == 0, name
         assert _seconds(str(condition['duration'])) % interval == 0, name
         assert condition['disableMetricValidation'] is True, name
@@ -170,7 +172,6 @@ def test_the_spike_is_the_workspace_total_over_the_configured_window(
     assert query == f'{expected} > {config["themis:costSpikeAlertCents"]}'
     assert set(re.findall(r'\[(\w+)\]', query)) == {window, f'{freshness_minutes}m'}
     assert _promql_condition(spike)['duration'] == '0s'
-    assert _sequence(_mapping(spike['alertStrategy'])['notificationPrompts']) == ['OPENED']
 
 
 def test_the_freshness_condition_is_the_heartbeat_silent_for_the_configured_window(
@@ -188,7 +189,6 @@ def test_the_freshness_condition_is_the_heartbeat_silent_for_the_configured_wind
     # run lands inside it.
     assert _seconds(str(condition['duration'])) == tick_seconds
     strategy = _mapping(freshness['alertStrategy'])
-    assert {'OPENED', 'CLOSED'} <= set(_sequence(strategy['notificationPrompts']))
     assert strategy['notificationChannelStrategies'], 'a silent exporter is re-notified, not forgotten'
     # A PromQL incident ignores auto-close; declaring one would promise a close that never comes.
     assert not strategy.get('autoClose')
@@ -205,7 +205,6 @@ def test_the_unpriced_condition_is_usage_on_a_model_outside_the_table(policies: 
     assert promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.LIST_PRICES_CENTS_PER_MTOK) in query
     assert query.endswith(') > 0'), query
     assert _promql_condition(unpriced)['duration'] == '0s'
-    assert _sequence(_mapping(unpriced['alertStrategy'])['notificationPrompts']) == ['OPENED']
     assert 'infra/themis_infra/cost_prices.py' in str(_mapping(unpriced['documentation'])['content'])
 
 

@@ -1,13 +1,15 @@
 """The spend alerts (`docs/design/cost-monitoring.md`): what Cloud Monitoring watches on the spend metrics for us.
 
-Three PromQL policies, notifying one Slack channel through Monitoring's incident lifecycle. The spend spike is the
+Three PromQL policies, notifying one Slack channel as each incident opens and as it closes: each is a state, open
+while the condition holds and closed once it does not. The spend spike is the
 workspace total across every producer (`cost_promql.workspace_cents`) against a threshold: Monitoring's threshold
 conditions take no window delta of a gauge, so the figure is the dashboard's own query. Freshness is
 `absent_over_time` of the exporter's heartbeat — the gauge every successful run sets once, sessions in the workspace
 or none, so its silence covers every way the exporter can die without a healthy exporter over an empty workspace
 reading as dead; the counters are silent whenever their callers are idle, by design, and get no freshness policy.
 Unpriced usage is the convert worker reporting tokens for a model the program's price table (`cost_prices`) has no
-row for — spend the dashboard shows as nothing — matched statically against the table's model ids. PromQL
+row for — spend the dashboard shows as nothing — matched statically against the table's model ids, over a week, so
+the incident closes when a deploy adds the row rather than when the worker falls idle. PromQL
 throughout, rather than Monitoring's absence condition for freshness,
 because only a PromQL condition can be declared before its metric exists: a fresh environment's first `pulumi up`
 runs before the first point. For the same reason the freshness condition must hold for one tick before it fires:
@@ -23,15 +25,17 @@ silent and closes about ten minutes after the first returning point.
 
 from __future__ import annotations
 
+import datetime
+
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cost_metrics, cost_promql
+from themis_infra import cost_metrics, cost_promql, promql
 
 _DAY_SECONDS = 86_400
-# Long enough that a whole transcription's worth of calls lands inside one window, short enough that the incident
-# closes on its own within the day the table gets its row.
-_UNPRICED_WINDOW = '1h'
+# Longer than the worker sits idle between batches, so the incident stays open until a deploy adds the model's row
+# (the matcher is the table's) rather than closing once the unpriced calls stop.
+_UNPRICED_WINDOW = '7d'
 
 
 def check_tuning(*, spike_window_minutes: int, freshness_minutes: int, tick_minutes: int) -> None:
@@ -121,13 +125,16 @@ class CostAlerts(pulumi.ComponentResource):
             display_name='Spend dashboard', url=dashboard_url
         )
 
-        def promql(
-            query: str, *, duration: str
+        def condition(
+            query: str, *, lookback: datetime.timedelta, duration: str
         ) -> gcp.monitoring.AlertPolicyConditionConditionPrometheusQueryLanguageArgs:
+            # At the exporter's tick, since its gauges change no faster, unless the lookback needs a longer interval.
+            interval = max(datetime.timedelta(minutes=tick_minutes), promql.evaluation_floor(lookback))
+            if lookback > promql.RETEST_LOOKBACK_LIMIT and promql.duration(duration):
+                raise ValueError(f'a query reading {lookback} back takes no retest window, got {duration}')
             return gcp.monitoring.AlertPolicyConditionConditionPrometheusQueryLanguageArgs(
                 query=query,
-                # Evaluated at the exporter's tick: its gauges change no faster.
-                evaluation_interval=tick,
+                evaluation_interval=f'{interval.total_seconds():.0f}s',
                 duration=duration,
                 # The policies are declared with the producers, before the first point on a fresh environment.
                 disable_metric_validation=True,
@@ -144,12 +151,17 @@ class CostAlerts(pulumi.ComponentResource):
             conditions=[
                 gcp.monitoring.AlertPolicyConditionArgs(
                     display_name=f'Workspace spend up more than {spike_cents} cents in {spike_window_minutes} min',
-                    condition_prometheus_query_language=promql(f'{workspace_cents} > {spike_cents}', duration='0s'),
+                    condition_prometheus_query_language=condition(
+                        f'{workspace_cents} > {spike_cents}',
+                        # The window's far end, read with the freshness tolerance every gauge read takes.
+                        lookback=datetime.timedelta(minutes=spike_window_minutes + freshness_minutes),
+                        duration='0s',
+                    ),
                 )
             ],
             notification_channels=[channel.name],
-            # One message per spike: the incident closes on its own once the window rolls past, which is no news.
-            alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=['OPENED']),
+            # The close says the spend rate fell back under the threshold, which ends the spike.
+            alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=['OPENED', 'CLOSED']),
             documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                 mime_type='text/markdown',
                 subject=f'Themis: workspace spend up more than {spike_dollars} in {spike_window_minutes} min',
@@ -158,7 +170,8 @@ class CostAlerts(pulumi.ComponentResource):
                     f'Code in CI, at list price — rose by more than {spike_dollars} in the last {spike_window_minutes} '
                     f'minutes (`themis:costSpikeAlertCents`, `themis:costSpikeWindowMinutes`). The dashboard shows '
                     f'how much, and which producer and agent; a session behind it is a live query against the '
-                    f'sessions API (`docs/design/cost-monitoring.md`, appendix).'
+                    f'sessions API (`docs/design/cost-monitoring.md`, appendix). The incident closes once the rise '
+                    f'over the window is back under {spike_dollars}.'
                 ),
                 links=[dashboard_link],
             ),
@@ -174,10 +187,11 @@ class CostAlerts(pulumi.ComponentResource):
             conditions=[
                 gcp.monitoring.AlertPolicyConditionArgs(
                     display_name=f'No exporter heartbeat for {freshness_minutes} min',
-                    condition_prometheus_query_language=promql(
+                    condition_prometheus_query_language=condition(
                         cost_promql.silence(
                             cost_metrics.EXPORTER_LAST_SUCCESS_TIMESTAMP_SECONDS, f'{freshness_minutes}m'
                         ),
+                        lookback=datetime.timedelta(minutes=freshness_minutes),
                         # One tick, so a fresh environment's first run lands before the never-existed metric fires it.
                         duration=tick,
                     ),
@@ -223,14 +237,16 @@ class CostAlerts(pulumi.ComponentResource):
             conditions=[
                 gcp.monitoring.AlertPolicyConditionArgs(
                     display_name=f'Request tokens in the last {_UNPRICED_WINDOW} for a model the price table lacks',
-                    condition_prometheus_query_language=promql(
-                        f'{cost_promql.unpriced_request_tokens(_UNPRICED_WINDOW)} > 0', duration='0s'
+                    condition_prometheus_query_language=condition(
+                        f'{cost_promql.unpriced_request_tokens(_UNPRICED_WINDOW)} > 0',
+                        lookback=promql.duration(_UNPRICED_WINDOW),
+                        duration='0s',
                     ),
                 )
             ],
             notification_channels=[channel.name],
-            # One message per episode: the incident closes once the window rolls past the unpriced calls.
-            alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=['OPENED']),
+            # The close says the table now prices every model the worker used in the window.
+            alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=['OPENED', 'CLOSED']),
             documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                 mime_type='text/markdown',
                 subject='Themis: convert worker usage on a model the price table lacks',
@@ -238,8 +254,8 @@ class CostAlerts(pulumi.ComponentResource):
                     f'The convert worker reported request tokens for a model the list-price table in '
                     f'`infra/themis_infra/cost_prices.py` has no row for, so the dashboard prices that usage at '
                     f"nothing and the workspace total under-counts it. Add the model's row to the table; the "
-                    f"dashboard's convert section shows which model. The incident closes on its own "
-                    f'{_UNPRICED_WINDOW} after the last unpriced call, priced or not.'
+                    f"dashboard's convert section shows which model. The incident closes once the deploy that adds "
+                    f'the row lands, or {_UNPRICED_WINDOW} after the last unpriced call if none does.'
                 ),
                 links=[dashboard_link],
             ),

@@ -140,7 +140,7 @@ async def _serve(clock: startup.StartupClock) -> None:
             read_timeout_seconds=auth_backend.ACL_READ_TIMEOUT_SECONDS,
             staleness_limit_seconds=limit,
             clock=time.monotonic,
-            rejections=acl_holder.Rejections(meter),
+            outcomes=acl_holder.LoadOutcomes(meter),
         )
         clock.step('ACL loaded')
         servicer = servicer_mod.Servicer(backend, acl, operator=operator)

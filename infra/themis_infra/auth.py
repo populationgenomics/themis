@@ -11,8 +11,8 @@ first revision starts. Ingress is internal-only, so every caller (the web tier, 
 resolves sessions) attaches to the services VPC; each holds `run.invoker` on it, granted in the program entrypoint,
 and the admission interceptor decides which rpcs each may call. The interceptor checks the audience of every
 caller's ID token against the URL `cloud_run.service_url` builds, the one every caller is handed. The service writes
-its spans to Cloud Trace at the stack's sample ratio, and each call's duration and status, and each version of the
-ACL it refuses, as metrics; the operational alerts read them (`alerts.OperationalAlerts`).
+its spans to Cloud Trace at the stack's sample ratio, and each call's duration and status, and when each outcome of
+loading the ACL last happened, as metrics; the operational alerts read them (`alerts.OperationalAlerts`).
 """
 
 from __future__ import annotations

@@ -28,7 +28,9 @@ def _producer_vocabulary() -> dict[str, object]:
     vocabulary: dict[str, object] = {
         name: value for name, value in vars(operational_names).items() if name.isupper() and isinstance(value, str)
     }
-    vocabulary['ACL_REJECTION_REASONS'] = tuple(reason.value for reason in operational_names.AclRejectionReason)
+    # The policies name only the success of each outcome label; every other value counts as a failure.
+    vocabulary['ACL_LOADED'] = operational_names.AclLoadOutcome.LOADED.value
+    vocabulary['DEPLOY_SUCCEEDED'] = operational_names.DeployResult.SUCCEEDED.value
     return vocabulary
 
 

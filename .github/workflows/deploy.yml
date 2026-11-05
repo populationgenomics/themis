@@ -246,11 +246,14 @@ jobs:
           uv run --locked --group agents python -m tools.agents apply \
             agents/svcv4-classifier.agent.yaml --agent-id "$THEMIS_ANTHROPIC_AGENT_ID" \
             --skill-ids "$THEMIS_AGENT_SKILL_IDS"
-      # A run that failed or was cancelled once signed in records one point, as the deploy account, that the
-      # deploy-failure alert pages on (infra/themis_infra/alerts.py); a failure before the sign-in shows in the
-      # run list only.
-      - name: Record the failure
-        if: (failure() || cancelled()) && steps.gcp.outcome == 'success'
+      # Every run that signed in records how it ended, as the deploy account, on the series the deploy-failure
+      # alert reads (infra/themis_infra/alerts.py): a failure or cancellation opens it, and a later successful
+      # deploy closes it. An images-only run puts nothing live, so its success records nothing; a failure before
+      # the sign-in shows in the run list only. Last, so a success is recorded only after every deploy step.
+      - name: Record the outcome
+        if: always() && steps.gcp.outcome == 'success' && (job.status != 'success' || env.IMAGES_ONLY != 'true')
+        env:
+          RESULT: ${{ job.status == 'success' && 'succeeded' || 'failed' }}
         run: |-
-          uv run --locked --group telemetry python -m themis.telemetry.deploy_failure \
-            --region australia-southeast1 --run "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          uv run --locked --group telemetry python -m themis.telemetry.deploy_outcome \
+            --region australia-southeast1 --run "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --result "${RESULT}"

@@ -11,7 +11,7 @@ import re
 
 import pytest
 
-from themis_infra import capture, cost_promql, cost_report
+from themis_infra import alerts, capture, cost_promql, cost_report
 
 _JOB_CHAIN = ['themis:infra:CostReport', 'gcp:cloudrunv2/job:Job']
 _SCHEDULE_CHAIN = ['themis:infra:CostReport', 'gcp:cloudscheduler/job:Job']
@@ -114,28 +114,14 @@ def test_the_sessions_split_reads_the_same_window_as_its_total() -> None:
     assert day['sessions_tokens'] == f'({day["sessions"]} - {day["sessions_runtime"]} - {day["sessions_search"]})'
 
 
-def test_a_failed_execution_pages_the_spend_channel_once(program: capture.Capture) -> None:
+def test_the_reports_latest_run_failing_pages_the_spend_channel_until_a_run_succeeds(program: capture.Capture) -> None:
     policy = _one(program, _POLICY_CHAIN)
     channel = _one(program, _CHANNEL_CHAIN)
     [condition] = [_mapping(c) for c in _sequence(policy['conditions'])]
-    threshold = _mapping(condition['conditionThreshold'])
-    filter_ = str(threshold['filter'])
-    assert 'metric.type="run.googleapis.com/job/completed_execution_count"' in filter_
-    assert f'resource.labels.job_name="{cost_report.JOB_NAME}"' in filter_
-    assert 'metric.labels.result="failed"' in filter_
-    assert threshold['comparison'] == 'COMPARISON_GT'
-    assert threshold['thresholdValue'] == 0
-    # A count that is only written when an execution ends: the window has to cover a whole run, and an empty window
-    # has to read as no failure, or the incident never closes and the next failure never pages.
-    [aggregation] = [_mapping(a) for a in _sequence(threshold['aggregations'])]
-    assert int(str(aggregation['alignmentPeriod']).removesuffix('s')) >= 240
-    assert threshold['evaluationMissingData'] == 'EVALUATION_MISSING_DATA_INACTIVE'
-    # Monitoring refuses a missing-data setting on a zero duration, and takes the duration in whole minutes.
-    duration = int(str(threshold['duration']).removesuffix('s'))
-    assert duration > 0
-    assert duration % 60 == 0
+    query = _mapping(condition['conditionPrometheusQueryLanguage'])['query']
+    assert query == alerts.latest_run_failed([cost_report.JOB_NAME])
     assert policy['notificationChannels'] == [channel['name']]
-    assert _sequence(_mapping(policy['alertStrategy'])['notificationPrompts']) == ['OPENED']
+    assert tuple(_sequence(_mapping(policy['alertStrategy'])['notificationPrompts'])) == alerts.STATE_PROMPTS
     content = str(_mapping(policy['documentation'])['content'])
     assert f'gcloud run jobs executions list --job {cost_report.JOB_NAME}' in content
 

@@ -11,7 +11,8 @@ producer figure, the sessions split included; for the hourly chart, one per prod
 which the report divides for display. The report parses the rendering strictly, and its own tests round-trip it.
 
 A morning the report posts nothing on is a quiet one or a failed one, and the channel cannot tell them apart, so a
-failed execution pages: a policy on Cloud Run's own execution count notifies the spend monitor's Slack channel.
+failed run pages: a policy on Cloud Run's own attempt count notifies the spend monitor's Slack channel while the
+latest run has failed, and again once a later run succeeds.
 
 - `CostReport` — the report Job, its schedule, its identity and grants, the token secret, and the failure policy.
 - `report_json` — the queries as the report reads them.
@@ -114,7 +115,7 @@ class CostReport(pulumi.ComponentResource):
             slack_channel_id: The Slack channel the report posts to, by id (a file upload addresses a channel by id).
             slack_bot_token: The bot token of the Slack app that posts; a secret, kept in Secret Manager for the Job.
             slack_notification_channel: The spend monitor's Monitoring notification channel
-                (`cost_alerts.CostAlerts.notification_channel_name`), which a failed execution pages.
+                (`cost_alerts.CostAlerts.notification_channel_name`), which a failed run pages.
             dashboard_url: The spend dashboard's console URL, linked from the report's message and from the page.
             opts: Resource options (dependency wiring).
         """
@@ -223,18 +224,19 @@ class CostReport(pulumi.ComponentResource):
             display_name='Themis cost: morning report failed',
             combiner='OR',
             severity='ERROR',
-            conditions=[alerts.failed_execution_condition(JOB_NAME)],
+            conditions=[alerts.latest_run_failed_condition([JOB_NAME])],
             notification_channels=[slack_notification_channel],
-            alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=['OPENED']),
+            alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=list(alerts.STATE_PROMPTS)),
             documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                 mime_type='text/markdown',
                 subject='Themis: the morning spend report failed',
                 content=(
-                    f'An execution of the `{JOB_NAME}` Job failed, so this morning has no report in the channel — the '
+                    f'The latest run of the `{JOB_NAME}` Job failed, so a morning has no report in the channel — the '
                     f'same silence as a morning with nothing to report, which is why the failure pages. The '
                     f'execution and its logs: `gcloud run jobs executions list --job {JOB_NAME} --region {region} '
                     f"--project {project}`. The dashboard is unaffected; the day's figures are there. The run is "
-                    f'not retried; the next morning runs on its own.'
+                    'not retried; the incident closes about ten minutes after a later run that succeeds, the next '
+                    "morning's or one by hand."
                 ),
                 links=[
                     gcp.monitoring.AlertPolicyDocumentationLinkArgs(display_name='Spend dashboard', url=dashboard_url)

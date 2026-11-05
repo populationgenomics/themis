@@ -1,18 +1,30 @@
 """Every alert reaches a channel: operational incidents the alerts channel, spend incidents the spend channel.
 
-Also: the operational policies watch the resources the program actually declares, and the database's connection
+Also: the operational policies watch the resources the program actually declares; every policy is a state that
+notifies as it closes, except the per-execution failure of a Job no schedule runs; and the database's connection
 condition follows the stack's tier.
 """
 
 from __future__ import annotations
 
+import datetime
+import re
+
 import pytest
 
-from themis_infra import alerts, capture, sql
+from themis_infra import alerts, capture, promql, sql
 
 _CHANNEL_TYPE = 'gcp:monitoring/notificationChannel:NotificationChannel'
 _POLICY_TYPE = 'gcp:monitoring/alertPolicy:AlertPolicy'
 _JOB_TYPE = 'gcp:cloudrunv2/job:Job'
+_SCHEDULE_TYPE = 'gcp:cloudscheduler/job:Job'
+# A schedule that runs a Cloud Run Job POSTs to the Job's v2 `:run` endpoint.
+_RUN_ENDPOINT = re.compile(r'https://run\.googleapis\.com/v2/projects/[^/]+/locations/[^/]+/jobs/([^/:]+):run')
+# The job-name matcher `promql.among` writes; no Job name carries an RE2 metacharacter.
+_JOB_MATCHER = re.compile(alerts.JOB_NAME_LABEL + r'=~"\^\(([^)"]*)\)\$"')
+# A range selector or subquery, `[5m]` or `[180h:1m]`, and an offset.
+_RANGE = re.compile(r'\[(\w+?)(?::(\w+))?\]')
+_OFFSET = re.compile(r'\boffset (\w+)')
 _SPEND_COMPONENTS = frozenset({'themis:infra:CostAlerts', 'themis:infra:CostReport'})
 # Pulumi's wire-protocol marker for a secret value.
 _SECRET_SIGNATURE = '1b47061264138c4ac30d75fd1eb44270'  # noqa: S105 — a protocol marker, not a credential
@@ -84,26 +96,155 @@ def test_every_policy_notifies_its_concerns_channel(
         assert str(_mapping(policy['documentation'])['content']), name
 
 
-def test_every_job_pages_on_a_failed_execution(
-    program: capture.Capture, policies: dict[str, tuple[list[str], dict[str, object]]]
-) -> None:
-    jobs = {
+@pytest.fixture(scope='module')
+def jobs(program: capture.Capture) -> set[str]:
+    """Every Cloud Run Job the program declares, by name."""
+    names = {
         str(_mapping(registration.state)['name'])
         for urn, registration in program.resources.items()
         if capture.urn_type_chain(urn)[-1] == _JOB_TYPE
     }
-    assert jobs, 'the program declares no Cloud Run Job'
-    thresholds = [
-        str(_mapping(_mapping(condition)['conditionThreshold'])['filter'])
-        for _, policy in policies.values()
-        for condition in _sequence(policy['conditions'])
-        if 'conditionThreshold' in _mapping(condition)
+    assert names, 'the program declares no Cloud Run Job'
+    return names
+
+
+def _schedule_targets(program: capture.Capture, *, paused: bool) -> set[str]:
+    """The Cloud Run Jobs the program's Cloud Scheduler jobs run, read off each target: the paused ones, or the rest."""
+    schedules = [
+        _mapping(registration.state)
+        for urn, registration in program.resources.items()
+        if capture.urn_type_chain(urn)[-1] == _SCHEDULE_TYPE
     ]
-    filters = ' '.join(
-        f for f in thresholds if alerts.COMPLETED_EXECUTIONS in f and 'metric.labels.result="failed"' in f
-    )
-    for job in jobs:
-        assert f'resource.labels.job_name="{job}"' in filters, job
+    assert schedules, 'the program schedules nothing'
+    names = set()
+    for schedule in schedules:
+        if bool(schedule.get('paused', False)) != paused:
+            continue
+        target = str(_mapping(schedule['httpTarget'])['uri'])
+        match = _RUN_ENDPOINT.fullmatch(target)
+        assert match, f'a schedule that runs no Cloud Run Job: {target}'
+        names.add(match.group(1))
+    return names
+
+
+@pytest.fixture(scope='module')
+def scheduled_jobs(program: capture.Capture, jobs: set[str]) -> set[str]:
+    """The Cloud Run Jobs a running schedule runs; a paused schedule's Job runs only by hand."""
+    names = _schedule_targets(program, paused=False)
+    assert names <= jobs, names - jobs
+    return names
+
+
+def _promql_queries(policy: dict[str, object]) -> list[str]:
+    return [
+        str(_mapping(_mapping(c)['conditionPrometheusQueryLanguage'])['query'])
+        for c in _sequence(policy['conditions'])
+        if 'conditionPrometheusQueryLanguage' in _mapping(c)
+    ]
+
+
+def _watched_jobs(query: str) -> set[str]:
+    """The Jobs a query over Cloud Run's attempt count names; none for any other query."""
+    if alerts.TASK_ATTEMPTS not in query:
+        return set()
+    matchers = _JOB_MATCHER.findall(query)
+    assert matchers, query
+    return {name for matcher in matchers for name in matcher.split('|')}
+
+
+def _prompts(policy: dict[str, object]) -> tuple[str, ...]:
+    return tuple(str(p) for p in _sequence(_mapping(policy['alertStrategy'])['notificationPrompts']))
+
+
+def test_the_latest_run_conditions_watch_exactly_the_scheduled_jobs(
+    policies: dict[str, tuple[list[str], dict[str, object]]], scheduled_jobs: set[str]
+) -> None:
+    watched: set[str] = set()
+    for _, policy in policies.values():
+        for query in _promql_queries(policy):
+            names = _watched_jobs(query)
+            if names and query == alerts.latest_run_failed(names):
+                watched |= names
+    assert watched == scheduled_jobs
+
+
+def test_every_unscheduled_job_pages_on_each_failed_execution(
+    policies: dict[str, tuple[list[str], dict[str, object]]], jobs: set[str], scheduled_jobs: set[str]
+) -> None:
+    unscheduled = jobs - scheduled_jobs
+    assert unscheduled, 'every Job is scheduled, so no policy is an event'
+    watched = {
+        name
+        for _, policy in policies.values()
+        if _prompts(policy) == alerts.EVENT_PROMPTS
+        for query in _promql_queries(policy)
+        if 'result="failed"' in query and 'result="succeeded"' not in query
+        for name in _watched_jobs(query)
+    }
+    assert watched == unscheduled
+
+
+def test_a_paused_schedules_job_pages_on_each_failure_not_on_its_latest_run(
+    program: capture.Capture, policies: dict[str, tuple[list[str], dict[str, object]]], scheduled_jobs: set[str]
+) -> None:
+    # A Job whose schedule is paused runs only by hand, so no later run is due to close a latest-run incident.
+    paused = _schedule_targets(program, paused=True)
+    assert paused, 'the dev stack pauses no schedule (themis:workSweepScheduled), so this checks nothing'
+    assert not paused & scheduled_jobs
+    event = {
+        name
+        for _, policy in policies.values()
+        if _prompts(policy) == alerts.EVENT_PROMPTS
+        for query in _promql_queries(policy)
+        for name in _watched_jobs(query)
+    }
+    assert paused <= event
+
+
+def test_only_a_policy_on_an_unscheduled_job_skips_the_close(
+    policies: dict[str, tuple[list[str], dict[str, object]]], jobs: set[str], scheduled_jobs: set[str]
+) -> None:
+    # A failed execution of a Job no schedule runs is an event no later execution repairs; every other policy is a
+    # state whose close means the failure is over, so the close is news.
+    for name, (_, policy) in policies.items():
+        watched = {job for query in _promql_queries(policy) for job in _watched_jobs(query)}
+        event = bool(watched) and watched <= jobs - scheduled_jobs
+        assert _prompts(policy) == (alerts.EVENT_PROMPTS if event else alerts.STATE_PROMPTS), name
+
+
+def _lookback(query: str) -> datetime.timedelta:
+    """How far back a query reads, at most: its longest range, a subquery's inner range and its longest offset."""
+    ranges = _RANGE.findall(query)
+    assert ranges, query
+    outer = [promql.duration(span) for span, step in ranges if step]
+    inner = [promql.duration(span) for span, step in ranges if not step]
+    offset = max((promql.duration(o) for o in _OFFSET.findall(query)), default=datetime.timedelta())
+    return max(outer, default=datetime.timedelta()) + max(inner, default=datetime.timedelta()) + offset
+
+
+def test_every_promql_condition_evaluates_no_faster_than_its_lookback_allows(
+    policies: dict[str, tuple[list[str], dict[str, object]]],
+) -> None:
+    # Monitoring refuses, at `pulumi up`, an interval under its floor for the lookback, and a retest window on a query
+    # reading past 25 h.
+    checked = 0
+    for name, (_, policy) in policies.items():
+        for c in _sequence(policy['conditions']):
+            if 'conditionPrometheusQueryLanguage' not in _mapping(c):
+                continue
+            condition = _mapping(_mapping(c)['conditionPrometheusQueryLanguage'])
+            lookback = _lookback(str(condition['query']))
+            interval = promql.duration(str(condition['evaluationInterval']))
+            assert interval >= promql.evaluation_floor(lookback), (name, lookback, interval)
+            if lookback > promql.RETEST_LOOKBACK_LIMIT:
+                assert not promql.duration(str(condition['duration'])), name
+            checked += 1
+    assert checked
+
+
+def test_a_latest_run_condition_over_no_job_is_refused() -> None:
+    with pytest.raises(ValueError, match='at least one Job'):
+        alerts.latest_run_failed([])
 
 
 def test_the_connection_condition_follows_the_stacks_tier(
