@@ -88,6 +88,12 @@ def runtime_account(*, project: str, opts: pulumi.ResourceOptions | None = None)
     )
 
 
+def _retain_on_delete(args: pulumi.ResourceTransformArgs) -> pulumi.ResourceTransformResult:
+    return pulumi.ResourceTransformResult(
+        args.props, pulumi.ResourceOptions.merge(args.opts, pulumi.ResourceOptions(retain_on_delete=True))
+    )
+
+
 class AclSecret(pulumi.ComponentResource):
     """The secret the site writes the ACL into, empty until its writer adds a version, and the grants on it.
 
@@ -96,7 +102,6 @@ class AclSecret(pulumi.ComponentResource):
 
     A component of its own, so a fresh environment can deploy it alone (`docs/runbooks/fresh-environment.md`): the
     auth service refuses to start until the site has added a valid version, and its read grant has to apply first.
-    The secret is protected, since re-creating it empties it until the site writes again.
 
     Attributes:
         secret_id: The secret's id, `ACL_SECRET_ID`.
@@ -126,7 +131,9 @@ class AclSecret(pulumi.ComponentResource):
             ValueError: See `check_acl_writer`.
         """
         check_acl_writer(writer)
-        super().__init__('themis:infra:AclSecret', 'themis', None, opts)
+        # Retained, so removing these resources from the program drops them from state and leaves them in GCP.
+        retained = pulumi.ResourceOptions(transforms=[_retain_on_delete])
+        super().__init__('themis:infra:AclSecret', 'themis', None, pulumi.ResourceOptions.merge(opts, retained))
         child = pulumi.ResourceOptions(parent=self)
         secret = secrets.site_written_secret(ACL_SECRET_ID, project=project, region=region, opts=child)
         writer_member = grants.service_account(writer)

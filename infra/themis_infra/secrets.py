@@ -68,9 +68,7 @@ def site_written_secret(
 ) -> gcp.secretmanager.Secret:
     """Provision one Secret Manager secret with no version: whoever is granted its versions writes them.
 
-    The secret is named and replicated as `_secret` describes, and protected: the stack never writes it, so
-    re-creating it would leave it empty until its writer next runs, and a `destroy` stops on it until it is
-    unprotected.
+    The secret is named and replicated as `_secret` describes.
 
     Args:
         secret_id: The secret's name (`acl`); the Pulumi resource is `themis-<secret_id>`.
@@ -81,12 +79,7 @@ def site_written_secret(
     Returns:
         The secret.
     """
-    return _secret(
-        secret_id,
-        project=project,
-        region=region,
-        opts=pulumi.ResourceOptions.merge(opts, pulumi.ResourceOptions(protect=True)),
-    )
+    return _secret(secret_id, project=project, region=region, opts=opts)
 
 
 def _secret(
