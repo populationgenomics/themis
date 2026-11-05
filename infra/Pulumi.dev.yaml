@@ -25,7 +25,7 @@ config:
   # objectAdmin on the PR-screenshot bucket below — adding a member grants publish-and-retract on
   # world-readable content. The group + roster live in cpg-infrastructure-private; this is the
   # principal only (no PII).
-  themis:prScreenshotWriterGroup: themis-dev-access@populationgenomics.org.au
+  themis:prScreenshotWriterGroup: themis-pr-screenshot-writers@populationgenomics.org.au
   # May impersonate themis-clu@ to call a backend service by hand
   # (docs/runbooks/hand-driving-a-service.md); the roster lives in cpg-infrastructure-private.
   themis:cluGroup: themis-clu@populationgenomics.org.au

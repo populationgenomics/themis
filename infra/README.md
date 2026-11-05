@@ -76,11 +76,11 @@ and the only bucket in the project that permits public access: GitHub renders a 
 which fetches the origin anonymously, so the read is necessarily unauthenticated
 ([`docs/design/pr-screenshots.md`](../docs/design/pr-screenshots.md)). `allUsers` holds
 `roles/storage.legacyObjectReader` — `storage.objects.get` and nothing else — so an object is fetchable by exact name
-but the bucket is not enumerable; the `themis-dev-access` group (`themis:prScreenshotWriterGroup`) holds `objectAdmin`
-so an uploader can also retract, and a developer's own `gcloud` ADC is the writer. Objects are `<sha256>.png`, kept
-forever, Autoclass-tiered, with soft delete off so a takedown is immediate. A stack only gets a bucket if it sets
-`themis:enablePrScreenshotBucket` — screenshots are of the fixture UI, so no other environment has a reason to expose a
-public one.
+but the bucket is not enumerable; the `themis-pr-screenshot-writers` group (`themis:prScreenshotWriterGroup`) holds
+`objectAdmin` so an uploader can also retract, and a developer's own `gcloud` ADC is the writer. Objects are
+`<sha256>.png`, kept forever, Autoclass-tiered, with soft delete off so a takedown is immediate. A stack only gets a
+bucket if it sets `themis:enablePrScreenshotBucket` — screenshots are of the fixture UI, so no other environment has a
+reason to expose a public one.
 
 **Supplied papers** — records the open-access archive does not serve, obtained through a human's institutional access —
 have no store of their own. A deposit is an ordinary litcache paper in the full-text bucket: the PDF as its source
