@@ -7,7 +7,7 @@ with workers running as the `themis-ingest` SA, and mints doc_ids into the share
 
 Two run shapes:
 
-- Staged sample (default): copies the first ``--limit`` paired seed objects into the
+- Staged sample (default): copies the first ``--limit`` seeds into the
   scratch bucket and runs against it, so the output ``papers/`` never touches the real
   cache. ``--limit`` is required. Isolated in storage only — the crosswalk is the shared
   one on both paths, so a staged run mints `doc_id`s whose manifests live in the scratch
@@ -154,7 +154,7 @@ def _licence_fallback() -> pipeline.LicenceFacts:
 
 
 def _stage_seed(source: gcs.Bucket, scratch: gcs.Bucket, *, seed_prefix: str, limit: int) -> int:
-    """Copy the first `limit` paired seed objects from `source` into `scratch` (idempotent).
+    """Copy the first `limit` seeds from `source` into `scratch` (idempotent).
 
     The copy is a server-side GCS rewrite, so the seed bytes never round-trip through
     this process; existing objects are left untouched.
@@ -164,8 +164,8 @@ def _stage_seed(source: gcs.Bucket, scratch: gcs.Bucket, *, seed_prefix: str, li
     )
     refs = pairing.refs[:limit]
     if len(pairing.refs) < limit:
-        _LOG.warning('source has only %d paired seed object(s) (< limit %d)', len(pairing.refs), limit)
-    keys = [key for ref in refs for key in (ref.json_key, ref.pdf_key)]
+        _LOG.warning('source has only %d seed(s) (< limit %d)', len(pairing.refs), limit)
+    keys = [key for ref in refs for key in (ref.json_key, ref.pdf_key) if key is not None]
 
     def _copy(key: str) -> None:
         if not scratch.blob(key).exists():
@@ -310,7 +310,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         source = _open_bucket(args.source_bucket)
         scratch = _open_bucket(args.scratch_bucket)
         staged = _stage_seed(source, scratch, seed_prefix=args.seed_prefix, limit=args.limit)
-        _LOG.info('staged %d seed pair(s) into gs://%s/%s', staged, args.scratch_bucket, args.seed_prefix)
+        _LOG.info('staged %d seed(s) into gs://%s/%s', staged, args.scratch_bucket, args.seed_prefix)
         run_bucket = args.scratch_bucket
 
     conn_factory = cloudsql.CrosswalkConnFactory(

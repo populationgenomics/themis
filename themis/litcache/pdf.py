@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import html
 import io
 import re
 import threading
@@ -154,6 +155,27 @@ def probe_has_text_layer(pdf_bytes: bytes) -> bool:
     return _count_chars(pdf_bytes) >= _MIN_TEXT_CHARS
 
 
+def leading_text(pdf_bytes: bytes, *, pages: int) -> str:
+    """The text layer of the pdf's first `pages` pages, a page to a line; "" for an image-only pdf.
+
+    Args:
+        pdf_bytes: The raw pdf source bytes.
+        pages: How many pages to read from the start; a shorter pdf is read whole.
+
+    Raises:
+        pypdfium2.PdfiumError: If the bytes are not a loadable pdf.
+    """
+    texts = []
+    with _document(pdf_bytes) as doc:
+        for index in range(min(pages, len(doc))):
+            page = doc[index]
+            with contextlib.closing(page):
+                textpage = page.get_textpage()
+                with contextlib.closing(textpage):
+                    texts.append(textpage.get_text_bounded())
+    return '\n'.join(texts)
+
+
 def doi_from_metadata(pdf_bytes: bytes) -> str | None:
     """Harvest a DOI from the pdf's embedded metadata, if one is present.
 
@@ -185,7 +207,8 @@ def _doi_from_xmp(pdf_bytes: bytes) -> str | None:
         # (dc:identifier). Anchored to the tag, so a body-text DOI can't match.
         match = re.search(tag + rb'\s*[>=]\s*["\']?(?:doi:)?\s*(10\.\d{4,9}/[^\s"\'<]+)', pdf_bytes)
         if match is not None:
-            return match.group(1).rstrip(b'.').decode('ascii', 'ignore')
+            # XMP is XML, so a SICI DOI's `<` and `>` arrive escaped.
+            return html.unescape(match.group(1).rstrip(b'.').decode('ascii', 'ignore'))
     return None
 
 

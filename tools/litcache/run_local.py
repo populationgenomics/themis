@@ -3,7 +3,7 @@
 A dev driver for exercising the real pipeline (`themis.litcache.ingest_beam`)
 end-to-end without any Dataflow or Pulumi infrastructure. It:
 
-1. stages the first ``--limit`` paired seed objects from the real seed bucket into
+1. stages the first ``--limit`` seeds from the real seed bucket into
    a **scratch** bucket's ``ingest/`` prefix (so output ``papers/`` lands in the
    scratch bucket, never the real cache);
 2. **replaces** the crosswalk table's contents with the ones inverted from the scratch
@@ -84,11 +84,11 @@ def _licence_fallback() -> pipeline.LicenceFacts:
 
 
 def _stage_seed(source: gcs.Bucket, scratch: gcs.Bucket, *, seed_prefix: str, limit: int) -> int:
-    """Copy the first `limit` paired seed objects from `source` into `scratch`.
+    """Copy the first `limit` seeds from `source` into `scratch`.
 
-    Pairs the source seed prefix, takes the first `limit` pairs in stem order, and
-    writes each pair's json + pdf under the same key in `scratch`. Idempotent: a
-    pair already present in `scratch` is skipped, so re-runs don't re-download.
+    Pairs the source seed prefix, takes the first `limit` seeds in stem order, and
+    writes each seed's objects under the same key in `scratch`. Idempotent: a
+    seed already present in `scratch` is skipped, so re-runs don't re-download.
 
     Args:
         source: The real seed bucket (read).
@@ -105,10 +105,10 @@ def _stage_seed(source: gcs.Bucket, scratch: gcs.Bucket, *, seed_prefix: str, li
     )
     refs = pairing.refs[:limit]
     if len(pairing.refs) < limit:
-        _LOG.warning('source has only %d paired seed object(s) (< limit %d)', len(pairing.refs), limit)
+        _LOG.warning('source has only %d seed(s) (< limit %d)', len(pairing.refs), limit)
     for ref in refs:
         for key in (ref.json_key, ref.pdf_key):
-            if scratch.blob(key).exists():
+            if key is None or scratch.blob(key).exists():
                 continue
             scratch.blob(key).upload_from_string(source.blob(key).download_as_bytes())
     return len(refs)
@@ -268,7 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     scratch = _open_bucket(args.scratch_bucket)
 
     staged = _stage_seed(source, scratch, seed_prefix=args.seed_prefix, limit=args.limit)
-    _LOG.info('staged %d seed pair(s) into gs://%s/%s', staged, args.scratch_bucket, args.seed_prefix)
+    _LOG.info('staged %d seed(s) into gs://%s/%s', staged, args.scratch_bucket, args.seed_prefix)
 
     bucket_factory = functools.partial(_open_bucket, args.scratch_bucket)
     with _crosswalk_conn_factory(args) as conn_factory:

@@ -4,7 +4,7 @@ A seed object flows through two per-paper halves with a batched resolution step
 between them (the runtime wrapper, `themis.litcache.ingest_beam`, wires the batch):
 
 - `extract_identity` — the local, network-free first half: classify identity
-  (`themis.litcache.identity`) from the seed's docling origin + embedded pdf DOI. Its
+  (`themis.litcache.identity`) from the seed's key, docling origin + embedded pdf DOI. Its
   `claim_key`, with its PMID and DOI, keys the batched resolution the write half joins
   on.
 - `ingest_paper` — the write half, given the paper's pre-resolved metadata: claim a
@@ -31,6 +31,12 @@ the pdf for char-addressability — the pdf is the source of truth there, so quo
 recovery hinges on its character layer; on the OA branch the probe is skipped (the XML
 is the source of truth).
 
+A seed may be a pdf alone, with no Docling json. Its key is then all that names the paper,
+so before anything is claimed or written the pdf is checked against the resolved record
+(`SeedMismatchError`): a pdf that is another paper, a stub, or an issue's compilation fails
+there. On the non-OA branch such a paper is committed with its pdf and no rendering; the
+worker's transcription step makes its main text.
+
 The manifest's `ExternalIds` are the ids that were minted: identity's, claimed before the
 manifest-exists skip, plus one harvested id — a book record's Bookshelf accession — claimed
 on the write path only (`_claim_accession`), so a committed paper never gains a crosswalk
@@ -56,6 +62,8 @@ import asyncio
 import dataclasses
 import datetime
 import hashlib
+import re
+import unicodedata
 from collections.abc import Callable, Iterable, Sequence
 
 import litfetch
@@ -63,7 +71,18 @@ from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 
 from themis.common import storage
-from themis.litcache import convert, crosswalk, identity, ingest, oa, pdf, records, resolve, writer
+from themis.litcache import (
+    convert,
+    crosswalk,
+    identity,
+    ingest,
+    oa,
+    pdf,
+    records,
+    resolve,
+    sourced_metadata,
+    writer,
+)
 from themis.litcache.models import litcache_pb2
 
 # Source-lineage handles: the manifest's `Source.handle` and the on-disk
@@ -71,6 +90,23 @@ from themis.litcache.models import litcache_pb2
 # is added only on the OA branch.
 _PDF_HANDLE = 'pdf'
 _XML_HANDLE = 'xml'
+
+# A pdf-only seed is taken for its paper when this share of the title's words is on its first pages, in order and
+# within this many times the title's length of each other.
+_TITLE_PAGES = 2
+_MIN_TITLE_COVERAGE = 0.8
+_TITLE_SPREAD = 2
+# Shorter words ("of", "in", "a", HGVS fragments) carry no signal and are often split or dropped by a text layer.
+_MIN_TITLE_WORD_LEN = 3
+# A hyphen ending a line: a word broken across lines, or a compound ("whole-genome") that happens to end one. Pdfium
+# writes one it recognises as `\x02`, with no line break after it.
+_LINE_END_HYPHEN = re.compile(r'\x02|[-\u00ad]\r?\n')
+# A line break after a DOI's `.`, `/` or `-`, where a narrow column wraps it.
+_WRAPPED_DOI = re.compile(r'(?<=[./-])\r?\n')
+
+
+class SeedMismatchError(ValueError):
+    """A pdf-only seed does not read as the paper its key names, so nothing of it is written."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -81,12 +117,12 @@ class SeedObject:
         bucket_key: The `ingest/` object name (URL-encoded identifier), the
             primary identity signal.
         docling_json: The seed `DoclingDocument` json — the identity origin and
-            the markdown source on the non-OA branch.
+            the markdown source on the non-OA branch — or None for a pdf-only seed.
         pdf: The seed pdf, retained verbatim as the revision's source bytes.
     """
 
     bucket_key: str
-    docling_json: bytes
+    docling_json: bytes | None
     pdf: bytes
 
 
@@ -145,8 +181,8 @@ def extract_identity(seed: SeedObject) -> identity.Identity:
     DOI is only a *fallback*: consulted when the key and origin name no external id (an
     otherwise content-addressed deposit), never overriding or competing with an
     explicit id — publisher-populated pdf metadata is not reliable enough to override
-    what a deposit explicitly declares. No network or database: identity is a pure
-    function of the seed.
+    what a deposit explicitly declares. A pdf-only seed has no origin, so its key alone
+    names it. No network or database: identity is a pure function of the seed.
 
     Args:
         seed: The paper's seed bytes (`bucket_key`, docling json, pdf).
@@ -156,8 +192,11 @@ def extract_identity(seed: SeedObject) -> identity.Identity:
 
     Raises:
         ValueError: If identity cannot be determined (no external id and no origin
-            binary hash to content-address against).
+            binary hash to content-address against — always the case for a pdf-only
+            seed whose key names no external id).
     """
+    if seed.docling_json is None:
+        return identity.determine_identity(seed.bucket_key, identity.DoclingOrigin(filename=None, binary_hash=None))
     origin = identity.read_docling_origin(seed.docling_json)
     ident = identity.determine_identity(seed.bucket_key, origin)
     if not ident.content_addressed:
@@ -213,14 +252,18 @@ def ingest_paper(
         The `IngestResult` for this object.
 
     Raises:
+        SeedMismatchError: If `seed` is a pdf alone and does not read as the paper
+            `resolved` describes (`_check_pdf_only_seed`); nothing is claimed or written.
         ValueError: If an OA body's source is not a known `SourceKind`, a cross-paper
             link reaches an incumbent with no manifest (an orphan, which cannot carry
             an equivalence edge), a book record's accession is already claimed by
             another paper (`_claim_accession`), or an input the writer rejects.
-        pypdfium2.PdfiumError: If, on the non-OA branch, the seed pdf is not a
-            loadable pdf (the char-addressability probe fails loud rather than report
-            a degraded paper as image-only).
+        pypdfium2.PdfiumError: If the seed pdf is a pdf alone, or is on the non-OA
+            branch, and is not a loadable pdf (the char-addressability probe fails loud
+            rather than report a degraded paper as image-only).
     """
+    if seed.docling_json is None:
+        _check_pdf_only_seed(seed, ident, resolved)
     mint_result = mint(ident.mint_keys)
     doc_id = mint_result.doc_id
     if mint_result.linked_doc_ids:
@@ -260,7 +303,7 @@ def ingest_paper(
         equivalence=litcache_pb2.Equivalence(edges=[], canonical_doc_id=doc_id),
         retraction=litcache_pb2.Retraction(),
         sources=branch.sources,
-        renderings=[branch.rendering],
+        renderings=branch.renderings,
         metadata=resolved.metadata,
         files=files,
     )
@@ -274,24 +317,25 @@ def ingest_paper(
     )
 
 
-def why_seed_not_held(bucket: gcs.Bucket, manifest: litcache_pb2.Manifest, seed_pdf: bytes) -> str | None:
+def why_seed_not_held(bucket: gcs.Bucket, manifest: litcache_pb2.Manifest, seed: SeedObject) -> str | None:
     """Why the paper `manifest` commits does not hold its seed, or None when it does.
 
-    A paper holds its seed when it has main text and stores the seed pdf's bytes as a source revision: the seed's
-    Docling json only ever bootstraps markdown, so once the paper has text the pdf is all the seed adds. A paper
-    ingested before, from another seed or another route, can hold neither.
+    A paper holds its seed when it stores the seed pdf's bytes as a source revision and, if the seed has a Docling
+    json, has main text: the json only ever bootstraps markdown, so once the paper has text the pdf is all the seed
+    adds. A pdf-only seed adds nothing beyond its pdf, so the revision alone holds it, and the worker's transcription
+    makes the text. A paper ingested before, from another seed or another route, can hold neither.
 
     Args:
         bucket: The cache bucket.
         manifest: The paper's committed manifest, as `ingest_paper` returned it.
-        seed_pdf: The seed's pdf bytes.
+        seed: The seed.
 
     Returns:
         A reason for a person reading the run's dead letters, or None when the seed may be deleted.
     """
-    if records.markdown(manifest) is None:
+    if seed.docling_json is not None and records.markdown(manifest) is None:
         return 'the paper has no main text'
-    pdf_hash = hashlib.sha256(seed_pdf).hexdigest()
+    pdf_hash = hashlib.sha256(seed.pdf).hexdigest()
     missing = []
     for source in manifest.sources:
         if any(revision.hash == pdf_hash for revision in source.revisions):
@@ -457,15 +501,119 @@ def _equivalence_closure(bucket: gcs.Bucket, seeds: Sequence[str]) -> dict[str, 
     return found
 
 
+def _words(text: str) -> list[str]:
+    """`text` as lower-case ascii words: punctuation and hyphens split words, accents are dropped."""
+    letters = []
+    for c in unicodedata.normalize('NFKD', text):
+        category = unicodedata.category(c)[0]
+        if category in 'LN':
+            letters.append(c)
+        elif category != 'M':  # a combining accent belongs to the letter before it
+            letters.append(' ')
+    return ''.join(letters).encode('ascii', 'ignore').decode().lower().split()
+
+
+def _significant_words(text: str) -> list[str]:
+    """`_words` of `text` long enough to tell one title from another."""
+    return [w for w in _words(text) if len(w) >= _MIN_TITLE_WORD_LEN]
+
+
+def _in_order(title: Sequence[str], window: Sequence[str]) -> int:
+    """How many of `title`'s words `window` holds in the same order: their longest common subsequence."""
+    previous = [0] * (len(window) + 1)
+    for w in title:
+        current = [0]
+        for j, v in enumerate(window):
+            current.append(previous[j] + 1 if w == v else max(previous[j + 1], current[j]))
+        previous = current
+    return previous[-1]
+
+
+def _title_coverage(title: Sequence[str], text: Sequence[str]) -> float:
+    """The largest share of `title`'s words in `text` in order, within `_TITLE_SPREAD` times the title's length."""
+    wanted = set(title)
+    span = _TITLE_SPREAD * len(title)
+    best = 0
+    for start, word in enumerate(text):
+        if word in wanted:
+            best = max(best, _in_order(title, text[start : start + span]))
+            if best == len(title):
+                break
+    return best / len(title)
+
+
+def _prints_doi(text: str, doi: str) -> bool:
+    """Whether `text` prints `doi` whole (bare, in a URL, or after a `DOI` label), not as part of a longer DOI.
+
+    A DOI wrapped across lines, at a `.`, `/` or hyphen, is read rejoined.
+    """
+    whole = re.compile(rf'(?:(?<![\w.])|(?<=doi)){re.escape(doi)}(?![\w/-]|\.\w)', re.IGNORECASE)
+    rejoined = _WRAPPED_DOI.sub('', text).replace('\x02', '-')
+    return any(whole.search(t) is not None for t in (text, rejoined))
+
+
+def _check_pdf_only_seed(seed: SeedObject, ident: identity.Identity, resolved: resolve.ResolvedPaper) -> None:
+    """Check a pdf-only seed reads as the paper its key names, the only thing that names it.
+
+    Most of the resolved title's words must be on the pdf's first pages, in order and close together: that rules out
+    another paper, a one-page stub, and an issue's compilation whose paper starts further in. It does not rule out a
+    pdf whose first pages quote the title in order — a reply to the paper, or a contents page. The pdf's embedded
+    DOI, where it has one, must be the paper's unless those pages print the paper's DOI and not the embedded one:
+    publishers' metadata names another work's DOI often enough that the printed one is the better witness, but a pdf
+    that prints the other DOI is that work, citing this one. A pdf with no text layer there is taken on an embedded
+    DOI that is the paper's, and otherwise cannot be checked.
+
+    Args:
+        seed: The seed, a pdf alone.
+        ident: The identity its key gives it.
+        resolved: The record resolved for that identity.
+
+    Raises:
+        SeedMismatchError: If the pdf fails a check, or there is nothing to check it by: no text on its first pages
+            and no embedded DOI that is the paper's, or no title word of three or more Latin letters or digits in the
+            resolved record (a title in another script, say). A title of one or two such words is checked by them
+            alone, so is weaker evidence than a long one.
+        pypdfium2.PdfiumError: If the pdf is not loadable.
+        ValueError: If `resolved.metadata` is not a valid `SourcedMetadata`.
+    """
+    stated = next((eid.value for eid in ident.external_ids if eid.scheme == 'doi'), None) or (
+        resolved.external_ids.doi or None
+    )
+    embedded = pdf.doi_from_metadata(seed.pdf)
+    doi_agrees = stated is not None and embedded is not None and embedded.lower() == stated.lower()
+    raw = pdf.leading_text(seed.pdf, pages=_TITLE_PAGES)
+    if not raw.strip():
+        if doi_agrees:
+            return
+        no_text = f'the pdf has no text on its first {_TITLE_PAGES} pages'
+        if stated is None:
+            raise SeedMismatchError(f'{no_text}, and the paper has no DOI to check its metadata by')
+        raise SeedMismatchError(f'{no_text}, and its metadata does not name the DOI {stated}')
+    if embedded is not None and stated is not None and not doi_agrees:
+        if not _prints_doi(raw, stated):
+            raise SeedMismatchError(f'the pdf metadata names DOI {embedded}, and its first pages do not print {stated}')
+        if _prints_doi(raw, embedded):
+            raise SeedMismatchError(f'the pdf metadata names DOI {embedded}, and its first pages print it')
+    title = sourced_metadata.parse(resolved.metadata).metadata.title
+    words = _significant_words(title)
+    if not words:
+        raise SeedMismatchError(f'the resolved title {title!r} has no word to find in the pdf')
+    coverage = max(_title_coverage(words, _significant_words(text)) for text in (raw, _LINE_END_HYPHEN.sub('', raw)))
+    if coverage < _MIN_TITLE_COVERAGE:
+        raise SeedMismatchError(
+            f"{coverage:.0%} of the title's words are in order on the pdf's first {_TITLE_PAGES} pages: {title!r}"
+        )
+
+
 @dataclasses.dataclass(frozen=True)
 class _Branch:
-    """The conversion-branch outcome: the source lineages and the rendering.
+    """The conversion-branch outcome: the source lineages and the rendering, if the branch makes one.
 
     Licence/access live on each `SourceInput`; there is no per-revision term.
     """
 
     sources: list[writer.SourceInput]
-    rendering: writer.RenderingInput
+    renderings: list[writer.RenderingInput]
 
 
 def _convert_branch(
@@ -481,9 +629,10 @@ def _convert_branch(
     pdf as a lineage alongside the fetched xml, and take licence/access from the
     fetched artifact. The retained seed pdf carries no machine-readable licence, so
     it is asserted to share the work's terms (`licence_basis=asserted`). Non-OA:
-    render the seed Docling json (`pdf-derived`), take licence/access from the
-    `LicenceFacts` fallback, and probe the pdf for char-addressability (skipped on
-    the OA branch — the XML is the source of truth a quote maps back to).
+    render the seed Docling json (`pdf-derived`) — or, for a pdf-only seed, render
+    nothing — take licence/access from the `LicenceFacts` fallback, and probe the pdf
+    for char-addressability (skipped on the OA branch — the XML is the source of
+    truth a quote maps back to).
     """
     if oa_source is not None:
         xml_hash = hashlib.sha256(oa_source.content).hexdigest()
@@ -511,16 +660,16 @@ def _convert_branch(
         )
         return _Branch(
             sources=[pdf_source, xml_source],
-            rendering=writer.RenderingInput(
-                construction=conversion.construction,
-                from_revision=xml_hash,
-                created_at=now,
-                markdown=conversion.markdown,
-            ),
+            renderings=[
+                writer.RenderingInput(
+                    construction=conversion.construction,
+                    from_revision=xml_hash,
+                    created_at=now,
+                    markdown=conversion.markdown,
+                )
+            ],
         )
 
-    pdf_hash = hashlib.sha256(seed.pdf).hexdigest()
-    conversion = convert.convert_docling(seed.docling_json)
     pdf_source = writer.SourceInput(
         handle=_PDF_HANDLE,
         media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF,
@@ -532,12 +681,17 @@ def _convert_branch(
         captured_at=now,
         has_text_layer=pdf.probe_has_text_layer(seed.pdf),
     )
+    if seed.docling_json is None:
+        return _Branch(sources=[pdf_source], renderings=[])
+    conversion = convert.convert_docling(seed.docling_json)
     return _Branch(
         sources=[pdf_source],
-        rendering=writer.RenderingInput(
-            construction=conversion.construction,
-            from_revision=pdf_hash,
-            created_at=now,
-            markdown=conversion.markdown,
-        ),
+        renderings=[
+            writer.RenderingInput(
+                construction=conversion.construction,
+                from_revision=hashlib.sha256(seed.pdf).hexdigest(),
+                created_at=now,
+                markdown=conversion.markdown,
+            )
+        ],
     )

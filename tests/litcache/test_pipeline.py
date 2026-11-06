@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import datetime
 import functools
 import json
 import pathlib
 import posixpath
+import re
 from collections.abc import Callable, Mapping
 
 import httpx2
@@ -26,7 +28,7 @@ import pytest
 from google.cloud import storage as gcs
 from litfetch import artifacts, ids
 
-from themis.litcache import crosswalk, metadata_fields, pipeline, rebuild, resolve, writer
+from themis.litcache import crosswalk, metadata_fields, pipeline, rebuild, records, resolve, writer
 from themis.litcache.models import litcache_pb2
 from themis.testing import openalex as fake_openalex
 
@@ -347,7 +349,7 @@ def _ingest_nonoa(bucket: gcs.Bucket, conn: pg8000.dbapi.Connection) -> pipeline
 def test_a_paper_holds_the_seed_it_was_ingested_from(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
     result = _ingest_nonoa(gcs_bucket, conn)
 
-    assert pipeline.why_seed_not_held(gcs_bucket, result.manifest, _seed().pdf) is None
+    assert pipeline.why_seed_not_held(gcs_bucket, result.manifest, _seed()) is None
 
 
 def test_a_paper_ingested_on_the_xml_branch_holds_its_seed(
@@ -369,13 +371,15 @@ def test_a_paper_ingested_on_the_xml_branch_holds_its_seed(
         file_sources=[],
     )
 
-    assert pipeline.why_seed_not_held(gcs_bucket, result.manifest, seed.pdf) is None
+    assert pipeline.why_seed_not_held(gcs_bucket, result.manifest, seed) is None
 
 
 def test_a_paper_does_not_hold_another_copy_of_its_pdf(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
     result = _ingest_nonoa(gcs_bucket, conn)
 
-    reason = pipeline.why_seed_not_held(gcs_bucket, result.manifest, _seed().pdf + b'\n%another copy\n')
+    reason = pipeline.why_seed_not_held(
+        gcs_bucket, result.manifest, dataclasses.replace(_seed(), pdf=_seed().pdf + b'\n%another copy\n')
+    )
 
     assert reason is not None
     assert 'no source revision' in reason
@@ -391,7 +395,7 @@ def test_a_paper_whose_seed_pdf_object_is_missing_does_not_hold_it(
         writer.source_revision_path(result.doc_id, source.handle, revision.hash, source.media_type)
     ).delete()
 
-    reason = pipeline.why_seed_not_held(gcs_bucket, result.manifest, _seed().pdf)
+    reason = pipeline.why_seed_not_held(gcs_bucket, result.manifest, _seed())
 
     assert reason is not None
     assert 'does not exist' in reason
@@ -405,7 +409,200 @@ def test_a_paper_with_no_main_text_does_not_hold_its_seed(
     manifest.CopyFrom(result.manifest)
     del manifest.refs['markdown']
 
-    assert pipeline.why_seed_not_held(gcs_bucket, manifest, _seed().pdf) == 'the paper has no main text'
+    assert pipeline.why_seed_not_held(gcs_bucket, manifest, _seed()) == 'the paper has no main text'
+
+
+def _pdf_only_seed(pdf: bytes) -> pipeline.SeedObject:
+    return pipeline.SeedObject(bucket_key='10.9999%2Fsynthetic.nonoa.pdf', docling_json=None, pdf=pdf)
+
+
+def test_a_pdf_only_seed_is_written_with_no_main_text_and_held(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket
+) -> None:
+    seed = _pdf_only_seed((_NONOA / 'source.pdf').read_bytes())
+    result = _ingest_via_transport(
+        gcs_bucket, conn, seed, _licence(), fetchers=_NO_OA, transport=_transport(_NONOA_CROSSREF)
+    )
+
+    assert result.written is True
+    assert records.markdown(result.manifest) is None  # the worker's transcription makes it
+    assert [s.media_type for s in result.manifest.sources] == [litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF]
+    assert pipeline.why_seed_not_held(gcs_bucket, result.manifest, seed) is None
+
+
+def _text_pdf(*lines: str, embedded_doi: str | None = None) -> bytes:
+    """A one-page pdf whose text layer is `lines`, one to a line, and whose XMP names `embedded_doi`."""
+    shown = ' '.join(f'({line}) Tj 0 -14 Td' for line in lines)
+    stream = f'BT /F1 12 Tf 20 180 Td {shown} ET'.encode('latin-1')
+    objs = [
+        b'<</Type/Catalog/Pages 2 0 R>>',
+        b'<</Type/Pages/Kids[3 0 R]/Count 1>>',
+        b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 400 200]/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>',
+        b'<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
+        b'<</Length %d>>\nstream\n' % len(stream) + stream + b'\nendstream',
+    ]
+    out = bytearray(b'%PDF-1.4\n')
+    offsets: list[int] = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += f'{i} 0 obj\n'.encode() + body + b'\nendobj\n'
+    xref = len(out)
+    out += f'xref\n0 {len(objs) + 1}\n'.encode() + b'0000000000 65535 f \n'
+    for offset in offsets:
+        out += f'{offset:010d} 00000 n \n'.encode()
+    out += f'trailer\n<</Size {len(objs) + 1}/Root 1 0 R>>\nstartxref\n{xref}\n%%EOF'.encode()
+    if embedded_doi is not None:
+        out += f'\n%<prism:doi>{embedded_doi}</prism:doi>\n'.encode()
+    return bytes(out)
+
+
+@pytest.mark.parametrize(
+    'pdf',
+    [
+        _text_pdf('https://doi.org/10.9999/synthetic.nonoa', 'Synthetic Non-OA Fixture', embedded_doi='10.9999/other'),
+        _text_pdf('Syn-', 'thetic Non-OA Fixture'),
+    ],
+    ids=['embedded-doi-wrong-but-the-papers-printed', 'title-word-broken-across-lines'],
+)
+def test_a_pdf_only_seed_that_reads_as_its_paper_is_written(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket, pdf: bytes
+) -> None:
+    result = _ingest_via_transport(
+        gcs_bucket, conn, _pdf_only_seed(pdf), _licence(), fetchers=_NO_OA, transport=_transport(_NONOA_CROSSREF)
+    )
+
+    assert result.written is True
+
+
+def _crossref_titled(title: str) -> bytes:
+    message = json.loads(_NONOA_CROSSREF)
+    message['message']['title'] = [title]
+    return json.dumps(message).encode('utf-8')
+
+
+@pytest.mark.parametrize(
+    ('pdf', 'crossref', 'reason'),
+    [
+        (
+            (_NONOA / 'source.pdf').read_bytes(),
+            _crossref_titled('Whole-Genome Sequencing of a Family Quartet'),
+            "0% of the title's words",
+        ),
+        (
+            (_NONOA / 'source.pdf').read_bytes() + b'\n%<prism:doi>10.9999/another.paper</prism:doi>\n',
+            _NONOA_CROSSREF,
+            'the pdf metadata names DOI 10.9999/another.paper',
+        ),
+        (
+            (_NONOA / 'source.pdf').read_bytes(),
+            _crossref_titled('Nothing in Study Case A: Fixture Non-OA Synthetic'),
+            "of the title's words are in order",
+        ),
+        ((_FIXTURES / 'image_only' / 'source.pdf').read_bytes(), _NONOA_CROSSREF, 'no text on its first 2 pages'),
+        (
+            (_FIXTURES / 'image_only' / 'source.pdf').read_bytes()
+            + b'\n%<prism:doi>10.9999/another.paper</prism:doi>\n',
+            _NONOA_CROSSREF,
+            'its metadata does not name the DOI 10.9999/synthetic.nonoa',
+        ),
+        (
+            _text_pdf(
+                'https://doi.org/10.9999/other',
+                'Synthetic Non-OA Fixture',
+                'Reply to 10.9999/synthetic.nonoa',
+                embedded_doi='10.9999/other',
+            ),
+            _NONOA_CROSSREF,
+            'the pdf metadata names DOI 10.9999/other, and its first pages print it',
+        ),
+    ],
+    ids=[
+        'another-title',
+        'another-doi',
+        'title-out-of-order',
+        'no-text-layer',
+        'no-text-layer-another-doi',
+        'prints-the-embedded-doi',
+    ],
+)
+def test_a_pdf_only_seed_that_does_not_read_as_its_paper_is_not_written(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket, pdf: bytes, crossref: bytes, reason: str
+) -> None:
+    with pytest.raises(pipeline.SeedMismatchError, match=re.escape(reason)):
+        _ingest_via_transport(
+            gcs_bucket, conn, _pdf_only_seed(pdf), _licence(), fetchers=_NO_OA, transport=_transport(crossref)
+        )
+
+    assert _doc_id_for(conn, 'doi:10.9999/synthetic.nonoa') is None  # nothing claimed
+    assert list(gcs_bucket.list_blobs(prefix='papers/')) == []
+
+
+def test_a_scanned_pdf_only_seed_is_taken_on_an_embedded_doi_that_is_its_papers(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket
+) -> None:
+    scan = (_FIXTURES / 'image_only' / 'source.pdf').read_bytes()
+    seed = _pdf_only_seed(scan + b'\n%<prism:doi>10.9999/synthetic.nonoa</prism:doi>\n')
+
+    result = _ingest_via_transport(
+        gcs_bucket, conn, seed, _licence(), fetchers=_NO_OA, transport=_transport(_NONOA_CROSSREF)
+    )
+
+    assert result.written is True
+
+
+@pytest.mark.parametrize(
+    ('text', 'words'),
+    [
+        ('Schrödinger and naïve Müller', ['schrodinger', 'and', 'naive', 'muller']),
+        ('Whole-Genome, p.Ala46Thr', ['whole', 'genome', 'p', 'ala46thr']),
+    ],
+)
+def test_words_drop_accents_and_split_at_punctuation(text: str, words: list[str]) -> None:
+    assert pipeline._words(text) == words
+
+
+def test_title_coverage_counts_the_title_in_order_and_close_together() -> None:
+    title = ['whole', 'genome', 'sequencing', 'quartet']
+    in_order = ['analysis', 'of', 'whole', 'genome', 'sequencing', 'in', 'a', 'family', 'quartet']
+    scattered = ['quartet', *['filler'] * 20, 'sequencing', *['filler'] * 20, 'genome', 'whole']
+
+    assert pipeline._title_coverage(title, in_order) == 1.0
+    assert pipeline._title_coverage(title, scattered) == 0.25
+
+
+@pytest.mark.parametrize('broken', ['Syn-\r\nthetic', 'Syn\u00ad\nthetic', 'Syn\x02thetic'])
+def test_a_word_broken_across_lines_is_rejoined(broken: str) -> None:
+    assert pipeline._LINE_END_HYPHEN.sub('', broken) == 'Synthetic'
+
+
+def test_title_coverage_skips_a_word_the_pdf_words_differently() -> None:
+    # "variants" is printed, but after the rest: matching it first would lose every word after it.
+    title = ['novel', 'variants', 'gene', 'cause', 'disease']
+
+    assert pipeline._title_coverage(title, ['novel', 'mutations', 'gene', 'cause', 'disease', 'variants']) == 0.8
+
+
+@pytest.mark.parametrize(
+    ('text', 'printed'),
+    [
+        ('https://doi.org/10.1000/abc1\r\nRESEARCH', True),
+        ('doi: 10.1000/ABC1.', True),
+        ('https://doi.org/10.1000/abc12', False),
+        ('https://doi.org/10.1000/abc1.supp', False),
+        ('https://doi.org/10.1000/abc1/figure', False),
+        ('https://doi.org/10.1000/\r\nabc1', True),
+        ('DOI10.1000/abc1', True),
+    ],
+)
+def test_prints_doi_finds_the_doi_whole(text: str, printed: bool) -> None:
+    assert pipeline._prints_doi(text, '10.1000/abc1') is printed
+
+
+def test_extract_identity_refuses_a_pdf_only_seed_whose_key_names_no_id() -> None:
+    seed = pipeline.SeedObject(bucket_key='scan-0042.pdf', docling_json=None, pdf=(_NONOA / 'source.pdf').read_bytes())
+
+    with pytest.raises(ValueError, match='no external id'):
+        pipeline.extract_identity(seed)
 
 
 def test_resumes_after_a_crash_reusing_the_claimed_doc_id(

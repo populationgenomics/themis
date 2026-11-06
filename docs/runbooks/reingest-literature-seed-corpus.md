@@ -34,14 +34,25 @@ probes for its manifest ([`pipeline.ingest_paper`](../../themis/litcache/pipelin
   create-only (`if_generation_match=0`), so even a race cannot replace a manifest
   ([`writer.py`](../../themis/litcache/writer.py)).
 
-`ingest/` is a dropbox, and a run consumes it. Once a paper is written or skipped, the write stage deletes its seed pair
-if the paper holds it: the paper has main text, and stores the seed's pdf bytes as a source
-([`pipeline.why_seed_not_held`](../../themis/litcache/pipeline.py)). The Docling json only bootstraps the markdown, so
-it goes with the pdf. A seed the paper does not hold — a second, different pdf of a committed paper — is kept and
+`ingest/` is a dropbox, and a run consumes it. Once a paper is written or skipped, the write stage deletes its seed if
+the paper holds it: the paper stores the seed's pdf bytes as a source and, when the seed has a Docling json, has main
+text ([`pipeline.why_seed_not_held`](../../themis/litcache/pipeline.py)). The Docling json only bootstraps the markdown,
+so it goes with the pdf. A seed the paper does not hold — a second, different pdf of a committed paper — is kept and
 dead-lettered as `seed not held`, for a person to look at. A seed that failed to ingest is kept, so the next run retries
-it, and so is an object with no counterpart. A deletion is undone from the bucket's noncurrent versions, kept 30 days.
-The store is not the seeds' archive: they are copied into `ingest/` by hand from source material kept outside Themis,
-and a redo or a rebuild copies them from there again.
+it, and so is a json with no pdf. A deletion is undone from the bucket's noncurrent versions, kept 30 days. The store is
+not the seeds' archive: they are copied into `ingest/` by hand from source material kept outside Themis, and a redo or a
+rebuild copies them from there again.
+
+A pdf with no json is a seed too, named by its key alone, so before anything is claimed the write stage checks it is
+that paper ([`pipeline._check_pdf_only_seed`](../../themis/litcache/pipeline.py)): most of the resolved title's words
+must be on its first two pages, in order, and a DOI in the pdf's metadata must be the paper's unless the paper's is
+printed there and the other is not. One that fails — another paper, a one-page stub, an issue's compilation — is
+dead-lettered as `SeedMismatchError` and kept. So is a scan with no text layer, unless its metadata names the key's DOI;
+such a seed stays in `ingest/` until a person decides. A reply or a contents page that prints the title in order can
+pass. One that passes and is not open access is committed with its pdf and no main text; the worker's transcription step
+makes the text, and spends, so it runs only on a run given that target. A pdf listed alone whose json is dropped before
+the write stage reaches it is kept for the next run, which takes the pair (`seed_json_arrived`); a json dropped after
+that is left unpaired.
 
 So a re-run is idempotent and, beside that missing-record fill and the deletions, does one thing: it completes the
 papers that have no manifest — those dead-lettered last time (unresolved metadata, a record failing the store's
@@ -244,7 +255,7 @@ uv run --group dataflow python -m tools.litcache.launch_dataflow \
 It exercises everything the real run does — the image, the subnet, the SA, the Cloud SQL mint, live NCBI and OA egress —
 and stays cheap. Read the report it prints at the end: `counters` is the per-stage tally for this run (`papers_seen`
 should equal
-`paper_written + paper_skipped + paper_unresolved + paper_precondition_failed + paper_schema_drift + paper_ambiguous_work + paper_index_failed + paper_failed + seed_gone`,
+`paper_written + paper_skipped + paper_unresolved + paper_precondition_failed + paper_schema_drift + paper_ambiguous_work + paper_index_failed + paper_failed + seed_gone + seed_json_arrived`,
 and `paper_written + paper_skipped` should equal `seed_deleted + seed_not_held + seed_replaced`); `dead-lettered` is the
 count of records under `diagnostics/dead_letters/<run>/`, consolidated into `<run>.jsonl` beside it with a `reason` per
 paper; `no_text_layer` lists pdf-derived papers with no recoverable character layer, a data-quality signal rather than a
@@ -320,8 +331,8 @@ The launcher prints the report once the job reaches `DONE`, then
 `Output written to gs://<bucket>/papers/; crosswalk minted into <instance>`. Success is the counters and the dead-letter
 list, not the exit code:
 
-- `papers_seen` is one per paired seed object (the launcher logs unpaired objects — a `.json` with no `.pdf` or the
-  reverse — as excluded; they are never ingested).
+- `papers_seen` is one per seed, a pair or a pdf alone (the launcher logs the objects that are not — a `.json` with no
+  `.pdf` — as excluded; they are never ingested).
 - `paper_written + paper_skipped` is what the store now holds from this seed; every other paper is a line in
   `gs://$FULLTEXT/diagnostics/dead_letters/<run>.jsonl` with its reason, or counted `seed_gone`: deleted before the run
   read it, by an overlapping run or a retried bundle whose first attempt ingested it and deleted the seed.
@@ -350,7 +361,7 @@ gcloud storage rm -r "gs://$SCRATCH/dataflow" "gs://$SCRATCH/ingest" "gs://$SCRA
 ```
 
 What a direct run leaves under the store's `ingest/` is what it did not ingest: dead-lettered seeds, seeds not held, and
-objects with no counterpart.
+jsons with no pdf.
 
 ## What can go wrong
 

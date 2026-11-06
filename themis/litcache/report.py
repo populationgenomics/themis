@@ -47,8 +47,8 @@ class IngestReport:
     Attributes:
         papers_total: Number of manifests under the papers prefix.
         flagged: Papers flagged `no_text_layer` (in `doc_id` order).
-        unpaired_seeds: Seed keys excluded for missing a counterpart (a `.json`
-            with no `.pdf`, or the reverse, or an unknown extension).
+        unpaired_seeds: Seed keys excluded as not a seed (a `.json` with no `.pdf`,
+            or an unknown extension).
         counters: The per-stage Beam-metric snapshot (`papers_seen`,
             `doc_id_minted`, …), as the runner reported it.
         dead_lettered: Papers the run could not ingest, counted from the records
@@ -143,6 +143,7 @@ def render_report(report: IngestReport) -> str:
         f'  seeds kept, not held (dead-lettered): {report.counters.get("seed_not_held", 0)}',
         f'  seeds kept, dropped again since read: {report.counters.get("seed_replaced", 0)}',
         f'  seeds already gone: {report.counters.get("seed_gone", 0)}',
+        f'  pdfs kept, their json dropped since read: {report.counters.get("seed_json_arrived", 0)}',
         f'  unpaired seed objects: {len(report.unpaired_seeds)}',
         f'  no_text_layer: {len(report.flagged)}',
     ]

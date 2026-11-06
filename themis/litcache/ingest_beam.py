@@ -4,7 +4,8 @@
 (`extract_identity`) and a write half (`ingest_paper`); this is the runtime that
 drives them, with a batched bibliographic-resolution stage between so the NCBI rate
 domain (efetch / idconv) is hit in bulk, not once per paper. It reads the flat seed
-prefix (`ingest/`), pairs each paper's `<id>.json` + `<id>.pdf`, and runs a three-stage
+prefix (`ingest/`), pairs each paper's `<id>.json` + `<id>.pdf` (a `<id>.pdf` alone is a
+seed too), and runs a three-stage
 graph, talking to GCS (`google.cloud.storage.Bucket`) and Cloud SQL (the crosswalk
 mint) from inside the workers:
 
@@ -36,12 +37,12 @@ mint) from inside the workers:
    bucket reports its own failures, not the history.
 
 `ingest/` is a dropbox: a run consumes what it can. Once the write half returns, written or
-skipped as already committed, the write stage deletes the seed pair if the paper holds it
+skipped as already committed, the write stage deletes the seed if the paper holds it
 (`pipeline.why_seed_not_held`), and only at the generations it read, so a file dropped again
 under the same name meanwhile is kept for the next run. A seed the paper does not hold — a
 second, different pdf of a committed paper, say — is kept and dead-lettered with the reason. A
-seed that failed to ingest is kept, so the next run retries it, and so is an object with no
-counterpart, which no run can ingest. The bucket's object versioning is what recovers a
+seed that failed to ingest is kept, so the next run retries it, and so is a json with no pdf,
+which no run can ingest. The bucket's object versioning is what recovers a
 deletion made in error.
 
 Backends reach the workers as factories, not instances: the driver and each worker live
@@ -49,9 +50,9 @@ in different processes, so a `Bucket` / Postgres connection / HTTP transport is 
 where it is used. Factories are picklable; the instances they build are not shipped.
 
 Seed pairing is driver-side (`pair_seed_keys`): the key set is finite and a single GCS
-list is cheap. A seed object missing its counterpart (a `.json` with no `.pdf`, or the
-reverse) is logged and excluded, a data-quality signal the diagnostics report surfaces,
-never a per-paper crash.
+list is cheap. A `.json` with no `.pdf` is logged and excluded, a data-quality signal the
+diagnostics report surfaces, never a per-paper crash. A `.pdf` with no `.json` is ingested
+on its key alone, once `pipeline.ingest_paper` has checked it is that paper.
 
 Every paper the write stage commits is asked for, on the bulk queue, in a request carrying the
 generation it committed (`enqueue`): the worker then runs its free steps, and spends only on the
@@ -64,7 +65,7 @@ Per-stage counts are emitted as Beam metrics under `METRICS_NAMESPACE` (`papers_
 `paper_precondition_failed` / `paper_schema_drift` / `paper_ambiguous_work` / `paper_index_failed` / `paper_failed`,
 `paper_asked` /
 `paper_already_asked` / `paper_not_asked`, `seed_deleted` / `seed_not_held` / `seed_replaced` /
-`seed_gone`).
+`seed_gone` / `seed_json_arrived`).
 
 `report_run` is the post-run step (call after `wait_until_finish`): it builds and logs
 the diagnostics report.
@@ -128,6 +129,7 @@ _COUNTER_NAMES = (
     'seed_not_held',
     'seed_replaced',
     'seed_gone',
+    'seed_json_arrived',
 )
 
 # Papers that could not be ingested — unresolved metadata, a record failing the store's
@@ -176,19 +178,19 @@ ApiKeyFactory = Callable[[], openalex.ApiKey]
 
 @dataclasses.dataclass(frozen=True)
 class SeedRef:
-    """A paired seed object: the two storage keys to read and the identity key.
+    """A seed: a pdf and its Docling json, or a pdf alone, and the identity key.
 
     Attributes:
-        bucket_key: The json object's name relative to the seed prefix (the
-            `ingest/` prefix stripped), the identity input `determine_identity`
-            decodes and classifies.
+        bucket_key: The json object's name — the pdf's, for a pdf alone — relative
+            to the seed prefix (the `ingest/` prefix stripped), the identity input
+            `determine_identity` decodes and classifies.
         json_key: The full storage key of the Docling json (identity origin and
-            non-OA markdown source).
+            non-OA markdown source), or None for a pdf alone.
         pdf_key: The full storage key of the pdf (retained source + char probe).
     """
 
     bucket_key: str
-    json_key: str
+    json_key: str | None
     pdf_key: str
 
 
@@ -197,9 +199,9 @@ class SeedPairing:
     """The outcome of pairing the seed prefix.
 
     Attributes:
-        refs: The papers with both a json and a pdf, ready to ingest.
-        unpaired: Storage keys with no counterpart (a json without a pdf, or the
-            reverse) — excluded from ingestion, surfaced for diagnostics.
+        refs: The papers with a pdf, with or without its json, ready to ingest.
+        unpaired: Storage keys that are not a seed (a json without a pdf, or an
+            object that is neither) — excluded from ingestion, surfaced for diagnostics.
     """
 
     refs: list[SeedRef]
@@ -221,7 +223,7 @@ class _PaperWork:
 
 @dataclasses.dataclass(frozen=True)
 class _ReadSeed:
-    """A seed pair as the write stage read it.
+    """A seed as the write stage read it.
 
     Attributes:
         seed: The bytes.
@@ -234,7 +236,10 @@ class _ReadSeed:
 
 
 def pair_seed_keys(keys: Iterable[str], *, prefix: str = 'ingest/') -> SeedPairing:
-    """Pair `<id>.json` + `<id>.pdf` seed objects by their shared stem.
+    """Pair `<id>.json` + `<id>.pdf` seed objects by their shared stem; a `<id>.pdf` alone is a seed too.
+
+    A json alone is not: the pdf is what a paper holds of its seed, and a json may be one whose pdf has not been
+    dropped yet.
 
     Args:
         keys: The storage keys under the seed prefix (full keys including `prefix`,
@@ -242,8 +247,8 @@ def pair_seed_keys(keys: Iterable[str], *, prefix: str = 'ingest/') -> SeedPairi
         prefix: The seed prefix to strip from each key before pairing.
 
     Returns:
-        The `SeedPairing`: paired `SeedRef`s (in stem order) and the keys left
-        unpaired (a `.json`/`.pdf` with no counterpart, or an unknown extension).
+        The `SeedPairing`: the `SeedRef`s (in stem order) and the keys left
+        unpaired (a `.json` with no `.pdf`, or an unknown extension).
     """
     jsons: dict[str, str] = {}
     pdfs: dict[str, str] = {}
@@ -263,10 +268,11 @@ def pair_seed_keys(keys: Iterable[str], *, prefix: str = 'ingest/') -> SeedPairi
     for stem in sorted(jsons.keys() | pdfs.keys()):
         json_key = jsons.get(stem)
         pdf_key = pdfs.get(stem)
-        if json_key is None or pdf_key is None:
-            unpaired.append(json_key or pdf_key or '')
+        if pdf_key is None:
+            unpaired.append(jsons[stem])
             continue
-        refs.append(SeedRef(bucket_key=f'{stem}{_JSON_SUFFIX}', json_key=json_key, pdf_key=pdf_key))
+        suffix = _PDF_SUFFIX if json_key is None else _JSON_SUFFIX
+        refs.append(SeedRef(bucket_key=f'{stem}{suffix}', json_key=json_key, pdf_key=pdf_key))
     return SeedPairing(refs=refs, unpaired=unpaired)
 
 
@@ -343,7 +349,7 @@ def _write_dead_letter(
 
 
 class _ExtractIdentityFn(beam.DoFn):
-    """Read a seed pair and classify its identity — the local, network-free stage.
+    """Read a seed and classify its identity — the local, network-free stage.
 
     Builds the bucket per worker; emits `(join_key, _PaperWork)` without the seed
     bytes (the write stage re-reads them). An unreadable seed is dead-lettered rather
@@ -395,7 +401,7 @@ class _ExtractIdentityFn(beam.DoFn):
         try:
             seed = pipeline.SeedObject(
                 bucket_key=ref.bucket_key,
-                docling_json=self._bucket.blob(ref.json_key).download_as_bytes(),
+                docling_json=None if ref.json_key is None else self._bucket.blob(ref.json_key).download_as_bytes(),
                 pdf=pdf_blob.download_as_bytes(),
             )
         except api_exceptions.NotFound:
@@ -567,7 +573,7 @@ class _WritePaperFn(beam.DoFn):
     unresolved papers never opens one. Counts `doc_id_minted`/`doc_id_adopted`,
     `paper_written`/`paper_skipped`, `paper_unresolved`/`paper_precondition_failed`/`paper_schema_drift`/
     `paper_ambiguous_work`/`paper_index_failed`/`paper_failed`, and
-    `seed_deleted`/`seed_not_held`/`seed_replaced`/`seed_gone`.
+    `seed_deleted`/`seed_not_held`/`seed_replaced`/`seed_gone`/`seed_json_arrived`.
     """
 
     def __init__(
@@ -609,6 +615,7 @@ class _WritePaperFn(beam.DoFn):
         self._seed_not_held = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_not_held')
         self._seed_replaced = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_replaced')
         self._seed_gone = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_gone')
+        self._seed_json_arrived = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_json_arrived')
 
     @override
     def setup(self) -> None:
@@ -651,30 +658,42 @@ class _WritePaperFn(beam.DoFn):
         )
 
     def _read_seed(self, ref: SeedRef) -> _ReadSeed | None:
-        """The seed pair and the generations read, or None when either object is gone."""
-        pdf_blob = self._bucket.blob(ref.pdf_key)
-        json_blob = self._bucket.blob(ref.json_key)
+        """The seed and the generations read, or None when an object of it is gone."""
+        blobs = [self._bucket.blob(key) for key in (ref.pdf_key, ref.json_key) if key is not None]
         # Outside any handler but NotFound, as in the identity stage: a failed read is transient and worth Beam's
         # retries, not a permanent dead letter.
         try:
-            pdf_bytes = pdf_blob.download_as_bytes()
-            docling_json = json_blob.download_as_bytes()
+            pdf_bytes, *docling_json = [blob.download_as_bytes() for blob in blobs]
         except api_exceptions.NotFound:
             # Deleted since the identity stage read it: by a first attempt of this bundle that settled it, or by hand.
             _LOG.info('seed %s is gone; nothing to ingest', ref.bucket_key)
             self._seed_gone.inc()
             return None
-        if pdf_blob.generation is None or json_blob.generation is None:
-            raise RuntimeError(f'seed {ref.bucket_key} was read with no generation')
+        generations = []
+        for blob in blobs:
+            if blob.generation is None:
+                raise RuntimeError(f'seed {ref.bucket_key} was read with no generation')
+            generations.append((blob.name, blob.generation))
         return _ReadSeed(
-            seed=pipeline.SeedObject(bucket_key=ref.bucket_key, docling_json=docling_json, pdf=pdf_bytes),
-            generations=((ref.pdf_key, pdf_blob.generation), (ref.json_key, json_blob.generation)),
+            seed=pipeline.SeedObject(
+                bucket_key=ref.bucket_key, docling_json=docling_json[0] if docling_json else None, pdf=pdf_bytes
+            ),
+            generations=tuple(generations),
         )
 
+    def _json_arrived(self, ref: SeedRef) -> bool:
+        """Whether a pdf listed alone has had its json dropped since, so the pair is the next run's to ingest."""
+        json_key = ref.pdf_key.removesuffix(_PDF_SUFFIX) + _JSON_SUFFIX
+        if not self._bucket.blob(json_key).exists():
+            return False
+        _LOG.info('seed %s was listed as a pdf alone and its json has arrived since; keeping the pair', ref.pdf_key)
+        self._seed_json_arrived.inc()
+        return True
+
     def _settle_seed(self, work: _PaperWork, read: _ReadSeed, manifest: litcache_pb2.Manifest) -> None:
-        """Delete the seed pair if the paper holds it; otherwise keep it and record why."""
+        """Delete the seed if the paper holds it; otherwise keep it and record why."""
         try:
-            reason = pipeline.why_seed_not_held(self._bucket, manifest, read.seed.pdf)
+            reason = pipeline.why_seed_not_held(self._bucket, manifest, read.seed)
         except ValueError as exc:  # a corrupt manifest
             reason = f'{type(exc).__name__}: {exc}'
         if reason is not None:
@@ -701,7 +720,7 @@ class _WritePaperFn(beam.DoFn):
         current = self._bucket.get_blob(key)
         if current is None or current.generation == generation:
             return False
-        _LOG.warning('seed object %s was replaced since it was read; keeping the pair', key)
+        _LOG.warning('seed object %s was replaced since it was read; keeping the seed', key)
         return True
 
     @override
@@ -743,6 +762,8 @@ class _WritePaperFn(beam.DoFn):
             if isinstance(outcome, resolve.IndexFailure):
                 self._dead_letter(work, reason=f'index failed: {outcome.reason}')
                 self._index_failed.inc()
+                continue
+            if work.ref.json_key is None and self._json_arrived(work.ref):
                 continue
             read = self._read_seed(work.ref)
             if read is None:
@@ -790,7 +811,7 @@ def build_pipeline(
 
     The driver lists and pairs the seed prefix (via `bucket_factory()`), emits the
     pairs, and runs the three-stage graph: classify identity, batch-resolve
-    bibliographic metadata, then join and write. Unpaired seed objects are logged and
+    bibliographic metadata, then join and write. Objects that are not a seed are logged and
     excluded.
 
     Args:
@@ -805,8 +826,8 @@ def build_pipeline(
         openalex_api_key_factory: Builds the key the resolve stage's OpenAlex requests
             carry, once per worker.
         seed_prefix: The flat seed prefix to ingest.
-        limit: Ingest only the first `limit` paired seed objects (in stem order) for
-            a bounded run; `None` ingests every pair. Deterministic across runs.
+        limit: Ingest only the first `limit` seeds (in stem order) for
+            a bounded run; `None` ingests every seed. Deterministic across runs.
         ask: What to ask the worker for, for each paper committed; None for a run into a bucket no
             worker reads, such as a staged sample's.
         fetchers_factory: Builds the litfetch OA-XML ladder per worker; `None` uses
@@ -838,7 +859,7 @@ def build_pipeline(
         _LOG.warning('%d unpaired seed object(s) excluded from ingestion: %s', len(pairing.unpaired), pairing.unpaired)
     refs = pairing.refs
     if limit is not None and len(refs) > limit:
-        _LOG.warning('limit=%d: ingesting the first %d of %d paired seed objects', limit, limit, len(refs))
+        _LOG.warning('limit=%d: ingesting the first %d of %d seeds', limit, limit, len(refs))
         refs = refs[:limit]
     dead_letter_prefix, _ = dead_letter_paths(now)
 
@@ -910,8 +931,8 @@ def run_ingestion(
         openalex_api_key_factory: Builds the OpenAlex API key on each resolving worker
             (`openalex_key.from_secret_manager` over the project holding it).
         seed_prefix: The flat seed prefix to ingest.
-        limit: Ingest only the first `limit` paired seed objects (for a bounded run,
-            e.g. on the DirectRunner); `None` ingests every pair.
+        limit: Ingest only the first `limit` seeds (for a bounded run,
+            e.g. on the DirectRunner); `None` ingests every seed.
 
     Returns:
         The `IngestionRun` — the pipeline result plus this run's diagnostics paths, which

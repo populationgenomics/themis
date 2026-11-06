@@ -91,6 +91,14 @@ def test_malformed_pdf_fails_loud() -> None:
         pdf.probe_has_text_layer(b'not a pdf')
 
 
+def test_leading_text_reads_a_pdf_shorter_than_asked_whole() -> None:
+    assert pdf.leading_text(_TEXT_PDF.read_bytes(), pages=5).startswith('Synthetic Non-OA Fixture')
+
+
+def test_leading_text_of_an_image_only_pdf_is_empty() -> None:
+    assert pdf.leading_text(_IMAGE_ONLY_PDF.read_bytes(), pages=2) == ''
+
+
 def test_doi_from_metadata_reads_an_elsevier_style_subject() -> None:
     # Elsevier stamps the DOI into the Subject; the `doi:` prefix is stripped.
     pdf_bytes = _pdf_with_metadata(Subject='Stem Cell Research 86 2025. doi:10.1016/j.scr.2025.103712', Title='A paper')
@@ -106,6 +114,13 @@ def test_doi_from_metadata_reads_xmp_dc_identifier() -> None:
     # dc:identifier carries the `doi:` prefix, which is stripped.
     pdf_bytes = _pdf_with_xmp('<dc:identifier>doi:10.1234/dc.test.001</dc:identifier>')
     assert pdf.doi_from_metadata(pdf_bytes) == '10.1234/dc.test.001'
+
+
+def test_doi_from_metadata_unescapes_an_xmp_sici_doi() -> None:
+    sici = '10.1002/(SICI)1097-4636(199701)35:1&lt;3::AID-JBM1&gt;3.0.CO;2-M'
+    pdf_bytes = _pdf_with_xmp(f'<prism:doi>{sici}</prism:doi>')
+
+    assert pdf.doi_from_metadata(pdf_bytes) == '10.1002/(SICI)1097-4636(199701)35:1<3::AID-JBM1>3.0.CO;2-M'
 
 
 def test_doi_from_metadata_prefers_xmp_over_the_info_dict() -> None:

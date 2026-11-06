@@ -38,7 +38,7 @@ from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.cloud import tasks_v2
 
-from themis.litcache import crosswalk, enqueue, identity, ingest_beam, openalex, pipeline
+from themis.litcache import crosswalk, enqueue, identity, ingest_beam, openalex, pipeline, records
 from themis.litcache.models import litcache_pb2, work_pb2
 from themis.testing import openalex as fake_openalex
 
@@ -90,6 +90,11 @@ def _no_fetchers() -> list[litfetch.Fetcher]:
     return []
 
 
+# The non-OA fixture pdf's own title, for a pdf-only seed that must read as its paper.
+_LONE_DOI = '10.5555/synthetic.lone'
+_TITLES = {_LONE_DOI: 'Synthetic Non-OA Fixture: A Case Study in Nothing'}
+
+
 def _resolve_handler(request: httpx2.Request) -> httpx2.Response:
     """Resolve the batch: idconv maps nothing (OA closed), OpenAlex echoes each DOI."""
     if 'openalex' in request.url.host:
@@ -99,8 +104,8 @@ def _resolve_handler(request: httpx2.Request) -> httpx2.Response:
             {
                 'id': f'https://openalex.org/{doi}',
                 'doi': f'https://doi.org/{doi}',
-                'title': f'Synthetic {doi}',
-                'display_name': f'Synthetic {doi}',
+                'title': _TITLES.get(doi, f'Synthetic {doi}'),
+                'display_name': _TITLES.get(doi, f'Synthetic {doi}'),
                 'publication_date': '2020-01-01',
                 'ids': {},  # no pmid → resolves via OpenAlex's own record
                 'type': 'article',
@@ -155,11 +160,20 @@ def test_pair_seed_keys_pairs_by_stem() -> None:
 
 
 def test_pair_seed_keys_reports_unpaired() -> None:
-    keys = ['ingest/a.json', 'ingest/a.pdf', 'ingest/lonely.json', 'ingest/orphan.pdf', 'ingest/weird.txt']
+    keys = ['ingest/a.json', 'ingest/a.pdf', 'ingest/lonely.json', 'ingest/weird.txt']
     pairing = ingest_beam.pair_seed_keys(keys)
 
     assert [r.bucket_key for r in pairing.refs] == ['a.json']
-    assert set(pairing.unpaired) == {'ingest/lonely.json', 'ingest/orphan.pdf', 'ingest/weird.txt'}
+    assert set(pairing.unpaired) == {'ingest/lonely.json', 'ingest/weird.txt'}
+
+
+def test_pair_seed_keys_takes_a_pdf_alone_as_a_seed() -> None:
+    pairing = ingest_beam.pair_seed_keys(['ingest/10.1%2Fa.pdf'])
+
+    assert pairing.refs == [
+        ingest_beam.SeedRef(bucket_key='10.1%2Fa.pdf', json_key=None, pdf_key='ingest/10.1%2Fa.pdf')
+    ]
+    assert pairing.unpaired == []
 
 
 def test_pair_seed_keys_ignores_keys_outside_the_prefix() -> None:
@@ -447,6 +461,27 @@ def _run(
             transport_factory=_resolve_transport,
         )
     return root.result
+
+
+def _assert_balanced(result: runner.PipelineResult) -> None:
+    """Every paper seen is settled once, and every paper stored settles its seed once."""
+    count = functools.partial(ingest_beam.read_counter, result)
+    settled = (
+        'paper_written',
+        'paper_skipped',
+        'paper_unresolved',
+        'paper_precondition_failed',
+        'paper_schema_drift',
+        'paper_ambiguous_work',
+        'paper_index_failed',
+        'paper_failed',
+        'seed_gone',
+        'seed_json_arrived',
+    )
+    assert count('papers_seen') == sum(count(name) for name in settled)
+    assert count('paper_written') + count('paper_skipped') == sum(
+        count(name) for name in ('seed_deleted', 'seed_not_held', 'seed_replaced')
+    )
 
 
 def _dead_letters(bucket: gcs.Bucket) -> list[dict[str, object]]:
@@ -1093,13 +1128,78 @@ def test_a_run_deletes_the_seeds_its_papers_hold(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
     token, bucket = seeded_bucket
-    bucket.blob('ingest/lonely.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    bucket.blob('ingest/lonely.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
 
     result = _run(token, conn_factory)
 
     assert len(_manifests(bucket)) == 2
-    assert _seed_keys(bucket) == ['ingest/lonely.pdf']  # no counterpart: no run can ingest it
+    assert _seed_keys(bucket) == ['ingest/lonely.json']  # no pdf: no run can ingest it
     assert ingest_beam.read_counter(result, 'seed_deleted') == 2
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_pdf_alone_is_ingested_once_it_reads_as_its_paper(
+    conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
+) -> None:
+    token, bucket = seeded_bucket
+    lone = 'ingest/' + urllib.parse.quote(_LONE_DOI, safe='') + '.pdf'
+    other = 'ingest/10.5555%2Fsynthetic.other.pdf'  # resolves to a title the fixture pdf does not carry
+    for key in (lone, other):
+        bucket.blob(key).upload_from_string((_NONOA / 'source.pdf').read_bytes())
+
+    result = _run(token, conn_factory)
+
+    manifests = {m.external_ids.doi: m for m in _manifests(bucket)}
+    assert sorted(manifests) == ['10.5555/synthetic.aaa', '10.5555/synthetic.bbb', _LONE_DOI]
+    assert records.markdown(manifests[_LONE_DOI]) is None  # left to the worker's transcription
+    assert _seed_keys(bucket) == [other]
+    (letter,) = _dead_letters(bucket)
+    assert letter['key'] == '10.5555%2Fsynthetic.other.pdf'
+    assert str(letter['reason']).startswith('SeedMismatchError: ')
+    assert ingest_beam.read_counter(result, 'seed_deleted') == 3
+    _assert_balanced(result)
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_pdf_alone_dropped_again_for_its_committed_paper_is_deleted(
+    conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
+) -> None:
+    token, bucket = seeded_bucket
+    lone = 'ingest/' + urllib.parse.quote(_LONE_DOI, safe='') + '.pdf'
+    bucket.blob(lone).upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    _run(token, conn_factory)
+
+    bucket.blob(lone).upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    result = _run(token, conn_factory)
+
+    assert _seed_keys(bucket) == []
+    assert ingest_beam.read_counter(result, 'paper_skipped') == 1
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_pdf_listed_alone_whose_json_arrives_is_kept_for_the_next_run(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As an uploader drops a pair pdf first, and the run lists the prefix between the two.
+    token, bucket = seeded_bucket
+    stem = urllib.parse.quote(_LONE_DOI, safe='')
+    bucket.blob(f'ingest/{stem}.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    pair = ingest_beam.pair_seed_keys
+
+    def pair_then_drop_the_json(keys: Iterable[str], *, prefix: str = 'ingest/') -> ingest_beam.SeedPairing:
+        pairing = pair(keys, prefix=prefix)
+        bucket.blob(f'ingest/{stem}.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
+        return pairing
+
+    monkeypatch.setattr(ingest_beam, 'pair_seed_keys', pair_then_drop_the_json)
+    result = _run(token, conn_factory)
+
+    assert _LONE_DOI not in {m.external_ids.doi for m in _manifests(bucket)}
+    assert _seed_keys(bucket) == [f'ingest/{stem}.json', f'ingest/{stem}.pdf']
+    assert ingest_beam.read_counter(result, 'seed_json_arrived') == 1
+    _assert_balanced(result)
 
 
 @pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
@@ -1185,10 +1285,12 @@ def test_a_seed_dropped_again_while_the_run_read_it_is_kept(
     dropped_again = b'%dropped again\n'
     held = pipeline.why_seed_not_held
 
-    def drop_again_then_check(bucket_: gcs.Bucket, manifest: litcache_pb2.Manifest, seed_pdf: bytes) -> str | None:
+    def drop_again_then_check(
+        bucket_: gcs.Bucket, manifest: litcache_pb2.Manifest, seed: pipeline.SeedObject
+    ) -> str | None:
         if manifest.external_ids.doi == '10.5555/synthetic.aaa':
             bucket_.blob(f'ingest/{stem}.{suffix}').upload_from_string(dropped_again)
-        return held(bucket_, manifest, seed_pdf)
+        return held(bucket_, manifest, seed)
 
     monkeypatch.setattr(pipeline, 'why_seed_not_held', drop_again_then_check)
     _BUCKETS[token] = typing.cast('gcs.Bucket', _GenerationCheckedBucket(bucket))
