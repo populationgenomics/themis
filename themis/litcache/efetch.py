@@ -38,6 +38,8 @@ _EFETCH_URL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi'
 _TOOL = 'themis-litcache'
 
 # eutils returns transient 5xx/429 and drops connections under load (`transient`): 2s, 4s, 8s, 16s.
+# Under load it also answers 200 with a set cut short by an appended `<errorResponse>` element.
+_ERROR_RESPONSE = b'<errorResponse'
 _MAX_FETCH_ATTEMPTS = 5
 _RETRY_BASE_DELAY_SECONDS = 2.0
 
@@ -57,13 +59,17 @@ _CANONICAL_PMID = re.compile(r'[1-9][0-9]*')
 _CANONICAL_BOOKID = re.compile(r'NBK[0-9]+')
 
 
+class MalformedSetError(ValueError):
+    """An efetch answer that does not read as one record per PMID (`parse_set`)."""
+
+
 class RecordPreconditionError(Exception):
     """A record that converts as the schema states but fails the store's precondition on its ids.
 
     The store holds a record only if its own id lists address it and agree: a book record states one
     Bookshelf accession, canonical (`NBK` and digits), and at most one DOI. The fault is one record's,
     pinned to the PMID it states, so `parse_response` charges it to that paper alone; a set that does
-    not read as one record per PMID is `parse_set`'s `ValueError`, and fails the batch.
+    not read as one record per PMID is `parse_set`'s `MalformedSetError`, and fails the set.
     """
 
 
@@ -158,7 +164,8 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx2.AsyncClient, attemp
     Args:
         pmids: The PMIDs to fetch in one efetch call.
         http_client: The async HTTP client (caller owns its lifecycle).
-        attempts: Tries for a transient failure (429, 5xx, dropped connection) before it escapes.
+        attempts: Tries for a transient failure (429, 5xx, dropped connection, a 2xx carrying an
+            `errorResponse`) before it escapes.
             The default suits an unattended batch run; a caller whose own retry policy owns backoff
             — an rpc handler under a deadline — passes 1.
 
@@ -170,6 +177,7 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx2.AsyncClient, attemp
         httpx2.HTTPStatusError: If efetch returns a non-retryable status (a 4xx
             other than 429), or keeps returning a retryable one past the retry budget.
         httpx2.TransportError: If the connection keeps failing past the retry budget.
+        transient.FailedBodyError: If efetch keeps answering with an `errorResponse` past the retry budget.
     """
     if not pmids:
         raise ValueError('efetch.fetch requires at least one PMID')
@@ -182,9 +190,14 @@ async def fetch(pmids: Sequence[str], *, http_client: httpx2.AsyncClient, attemp
     }
     # POST the id list in the body: NCBI caps an inline `id=` list on a GET near 200
     # UIDs, but POST has no such ceiling, so one path serves any batch size.
-    response = await transient.send(
-        lambda: http_client.post(_EFETCH_URL, data=params), attempts=attempts, base_delay=_RETRY_BASE_DELAY_SECONDS
-    )
+
+    async def post() -> httpx2.Response:
+        response = await http_client.post(_EFETCH_URL, data=params)
+        if response.is_success and _ERROR_RESPONSE in response.content:
+            raise transient.FailedBodyError('efetch answered 2xx with an errorResponse')
+        return response
+
+    response = await transient.send(post, attempts=attempts, base_delay=_RETRY_BASE_DELAY_SECONDS)
     return response.content
 
 
@@ -214,7 +227,7 @@ def parse_set(xml: bytes) -> ParsedSet:
         from all three — the caller's `unknown`, never an invented record.
 
     Raises:
-        ValueError: If the root element is not `PubmedArticleSet` (an unexpected response shape,
+        MalformedSetError: If the root element is not `PubmedArticleSet` (an unexpected response shape,
             e.g. an eutils error document — not a silent miss); if the set carries a member that is
             neither a record of the two kinds nor the deletion notice; if a record or deletion
             states a PMID that is not canonical (digits, no leading zero), or one the set already
@@ -224,7 +237,7 @@ def parse_set(xml: bytes) -> ParsedSet:
     """
     root = etree.fromstring(xml, _PARSER)
     if root.tag != 'PubmedArticleSet':
-        raise ValueError(f'expected a PubmedArticleSet, got <{root.tag}>')
+        raise MalformedSetError(f'expected a PubmedArticleSet, got <{root.tag}>')
     articles: dict[str, pubmed_proto.pubmed_pb2.PubmedArticle] = {}
     book_articles: dict[str, pubmed_proto.pubmed_pb2.PubmedBookArticle] = {}
     deleted: set[str] = set()
@@ -243,7 +256,7 @@ def parse_set(xml: bytes) -> ParsedSet:
                     pmid = stated.text or ''
                     deleted.add(_canonical_unanswered_pmid(pmid, element.tag, articles, book_articles, deleted))
             case _:
-                raise ValueError(
+                raise MalformedSetError(
                     f'unexpected <{element.tag}> in a PubmedArticleSet; a member is a record of one of two kinds '
                     'or the DeleteCitation notice'
                 )
@@ -257,18 +270,18 @@ def _converted[T](element: etree._Element, convert: Callable[[etree._Element], T
     except (IndexError, KeyError, OverflowError, ValueError) as e:
         stated = (element.findtext(pmid_path) or '').strip()
         where = f'PMID {stated}' if stated else 'no PMID stated'
-        raise ValueError(
+        raise MalformedSetError(
             f'<{element.tag}> ({where}) does not convert as the pubmed_proto schema states it: {e!r}'
         ) from e
 
 
 def _canonical_unanswered_pmid(pmid: str, tag: str, *answered: Container[str]) -> str:
     if not _CANONICAL_PMID.fullmatch(pmid):
-        raise ValueError(
+        raise MalformedSetError(
             f'the index states a PMID that is not canonical (digits, no leading zero) in a {tag}: {pmid!r}'
         )
     if any(pmid in pmids for pmids in answered):
-        raise ValueError(f'PMID {pmid} is answered twice in one PubmedArticleSet')
+        raise MalformedSetError(f'PMID {pmid} is answered twice in one PubmedArticleSet')
     return pmid
 
 
@@ -295,7 +308,8 @@ def parse_response(xml: bytes) -> ParsedResponse:
     other records in the set resolve regardless.
 
     Raises:
-        ValueError: As `parse_set` — the set does not read as one record per PMID.
+        MalformedSetError: As `parse_set` — the set does not read as one record per PMID.
+        lxml.etree.XMLSyntaxError: As `parse_set`.
     """
     parsed = parse_set(xml)
     resolved: dict[str, ResolvedMetadata] = {}
@@ -320,6 +334,11 @@ def parse_response(xml: bytes) -> ParsedResponse:
 
 
 async def resolve(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> ParsedResponse:
-    """Resolve a batch of PMIDs to their `SourcedMetadata` + cross-ids via efetch (see `parse_response`)."""
+    """Resolve a batch of PMIDs to their `SourcedMetadata` + cross-ids via efetch (see `parse_response`).
+
+    Raises:
+        httpx2.HTTPError, transient.FailedBodyError: As `fetch`.
+        MalformedSetError, lxml.etree.XMLSyntaxError: As `parse_response`.
+    """
     xml = await fetch(pmids, http_client=http_client)
     return parse_response(xml)

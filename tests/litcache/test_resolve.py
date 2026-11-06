@@ -16,13 +16,14 @@ import json
 import logging
 import pathlib
 import traceback
+import urllib.parse
 from collections.abc import Callable, Sequence
 
 import httpx2
 import litfetch
 import pytest
 
-from themis.litcache import efetch, openalex, resolve, sourced_metadata, upstream_record
+from themis.litcache import efetch, openalex, resolve, sourced_metadata, transient, upstream_record
 from themis.litcache.models import litcache_pb2
 from themis.testing import openalex as fake_openalex
 
@@ -392,6 +393,148 @@ def test_resolve_batch_batches_pmids_into_one_efetch_call() -> None:
     resolved = _resolve_batch(handler, requests)
     assert efetch_calls == 1  # both PMIDs ride one efetch call
     assert set(resolved) == {'a'}  # 'b' is absent from the fixture set → unresolved, not raised
+
+
+def _efetched_ids(request: httpx2.Request) -> list[str]:
+    """The PMIDs an efetch POST asks for."""
+    return dict(urllib.parse.parse_qsl(request.content.decode()))['id'].split(',')
+
+
+def test_resolve_batch_charges_a_pmid_efetch_fails_on_to_its_paper_alone() -> None:
+    # efetch answers 400 to any call naming the poison PMID: halving the chunk confines the failure to it, the other
+    # paper resolves, and the poison's DOI takes no fallback (PubMed may hold its record).
+    poison = '11111111'
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        assert 'efetch' in request.url.path, f'no DOI fallback for a PMID efetch failed on: {request.url}'
+        if poison in _efetched_ids(request):
+            return httpx2.Response(400)
+        return httpx2.Response(200, content=_EFETCH_XML)
+
+    requests = [
+        resolve.ResolveRequest(join_key='good', pmid=_PMID, doi=None),
+        resolve.ResolveRequest(join_key='poison', pmid=poison, doi=_DOI_UNKNOWN),
+    ]
+    outcomes = _resolve_batch(handler, requests)
+
+    assert isinstance(outcomes['good'], resolve.ResolvedPaper)
+    failed = outcomes['poison']
+    assert isinstance(failed, resolve.IndexFailure)
+    assert '400' in failed.reason
+
+
+def test_resolve_batch_asks_for_each_half_after_a_spurious_failure() -> None:
+    asked: list[list[str]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        asked.append(_efetched_ids(request))
+        if len(asked) == 1:
+            return httpx2.Response(400)
+        return httpx2.Response(200, content=_EFETCH_XML)
+
+    requests = [
+        resolve.ResolveRequest(join_key='a', pmid=_PMID, doi=None),
+        resolve.ResolveRequest(join_key='b', pmid='11111111', doi=None),
+    ]
+    outcomes = _resolve_batch(handler, requests)
+
+    assert sorted(asked[0]) == sorted([_PMID, '11111111'])
+    assert sorted(asked[1:]) == [['11111111'], [_PMID]]
+    assert set(outcomes) == {'a'}  # 'b' is absent from the fixture set: unresolved, not failed
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        b'<PubmedArticleSet><PubmedArticle><errorResponse><message>x</message></errorResponse>',
+        b'<PubmedArticleSet><PubmedArticle>',
+        b'<eFetchResult><ERROR>bad id</ERROR></eFetchResult>',
+    ],
+    ids=['error-response', 'not-well-formed', 'not-a-set'],
+)
+def test_resolve_batch_charges_an_unreadable_answer_to_the_pmid_it_recurs_on(
+    monkeypatch: pytest.MonkeyPatch, body: bytes
+) -> None:
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    poison = '11111111'
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if poison in _efetched_ids(request):
+            return httpx2.Response(200, content=body)
+        return httpx2.Response(200, content=_EFETCH_XML)
+
+    requests = [
+        resolve.ResolveRequest(join_key='good', pmid=_PMID, doi=None),
+        resolve.ResolveRequest(join_key='poison', pmid=poison, doi=None),
+    ]
+    outcomes = _resolve_batch(handler, requests)
+
+    assert isinstance(outcomes['good'], resolve.ResolvedPaper)
+    assert isinstance(outcomes['poison'], resolve.IndexFailure)
+
+
+@pytest.mark.parametrize(
+    ('answer', 'raised'),
+    [
+        (httpx2.Response(400), httpx2.HTTPStatusError),
+        (httpx2.Response(200, content=b'<PubmedArticleSet><errorResponse/>'), transient.FailedBodyError),
+        (httpx2.Response(200, content=b'<eFetchResult/>'), efetch.MalformedSetError),
+    ],
+    ids=['400', 'error-response', 'not-a-set'],
+)
+def test_resolve_batch_raises_a_failure_of_every_request_within_a_few_calls(
+    monkeypatch: pytest.MonkeyPatch, answer: httpx2.Response, raised: type[Exception]
+) -> None:
+    # Every call failing: past the breaker's few PMIDs the error is raised, not charged to every paper.
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    nodes: set[tuple[str, ...]] = set()
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nodes.add(tuple(_efetched_ids(request)))
+        return answer
+
+    requests = [resolve.ResolveRequest(join_key=str(i), pmid=str(10_000_000 + i), doi=None) for i in range(200)]
+    with pytest.raises(raised):
+        _resolve_batch(handler, requests)
+    assert len(nodes) <= 15  # one path of halvings to a leaf, and a few siblings: not the ~400 of the whole tree
+
+
+@pytest.mark.parametrize('status', [401, 403, 404])
+def test_resolve_batch_does_not_halve_a_refusal_of_every_request(status: int) -> None:
+    calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        del request
+        calls += 1
+        return httpx2.Response(status)
+
+    requests = [
+        resolve.ResolveRequest(join_key='a', pmid=_PMID, doi=None),
+        resolve.ResolveRequest(join_key='b', pmid='11111111', doi=None),
+    ]
+    with pytest.raises(httpx2.HTTPStatusError):
+        _resolve_batch(handler, requests)
+    assert calls == 1
+
+
+def test_resolve_batch_does_not_halve_an_outage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    calls = 0
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        del request
+        calls += 1
+        return httpx2.Response(503)
+
+    requests = [
+        resolve.ResolveRequest(join_key='a', pmid=_PMID, doi=None),
+        resolve.ResolveRequest(join_key='b', pmid='11111111', doi=None),
+    ]
+    with pytest.raises(httpx2.HTTPStatusError):
+        _resolve_batch(handler, requests)
+    assert calls == efetch._MAX_FETCH_ATTEMPTS
 
 
 def test_resolve_batch_charges_a_failed_precondition_to_its_paper_alone() -> None:

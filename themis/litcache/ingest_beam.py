@@ -27,12 +27,22 @@ mint) from inside the workers:
    (counted `paper_precondition_failed`, the failed precondition recorded as the reason), a
    paper whose index record cannot be read or stored (counted `paper_schema_drift`, the key
    recorded as the reason), a paper OpenAlex holds more than one work for (counted
-   `paper_ambiguous_work`, the works recorded as the reason) and a paper whose write half
-   raises (counted `paper_failed`, the exception recorded as the reason) are all
+   `paper_ambiguous_work`, the works recorded as the reason), a paper efetch failed to answer
+   for (counted `paper_index_failed`, the error recorded as the reason) and a paper whose write
+   half raises (counted `paper_failed`, the exception recorded as the reason) are all
    dead-lettered under the run's own prefix (`dead_letter_paths`) and
    the run carries on — one bad paper never aborts a full-seed pass. `report_run`
    consolidates that run's records into one text file, so a re-run against the same
    bucket reports its own failures, not the history.
+
+`ingest/` is a dropbox: a run consumes what it can. Once the write half returns, written or
+skipped as already committed, the write stage deletes the seed pair if the paper holds it
+(`pipeline.why_seed_not_held`), and only at the generations it read, so a file dropped again
+under the same name meanwhile is kept for the next run. A seed the paper does not hold — a
+second, different pdf of a committed paper, say — is kept and dead-lettered with the reason. A
+seed that failed to ingest is kept, so the next run retries it, and so is an object with no
+counterpart, which no run can ingest. The bucket's object versioning is what recovers a
+deletion made in error.
 
 Backends reach the workers as factories, not instances: the driver and each worker live
 in different processes, so a `Bucket` / Postgres connection / HTTP transport is built
@@ -51,13 +61,13 @@ paper is committed, and the sweep asks for it.
 
 Per-stage counts are emitted as Beam metrics under `METRICS_NAMESPACE` (`papers_seen`,
 `doc_id_minted` / `doc_id_adopted`, `paper_written` / `paper_skipped`, `paper_unresolved` /
-`paper_precondition_failed` / `paper_schema_drift` / `paper_ambiguous_work` / `paper_failed`, `paper_asked` /
-`paper_already_asked` / `paper_not_asked`).
+`paper_precondition_failed` / `paper_schema_drift` / `paper_ambiguous_work` / `paper_index_failed` / `paper_failed`,
+`paper_asked` /
+`paper_already_asked` / `paper_not_asked`, `seed_deleted` / `seed_not_held` / `seed_replaced` /
+`seed_gone`).
 
 `report_run` is the post-run step (call after `wait_until_finish`): it builds and logs
-the diagnostics report. Deleting the transient seed prefix is a separate manual operator
-step (`themis.litcache.report.teardown_seed`), taken only once the report confirms a
-clean ingestion — never a side effect of the run.
+the diagnostics report.
 """
 
 from __future__ import annotations
@@ -89,7 +99,7 @@ from google.cloud import tasks_v2
 
 from themis.common import constants
 from themis.litcache import crosswalk, enqueue, identity, openalex, pipeline, produce, report, resolve
-from themis.litcache.models import work_pb2
+from themis.litcache.models import litcache_pb2, work_pb2
 
 _LOG = logging.getLogger(__name__)
 
@@ -109,10 +119,15 @@ _COUNTER_NAMES = (
     'paper_precondition_failed',
     'paper_schema_drift',
     'paper_ambiguous_work',
+    'paper_index_failed',
     'paper_failed',
     'paper_asked',
     'paper_already_asked',
     'paper_not_asked',
+    'seed_deleted',
+    'seed_not_held',
+    'seed_replaced',
+    'seed_gone',
 )
 
 # Papers that could not be ingested — unresolved metadata, a record failing the store's
@@ -124,10 +139,10 @@ _DEAD_LETTER_ROOT = 'diagnostics/dead_letters/'
 _JSON_SUFFIX = '.json'
 _PDF_SUFFIX = '.pdf'
 
-# A seed pdf larger than this is read-whole-into-memory + parsed on the worker, which OOMs or
-# stalls a modest machine; such a seed is dead-lettered by size rather than pulled. The corpus
-# has a handful of 200-450 MB outliers; legitimate papers sit well under this.
-_MAX_SEED_PDF_BYTES = 100 * 1024 * 1024
+# A seed pdf is read whole into memory and parsed on the worker, peaking at about twice its size
+# plus twice its Docling json's; a pdf larger than this is dead-lettered by size rather than
+# pulled. Legitimate figure-heavy papers reach 450 MB.
+_MAX_SEED_PDF_BYTES = 512 * 1024 * 1024
 
 # One shard key funnels every resolve request through a single GroupByKey group, so one
 # worker resolves the whole seed serially — bounding the global NCBI request rate
@@ -204,6 +219,20 @@ class _PaperWork:
     ident: identity.Identity
 
 
+@dataclasses.dataclass(frozen=True)
+class _ReadSeed:
+    """A seed pair as the write stage read it.
+
+    Attributes:
+        seed: The bytes.
+        generations: Each object's key and the generation read, pdf first: the generations a deletion is
+            conditioned on.
+    """
+
+    seed: pipeline.SeedObject
+    generations: tuple[tuple[str, int], ...]
+
+
 def pair_seed_keys(keys: Iterable[str], *, prefix: str = 'ingest/') -> SeedPairing:
     """Pair `<id>.json` + `<id>.pdf` seed objects by their shared stem.
 
@@ -271,8 +300,7 @@ def dead_letter_paths(now: datetime.datetime) -> tuple[str, str]:
 
     Records are scoped to one pass. A bucket accumulates passes, so an unscoped prefix
     would make every later run's report describe the bucket's whole history: a paper
-    whose failure was fixed would keep failing the dead-letter gate, and the gate is the
-    documented precondition for `report.teardown_seed`.
+    whose failure was fixed would keep failing the launcher's dead-letter gate.
 
     Args:
         now: The run's timestamp — the same one threaded through `build_pipeline`.
@@ -303,7 +331,8 @@ def _write_dead_letter(
         key: The seed's `bucket_key`; url-encoded, it names the record blob. Seeds sharing a
             claim key are ingested apart, so the claim key cannot name it.
         reason: Why it was dead-lettered — the exception (`type: message`),
-            `'metadata unresolved'`, or `'precondition failed: <reason>'`.
+            `'metadata unresolved'`, `'precondition failed: <reason>'`, `'index failed: <error>'`, or, for a seed kept
+            beside a committed paper, `'seed not held: <reason>'`.
         claim_key: The paper's claim key, when identity was classified.
         pmid: The paper's PMID, when identity was classified.
         doi: The paper's DOI, when identity was classified.
@@ -326,20 +355,29 @@ class _ExtractIdentityFn(beam.DoFn):
         self._dead_letter_prefix = dead_letter_prefix
         self._seen = metric.Metrics.counter(METRICS_NAMESPACE, 'papers_seen')
         self._failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_failed')
+        self._seed_gone = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_gone')
 
     @override
     def setup(self) -> None:
         self._bucket = self._bucket_factory()
 
+    def _gone(self, ref: SeedRef) -> None:
+        # Deleted since the driver listed it: by a run that ingested it, or by hand.
+        _LOG.info('seed %s is gone; nothing to ingest', ref.bucket_key)
+        self._seed_gone.inc()
+
     @override
     def process(self, ref: SeedRef) -> Iterator[tuple[str, _PaperWork]]:
         self._seen.inc()
-        # A pathologically large seed pdf (hundreds of MB) is read whole into memory and parsed
+        # A pathologically large seed pdf (over half a GB) is read whole into memory and parsed
         # for metadata; on a modest worker that OOMs or stalls the parser — a hang, not a
         # catchable error, so the exception handler below can't reach it. Skip it by metadata
         # (the size, no download) before pulling the bytes.
         pdf_blob = self._bucket.get_blob(ref.pdf_key)
-        if pdf_blob is not None and pdf_blob.size is not None and pdf_blob.size > _MAX_SEED_PDF_BYTES:
+        if pdf_blob is None:
+            self._gone(ref)
+            return
+        if pdf_blob.size is not None and pdf_blob.size > _MAX_SEED_PDF_BYTES:
             _LOG.warning(
                 'seed pdf %s is %d bytes (> %d): dead-lettering', ref.pdf_key, pdf_blob.size, _MAX_SEED_PDF_BYTES
             )
@@ -351,14 +389,18 @@ class _ExtractIdentityFn(beam.DoFn):
             )
             self._failed.inc()
             return
-        # The downloads stay outside the handler: a GCS fault is transient, and letting it
-        # raise keeps Beam's bundle retries. Dead-lettering is for a seed that will not parse
-        # however many times it is read.
-        seed = pipeline.SeedObject(
-            bucket_key=ref.bucket_key,
-            docling_json=self._bucket.blob(ref.json_key).download_as_bytes(),
-            pdf=(pdf_blob or self._bucket.blob(ref.pdf_key)).download_as_bytes(),
-        )
+        # The downloads stay outside the handler but NotFound: a GCS fault is transient, and
+        # letting it raise keeps Beam's bundle retries. Dead-lettering is for a seed that will
+        # not parse however many times it is read.
+        try:
+            seed = pipeline.SeedObject(
+                bucket_key=ref.bucket_key,
+                docling_json=self._bucket.blob(ref.json_key).download_as_bytes(),
+                pdf=pdf_blob.download_as_bytes(),
+            )
+        except api_exceptions.NotFound:
+            self._gone(ref)
+            return
         try:
             ident = pipeline.extract_identity(seed)
         except Exception as exc:  # noqa: BLE001 — isolate one unreadable seed; the reason is recorded, not swallowed
@@ -397,9 +439,10 @@ class _ResolveBatchFn(beam.DoFn):
     Runs `resolve.resolve_batch` over the `GroupByKey` group (it chunks the ids into
     per-call batches), emitting `(join_key, outcome)` for each paper it settles: a
     `ResolvedPaper`, a `RecordPreconditionFailure` for a record that fails the store's
-    precondition, a `SchemaDriftFailure` for a record Themis cannot read or store, or an
-    `AmbiguousWorkFailure` for a paper OpenAlex holds more than one work for (an unresolved
-    paper is absent — the write stage dead-letters all four). The HTTP transport and the
+    precondition, a `SchemaDriftFailure` for a record Themis cannot read or store, an
+    `AmbiguousWorkFailure` for a paper OpenAlex holds more than one work for, or an `IndexFailure`
+    for a paper efetch fails on (an unresolved paper is absent — the write stage dead-letters
+    all five). The HTTP transport and the
     OpenAlex API key are built per worker.
     """
 
@@ -523,7 +566,8 @@ class _WritePaperFn(beam.DoFn):
     `beam.utils.shared.Shared`), opened lazily on the first mint — a bundle of only
     unresolved papers never opens one. Counts `doc_id_minted`/`doc_id_adopted`,
     `paper_written`/`paper_skipped`, `paper_unresolved`/`paper_precondition_failed`/`paper_schema_drift`/
-    `paper_ambiguous_work`/`paper_failed`.
+    `paper_ambiguous_work`/`paper_index_failed`/`paper_failed`, and
+    `seed_deleted`/`seed_not_held`/`seed_replaced`/`seed_gone`.
     """
 
     def __init__(
@@ -556,10 +600,15 @@ class _WritePaperFn(beam.DoFn):
         self._precondition_failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_precondition_failed')
         self._schema_drift = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_schema_drift')
         self._ambiguous_work = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_ambiguous_work')
+        self._index_failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_index_failed')
         self._failed = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_failed')
         self._asked = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_asked')
         self._already_asked = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_already_asked')
         self._not_asked = metric.Metrics.counter(METRICS_NAMESPACE, 'paper_not_asked')
+        self._seed_deleted = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_deleted')
+        self._seed_not_held = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_not_held')
+        self._seed_replaced = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_replaced')
+        self._seed_gone = metric.Metrics.counter(METRICS_NAMESPACE, 'seed_gone')
 
     @override
     def setup(self) -> None:
@@ -601,6 +650,60 @@ class _WritePaperFn(beam.DoFn):
             doi=by_scheme.get('doi'),
         )
 
+    def _read_seed(self, ref: SeedRef) -> _ReadSeed | None:
+        """The seed pair and the generations read, or None when either object is gone."""
+        pdf_blob = self._bucket.blob(ref.pdf_key)
+        json_blob = self._bucket.blob(ref.json_key)
+        # Outside any handler but NotFound, as in the identity stage: a failed read is transient and worth Beam's
+        # retries, not a permanent dead letter.
+        try:
+            pdf_bytes = pdf_blob.download_as_bytes()
+            docling_json = json_blob.download_as_bytes()
+        except api_exceptions.NotFound:
+            # Deleted since the identity stage read it: by a first attempt of this bundle that settled it, or by hand.
+            _LOG.info('seed %s is gone; nothing to ingest', ref.bucket_key)
+            self._seed_gone.inc()
+            return None
+        if pdf_blob.generation is None or json_blob.generation is None:
+            raise RuntimeError(f'seed {ref.bucket_key} was read with no generation')
+        return _ReadSeed(
+            seed=pipeline.SeedObject(bucket_key=ref.bucket_key, docling_json=docling_json, pdf=pdf_bytes),
+            generations=((ref.pdf_key, pdf_blob.generation), (ref.json_key, json_blob.generation)),
+        )
+
+    def _settle_seed(self, work: _PaperWork, read: _ReadSeed, manifest: litcache_pb2.Manifest) -> None:
+        """Delete the seed pair if the paper holds it; otherwise keep it and record why."""
+        try:
+            reason = pipeline.why_seed_not_held(self._bucket, manifest, read.seed.pdf)
+        except ValueError as exc:  # a corrupt manifest
+            reason = f'{type(exc).__name__}: {exc}'
+        if reason is not None:
+            self._dead_letter(work, reason=f'seed not held: {reason}')
+            self._seed_not_held.inc()
+            return
+        if any(self._replaced(key, generation) for key, generation in read.generations):
+            self._seed_replaced.inc()
+            return
+        for key, generation in read.generations:
+            try:
+                self._bucket.blob(key).delete(if_generation_match=generation)
+            except api_exceptions.PreconditionFailed:
+                # Dropped again between the check above and here: the new object is the next run's.
+                _LOG.warning('seed object %s was replaced since it was read; keeping it', key)
+                self._seed_replaced.inc()
+                return
+            except api_exceptions.NotFound:
+                pass  # already deleted
+        self._seed_deleted.inc()
+
+    def _replaced(self, key: str, generation: int) -> bool:
+        """Whether `key` was dropped again since the stage read it at `generation`, so its pair is the next run's."""
+        current = self._bucket.get_blob(key)
+        if current is None or current.generation == generation:
+            return False
+        _LOG.warning('seed object %s was replaced since it was read; keeping the pair', key)
+        return True
+
     @override
     def process(self, joined: tuple[str, dict[str, list[object]]]) -> Iterator[str]:
         _join_key, grouped = joined
@@ -613,7 +716,8 @@ class _WritePaperFn(beam.DoFn):
                 resolve.ResolvedPaper
                 | resolve.RecordPreconditionFailure
                 | resolve.SchemaDriftFailure
-                | resolve.AmbiguousWorkFailure,
+                | resolve.AmbiguousWorkFailure
+                | resolve.IndexFailure,
             )
         ]
         outcome = outcomes[0] if outcomes else None
@@ -636,18 +740,18 @@ class _WritePaperFn(beam.DoFn):
                 self._dead_letter(work, reason=f'ambiguous OpenAlex work: {outcome.reason}')
                 self._ambiguous_work.inc()
                 continue
-            # Outside the handler, as in the identity stage: a failed seed read is transient
-            # and worth Beam's retries, not a permanent dead-letter.
-            seed = pipeline.SeedObject(
-                bucket_key=work.ref.bucket_key,
-                docling_json=self._bucket.blob(work.ref.json_key).download_as_bytes(),
-                pdf=self._bucket.blob(work.ref.pdf_key).download_as_bytes(),
-            )
+            if isinstance(outcome, resolve.IndexFailure):
+                self._dead_letter(work, reason=f'index failed: {outcome.reason}')
+                self._index_failed.inc()
+                continue
+            read = self._read_seed(work.ref)
+            if read is None:
+                continue
             try:
                 result = pipeline.ingest_paper(
                     self._bucket,
                     self._mint,
-                    seed,
+                    read.seed,
                     work.ident,
                     outcome,
                     self._licence,
@@ -663,6 +767,7 @@ class _WritePaperFn(beam.DoFn):
             (self._minted if result.minted else self._adopted).inc()
             (self._written if result.written else self._skipped).inc()
             self._ask_for(result)
+            self._settle_seed(work, read, result.manifest)
             yield result.doc_id
 
 
@@ -844,10 +949,9 @@ def report_run(
     """Build and log the post-run diagnostics report.
 
     Call after the run reaches a terminal state (`result.wait_until_finish()`).
-    The unpaired-seed list is re-derived here (the seed is still intact — teardown
-    is a separate manual step, `themis.litcache.report.teardown_seed`), the counters
-    snapshotted from the run's metrics, and the `no_text_layer` papers scanned from
-    the committed manifests.
+    The unpaired-seed list is re-derived here from what the run left under the seed
+    prefix, the counters snapshotted from the run's metrics, and the `no_text_layer`
+    papers scanned from the committed manifests.
 
     Args:
         run: The finished run, carrying its own diagnostics paths — so the report

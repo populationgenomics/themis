@@ -63,7 +63,7 @@ from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 
 from themis.common import storage
-from themis.litcache import convert, crosswalk, identity, ingest, oa, pdf, resolve, writer
+from themis.litcache import convert, crosswalk, identity, ingest, oa, pdf, records, resolve, writer
 from themis.litcache.models import litcache_pb2
 
 # Source-lineage handles: the manifest's `Source.handle` and the on-disk
@@ -272,6 +272,36 @@ def ingest_paper(
         manifest=result.manifest,
         generation=result.generation,
     )
+
+
+def why_seed_not_held(bucket: gcs.Bucket, manifest: litcache_pb2.Manifest, seed_pdf: bytes) -> str | None:
+    """Why the paper `manifest` commits does not hold its seed, or None when it does.
+
+    A paper holds its seed when it has main text and stores the seed pdf's bytes as a source revision: the seed's
+    Docling json only ever bootstraps markdown, so once the paper has text the pdf is all the seed adds. A paper
+    ingested before, from another seed or another route, can hold neither.
+
+    Args:
+        bucket: The cache bucket.
+        manifest: The paper's committed manifest, as `ingest_paper` returned it.
+        seed_pdf: The seed's pdf bytes.
+
+    Returns:
+        A reason for a person reading the run's dead letters, or None when the seed may be deleted.
+    """
+    if records.markdown(manifest) is None:
+        return 'the paper has no main text'
+    pdf_hash = hashlib.sha256(seed_pdf).hexdigest()
+    missing = []
+    for source in manifest.sources:
+        if any(revision.hash == pdf_hash for revision in source.revisions):
+            name = writer.source_revision_path(manifest.doc_id, source.handle, pdf_hash, source.media_type)
+            if bucket.blob(name).exists():
+                return None
+            missing.append(name)
+    if missing:
+        return f'its manifest records the seed pdf as {", ".join(missing)}, which does not exist'
+    return f'the paper holds no source revision {pdf_hash}, so its seed pdf is another copy'
 
 
 async def _fetch_oa(

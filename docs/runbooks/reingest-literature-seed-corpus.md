@@ -34,14 +34,25 @@ probes for its manifest ([`pipeline.ingest_paper`](../../themis/litcache/pipelin
   create-only (`if_generation_match=0`), so even a race cannot replace a manifest
   ([`writer.py`](../../themis/litcache/writer.py)).
 
-So a plain re-run over the whole seed is idempotent and, beside that missing-record fill, does one thing: it completes
-the papers that have no manifest — those dead-lettered last time (unresolved metadata, a record failing the store's
-precondition, a record with a field its reader cannot read, a write-half exception, an oversized pdf) and those a crash
-left claimed but uncommitted. Each is re-done under the `doc_id` its crosswalk row already holds. Nothing else changes —
-though a skip is not free: the write stage downloads a paper's seed json and pdf before it learns the manifest exists
-([`ingest_beam._WritePaperFn`](../../themis/litcache/ingest_beam.py)), so a full re-run still moves the whole seed.
+`ingest/` is a dropbox, and a run consumes it. Once a paper is written or skipped, the write stage deletes its seed pair
+if the paper holds it: the paper has main text, and stores the seed's pdf bytes as a source
+([`pipeline.why_seed_not_held`](../../themis/litcache/pipeline.py)). The Docling json only bootstraps the markdown, so
+it goes with the pdf. A seed the paper does not hold — a second, different pdf of a committed paper — is kept and
+dead-lettered as `seed not held`, for a person to look at. A seed that failed to ingest is kept, so the next run retries
+it, and so is an object with no counterpart. A deletion is undone from the bucket's noncurrent versions, kept 30 days.
+The store is not the seeds' archive: they are copied into `ingest/` by hand from source material kept outside Themis,
+and a redo or a rebuild copies them from there again.
 
-There is no flag that forces reprocessing. To redo a committed paper, remove its directory and re-run:
+So a re-run is idempotent and, beside that missing-record fill and the deletions, does one thing: it completes the
+papers that have no manifest — those dead-lettered last time (unresolved metadata, a record failing the store's
+precondition, a record with a field its reader cannot read, a write-half exception, an oversized pdf), those a crash
+left claimed but uncommitted, and those dropped since. Each is re-done under the `doc_id` its crosswalk row already
+holds. A skip is not free: the write stage downloads a paper's seed json and pdf before it learns the manifest exists
+([`ingest_beam._WritePaperFn`](../../themis/litcache/ingest_beam.py)), so the first run over a prefix the earlier runs
+left in place moves all of it, once.
+
+There is no flag that forces reprocessing. To redo a committed paper, remove its directory, copy its seed into `ingest/`
+again from the source material, and run:
 
 ```sh
 gcloud storage rm -r "gs://$FULLTEXT/papers/$DOC_ID"
@@ -118,12 +129,14 @@ paper makes; `--limit` refreshes the first N due in `doc_id` order, a canary bef
 touches a `metadata.pb` that exists, so re-run it until it exits 0. A non-zero exit lists each paper it did not refresh
 and why, and the reasons are of two kinds. A transport failure ends the run with what is written kept, and a resolver
 miss (`metadata unresolved`) can be litfetch's batched resolver abandoning a lookup it could not complete in time; both
-are re-run. The rest stay on the list however often it runs and are reviewed, not retried: a manifest with neither pmid
-nor doi (nothing to resolve on), an unreadable manifest, a record that fails the store's precondition
-(`precondition failed:` — a book record stating no Bookshelf accession, say), and a record holding a field a reader
-reads in a shape it cannot read (`schema drift:`, repaired in that reader). A key the index adds causes it only if its
-value is a NaN or an infinite number, which standard JSON text cannot carry; otherwise no reader reads the key, and the
-JSON text keeps it. A miss that persists is a paper no index has a record for.
+are re-run, as is a paper efetch failed on even when asked for it alone (`index failed:`), which is reviewed only if it
+recurs — a record that does not convert as the pubmed_proto schema states recurs on every run. The rest stay on the list
+however often it runs and are reviewed, not retried: a manifest with neither pmid nor doi (nothing to resolve on), an
+unreadable manifest, a record that fails the store's precondition (`precondition failed:` — a book record stating no
+Bookshelf accession, say), and a record holding a field a reader reads in a shape it cannot read (`schema drift:`,
+repaired in that reader). A key the index adds causes it only if its value is a NaN or an infinite number, which
+standard JSON text cannot carry; otherwise no reader reads the key, and the JSON text keeps it. A miss that persists is
+a paper no index has a record for.
 
 ### Filling the metadata fields
 
@@ -162,9 +175,8 @@ uv run python -m tools.psql --project cpg-themis-dev -- -c 'TRUNCATE litcache.cr
 gcloud storage rm -r "gs://$FULLTEXT/papers"
 ```
 
-Either way the seed under `ingest/` must still exist — it is the only input. The plan marks that prefix transient, to be
-deleted once ingestion succeeds; every path in this runbook is closed the day that happens, so decide that before
-running `teardown_seed` (below).
+Either way the run reads only `ingest/`, and a run deletes each seed its paper holds, so a rebuild copies the seeds
+there again from the source material: each paper's pdf and a Docling json made from it.
 
 ## Prerequisites
 
@@ -198,8 +210,8 @@ gcloud storage buckets add-iam-policy-binding "gs://$FULLTEXT" --member="user:$M
 ```
 
 The last one is wider than reading: on a direct run the launcher itself lists `ingest/`, scans every manifest for the
-report, and writes the dead-letter summary into the store; teardown deletes from it. For the crosswalk step of a full
-rebuild you also need the `themis-clu` group ([`hand-driving-a-service.md`](hand-driving-a-service.md)).
+report, and writes the dead-letter summary into the store; the job deletes the seeds it ingested. For the crosswalk step
+of a full rebuild you also need the `themis-clu` group ([`hand-driving-a-service.md`](hand-driving-a-service.md)).
 
 ## 1. Build and push the worker image
 
@@ -232,11 +244,13 @@ uv run --group dataflow python -m tools.litcache.launch_dataflow \
 It exercises everything the real run does — the image, the subnet, the SA, the Cloud SQL mint, live NCBI and OA egress —
 and stays cheap. Read the report it prints at the end: `counters` is the per-stage tally for this run (`papers_seen`
 should equal
-`paper_written + paper_skipped + paper_unresolved + paper_precondition_failed + paper_schema_drift + paper_ambiguous_work + paper_failed`);
-`dead-lettered` is the count of records under `diagnostics/dead_letters/<run>/`, consolidated into `<run>.jsonl` beside
-it with a `reason` per paper; `no_text_layer` lists pdf-derived papers with no recoverable character layer, a
-data-quality signal rather than a failure. A second staged run reports every paper it wrote the first time as
-`paper_skipped` — that is the idempotency check.
+`paper_written + paper_skipped + paper_unresolved + paper_precondition_failed + paper_schema_drift + paper_ambiguous_work + paper_index_failed + paper_failed + seed_gone`,
+and `paper_written + paper_skipped` should equal `seed_deleted + seed_not_held + seed_replaced`); `dead-lettered` is the
+count of records under `diagnostics/dead_letters/<run>/`, consolidated into `<run>.jsonl` beside it with a `reason` per
+paper; `no_text_layer` lists pdf-derived papers with no recoverable character layer, a data-quality signal rather than a
+failure. The run deletes the staged seeds it ingested from the scratch bucket, never the store's. A second staged run
+copies the same pairs again and reports every paper it wrote the first time as `paper_skipped` — that is the idempotency
+check.
 
 The isolation is storage only. The crosswalk is the shared one, so a staged run mints rows whose manifests live in the
 scratch bucket. That is harmless to the direct run — it adopts the row and, finding no manifest in the store, writes the
@@ -308,8 +322,15 @@ list, not the exit code:
 
 - `papers_seen` is one per paired seed object (the launcher logs unpaired objects — a `.json` with no `.pdf` or the
   reverse — as excluded; they are never ingested).
-- `paper_written + paper_skipped` is what the store now holds from this seed; every remaining paper is a line in
-  `gs://$FULLTEXT/diagnostics/dead_letters/<run>.jsonl` with its reason.
+- `paper_written + paper_skipped` is what the store now holds from this seed; every other paper is a line in
+  `gs://$FULLTEXT/diagnostics/dead_letters/<run>.jsonl` with its reason, or counted `seed_gone`: deleted before the run
+  read it, by an overlapping run or a retried bundle whose first attempt ingested it and deleted the seed.
+- Of the papers stored, `seed_deleted` had their seeds deleted. Each `seed not held` line in the dead letters is a seed
+  kept beside a paper that does not hold it — another pdf of the same paper, say — and counts toward
+  `--max-dead-letters` like any other, since a person decides what becomes of it. `seed_replaced` counts pairs one of
+  whose objects was dropped again while the run read it; the next run takes them.
+- A deletion interrupted between the pdf and the json leaves the json alone, as does a json dropped again in the moment
+  between the two deletions; the next run lists it as unpaired.
 - The `papers written:` line at the top of the report is the count of every manifest under `papers/`, not this run's
   writes; on a direct run that is the whole store. Producing it downloads each manifest from your machine, which takes a
   while after the job itself has finished — leave the launcher running.
@@ -328,9 +349,8 @@ no longer need; the crosswalk rows staged runs minted stay, and are healed or su
 gcloud storage rm -r "gs://$SCRATCH/dataflow" "gs://$SCRATCH/ingest" "gs://$SCRATCH/papers" "gs://$SCRATCH/diagnostics"
 ```
 
-`report.teardown_seed` deletes the store's `ingest/` ([`report.py`](../../themis/litcache/report.py)) — a manual step by
-design, taken only after the report confirms every paper is committed, and one that forecloses every re-ingestion this
-runbook describes. Do not take it as part of a routine re-run.
+What a direct run leaves under the store's `ingest/` is what it did not ingest: dead-lettered seeds, seeds not held, and
+objects with no counterpart.
 
 ## What can go wrong
 

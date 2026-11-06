@@ -235,14 +235,16 @@ def test_refresh_reports_a_resolver_miss_and_still_refreshes_the_rest(gcs_bucket
 
 
 def test_refresh_reports_a_record_the_store_cannot_take_without_writing_it(gcs_bucket: gcs.Bucket) -> None:
-    """A record failing a precondition or its reader, or one OpenAlex holds two works of, is kept as a failure."""
+    """A record failing a precondition or its reader, one OpenAlex holds two works of, or one efetch failed on fails."""
     _commit(gcs_bucket, _A, pmid='1', metadata=None)
     _commit(gcs_bucket, _B, pmid='2', metadata=None)
     _commit(gcs_bucket, _C, pmid='3', metadata=None)
+    _commit(gcs_bucket, _D, pmid='4', metadata=None)
     outcomes = {
         '1': resolve.RecordPreconditionFailure(reason='no article title'),
         '2': resolve.SchemaDriftFailure(reason='publication_year: not an integer'),
         '3': resolve.AmbiguousWorkFailure(reason='OpenAlex holds 2 works for pmid:3: W1, W2'),
+        '4': resolve.IndexFailure(reason="HTTPStatusError: Client error '400 Bad Request'"),
     }
 
     report = _run(gcs_bucket, _stub_resolver(outcomes))
@@ -252,8 +254,9 @@ def test_refresh_reports_a_record_the_store_cannot_take_without_writing_it(gcs_b
         _A: 'precondition failed: no article title',
         _B: 'schema drift: publication_year: not an integer',
         _C: 'ambiguous OpenAlex work: OpenAlex holds 2 works for pmid:3: W1, W2',
+        _D: "index failed: HTTPStatusError: Client error '400 Bad Request'",
     }
-    for doc_id in (_A, _B, _C):
+    for doc_id in (_A, _B, _C, _D):
         assert _read(gcs_bucket, writer.metadata_path(doc_id)) is None
 
 

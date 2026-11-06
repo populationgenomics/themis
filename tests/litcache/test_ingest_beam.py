@@ -20,7 +20,7 @@ import threading
 import time
 import typing
 import urllib.parse
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 import apache_beam as beam
 import httpx2
@@ -388,17 +388,29 @@ def conn_factory(
     )
 
 
+# Distinct DOI bucket keys give two distinct identities from the same bytes (the
+# docling origin filename is opaque, so the DOI key is the identity signal).
+_SEEDED_STEMS = ('10.5555%2Fsynthetic.aaa', '10.5555%2Fsynthetic.bbb')
+
+
+def _drop(bucket: gcs.Bucket, *stems: str, pdf: bytes | None = None) -> None:
+    """Drop a non-OA seed pair under `ingest/` for each stem."""
+    if pdf is None:
+        pdf = (_NONOA / 'source.pdf').read_bytes()
+    for stem in stems:
+        bucket.blob(f'ingest/{stem}.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
+        bucket.blob(f'ingest/{stem}.pdf').upload_from_string(pdf)
+
+
+def _seed_keys(bucket: gcs.Bucket) -> list[str]:
+    return sorted(blob.name for blob in bucket.list_blobs(prefix='ingest/'))
+
+
 @pytest.fixture
 def seeded_bucket(request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket) -> Iterator[tuple[str, gcs.Bucket]]:
     """A registered fake-gcs bucket seeded with two non-OA papers under `ingest/`."""
     token = request.node.name
-    docling = (_NONOA / 'docling.json').read_bytes()
-    pdf = (_NONOA / 'source.pdf').read_bytes()
-    # Distinct DOI bucket keys give two distinct identities from the same bytes (the
-    # docling origin filename is opaque, so the DOI key is the identity signal).
-    for doi in ('10.5555%2Fsynthetic.aaa', '10.5555%2Fsynthetic.bbb'):
-        gcs_bucket.blob(f'ingest/{doi}.json').upload_from_string(docling)
-        gcs_bucket.blob(f'ingest/{doi}.pdf').upload_from_string(pdf)
+    _drop(gcs_bucket, *_SEEDED_STEMS)
     _BUCKETS[token] = gcs_bucket
     yield token, gcs_bucket
     del _BUCKETS[token]
@@ -477,6 +489,7 @@ def test_each_paper_committed_is_asked_for_once_with_its_generation(
         tasks = list(_TASKS[token])
         # Skips both papers, and asks again at the generations it finds: a retried bundle skips what its
         # failed attempt committed, which that attempt may not have asked for.
+        _drop(bucket, *_SEEDED_STEMS)
         _run(token, conn_factory, ask=ask)
         again = _TASKS[token][len(tasks) :]
     finally:
@@ -542,10 +555,11 @@ def test_build_pipeline_re_run_adopts_the_incumbent_doc_ids(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
 ) -> None:
-    token, _bucket = seeded_bucket
+    token, bucket = seeded_bucket
     _run(token, conn_factory)
     first_ids = _crosswalk(conn)
 
+    _drop(bucket, *_SEEDED_STEMS)
     _run(token, conn_factory)
 
     # A second pass claims nothing new. Only the crosswalk can show that: the manifests are
@@ -556,7 +570,7 @@ def test_build_pipeline_re_run_adopts_the_incumbent_doc_ids(
 
 
 @pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
-def test_report_run_summarizes_and_leaves_seed_intact(
+def test_report_run_summarizes_what_the_run_left(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
     token, bucket = seeded_bucket
@@ -573,10 +587,7 @@ def test_report_run_summarizes_and_leaves_seed_intact(
     assert rep.unpaired_seeds == ['ingest/lonely.json']
     assert rep.flagged == []
     assert rep.dead_lettered == 0
-
-    # The report never deletes: the seed prefix is left intact for the manual
-    # teardown (`themis.litcache.report.teardown_seed`).
-    assert list(bucket.list_blobs(prefix='ingest/')) != []
+    assert _seed_keys(bucket) == ['ingest/lonely.json']
     assert len(_manifests(bucket)) == 2
 
 
@@ -627,6 +638,7 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
         assert [r['reason'] for r in records] == ['metadata unresolved']
         assert 'synthetic.ghost' in str(records[0]['key'])
         assert _manifests(gcs_bucket) == []
+        assert len(_seed_keys(gcs_bucket)) == 2  # kept for the next run to retry
 
         # The report counts the records on the bucket, so a run whose metrics never
         # reached the driver still reports its failures rather than a clean 0.
@@ -636,8 +648,8 @@ def test_build_pipeline_dead_letters_unresolvable_papers(
         assert rep.dead_lettered == 1
 
         # A later pass over the same bucket, with the failing seed gone, reports its own
-        # failures — not the bucket's history. The gate on `dead_lettered` is the
-        # precondition for tearing the seed down, so a stale count blocks that forever.
+        # failures — not the bucket's history. The launcher gates on `dead_lettered`, so a
+        # stale count would fail every later run.
         for blob in list(gcs_bucket.list_blobs(prefix='ingest/')):
             blob.delete()
         with test_pipeline.TestPipeline(options=_options()) as second_root:
@@ -849,6 +861,55 @@ def test_build_pipeline_dead_letters_a_paper_openalex_holds_two_works_of(
         del _BUCKETS[token]
 
 
+def _failing_efetch_transport() -> httpx2.MockTransport:
+    """A transport where efetch answers 400 to every call naming `_BOOK_PMID`."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if 'efetch' in request.url.path:
+            assert _BOOK_PMID in request.content.decode()
+            return httpx2.Response(400)
+        raise AssertionError(f'unexpected resolve request: {request.url}')
+
+    return httpx2.MockTransport(handler)
+
+
+def test_build_pipeline_dead_letters_a_paper_efetch_fails_on(
+    request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
+) -> None:
+    # One PMID efetch fails on alone costs its paper, not the run; the seed is kept, so the next run retries it.
+    token = request.node.name
+    _drop(gcs_bucket, _BOOK_PMID)
+    _BUCKETS[token] = gcs_bucket
+    try:
+        with test_pipeline.TestPipeline(options=_options()) as root:
+            ingest_beam.build_pipeline(
+                root,
+                ask=None,
+                bucket_factory=functools.partial(_bucket_for, token),
+                conn_factory=_forbidden_conn,
+                licence=_licence(),
+                now=_NOW,
+                openalex_api_key_factory=_openalex_api_key,
+                fetchers_factory=_no_fetchers,
+                transport_factory=_failing_efetch_transport,
+            )
+        result = root.result
+
+        records = _dead_letters(gcs_bucket)
+        assert len(records) == 1
+        assert str(records[0]['reason']).startswith('index failed: ')
+        assert records[0]['pmid'] == _BOOK_PMID
+        assert _seed_keys(gcs_bucket) == [f'ingest/{_BOOK_PMID}.json', f'ingest/{_BOOK_PMID}.pdf']
+
+        rep = ingest_beam.report_run(
+            ingest_beam.IngestionRun.stamped(result, _NOW), functools.partial(_bucket_for, token)
+        )
+        assert rep.counters['paper_index_failed'] == 1
+        assert rep.counters['paper_unresolved'] == 0
+    finally:
+        del _BUCKETS[token]
+
+
 def test_build_pipeline_dead_letters_a_record_failing_the_precondition(
     request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
 ) -> None:
@@ -1025,3 +1086,191 @@ def test_paper_failed_totals_both_stages(request: pytest.FixtureRequest, gcs_buc
         assert _manifests(gcs_bucket) == []
     finally:
         del _BUCKETS[token]
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_run_deletes_the_seeds_its_papers_hold(
+    conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
+) -> None:
+    token, bucket = seeded_bucket
+    bucket.blob('ingest/lonely.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+
+    result = _run(token, conn_factory)
+
+    assert len(_manifests(bucket)) == 2
+    assert _seed_keys(bucket) == ['ingest/lonely.pdf']  # no counterpart: no run can ingest it
+    assert ingest_beam.read_counter(result, 'seed_deleted') == 2
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_seed_dropped_again_for_a_committed_paper_is_deleted(
+    conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
+) -> None:
+    token, bucket = seeded_bucket
+    _run(token, conn_factory)
+    committed = {m.doc_id: m for m in _manifests(bucket)}
+
+    _drop(bucket, *_SEEDED_STEMS)
+    result = _run(token, conn_factory)
+
+    assert {m.doc_id: m for m in _manifests(bucket)} == committed
+    assert _seed_keys(bucket) == []
+    assert ingest_beam.read_counter(result, 'paper_skipped') == 2
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_seed_whose_pdf_its_paper_does_not_hold_is_kept_and_dead_lettered(
+    conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
+) -> None:
+    token, bucket = seeded_bucket
+    _run(token, conn_factory)
+
+    # Another copy of a committed paper's pdf: the paper is skipped, and its pdf is not this one.
+    stem = _SEEDED_STEMS[0]
+    _drop(bucket, stem, pdf=(_NONOA / 'source.pdf').read_bytes() + b'\n%another copy\n')
+    result = _run(token, conn_factory)
+
+    assert _seed_keys(bucket) == [f'ingest/{stem}.json', f'ingest/{stem}.pdf']
+    (record,) = _dead_letters(bucket)
+    assert record['key'] == f'{stem}.json'
+    assert str(record['reason']).startswith('seed not held: ')
+    assert ingest_beam.read_counter(result, 'seed_not_held') == 1
+    settled = sum(ingest_beam.read_counter(result, n) for n in ('seed_deleted', 'seed_not_held', 'seed_replaced'))
+    stored = sum(ingest_beam.read_counter(result, n) for n in ('paper_written', 'paper_skipped'))
+    assert settled == stored == 1
+
+
+class _GenerationCheckedBlob:
+    """A real blob whose delete honours `if_generation_match`, which fake-gcs-server ignores."""
+
+    def __init__(self, bucket: gcs.Bucket, key: str) -> None:
+        self._bucket = bucket
+        self._blob = bucket.blob(key)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._blob, name)
+
+    def delete(self, *, if_generation_match: int) -> None:
+        current = self._bucket.get_blob(self._blob.name)
+        if current is None:
+            raise api_exceptions.NotFound(self._blob.name)
+        if current.generation != if_generation_match:
+            raise api_exceptions.PreconditionFailed(f'{self._blob.name} is at {current.generation}')
+        self._blob.delete(if_generation_match=if_generation_match)
+
+
+class _GenerationCheckedBucket:
+    """A real bucket whose blobs' deletes honour their generation precondition; everything else delegates."""
+
+    def __init__(self, bucket: gcs.Bucket) -> None:
+        self._bucket = bucket
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._bucket, name)
+
+    def blob(self, key: str) -> object:
+        return _GenerationCheckedBlob(self._bucket, key)
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+@pytest.mark.parametrize('suffix', ['pdf', 'json'])
+def test_a_seed_dropped_again_while_the_run_read_it_is_kept(
+    suffix: str,
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token, bucket = seeded_bucket
+    stem = _SEEDED_STEMS[0]
+    dropped_again = b'%dropped again\n'
+    held = pipeline.why_seed_not_held
+
+    def drop_again_then_check(bucket_: gcs.Bucket, manifest: litcache_pb2.Manifest, seed_pdf: bytes) -> str | None:
+        if manifest.external_ids.doi == '10.5555/synthetic.aaa':
+            bucket_.blob(f'ingest/{stem}.{suffix}').upload_from_string(dropped_again)
+        return held(bucket_, manifest, seed_pdf)
+
+    monkeypatch.setattr(pipeline, 'why_seed_not_held', drop_again_then_check)
+    _BUCKETS[token] = typing.cast('gcs.Bucket', _GenerationCheckedBucket(bucket))
+    result = _run(token, conn_factory)
+
+    # The pair waits for the next run, whichever of its objects was dropped again; the other paper's seed is deleted.
+    assert _seed_keys(bucket) == [f'ingest/{stem}.json', f'ingest/{stem}.pdf']
+    assert bucket.blob(f'ingest/{stem}.{suffix}').download_as_bytes() == dropped_again
+    assert ingest_beam.read_counter(result, 'seed_replaced') == 1
+    assert ingest_beam.read_counter(result, 'seed_deleted') == 1
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_seed_gone_before_the_write_stage_is_counted_and_the_run_completes(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As a retried write bundle finds a seed its first attempt deleted: the run completes.
+    token, bucket = seeded_bucket
+    stem = _SEEDED_STEMS[0]
+    extract = pipeline.extract_identity
+
+    def extract_then_delete(seed: pipeline.SeedObject) -> identity.Identity:
+        ident = extract(seed)
+        if seed.bucket_key == f'{stem}.json':
+            bucket.blob(f'ingest/{stem}.pdf').delete()
+        return ident
+
+    monkeypatch.setattr(pipeline, 'extract_identity', extract_then_delete)
+    result = _run(token, conn_factory)
+
+    assert {m.external_ids.doi for m in _manifests(bucket)} == {'10.5555/synthetic.bbb'}
+    assert _dead_letters(bucket) == []
+    assert ingest_beam.read_counter(result, 'seed_gone') == 1
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_seed_gone_after_the_driver_listed_it_is_counted_and_the_run_completes(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # As an overlapping run deletes a seed this one listed.
+    token, bucket = seeded_bucket
+    stem = _SEEDED_STEMS[0]
+    pair = ingest_beam.pair_seed_keys
+
+    def pair_then_delete(keys: Iterable[str], *, prefix: str = 'ingest/') -> ingest_beam.SeedPairing:
+        pairing = pair(keys, prefix=prefix)
+        bucket.blob(f'ingest/{stem}.pdf').delete()
+        return pairing
+
+    monkeypatch.setattr(ingest_beam, 'pair_seed_keys', pair_then_delete)
+    result = _run(token, conn_factory)
+
+    assert {m.external_ids.doi for m in _manifests(bucket)} == {'10.5555/synthetic.bbb'}
+    assert _dead_letters(bucket) == []
+    assert ingest_beam.read_counter(result, 'seed_gone') == 1
+
+
+@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
+def test_a_pdf_dropped_again_after_the_replacement_check_is_kept(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The drop lands between the check and the delete, so the delete's own generation precondition is what keeps it.
+    token, bucket = seeded_bucket
+    stem = _SEEDED_STEMS[0]
+    dropped_again = b'%dropped again\n'
+
+    def drop_again_unseen(self: object, key: str, generation: int) -> bool:
+        del self, generation
+        if key == f'ingest/{stem}.pdf':
+            bucket.blob(key).upload_from_string(dropped_again)
+        return False
+
+    monkeypatch.setattr(ingest_beam._WritePaperFn, '_replaced', drop_again_unseen)
+    _BUCKETS[token] = typing.cast('gcs.Bucket', _GenerationCheckedBucket(bucket))
+    result = _run(token, conn_factory)
+
+    assert _seed_keys(bucket) == [f'ingest/{stem}.json', f'ingest/{stem}.pdf']
+    assert bucket.blob(f'ingest/{stem}.pdf').download_as_bytes() == dropped_again
+    assert ingest_beam.read_counter(result, 'seed_replaced') == 1

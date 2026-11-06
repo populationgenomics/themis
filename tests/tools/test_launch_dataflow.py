@@ -70,10 +70,16 @@ def test_dataflow_options_carry_the_target() -> None:
     # would submit to one project while minting into another's Cloud SQL.
     target = launch_dataflow._Target(project='cpg-themis-test', region='europe-west2')
     options = launch_dataflow._dataflow_options(
-        target=target, scratch_bucket='scratch', sdk_image='img', job_name='job', max_workers=1
+        target=target,
+        scratch_bucket='scratch',
+        sdk_image='img',
+        job_name='job',
+        max_workers=1,
+        worker_machine_type='n1-highmem-4',
     )
     resolved = options.get_all_options()
 
+    assert resolved['machine_type'] == 'n1-highmem-4'
     assert resolved['project'] == 'cpg-themis-test'
     assert resolved['region'] == 'europe-west2'
     assert resolved['subnetwork'] == target.subnetwork

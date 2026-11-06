@@ -1,16 +1,10 @@
-"""Post-run diagnostics report and the (manual) seed teardown.
+"""Post-run diagnostics report.
 
 After a seed-ingestion run, a diagnostics report is emitted: the `no_text_layer`
 papers (the pdf-derived papers whose pdf carries no recoverable character layer —
 the quote→bbox problem the design surfaces early, literature-cache.md §Source
-anchors), the seed objects left unpaired, and the per-stage totals. The report is
-the input to the manual check before the transient `ingest/` prefix is deleted with
-`teardown_seed`.
-
-Teardown is deliberately not automatic: the seed bytes are the only re-completion
-source for a paper whose manifest never got written, so deleting `ingest/` is an
-explicit operator step taken only once the report confirms every paper ingested —
-never a side effect of the run finishing.
+anchors), the seed objects left unpaired, and the per-stage totals, among them the
+seeds the run deleted because their papers hold them and those it kept.
 
 This module operates on a `google.cloud.storage.Bucket` plus plain counts, so it is
 testable without Beam. The Beam coupling — turning a `PipelineResult` into the
@@ -20,14 +14,11 @@ counter snapshot — lives in `themis.litcache.ingest_beam`.
 from __future__ import annotations
 
 import dataclasses
-import logging
 from collections.abc import Iterator, Mapping
 
 from google.cloud import storage as gcs
 
 from themis.litcache.models import litcache_pb2
-
-_LOG = logging.getLogger(__name__)
 
 _MANIFEST_SUFFIX = '/manifest.pb'
 
@@ -143,10 +134,15 @@ def render_report(report: IngestReport) -> str:
         f'  precondition failed (dead-lettered): {report.counters.get("paper_precondition_failed", 0)}',
         f'  schema drift (dead-lettered): {report.counters.get("paper_schema_drift", 0)}',
         f'  ambiguous OpenAlex work (dead-lettered): {report.counters.get("paper_ambiguous_work", 0)}',
+        f'  index failed (dead-lettered): {report.counters.get("paper_index_failed", 0)}',
         f'  failed (dead-lettered): {report.counters.get("paper_failed", 0)}',
         f'  asked the worker for: {report.counters.get("paper_asked", 0)}',
         f'  already asked for: {report.counters.get("paper_already_asked", 0)}',
         f'  not asked for (left to the sweep): {report.counters.get("paper_not_asked", 0)}',
+        f'  seeds deleted, held by their papers: {report.counters.get("seed_deleted", 0)}',
+        f'  seeds kept, not held (dead-lettered): {report.counters.get("seed_not_held", 0)}',
+        f'  seeds kept, dropped again since read: {report.counters.get("seed_replaced", 0)}',
+        f'  seeds already gone: {report.counters.get("seed_gone", 0)}',
         f'  unpaired seed objects: {len(report.unpaired_seeds)}',
         f'  no_text_layer: {len(report.flagged)}',
     ]
@@ -180,30 +176,6 @@ def write_dead_letter_summary(bucket: gcs.Bucket, *, records_prefix: str, summar
     body = '\n'.join(blob.download_as_bytes().decode('utf-8') for blob in records) + '\n'
     bucket.blob(summary_path).upload_from_string(body, content_type='application/x-ndjson')
     return len(records)
-
-
-def teardown_seed(bucket: gcs.Bucket, *, seed_prefix: str = 'ingest/') -> int:
-    """Delete every object under `seed_prefix` — a manual operator step.
-
-    The seed prefix is transient: source bytes are copied into each paper
-    directory, so once every paper's manifest is committed the seed is redundant.
-    This is not called automatically by the run: the seed is the only re-completion
-    source for an unwritten paper, so the operator deletes it only after the
-    diagnostics report (`build_report`) confirms a clean ingestion.
-
-    Args:
-        bucket: The cache bucket.
-        seed_prefix: The flat seed prefix to delete.
-
-    Returns:
-        The number of objects deleted.
-    """
-    deleted = 0
-    for blob in list(bucket.list_blobs(prefix=seed_prefix)):
-        blob.delete()
-        deleted += 1
-    _LOG.info('deleted %d seed object(s) under %r', deleted, seed_prefix)
-    return deleted
 
 
 def _scan_manifests(bucket: gcs.Bucket, papers_prefix: str) -> Iterator[litcache_pb2.Manifest]:

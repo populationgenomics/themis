@@ -177,7 +177,13 @@ def _stage_seed(source: gcs.Bucket, scratch: gcs.Bucket, *, seed_prefix: str, li
 
 
 def _dataflow_options(
-    *, target: _Target, scratch_bucket: str, sdk_image: str, job_name: str, max_workers: int
+    *,
+    target: _Target,
+    scratch_bucket: str,
+    sdk_image: str,
+    job_name: str,
+    max_workers: int,
+    worker_machine_type: str,
 ) -> pipeline_options.PipelineOptions:
     """Dataflow Runner v2 options: workers run as the ingestion SA off the custom image."""
     return pipeline_options.PipelineOptions(
@@ -189,9 +195,7 @@ def _dataflow_options(
             f'--staging_location=gs://{scratch_bucket}/dataflow/staging',
             f'--sdk_container_image={sdk_image}',
             '--experiments=use_runner_v2',
-            # Headroom for reading + parsing large seed pdfs whole in memory (the oversized ones
-            # are dead-lettered, but legitimate large papers still load fully).
-            '--worker_machine_type=n1-standard-2',
+            f'--worker_machine_type={worker_machine_type}',
             f'--subnetwork={target.subnetwork}',
             f'--service_account_email={target.ingest_sa}',
             f'--job_name={job_name}',
@@ -225,6 +229,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         '--limit', type=int, default=None, help='cap papers ingested; omit to ingest all (required unless --direct)'
     )
     parser.add_argument('--max-workers', type=int, default=2, help='Dataflow max workers (default: %(default)s)')
+    parser.add_argument(
+        '--worker-machine-type',
+        default='n1-standard-2',
+        help="Dataflow worker machine type; the single-shard resolve holds every paper's records, so a large seed "
+        'needs a high-memory type (default: %(default)s)',
+    )
     parser.add_argument(
         '--direct',
         action='store_true',
@@ -315,6 +325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         sdk_image=args.sdk_image,
         job_name=job_name,
         max_workers=args.max_workers,
+        worker_machine_type=args.worker_machine_type,
     )
 
     run = ingest_beam.run_ingestion(

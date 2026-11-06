@@ -19,7 +19,7 @@ import httpx2
 import pytest
 from lxml import etree
 
-from themis.litcache import efetch, metadata_fields, sourced_metadata, upstream_record
+from themis.litcache import efetch, metadata_fields, sourced_metadata, transient, upstream_record
 from themis.litcache.models import litcache_pb2
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
@@ -353,6 +353,68 @@ def test_fetch_retries_transient_error_then_succeeds(monkeypatch: pytest.MonkeyP
 
     assert asyncio.run(run()) == b'<PubmedArticleSet/>'
     assert len(calls) == 3  # two transient 502s, then the 200
+
+
+# The shape eutils answers under load: a 200 whose set is cut short by an appended error element.
+_CUT_SHORT = (
+    b'<PubmedArticleSet>\n<PubmedArticle>\n'
+    b'<errorResponse xmlns="http://www.ncbi.nlm.nih.gov/"><message>Unable to obtain query #1</message></errorResponse>'
+)
+
+
+def _bodies_handler(bodies: list[bytes]) -> tuple[list[int], Callable[[httpx2.Request], httpx2.Response]]:
+    """A MockTransport handler answering 200 with each body in turn (last repeats); records call count."""
+    calls: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        del request
+        calls.append(1)
+        return httpx2.Response(200, content=bodies[min(len(calls) - 1, len(bodies) - 1)])
+
+    return calls, handler
+
+
+def test_fetch_retries_a_set_cut_short_by_an_error_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    calls, handler = _bodies_handler([_CUT_SHORT, b'<PubmedArticleSet/>'])
+
+    async def run() -> bytes:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+            return await efetch.fetch(['1'], http_client=client)
+
+    assert asyncio.run(run()) == b'<PubmedArticleSet/>'
+    assert len(calls) == 2
+
+
+def test_fetch_keeps_the_status_of_a_failed_answer_carrying_an_error_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    calls: list[int] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        del request
+        calls.append(1)
+        return httpx2.Response(400, content=_CUT_SHORT)
+
+    async def run() -> bytes:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+            return await efetch.fetch(['1'], http_client=client)
+
+    with pytest.raises(httpx2.HTTPStatusError):
+        asyncio.run(run())
+    assert len(calls) == 1  # a 4xx stays non-retryable whatever its body
+
+
+def test_fetch_gives_up_on_error_responses_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
+    calls, handler = _bodies_handler([_CUT_SHORT])
+
+    async def run() -> bytes:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+            return await efetch.fetch(['1'], http_client=client)
+
+    with pytest.raises(transient.FailedBodyError):
+        asyncio.run(run())
+    assert len(calls) == efetch._MAX_FETCH_ATTEMPTS
 
 
 def test_fetch_gives_up_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:

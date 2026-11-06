@@ -199,8 +199,9 @@ async def refresh(
     Requests are keyed by `doc_id`, so two papers sharing an identifier each receive
     a record. A paper present in the plan and absent from the resolver's result is a
     failure, never a silent skip; so is one the resolver settles with a failure of its
-    own — a record failing the store's precondition, or one Themis cannot read or store —
-    carrying that failure's reason. The due papers are resolved in chunks and each chunk
+    own — a record failing the store's precondition, one Themis cannot read or store, a paper
+    OpenAlex holds more than one work for, or one efetch failed on — carrying that failure's
+    reason. The due papers are resolved in chunks and each chunk
     written before the next is resolved: a resolver transport error propagates, the
     records written so far stay (each is valid on its own), and a re-run resumes with
     the papers still lacking one.
@@ -241,7 +242,11 @@ async def refresh(
 
 def _failure_reason(
     request: resolve.ResolveRequest,
-    outcome: resolve.RecordPreconditionFailure | resolve.SchemaDriftFailure | resolve.AmbiguousWorkFailure | None,
+    outcome: resolve.RecordPreconditionFailure
+    | resolve.SchemaDriftFailure
+    | resolve.AmbiguousWorkFailure
+    | resolve.IndexFailure
+    | None,
 ) -> str:
     """Why the paper was not refreshed, worded as ingestion's dead letters word the same outcome."""
     match outcome:
@@ -253,6 +258,8 @@ def _failure_reason(
             return f'schema drift: {reason}'
         case resolve.AmbiguousWorkFailure(reason=reason):
             return f'ambiguous OpenAlex work: {reason}'
+        case resolve.IndexFailure(reason=reason):
+            return f'index failed: {reason}'
 
 
 def render_failures(failures: Iterable[Failure]) -> str:

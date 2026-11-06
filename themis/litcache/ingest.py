@@ -139,8 +139,8 @@ async def ingest_unknown_paper(
         efetch.RecordPreconditionError, upstream_record.SchemaDriftError, openalex.AmbiguousWorkError: If
             an index holds a record of the paper this store cannot take (`resolve.resolve_metadata`).
             Permanent for that id.
-        httpx2.HTTPError: On an upstream failure that is not a clean miss — transient, so it propagates
-            rather than being recorded as a paper that does not exist.
+        httpx2.HTTPError, transient.FailedBodyError: On an upstream failure that is not a clean miss —
+            transient, so it propagates rather than being recorded as a paper that does not exist.
         RuntimeError: If the mint did not converge within its retry bound (`crosswalk.mint`) — a bug,
             not an expected outcome.
         pg8000.exceptions.DatabaseError: On any crosswalk failure that is not the insert race `mint`

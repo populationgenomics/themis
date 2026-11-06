@@ -19,9 +19,9 @@ OpenAlex API key is read from ``--project``'s Secret Manager under the same cred
 Metadata resolution and the OA ladder use their live defaults; resolution is batched,
 so the request rate is bounded by call count, not worker count. A paper that cannot be
 resolved or written is dead-lettered under ``diagnostics/dead_letters/`` and the run
-carries on; more than ``--max-dead-letters`` of them exits non-zero. Teardown is manual:
-delete what the run wrote under the scratch bucket (the bucket itself is Pulumi's), or call
-``themis.litcache.report.teardown_seed``.
+carries on; more than ``--max-dead-letters`` of them exits non-zero. The run deletes each
+staged seed its paper holds, as a run on the store does; delete the rest of what it wrote
+under the scratch bucket by hand (the bucket itself is Pulumi's).
 
 Example (throwaway Postgres needs the ``test`` group for testcontainers)::
 
@@ -293,10 +293,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         rep = ingest_beam.report_run(run, bucket_factory, seed_prefix=args.seed_prefix)
 
     print(report.render_report(rep))
-    print(f'\nOutput written to gs://{args.scratch_bucket}/papers/ — seed left intact under {args.seed_prefix}.')
     print(
-        'Teardown is manual: delete what the run wrote under the scratch bucket, '
-        'or call themis.litcache.report.teardown_seed.'
+        f'\nOutput written to gs://{args.scratch_bucket}/papers/; what was not ingested is left under '
+        f'{args.seed_prefix}. Delete what the run wrote under the scratch bucket by hand.'
     )
     if rep.dead_lettered > args.max_dead_letters:
         # Per-paper isolation keeps the pipeline DONE however many papers failed, so the

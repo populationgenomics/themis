@@ -100,18 +100,6 @@ def test_render_report_mentions_flagged_and_unpaired(gcs_bucket: gcs.Bucket) -> 
     assert 'unpaired: ingest/lonely.json' in rendered
 
 
-def test_teardown_deletes_only_the_seed_prefix(gcs_bucket: gcs.Bucket) -> None:
-    gcs_bucket.blob('ingest/a.json').upload_from_string(b'{}')
-    gcs_bucket.blob('ingest/a.pdf').upload_from_string(b'%PDF')
-    gcs_bucket.blob('papers/aaa/manifest.pb').upload_from_string(b'{}')  # not under ingest/: survives
-
-    deleted = report.teardown_seed(gcs_bucket)
-
-    assert deleted == 2
-    assert list(gcs_bucket.list_blobs(prefix='ingest/')) == []
-    assert gcs_bucket.blob('papers/aaa/manifest.pb').exists()
-
-
 def test_write_dead_letter_summary_consolidates_records(gcs_bucket: gcs.Bucket) -> None:
     # Records come from the real producer, so the shape this summary documents is pinned to
     # what the pipeline writes rather than to a hand-written copy that can drift from it.

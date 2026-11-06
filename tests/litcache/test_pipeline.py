@@ -338,6 +338,76 @@ def test_re_run_is_idempotent_and_skips(conn: pg8000.dbapi.Connection, gcs_bucke
     assert gcs_bucket.blob(writer.manifest_path(first.doc_id)).download_as_bytes() == committed
 
 
+def _ingest_nonoa(bucket: gcs.Bucket, conn: pg8000.dbapi.Connection) -> pipeline.IngestResult:
+    return _ingest_via_transport(
+        bucket, conn, _seed(), _licence(), fetchers=_NO_OA, transport=_transport(_NONOA_CROSSREF)
+    )
+
+
+def test_a_paper_holds_the_seed_it_was_ingested_from(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
+    result = _ingest_nonoa(gcs_bucket, conn)
+
+    assert pipeline.why_seed_not_held(gcs_bucket, result.manifest, _seed().pdf) is None
+
+
+def test_a_paper_ingested_on_the_xml_branch_holds_its_seed(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket
+) -> None:
+    # Its text is rendered from the XML, not the seed: the seed pdf is kept as a source all the same.
+    seed = pipeline.SeedObject(
+        bucket_key='10.1186%2Fs13073-017-0482-5.json',
+        docling_json=(_OA / 'docling.json').read_bytes(),
+        pdf=(_OA / 'source.pdf').read_bytes(),
+    )
+    result = _ingest_via_transport(
+        gcs_bucket,
+        conn,
+        seed,
+        _licence(),
+        fetchers=[_jats_fetcher()],
+        transport=_transport((_OA / 'crossref.json').read_bytes()),
+        file_sources=[],
+    )
+
+    assert pipeline.why_seed_not_held(gcs_bucket, result.manifest, seed.pdf) is None
+
+
+def test_a_paper_does_not_hold_another_copy_of_its_pdf(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
+    result = _ingest_nonoa(gcs_bucket, conn)
+
+    reason = pipeline.why_seed_not_held(gcs_bucket, result.manifest, _seed().pdf + b'\n%another copy\n')
+
+    assert reason is not None
+    assert 'no source revision' in reason
+
+
+def test_a_paper_whose_seed_pdf_object_is_missing_does_not_hold_it(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket
+) -> None:
+    result = _ingest_nonoa(gcs_bucket, conn)
+    (source,) = result.manifest.sources
+    (revision,) = source.revisions
+    gcs_bucket.blob(
+        writer.source_revision_path(result.doc_id, source.handle, revision.hash, source.media_type)
+    ).delete()
+
+    reason = pipeline.why_seed_not_held(gcs_bucket, result.manifest, _seed().pdf)
+
+    assert reason is not None
+    assert 'does not exist' in reason
+
+
+def test_a_paper_with_no_main_text_does_not_hold_its_seed(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket
+) -> None:
+    result = _ingest_nonoa(gcs_bucket, conn)
+    manifest = litcache_pb2.Manifest()
+    manifest.CopyFrom(result.manifest)
+    del manifest.refs['markdown']
+
+    assert pipeline.why_seed_not_held(gcs_bucket, manifest, _seed().pdf) == 'the paper has no main text'
+
+
 def test_resumes_after_a_crash_reusing_the_claimed_doc_id(
     conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
 ) -> None:

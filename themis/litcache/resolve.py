@@ -49,8 +49,9 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 import httpx2
 import litfetch
 from litfetch import resolvers
+from lxml import etree
 
-from themis.litcache import crossref, efetch, openalex, sourced_metadata, upstream_record
+from themis.litcache import crossref, efetch, openalex, sourced_metadata, transient, upstream_record
 from themis.litcache.models import litcache_pb2
 
 _LOG = logging.getLogger(__name__)
@@ -66,6 +67,11 @@ _CROSSREF_MAX_ATTEMPTS = 5
 # efetch caps a PMID list at 200; a resolve batch larger than that is split into this
 # many ids per efetch call. litfetch's batched resolver self-chunks at its own caps.
 _ID_CALL_LIMIT = 200
+# The statuses `_efetch_confined` asks for each half on: what efetch answers to a request it cannot
+# serve, which may be one PMID's doing. Any other is about every request, and propagates.
+_HALVED_STATUSES = frozenset({400, 413, 414})
+# More PMIDs than this failing alone in one chunk is a failure of every request, not of those PMIDs.
+_MAX_INDEX_FAILURES_PER_CHUNK = 2
 
 
 class MetadataUnresolvedError(Exception):
@@ -147,7 +153,21 @@ class AmbiguousWorkFailure:
     reason: str
 
 
-type Outcome = ResolvedPaper | RecordPreconditionFailure | SchemaDriftFailure | AmbiguousWorkFailure
+@dataclasses.dataclass(frozen=True)
+class IndexFailure:
+    """A paper whose PMID efetch failed to answer for even when asked for it alone (`_efetch_confined`).
+
+    PubMed may hold the paper's record, so no other source is tried in its place. Nothing is written for the paper, so
+    a later run asks again; one efetch keeps failing on is reviewed.
+
+    Attributes:
+        reason: How efetch failed, as the error states it.
+    """
+
+    reason: str
+
+
+type Outcome = ResolvedPaper | RecordPreconditionFailure | SchemaDriftFailure | AmbiguousWorkFailure | IndexFailure
 
 
 @dataclasses.dataclass(frozen=True)
@@ -364,6 +384,7 @@ async def resolve_metadata(
         openalex.AmbiguousWorkError: If OpenAlex holds more than one work for the paper's PMID or DOI.
         httpx2.HTTPError: On a transport failure or a non-2xx status from any index other than Crossref's 404
             (a transient error the caller retries — distinct from a clean miss).
+        transient.FailedBodyError: If efetch keeps answering 2xx with an `errorResponse` (transient, likewise).
     """
     settled = await _settle_one(pmid=pmid, doi=doi, http_client=http_client)
     found = await _look_up_beside([settled], http_client=http_client, openalex_api_key=openalex_api_key)
@@ -411,19 +432,81 @@ def _chunk(items: Sequence[str], size: int) -> Iterator[Sequence[str]]:
         yield items[start : start + size]
 
 
-async def _efetch_batched(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> efetch.ParsedResponse:
-    """Resolve `pmids` through efetch in chunks of `_ID_CALL_LIMIT`, merging the chunks' answers."""
-    resolved: dict[str, efetch.ResolvedMetadata] = {}
-    precondition_failed: dict[str, str] = {}
+@dataclasses.dataclass
+class _Efetched:
+    """efetch's answers for a batch of PMIDs: `efetch.ParsedResponse`'s two maps, and the PMIDs it failed to answer.
+
+    Attributes:
+        resolved: As `efetch.ParsedResponse.resolved`.
+        precondition_failed: As `efetch.ParsedResponse.precondition_failed`.
+        failed: Each PMID efetch failed to answer for even alone, with how it failed (`IndexFailure`).
+    """
+
+    resolved: dict[str, efetch.ResolvedMetadata] = dataclasses.field(default_factory=dict)
+    precondition_failed: dict[str, str] = dataclasses.field(default_factory=dict)
+    failed: dict[str, str] = dataclasses.field(default_factory=dict)
+
+    def update(self, other: _Efetched) -> None:
+        self.resolved.update(other.resolved)
+        self.precondition_failed.update(other.precondition_failed)
+        self.failed.update(other.failed)
+
+
+async def _efetch_batched(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> _Efetched:
+    """Resolve `pmids` through efetch in chunks of `_ID_CALL_LIMIT`, merging their answers (`_efetch_confined`)."""
+    efetched = _Efetched()
     for chunk in _chunk(pmids, _ID_CALL_LIMIT):
-        response = await efetch.resolve(chunk, http_client=http_client)
-        resolved.update(response.resolved)
-        precondition_failed.update(response.precondition_failed)
-    return efetch.ParsedResponse(resolved=resolved, precondition_failed=precondition_failed)
+        efetched.update(await _efetch_confined(chunk, http_client=http_client))
+    return efetched
 
 
-def _efetch_outcome(efetched: efetch.ParsedResponse, pmid: str | None) -> _Settled | RecordPreconditionFailure | None:
-    """What efetch's answer settles for `pmid`: resolved, a failed precondition, or `None` (not answered)."""
+async def _efetch_confined(pmids: Sequence[str], *, http_client: httpx2.AsyncClient) -> _Efetched:
+    """Ask efetch for `pmids`, and for each half apart when efetch fails on the whole, down to one PMID.
+
+    efetch fails a batch it should answer: a 400, a set cut short by an `errorResponse` past the retry budget, a set
+    that does not read as one record per PMID. Halving confines a failure that recurs on a few PMIDs to those, each an
+    `IndexFailure`, so it costs those papers rather than the run. A failure on more than
+    `_MAX_INDEX_FAILURES_PER_CHUNK` PMIDs alone is a failure of every request — NCBI under load, a request efetch
+    refuses whatever it names — so the error is raised: a breaker that stops halving within a few levels, about a
+    dozen calls for a 200-PMID chunk, each spending its own retry budget.
+
+    Raises:
+        httpx2.HTTPStatusError: If efetch answers a 429 or a 5xx past the retry budget, or any status other than
+            those in `_HALVED_STATUSES`; or one of those on more PMIDs alone than the breaker allows.
+        httpx2.TransportError: If the connection keeps failing past the retry budget.
+        transient.FailedBodyError, efetch.MalformedSetError, lxml.etree.XMLSyntaxError: If efetch fails so on more PMIDs
+            alone than the breaker allows.
+    """
+    efetched = _Efetched()
+
+    async def ask(part: Sequence[str]) -> None:
+        try:
+            response = await efetch.resolve(part, http_client=http_client)
+        except (httpx2.HTTPStatusError, transient.FailedBodyError, efetch.MalformedSetError, etree.XMLSyntaxError) as e:
+            if isinstance(e, httpx2.HTTPStatusError) and e.response.status_code not in _HALVED_STATUSES:
+                raise
+            if len(part) > 1:
+                _LOG.warning('efetch failed for %d PMIDs (%r); asking for each half apart', len(part), e)
+                half = len(part) // 2
+                await ask(part[:half])
+                await ask(part[half:])
+                return
+            if len(efetched.failed) == _MAX_INDEX_FAILURES_PER_CHUNK:
+                raise
+            _LOG.warning('efetch failed for PMID %s alone: %r', part[0], e)
+            efetched.failed[part[0]] = f'{type(e).__name__}: {e}'
+            return
+        efetched.resolved.update(response.resolved)
+        efetched.precondition_failed.update(response.precondition_failed)
+
+    await ask(pmids)
+    return efetched
+
+
+def _efetch_outcome(
+    efetched: _Efetched, pmid: str | None
+) -> _Settled | RecordPreconditionFailure | IndexFailure | None:
+    """What efetch's answer settles for `pmid`: resolved, a failed precondition or call, or `None` (not answered)."""
     if pmid is None:
         return None
     record = efetched.resolved.get(pmid)
@@ -432,6 +515,9 @@ def _efetch_outcome(efetched: efetch.ParsedResponse, pmid: str | None) -> _Settl
     reason = efetched.precondition_failed.get(pmid)
     if reason is not None:
         return RecordPreconditionFailure(reason=reason)
+    reason = efetched.failed.get(pmid)
+    if reason is not None:
+        return IndexFailure(reason=reason)
     return None
 
 
@@ -462,7 +548,8 @@ async def resolve_batch(
     precondition is a `RecordPreconditionFailure` in the result, not raised: the fault is that
     record's alone, and the DOI path is not tried in its place. Likewise a paper whose OpenAlex
     record cannot be read or stored is a `SchemaDriftFailure`, and one OpenAlex holds more than
-    one work for an `AmbiguousWorkFailure`, each charged to it alone.
+    one work for an `AmbiguousWorkFailure`, each charged to it alone; and a paper whose PMID efetch
+    fails to answer for even alone is an `IndexFailure` (`_efetch_confined`).
 
     Args:
         requests: The papers to resolve (deduplicated on identifier internally).
@@ -476,17 +563,19 @@ async def resolve_batch(
     Returns:
         A mapping of `join_key` → the paper's outcome: a `ResolvedPaper`, a
         `RecordPreconditionFailure` carrying the reason, a `SchemaDriftFailure` naming the
-        key, or an `AmbiguousWorkFailure` naming the works. A paper resolved through efetch
+        key, an `AmbiguousWorkFailure` naming the works, or an `IndexFailure` saying how efetch
+        failed. A paper resolved through efetch
         (directly or via a discovered pmid) carries efetch's harvested cross-ids; a paper
         OpenAlex resolved carries its DOI and pmcid.
 
     Raises:
-        httpx2.HTTPError: On a transport failure or a non-2xx status from efetch or OpenAlex
-            (transient; the caller retries the batch).
+        httpx2.HTTPError: On a transport failure, a 429 or 5xx from efetch past its retry budget, or a
+            non-2xx status from OpenAlex (transient; the caller retries the batch); or a failure of every
+            efetch request (`_efetch_confined`).
+        transient.FailedBodyError, efetch.MalformedSetError, lxml.etree.XMLSyntaxError: On a failure of
+            every efetch request (`_efetch_confined`).
         ValueError: If two requests share a `join_key` but not their identifiers. Also if an
-            efetch answer does not read as one record per PMID (`efetch.parse_set`): the parse
-            itself is then not trustworthy, so the chunk fails rather than any one paper; likewise
-            if an OpenAlex answer does not read as works of the identifiers asked (`openalex.find`).
+            OpenAlex answer does not read as works of the identifiers asked (`openalex.find`).
         upstream_record.SchemaDriftError: If an OpenAlex work's `id`, or the identifier it was
             looked up by, cannot be read, so it cannot be charged to one paper (`openalex.find`).
     """
@@ -581,7 +670,7 @@ def _doi_outcome(
     doi: str,
     litfetched: litfetch.ArticleIds,
     in_openalex: _InOpenAlex | SchemaDriftFailure | AmbiguousWorkFailure | None,
-    efetched: efetch.ParsedResponse,
+    efetched: _Efetched,
 ) -> _Settled | Outcome | None:
     """What the DOI path settles for `doi` (`_resolve_doi_batch`), or `None` when nothing resolves it.
 
