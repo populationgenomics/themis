@@ -12,10 +12,15 @@ time surfaces as an `anthropic` error, is retried, and leaves the paper PENDING.
 Each transcription's token usage goes to the request-token counter, exported periodically off the
 request path (`themis/telemetry`), so a failed export is logged and never fails a conversion. `PORT` is
 the Cloud Run convention; `/healthz` reports liveness.
+
+`THEMIS_CONVERT_CONCURRENCY` is how many requests the service lets one instance serve at once, and
+sizes the thread pool each request's producer runs on (`handler.process_conversion`). It is required:
+a pool smaller than the service's limit would cap the instance below it without saying so.
 """
 
 from __future__ import annotations
 
+import concurrent.futures
 import datetime
 import functools
 import logging
@@ -36,6 +41,9 @@ from themis.telemetry import names, request_tokens
 _BUCKET: web.AppKey[storage.Bucket] = web.AppKey('bucket', storage.Bucket)
 _CONVERT_PDF: web.AppKey[ocr.PdfConverter] = web.AppKey('convert_pdf')
 _METER_PROVIDER: web.AppKey[sdk_metrics.MeterProvider] = web.AppKey('meter_provider', sdk_metrics.MeterProvider)
+_EXECUTOR: web.AppKey[concurrent.futures.ThreadPoolExecutor] = web.AppKey(
+    'executor', concurrent.futures.ThreadPoolExecutor
+)
 
 # The series' `job` label; the Cloud Run service's name.
 _SERVICE_NAME = 'themis-convert-worker'
@@ -62,8 +70,16 @@ async def _convert(request: web.Request) -> web.Response:
         content_type=request.content_type,
         headers=request.headers,
         produce=produce,
+        executor=request.app[_EXECUTOR],
     )
     return web.Response(status=status)
+
+
+def _concurrency_from_env() -> int:
+    value = _require('THEMIS_CONVERT_CONCURRENCY')
+    if not value.isdecimal() or int(value) < 1:
+        raise SystemExit(f'THEMIS_CONVERT_CONCURRENCY must be a positive integer, not {value!r}')
+    return int(value)
 
 
 def _bucket_from_env() -> storage.Bucket:
@@ -105,7 +121,9 @@ async def _on_startup(app: web.Application) -> None:
     # Env reads before anything that reaches a network, so a missing identifier is reported as itself
     # rather than behind a connection failure.
     credentials = _credentials_from_env()
+    concurrency = _concurrency_from_env()
     app[_BUCKET] = _bucket_from_env()
+    app[_EXECUTOR] = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix='convert')
     provider = _meter_provider()
     app[_METER_PROVIDER] = provider
     tokens = request_tokens.RequestTokens(provider.get_meter(names.METER_NAME))
@@ -115,6 +133,7 @@ async def _on_startup(app: web.Application) -> None:
 async def _on_cleanup(app: web.Application) -> None:
     app[_METER_PROVIDER].shutdown(timeout_millis=_SHUTDOWN_TIMEOUT.total_seconds() * 1000)
     app[_BUCKET].client.close()
+    app[_EXECUTOR].shutdown(wait=False, cancel_futures=True)
 
 
 def build_app() -> web.Application:

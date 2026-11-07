@@ -13,10 +13,13 @@ federation credential touches no network, so binding it needs no fake.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import dataclasses
 import datetime
 import functools
 import json
+import pathlib
+import threading
 import uuid
 from collections.abc import Collection
 from typing import override
@@ -42,6 +45,8 @@ from themis.telemetry import names, request_tokens
 from themis.testing import in_memory_metrics
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
+_OTHER_DOC_ID = '9f3a0000-0000-4000-8000-000000000011'
+_TEXT_PDF = pathlib.Path(__file__).resolve().parents[4] / 'tests' / 'fixtures' / 'litcache' / 'nonoa' / 'source.pdf'
 _CAPTURED_AT = datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC)
 # The delivery Cloud Tasks names on every request it makes.
 _DELIVERY = {
@@ -71,9 +76,11 @@ _FEDERATION_ENV = {
 }
 
 
-def _set_federation_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def _set_startup_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set every variable startup reads before the bucket: the federation ids and the request concurrency."""
     for name, value in _FEDERATION_ENV.items():
         monkeypatch.setenv(name, value)
+    monkeypatch.setenv('THEMIS_CONVERT_CONCURRENCY', '4')
 
 
 class _Provider(sdk_metrics.MeterProvider):
@@ -135,15 +142,17 @@ def _run(
     content_type: str = 'application/json',
     headers: dict[str, str] | None = None,
 ) -> int:
-    return asyncio.run(
-        handler_mod.process_conversion(
-            _lazy_bucket(),
-            body,
-            content_type=content_type,
-            headers=_DELIVERY if headers is None else headers,
-            produce=produce,
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        return asyncio.run(
+            handler_mod.process_conversion(
+                _lazy_bucket(),
+                body,
+                content_type=content_type,
+                headers=_DELIVERY if headers is None else headers,
+                produce=produce,
+                executor=executor,
+            )
         )
-    )
 
 
 def _request(doc_id: str = _DOC_ID, targets: tuple[str, ...] = (work.MAIN_TEXT_TARGET,)) -> bytes:
@@ -338,11 +347,17 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
     produce = functools.partial(
         produce_mod.run, fetch=fetch, fetch_pdf=no_pdf_located, convert_pdf=convert, now=lambda: _CAPTURED_AT
     )
-    status = asyncio.run(
-        handler_mod.process_conversion(
-            gcs_bucket, _request(), content_type=work.WORK_REQUEST_MEDIA_TYPE, headers=_DELIVERY, produce=produce
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        status = asyncio.run(
+            handler_mod.process_conversion(
+                gcs_bucket,
+                _request(),
+                content_type=work.WORK_REQUEST_MEDIA_TYPE,
+                headers=_DELIVERY,
+                produce=produce,
+                executor=executor,
+            )
         )
-    )
     assert status == 200
     assert outcome_mod.read_readiness(gcs_bucket, _DOC_ID) is outcome_mod.Readiness.READY
     manifest = litcache_pb2.Manifest.FromString(gcs_bucket.blob(writer.manifest_path(_DOC_ID)).download_as_bytes())
@@ -356,7 +371,7 @@ def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(
     # Drives the app `main` actually builds, startup included, so the wiring between build_app and
     # _on_startup is covered: a revision that never binds the bucket passes its startup probe and
     # then 500s every task, because /healthz answers without touching it.
-    _set_federation_env(monkeypatch)
+    _set_startup_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', lambda: gcs_bucket)
     _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()
@@ -385,6 +400,70 @@ def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(
     assert legacy_status == 200
 
 
+def test_a_request_blocked_on_a_synchronous_call_holds_up_no_other() -> None:
+    # The producer blocks on the store's synchronous client. Run on the server's event loop, one such
+    # wait would stall every request the instance is serving: here the first would never see the second.
+    second_ran = threading.Event()
+
+    async def produce(_bucket: storage.Bucket, doc_id: str, /, **_request: object) -> outcome_mod.Readiness:
+        if doc_id == _DOC_ID:
+            if not second_ran.wait(timeout=10):
+                raise AssertionError('the second request did not run while the first was blocked')
+        else:
+            second_ran.set()
+        return outcome_mod.Readiness.READY
+
+    async def both(executor: concurrent.futures.Executor) -> list[int]:
+        return await asyncio.gather(
+            *(
+                handler_mod.process_conversion(
+                    _lazy_bucket(),
+                    _request(doc_id=doc_id),
+                    content_type=work.WORK_REQUEST_MEDIA_TYPE,
+                    headers=_DELIVERY,
+                    produce=produce,
+                    executor=executor,
+                )
+                for doc_id in (_DOC_ID, _OTHER_DOC_ID)
+            )
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        assert asyncio.run(both(executor)) == [200, 200]
+
+
+def test_concurrent_requests_render_through_the_one_pdfium_thread() -> None:
+    # Each request's producer runs on a loop of its own and awaits the shared pdfium thread from there,
+    # the way a transcription renders its pages.
+    pdf_bytes = _TEXT_PDF.read_bytes()
+    rendered: list[int] = []
+
+    async def produce(_bucket: storage.Bucket, _doc_id: str, /, **_request: object) -> outcome_mod.Readiness:
+        rendered.append(len(await anthropic_ocr.render(pdf_bytes)))
+        return outcome_mod.Readiness.READY
+
+    async def many(executor: concurrent.futures.Executor) -> list[int]:
+        return await asyncio.gather(
+            *(
+                handler_mod.process_conversion(
+                    _lazy_bucket(),
+                    _request(doc_id=f'9f3a0000-0000-4000-8000-0000000001{n:02d}'),
+                    content_type=work.WORK_REQUEST_MEDIA_TYPE,
+                    headers=_DELIVERY,
+                    produce=produce,
+                    executor=executor,
+                )
+                for n in range(8)
+            )
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        assert asyncio.run(many(executor)) == [200] * 8
+    assert len(rendered) == 8
+    assert set(rendered) == {rendered[0]}
+    assert rendered[0] > 0
+
+
 def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.Bucket) -> None:
     # The retry contract rests on aiohttp turning a producer raise into the 500 Cloud Tasks retries.
     app = aiohttp.web.Application()
@@ -397,10 +476,12 @@ def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.B
             content_type=request.content_type,
             headers=request.headers,
             produce=_raising(),
+            executor=executor,
         )
         return aiohttp.web.Response(status=status)
 
     app.router.add_post('/convert', convert)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     async def drive() -> int:
         async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
@@ -409,14 +490,17 @@ def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.B
             )
             return response.status
 
-    assert asyncio.run(drive()) == 500
+    try:
+        assert asyncio.run(drive()) == 500
+    finally:
+        executor.shutdown()
 
 
 # --- entrypoint env wiring (fail loud) ---
 
 
 def test_startup_requires_the_fulltext_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
-    _set_federation_env(monkeypatch)  # valid, so startup reaches the bucket read
+    _set_startup_env(monkeypatch)  # valid, so startup reaches the bucket read
     monkeypatch.delenv('THEMIS_FULLTEXT_BUCKET', raising=False)
     with pytest.raises(SystemExit, match='THEMIS_FULLTEXT_BUCKET'):
         asyncio.run(main_mod._on_startup(main_mod.build_app()))
@@ -427,10 +511,22 @@ def test_startup_refuses_a_bucket_that_does_not_exist(
 ) -> None:
     # A named-but-absent bucket has to fail the startup probe: /healthz never touches the bucket, so a
     # revision that starts anyway goes live and 500s every task until the queue drops it.
-    _set_federation_env(monkeypatch)
+    _set_startup_env(monkeypatch)
     monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', f'themis-absent-{uuid.uuid4().hex}')
     monkeypatch.setattr(main_mod.storage, 'Client', lambda: gcs_client)
     with pytest.raises(SystemExit, match='does not exist or is not readable'):
+        asyncio.run(main_mod._on_startup(main_mod.build_app()))
+
+
+@pytest.mark.parametrize('value', [None, '', '0', '-1', 'four'])
+def test_startup_requires_a_positive_request_concurrency(value: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A pool smaller than the service's per-instance limit would cap the instance below it silently.
+    _set_startup_env(monkeypatch)
+    if value is None:
+        monkeypatch.delenv('THEMIS_CONVERT_CONCURRENCY')
+    else:
+        monkeypatch.setenv('THEMIS_CONVERT_CONCURRENCY', value)
+    with pytest.raises(SystemExit, match='THEMIS_CONVERT_CONCURRENCY'):
         asyncio.run(main_mod._on_startup(main_mod.build_app()))
 
 
@@ -439,7 +535,7 @@ def test_startup_requires_each_anthropic_federation_id(missing: str, monkeypatch
     # The property the deleted unconfigured-converter stub used to hold, moved a stage earlier: a
     # worker that cannot authenticate must never serve, rather than burning a retry budget per paper.
     # Checked before the bucket read, so the missing identifier is what the operator is told.
-    _set_federation_env(monkeypatch)
+    _set_startup_env(monkeypatch)
     monkeypatch.delenv(missing, raising=False)
     with pytest.raises(SystemExit, match=missing):
         asyncio.run(main_mod._on_startup(main_mod.build_app()))
@@ -450,7 +546,7 @@ def test_startup_requires_each_anthropic_federation_id(missing: str, monkeypatch
 
 def _bound_converter(monkeypatch: pytest.MonkeyPatch) -> functools.partial[object]:
     """The converter `_on_startup` binds, with the bucket read stubbed out."""
-    _set_federation_env(monkeypatch)
+    _set_startup_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
     _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()
@@ -473,7 +569,7 @@ def test_startup_binds_the_claude_converter_on_a_federation_credential(monkeypat
 
 def test_startup_binds_the_converter_to_the_apps_request_token_counter(monkeypatch: pytest.MonkeyPatch) -> None:
     # The counter has to be on the app's own provider, or what a transcription records is never exported.
-    _set_federation_env(monkeypatch)
+    _set_startup_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
     provider = _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()
@@ -489,7 +585,7 @@ def test_startup_binds_the_converter_to_the_apps_request_token_counter(monkeypat
 
 def test_cleanup_shuts_the_meter_provider_down(monkeypatch: pytest.MonkeyPatch) -> None:
     # The last export rides shutdown; a provider left running loses whatever it recorded since its tick.
-    _set_federation_env(monkeypatch)
+    _set_startup_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
     provider = _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()
@@ -517,7 +613,7 @@ def test_each_federation_id_reaches_the_credential_argument_it_names(monkeypatch
 def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: pytest.MonkeyPatch) -> None:
     # The binding is only worth anything if it reaches the producer: /convert has to pass the app's
     # converter as produce.run's `convert_pdf`, not fall back to a default.
-    _set_federation_env(monkeypatch)
+    _set_startup_env(monkeypatch)
     monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
     _stub_meter_provider(monkeypatch)
     app = main_mod.build_app()

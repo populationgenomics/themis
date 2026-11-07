@@ -11,19 +11,21 @@ The request is one attempt in the paper's job log: an id minted here, and the de
 read off Cloud Tasks' request headers.
 
 Cloud Run's IAM verifies the task's OIDC token before the request arrives, so there is no in-app auth
-check. `produce` is awaited directly and blocks the event loop for the conversion's duration, which is
-sound only while the service sets `max_instance_request_concurrency=1` and declares no liveness probe
-(`infra/themis_infra/convert.py`); both would have to change together.
+check. An instance serves several requests at once, and `produce` blocks on the store's synchronous
+client, so each request runs `produce` on a thread of its own, in an event loop of its own: a request
+waiting on the store holds up no other request, and the server's loop stays free to accept the next.
 """
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import dataclasses
 import json
 import logging
 import re
 import uuid
-from collections.abc import Awaitable, Collection, Mapping
+from collections.abc import Collection, Coroutine, Mapping
 from typing import Protocol
 
 import protovalidate
@@ -53,7 +55,7 @@ class Producer(Protocol):
 
     def __call__(
         self, bucket: gcs.Bucket, doc_id: str, /, *, targets: Collection[str], attempt: joblog.Attempt
-    ) -> Awaitable[outcome_mod.Readiness]: ...
+    ) -> Coroutine[object, object, outcome_mod.Readiness]: ...
 
 
 @dataclasses.dataclass(frozen=True)
@@ -113,7 +115,13 @@ def _attempt(headers: Mapping[str, str]) -> joblog.Attempt | None:
 
 
 async def process_conversion(
-    bucket: gcs.Bucket, body: bytes, *, content_type: str, headers: Mapping[str, str], produce: Producer
+    bucket: gcs.Bucket,
+    body: bytes,
+    *,
+    content_type: str,
+    headers: Mapping[str, str],
+    produce: Producer,
+    executor: concurrent.futures.Executor,
 ) -> int:
     """Run the paper the task body names up to date; return the HTTP status Cloud Tasks reads.
 
@@ -124,6 +132,8 @@ async def process_conversion(
         content_type: The request's media type, which says which of the two the body is.
         headers: The request's headers, which name the Cloud Tasks delivery.
         produce: The producer to run, with its converter already bound.
+        executor: Runs the producer, one thread per request, so it has as many threads as the instance
+            serves requests at once.
 
     Returns:
         200 once the producer returns, or for a paper the corpus does not hold; 400 for a body that is
@@ -144,7 +154,9 @@ async def process_conversion(
     if request is None or attempt is None:
         return _BAD_REQUEST
     try:
-        readiness = await produce(bucket, request.doc_id, targets=request.targets, attempt=attempt)
+        readiness = await asyncio.get_running_loop().run_in_executor(
+            executor, asyncio.run, produce(bucket, request.doc_id, targets=request.targets, attempt=attempt)
+        )
     except produce_mod.PaperNotInCorpusError:
         # The corpus holds no such paper, and object reads are strongly consistent, so retrying spends
         # the whole budget on a task that cannot succeed. Settled, like the enqueuer's other bugs.

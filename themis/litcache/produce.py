@@ -33,6 +33,7 @@ The fetchers and the PDF converter are injected so the loop runs offline in test
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import datetime
 import hashlib
@@ -310,7 +311,7 @@ async def _run_locate(run: _Run, manifest: litcache_pb2.Manifest, _inputs: tuple
         access=located.access.access,
         captured_at=run.now(),
         origin_url=located.origin_url,
-        has_text_layer=pdf.probe_has_text_layer(located.content),
+        has_text_layer=await asyncio.wrap_future(pdf.probe_has_text_layer(located.content)),
     )
     _commit(lambda: writer.add_source(run.bucket, run.doc_id, source))
 

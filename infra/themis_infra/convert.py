@@ -33,6 +33,9 @@ from themis_infra import cloud_run, grants
 # never takes an instance an interactive request needs. Tune against observed volume.
 _INTERACTIVE_CONCURRENT_DISPATCHES = 5
 _BULK_CONCURRENT_DISPATCHES = 5
+# How many requests one worker instance serves at once. The worker sizes the thread pool each request's
+# producer runs on from this (THEMIS_CONVERT_CONCURRENCY), so the two are set from one value.
+_REQUEST_CONCURRENCY = 1
 # Bounded retries. Cloud Tasks has no dead-letter destination — an exhausted task is simply deleted,
 # leaving the paper as it was for the sweep to find. 1 attempt + 4 retries at a doubling 30s spreads a
 # transient failure (model-API overload, a fetch blip) over ~7.5 minutes; the ceiling binds only if the
@@ -180,16 +183,13 @@ class ConvertWorker(pulumi.ComponentResource):
                 # The conversion is the request (I/O-bound on the model API); Cloud Run keeps CPU
                 # allocated for its duration, up to this timeout.
                 timeout=_REQUEST_TIMEOUT,
-                # One conversion per instance: each holds a PDF in memory and one long model stream;
-                # fleet-wide parallelism is the queues' max_concurrent_dispatches, not per-instance fan-in.
-                # Load-bearing beyond memory — the handler awaits blocking GCS and litdown work directly
-                # on the event loop, so a value above 1 interleaves requests only at await points.
-                max_instance_request_concurrency=1,
+                max_instance_request_concurrency=_REQUEST_CONCURRENCY,
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,
                         envs=[
                             _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
+                            _env('THEMIS_CONVERT_CONCURRENCY', str(_REQUEST_CONCURRENCY)),
                             # PDF-OCR client credentials: keyless WIF (Path B), its own svac + rule
                             # (../../docs/runbooks/claude-api-wif.md).
                             _env('ANTHROPIC_FEDERATION_RULE_ID', anthropic_federation_rule_id),

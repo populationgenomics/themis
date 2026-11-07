@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import contextlib
 import dataclasses
 import functools
@@ -258,7 +259,7 @@ def _budget(page_bytes: int) -> Iterator[None]:
 def test_the_whole_page_image_fits_the_tier_claude_reads_at() -> None:
     # Sized the other way round the image is resized on arrival and the transcription is made from
     # something we never saw.
-    (page,) = anthropic_ocr.render(_pdf(1))
+    (page,) = asyncio.run(anthropic_ocr.render(_pdf(1)))
     image = (page.width, page.height)
 
     assert (
@@ -274,7 +275,7 @@ def test_the_whole_page_image_fits_the_tier_claude_reads_at() -> None:
 def test_a_long_paper_stays_under_the_many_image_edge_limit() -> None:
     # Past twenty images the API rejects the whole request unless every image is under this, so the
     # cap is a precondition of the request succeeding at all, not a cost choice.
-    pages = anthropic_ocr.render(_pdf(claude_images.MANY_IMAGE_THRESHOLD + 2))
+    pages = asyncio.run(anthropic_ocr.render(_pdf(claude_images.MANY_IMAGE_THRESHOLD + 2)))
 
     assert len(pages) > claude_images.MANY_IMAGE_THRESHOLD
     assert all(max(page.width, page.height) <= claude_images.MANY_IMAGE_MAX_EDGE for page in pages)
@@ -285,12 +286,12 @@ def test_a_paper_whose_pages_together_overrun_is_rendered_small_enough_to_send()
     # than trimming it. The budget is forced because the fixture no longer overruns on its own: at
     # twenty pages it encodes to ~25 MB of the 32 MB a request carries, and past twenty the
     # many-image edge cap shrinks the pages before their weight ever does.
-    (alone,) = anthropic_ocr.render(_paper_of(1))
-    twenty = anthropic_ocr.render(_paper_of(20))
+    (alone,) = asyncio.run(anthropic_ocr.render(_paper_of(1)))
+    twenty = asyncio.run(anthropic_ocr.render(_paper_of(20)))
     assert sum(len(page.png) for page in twenty) * 4 / 3 < _MAX_REQUEST_BYTES
 
     with _budget(sum(len(page.png) for page in twenty) - 1):
-        pages = anthropic_ocr.render(_paper_of(20))
+        pages = asyncio.run(anthropic_ocr.render(_paper_of(20)))
 
     assert len(pages) == 20
     assert pages[0].width < alone.width
@@ -300,10 +301,10 @@ def test_a_page_too_heavy_to_send_is_rendered_smaller_before_it_is_given_up_on()
     # A budget just under one page's own weight drives the loop's body, not only its exit. A real
     # page, not a blank one: blank pages encode to almost nothing at any size, so shrinking one
     # frees no bytes and the loop has nothing to show.
-    (full,) = anthropic_ocr.render(_paper_of(1))
+    (full,) = asyncio.run(anthropic_ocr.render(_paper_of(1)))
 
     with _budget(len(full.png) - 1):
-        (shrunk,) = anthropic_ocr.render(_paper_of(1))
+        (shrunk,) = asyncio.run(anthropic_ocr.render(_paper_of(1)))
 
     assert shrunk.width < full.width
 
@@ -312,14 +313,16 @@ def test_an_unloadable_pdf_is_terminal_not_retried() -> None:
     # The same bytes will not load next time. Left as a PdfiumError it is a 5xx, five Cloud Tasks
     # retries, and a paper stuck PENDING with nothing recording why: produce.py settles OcrError alone.
     with pytest.raises(ocr.OcrError, match='could not be loaded'):
-        anthropic_ocr.render(b'not a pdf')
+        asyncio.run(anthropic_ocr.render(b'not a pdf'))
 
 
 def _raise(error: Exception) -> object:
-    """A stand-in that fails the way the real call would."""
+    """A stand-in for a `pdf` job submitter whose job fails the way the real one would."""
 
-    def fail(*_args: object, **_kwargs: object) -> object:
-        raise error
+    def fail(*_args: object, **_kwargs: object) -> concurrent.futures.Future[object]:
+        failed: concurrent.futures.Future[object] = concurrent.futures.Future()
+        failed.set_exception(error)
+        return failed
 
     return fail
 
@@ -339,18 +342,18 @@ def test_a_page_that_will_not_rasterize_is_terminal_not_retried(
     monkeypatch.setattr(pdf, 'render_pages', _raise(error))
 
     with pytest.raises(ocr.OcrError, match='unrenderable page'):
-        anthropic_ocr.render(_paper_of(1))
+        asyncio.run(anthropic_ocr.render(_paper_of(1)))
 
 
 def test_the_shrink_makes_progress_when_the_token_budget_binds() -> None:
-    # _page_fit solves against the tier's token budget as well as its edge. On US letter the budget
+    # _PageFit solves against the tier's token budget as well as its edge. On US letter the budget
     # binds, so scaling the previous cap fits to the same pixels and the loop reads "unchanged" as
     # "nothing left to try" — settling a paper that a smaller render would have sent.
     letter = _pdf(1)  # 612x792, the ratio at which the token budget binds before the edge does
-    (full,) = anthropic_ocr.render(letter)
+    (full,) = asyncio.run(anthropic_ocr.render(letter))
 
     with _budget(len(full.png) - 1):
-        (shrunk,) = anthropic_ocr.render(letter)
+        (shrunk,) = asyncio.run(anthropic_ocr.render(letter))
 
     assert shrunk.height < full.height
 
@@ -359,7 +362,7 @@ def test_a_paper_that_will_not_fit_a_request_is_terminal() -> None:
     # Shrinking stops at the standard tier's edge rather than rendering something illegible, and a
     # paper still too large there will not transcribe however many times it is asked.
     with _budget(1), pytest.raises(ocr.OcrError, match='one request'):
-        anthropic_ocr.render(_pdf(1))
+        asyncio.run(anthropic_ocr.render(_pdf(1)))
 
 
 def test_a_paper_of_more_pages_than_a_request_carries_is_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -367,7 +370,7 @@ def test_a_paper_of_more_pages_than_a_request_carries_is_terminal(monkeypatch: p
     monkeypatch.setattr(claude_images, 'MAX_IMAGE_BLOCKS', 2)
 
     with pytest.raises(ocr.OcrError, match='image blocks'):
-        anthropic_ocr.render(_pdf(3))
+        asyncio.run(anthropic_ocr.render(_pdf(3)))
 
 
 @pytest.mark.parametrize(
@@ -377,14 +380,14 @@ def test_a_paper_of_more_pages_than_a_request_carries_is_terminal(monkeypatch: p
 def test_the_many_image_cap_turns_on_above_the_threshold_and_not_at_it(pages: int, capped: bool) -> None:
     # "More than twenty" is an off-by-one waiting to happen, and getting it wrong either wastes
     # resolution on every long paper or has the API reject it outright.
-    rendered = anthropic_ocr.render(_pdf(pages))
+    rendered = asyncio.run(anthropic_ocr.render(_pdf(pages)))
 
     assert all(max(page.width, page.height) <= claude_images.MANY_IMAGE_MAX_EDGE for page in rendered) == capped
 
 
 def test_a_short_paper_is_rendered_larger_than_that_limit_allows() -> None:
     # The cap is not applied when it does not have to be: fidelity is the thing being bought.
-    (page,) = anthropic_ocr.render(_pdf(1))
+    (page,) = asyncio.run(anthropic_ocr.render(_pdf(1)))
 
     assert max(page.width, page.height) > claude_images.MANY_IMAGE_MAX_EDGE
 

@@ -201,7 +201,7 @@ def extract_identity(seed: SeedObject) -> identity.Identity:
     ident = identity.determine_identity(seed.bucket_key, origin)
     if not ident.content_addressed:
         return ident
-    pdf_doi = pdf.doi_from_metadata(seed.pdf)
+    pdf_doi = pdf.doi_from_metadata(seed.pdf).result()
     if pdf_doi is None:
         return ident
     return identity.determine_identity(seed.bucket_key, origin, extra_candidates=[pdf_doi])
@@ -579,9 +579,9 @@ def _check_pdf_only_seed(seed: SeedObject, ident: identity.Identity, resolved: r
     stated = next((eid.value for eid in ident.external_ids if eid.scheme == 'doi'), None) or (
         resolved.external_ids.doi or None
     )
-    embedded = pdf.doi_from_metadata(seed.pdf)
+    embedded = pdf.doi_from_metadata(seed.pdf).result()
     doi_agrees = stated is not None and embedded is not None and embedded.lower() == stated.lower()
-    raw = pdf.leading_text(seed.pdf, pages=_TITLE_PAGES)
+    raw = pdf.leading_text(seed.pdf, pages=_TITLE_PAGES).result()
     if not raw.strip():
         if doi_agrees:
             return
@@ -679,7 +679,7 @@ def _convert_branch(
         licence_basis=licence.licence_basis,
         access=licence.access,
         captured_at=now,
-        has_text_layer=pdf.probe_has_text_layer(seed.pdf),
+        has_text_layer=pdf.probe_has_text_layer(seed.pdf).result(),
     )
     if seed.docling_json is None:
         return _Branch(sources=[pdf_source], renderings=[])

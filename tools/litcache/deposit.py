@@ -184,7 +184,7 @@ def _pdf_has_text_layer(pdf_bytes: bytes) -> bool:
     if not pdf_bytes.startswith(b'%PDF-'):
         raise DepositError('the supplied file is not a PDF (no %PDF- header)')
     try:
-        return pdf.probe_has_text_layer(pdf_bytes)
+        return pdf.probe_has_text_layer(pdf_bytes).result()
     except pypdfium2.PdfiumError as e:
         raise DepositError('the supplied file is not a loadable PDF') from e
 

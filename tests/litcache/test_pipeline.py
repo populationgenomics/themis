@@ -11,6 +11,7 @@ the shared `gcs_bucket` and `conn` fixtures: an absent daemon skips rather than 
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import dataclasses
 import datetime
@@ -879,7 +880,9 @@ def test_extract_identity_ignores_pdf_doi_when_key_names_an_id(monkeypatch: pyte
 def test_extract_identity_falls_back_to_pdf_doi_when_id_poor(monkeypatch: pytest.MonkeyPatch) -> None:
     # No id in key or origin: the pdf's embedded DOI rescues the deposit from a
     # binhash-only identity (the empirically useful fallback).
-    monkeypatch.setattr(pipeline.pdf, 'doi_from_metadata', lambda _pdf: '10.9999/from-pdf')
+    found: concurrent.futures.Future[str | None] = concurrent.futures.Future()
+    found.set_result('10.9999/from-pdf')
+    monkeypatch.setattr(pipeline.pdf, 'doi_from_metadata', lambda _pdf: found)
     seed = pipeline.SeedObject(
         bucket_key='opaque-deposit.pdf',
         docling_json=json.dumps({'origin': {'filename': 'opaque-deposit.pdf', 'binary_hash': 7}}).encode(),

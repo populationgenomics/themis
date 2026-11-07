@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
 import logging
 from collections.abc import Callable, Sequence
 
@@ -118,25 +119,26 @@ def _max_edge(page_count: int) -> int:
     return _TIER.max_edge
 
 
-def _page_fit(max_edge: int) -> pdf.PageFit:
-    """The size to render each page at, within `max_edge` and the tier's visual-token budget."""
+@dataclasses.dataclass(frozen=True)
+class _PageFit:
+    """The size to render each page at, within `max_edge` and the tier's visual-token budget (a `pdf.PageFit`)."""
 
-    def fit(width_pt: float, height_pt: float) -> tuple[int, int]:
+    max_edge: int
+
+    def __call__(self, width_pt: float, height_pt: float) -> tuple[int, int]:
         scale = _SEED_DPI / _POINTS_PER_INCH
         # Fit to what Claude would resize the image to, so it reads the page as rendered rather than
         # a resample of it — and so a returned coordinate is in the space we chose.
         _, page_height = claude_images.resized_size(
             max(round(width_pt * scale), 1),
             max(round(height_pt * scale), 1),
-            max_edge=max_edge,
+            max_edge=self.max_edge,
             max_tokens=_TIER.max_tokens,
         )
         return (max(round(page_height * width_pt / height_pt), 1), page_height)
 
-    return fit
 
-
-def render(pdf_bytes: bytes) -> list[pdf.PageImage]:
+async def render(pdf_bytes: bytes) -> list[pdf.PageImage]:
     """Rasterize a paper's pages at the largest size this provider can both read and send.
 
     How many bytes a page encodes to depends on what is printed on it, not only on its size, so the
@@ -150,7 +152,7 @@ def render(pdf_bytes: bytes) -> list[pdf.PageImage]:
             edge. Rendering it again would produce the same bytes, so this is settled, not retried.
     """
     try:
-        page_count = pdf.page_count(pdf_bytes)
+        page_count = await asyncio.wrap_future(pdf.page_count(pdf_bytes))
     except pypdfium2.PdfiumError as e:
         # Permanent: the same bytes will not load next time. Left to propagate it is a 5xx, five
         # retries, and a paper stuck PENDING with nothing recording why.
@@ -166,7 +168,7 @@ def render(pdf_bytes: bytes) -> list[pdf.PageImage]:
     rendered_at: tuple[int, int] | None = None
     while True:
         try:
-            pages = pdf.render_pages(pdf_bytes, fit=_page_fit(max_edge))
+            pages = await asyncio.wrap_future(pdf.render_pages(pdf_bytes, fit=_PageFit(max_edge)))
         except (ValueError, pypdfium2.PdfiumError) as e:
             # A page the document's page tree offers but pdfium will not load or rasterize:
             # `FPDF_LoadPage` returning NULL is a `PdfiumError`, a degenerate page size a
@@ -178,7 +180,7 @@ def render(pdf_bytes: bytes) -> list[pdf.PageImage]:
         if encoded <= _PAGE_BYTE_BUDGET and largest <= _IMAGE_BYTE_BUDGET:
             return pages
         size = (pages[0].width, pages[0].height)
-        # The next edge comes off the rendered page, not off the previous cap. `_page_fit` solves
+        # The next edge comes off the rendered page, not off the previous cap. `_PageFit` solves
         # against the tier's token budget as well as the edge, and when the budget is the binding one
         # a smaller cap fits to the same pixels and renders the same bytes -- on US letter it does,
         # so scaling the cap alone stalls on the commonest page there is.
@@ -264,7 +266,7 @@ async def convert_pdf(
         ocr.SpentError: Also when the final message carries no stop reason, which the API sets on every
             complete turn: the turn was paid for and cannot be judged.
     """
-    pages = render(pdf_bytes)
+    pages = await render(pdf_bytes)
     answered = False
     # The turn as far as the stream got, from `message_start` on: what a turn that fails after it was paid for.
     snapshot: anthropic.types.Message | None = None
