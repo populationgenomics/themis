@@ -30,8 +30,11 @@ Every source of work asks the worker the same question: bring this paper up to d
 ingestion asks it for every paper it commits, and so does every other writer: whatever commits to a paper asks for that
 paper. A scheduled sweep ([`themis/litcache/sweep.py`](../../themis/litcache/sweep.py)) catches any writer that failed
 to ask, and asks again for the main text of every paper still waiting for it. Cloud Tasks carries those requests
-([`themis/litcache/enqueue.py`](../../themis/litcache/enqueue.py)) to the worker service on two queues, so that a
-backfill of tens of thousands of papers never delays an agent.
+([`themis/litcache/enqueue.py`](../../themis/litcache/enqueue.py)) on two queues, so that a backfill of tens of
+thousands of papers never delays an agent. Each queue has its own deployment of the worker. The interactive one runs one
+request per instance, so an agent's paper never shares an instance with anything else. The bulk one runs many requests
+per instance, because a request spends most of its time waiting on the model API and the store, and an instance that
+waits on one request at a time is mostly idle.
 
 Spending follows from the targets. A request that names no target runs every free step and skips every step that costs
 money. A request that names targets runs those targets and the steps they depend on, paying for whatever on that path
@@ -113,10 +116,13 @@ a manifest holding only the paper's identifiers
 ### What the platform allows
 
 Cloud Run allocates CPU to an instance only while it is handling a request. Work left running after the HTTP response is
-throttled, so in-process background work after a response returns is unreliable. Cloud Tasks holds a dispatched request
-open for at most 30 minutes ([`themis/litcache/work.py`](../../themis/litcache/work.py)), which caps any work that runs
-as a single pushed request. And an agent that repeatedly polls for a paper pays a model turn's tokens on every poll, so
-how a caller waits is part of the design.
+throttled, so in-process background work after a response returns is unreliable. A service also sets how many requests
+one instance may serve at once. Cloud Run bills an instance for the time it is serving at least one request, whether it
+is computing or waiting, so an instance serving one request that mostly waits on the network is paid for while it waits.
+Cloud Tasks holds a dispatched request open for at most 30 minutes
+([`themis/litcache/work.py`](../../themis/litcache/work.py)), which caps any work that runs as a single pushed request.
+And an agent that repeatedly polls for a paper pays a model turn's tokens on every poll, so how a caller waits is part
+of the design.
 
 ## Non-goals
 
@@ -346,16 +352,71 @@ manifest and resumes at the supplement-render step. A paper whose steps together
 finishes across several deliveries. The same property lets free steps run first and spending steps run later: a
 subsequent request that names a spending target finds the free steps already committed and runs only what remains.
 
-The worker runs as a single Cloud Run service
-([`themis/services/convert_worker/`](../../themis/services/convert_worker/)). Each instance handles one request at a
-time, because a request holds an entire PDF in memory and awaits conversion directly rather than handing it off. The
-service's request timeout and the queue's dispatch deadline are set to the same 30-minute value. If those two timeouts
-differed, one side could abandon a long request while the other retried it, running two copies concurrently.
+The worker runs as a Cloud Run service ([`themis/services/convert_worker/`](../../themis/services/convert_worker/)), and
+a request runs its paper to the fixed point before it responds rather than handing the work off. The service's request
+timeout and the queue's dispatch deadline are set to the same 30-minute value. If those two timeouts differed, one side
+could abandon a long request while the other retried it, running two copies concurrently.
 
 The worker maps its outcome to an HTTP status that Cloud Tasks reads as its retry signal. When every reached step is
 done or settled, the worker returns success, even if a step settled as a permanent failure, because retrying would only
 spend again to reach the same settled state. Any transient error that a later attempt could clear propagates as a
 failure, and the queue retries it.
+
+### Many papers at once in one instance
+
+The simplest worker serves one request per instance. Each request then has the whole instance to itself: its memory, its
+CPU, and nothing else to share them with. A crash takes one paper down with it, and code that blocks costs nothing,
+because there is nothing else for it to delay.
+
+That shape breaks on what a request spends its time doing. Transcribing a PDF is one long call to the model API, and the
+rest of a request is reads and writes against the store. Rendering the pages the model reads is the only real
+computation. Take an 18-page paper: the worker reads its PDF from the store in well under a second, renders its pages in
+about two, then streams the transcription for over a minute. The instance computes for a few percent of the request. A
+bulk run of 4,000 such papers at one request per instance needs either many instances, each paid for while it waits, or
+a few instances and a run that takes most of a day: five instances at a minute and a half per paper take over 19 hours.
+The appendix has the measurements behind these figures.
+
+So the worker serves many requests at once. Waiting on the model API already lets other requests run, since that call is
+asynchronous. What would stop them is the work that blocks: the store's client is synchronous, and converting XML and
+rendering pages are computation. So the worker runs each request on a thread of its own, with an event loop of its own.
+A request blocked on the store then holds up only itself, and the server stays free to accept the next request.
+
+Rendering needs more than a thread. The PDF library the worker uses, pdfium, keeps state for the whole process and is
+not safe to call from two threads at once. It can also crash, or exhaust memory, on a malformed PDF. With many requests
+sharing an instance, a crash in the server process takes down every request in flight on it, and the damage repeats.
+Cloud Tasks retries the PDF that caused the crash, and each retry takes down a fresh set of co-tenant requests. A
+transcription logs its attempt as begun before it calls the model, and the job log counts an abandoned begun attempt as
+spent (§"The job log records what the worker has tried"). So after three such crashes, a co-tenant paper settles as
+failed even though nothing was wrong with it.
+
+The worker therefore runs pdfium in a child process of its own. Every PDF operation, whether rendering pages, counting
+them or reading the text layer, is a job sent to that child, one at a time, and the request awaits the job's result.
+Because the child runs one job at a time, the job it was running when it died is the job that killed it. That job fails
+the way a PDF that pdfium cannot load fails, which settles the paper rather than retrying it, and a fresh child takes
+the next job. Suppose sixteen requests share an instance, and paper X's PDF crashes pdfium while its pages render. X's
+transcription settles as failed. The other fifteen requests wait a second or two for the new child to start, and nothing
+else on the instance notices.
+
+The child also marks itself as the process the kernel should kill first when the container runs out of memory, so a
+render that balloons kills the child rather than the server. That choice cuts both ways: when the server's own requests
+are what filled memory, the kernel still kills the child, and the job it was running did nothing wrong. So a job whose
+child is killed that way runs once more on a fresh child, and is blamed only if it is killed again. A render that
+balloons does so every time, while a job caught in someone else's memory pressure usually finishes on the second run.
+Two kills in a row during one job still blame it, which the instance's sizing exists to prevent.
+
+The rule that a dead child blames its job assumes the child was working. A child that cannot start, because the
+deployment is broken or the instance is short of processes, says nothing about the PDF, so the job fails in a way the
+worker reports as a transient error, and Cloud Tasks retries the request rather than the paper settling as unreadable.
+
+The server's own memory per request is bounded instead of isolated. The page images it sends are capped by the size of
+one model request, and the PDF is capped by the size limit ingestion enforces, so the deployment is sized for its
+concurrency times that worst case (§"Two queues, two deployments of one worker"). An out-of-memory kill outside
+rendering, which that sizing exists to prevent, would still take down the instance.
+
+One child renders one PDF at a time. Renders take a few seconds of a request lasting a minute or more, so one child
+keeps up with roughly fifteen to twenty concurrent requests on its instance. More concurrency than that comes from more
+instances rather than more requests per instance. The child costs a second Python process's memory on each instance, and
+a crash costs the job queue a second or two while its replacement starts.
 
 ### Every trigger asks the same question
 
@@ -448,18 +509,30 @@ The cost of distinct task names is that requests with different targets or gener
 same time. The worker coordinates overlapping executions through the manifest and job log compare-and-swaps
 ([Redelivery, overlap and failed enqueues](#redelivery-overlap-and-failed-enqueues)).
 
-### Two queues into one worker
+### Two queues, two deployments of one worker
 
 An agent waiting on a paper's text and a bulk run asking for tens of thousands of papers need the same worker logic with
 isolated queues. On a single queue, an agent's request would wait behind the bulk run's backlog. Two Cloud Tasks queues
-therefore feed the same Cloud Run worker service: an interactive queue for `MaybeIngestPapers`, and a bulk queue for
-everything else. The worker service's maximum instance count equals the sum of the two queues' concurrency limits, so a
-saturated bulk queue never starves an interactive request of a Cloud Run instance.
+therefore carry the requests: an interactive queue for `MaybeIngestPapers`, and a bulk queue for everything else.
 
-Deploying a second Cloud Run service for bulk work would allow separate container images and memory limits, at the cost
-of duplicating the deployment, the HTTP status mapping, and the step runner. Because the two queues already isolate
-interactive latency from bulk backlogs, and the worker's memory must be sized for the largest single input it converts
-regardless of which queue delivered it, one service serves both queues.
+Separate queues still leave the two kinds of work sharing instances if one service serves both. With many requests per
+instance (§"Many papers at once in one instance"), an agent's paper would land on an instance busy with fifteen bulk
+transcriptions. It would wait its turn for the pdfium process behind their renders, and it would share the instance's
+memory with them. The two kinds of work also want instances of different shapes. An interactive request wants an
+instance that answers quickly and holds one paper. A bulk run wants a few large instances that each hold many papers'
+PDFs and page images at once.
+
+So each queue gets its own deployment of the same worker: the same image, the same step runner and the same mapping from
+outcome to HTTP status, deployed twice with different settings. The interactive deployment serves one request per
+instance, and its maximum instance count equals the interactive queue's concurrency limit, so a full queue always finds
+an instance. The bulk deployment runs on high-memory instances that each serve many requests, and its instances are
+sized so that the bulk queue's concurrency limit equals their total request capacity. As toy figures, four instances
+serving sixteen requests each give the bulk queue sixty-four concurrent requests. Each instance then holds sixteen
+papers' PDFs and page images at once, tens of megabytes for a typical paper and several times that for a large one, so
+its memory is sized for that sum rather than for the largest single input.
+
+Both deployments come from one definition with different parameters, so the cost of the second is one more service to
+deploy and watch, not a second copy of its code.
 
 Queue concurrency limits bound capacity rather than spend. They protect instance memory and pace requests to NCBI,
 open-access hosts, and the model API, while doing nothing to cap cumulative model cost. With toy figures, five
@@ -1090,9 +1163,38 @@ outer request timeout, leaving the server waiting on a caller that had already b
   is that files copied into the bucket by an external tool wait up to one sweep period.
 
 - **A worker service per kind of work.** Giving each step kind its own Cloud Run service would allow separate container
-  images, memory sizes, and scaling. It lost because isolating interactive agent requests from bulk backfills is already
-  handled by the two Cloud Tasks queues, and a second service would duplicate the deployment and the outcome-to-HTTP
-  status mapping.
+  images, memory sizes, and scaling for each step. It lost because the split that matters for sizing is by who is
+  waiting, which the two deployments per queue already make, and a paper's steps run in one request in dependency order.
+  A service per step would turn that one request into a chain of requests between services.
+
+- **One request per instance, with more instances.** Keeping the worker serving one request at a time leaves its code
+  free to block, and a crash costs one paper. It lost on cost. A bulk run's instances spend most of each request waiting
+  on the model API, and Cloud Run bills for that wait, so a run of thousands of papers pays for many instances that are
+  mostly idle.
+
+- **One service for both queues, serving many requests per instance.** This keeps a single deployment. It lost because
+  an agent's request would share an instance with bulk work: it would queue for the pdfium process behind bulk renders,
+  and share the instance's memory with them.
+
+- **A thread for pdfium, inside the server process.** One thread that owns pdfium keeps it single-threaded without a
+  second process, and costs nothing to start. It lost because a pdfium crash would then kill the server and every
+  request on the instance, and the retries of the PDF that caused it would keep spending co-tenant papers' attempts.
+
+- **Several pdfium processes per instance.** A pool of children would render several PDFs at once. It lost because one
+  child keeps up with the fifteen to twenty requests an instance serves, and more concurrency is cheaper as more
+  instances than as more children. A pool would also make it harder to tell which job a dead child was running.
+
+- **A process for every request.** Running each request in a process of its own would confine any crash or out-of-memory
+  kill to one paper, not just those inside pdfium. It lost on memory and start-up time. A Python process with the
+  worker's libraries loaded held about 280 MB, and importing the model API's client alone takes about a second, so
+  sixteen requests per instance would carry several gigabytes of baseline before any paper. The server's memory per
+  request is bounded, so sizing the instance covers it.
+
+- **A lock around every pdfium call, taken by whichever thread needs it.** A lock is the smallest change from code that
+  reached pdfium from one thread. It lost because it relies on every caller remembering to take it, and a pdfium object
+  that outlives the lock crashes the process. A lock also leaves pdfium in the server process, where a crash takes every
+  request with it. A child process that owns pdfium makes the single-caller rule hold by construction and contains the
+  crash.
 
 - **A work table in PostgreSQL, a drainer job, and a scheduled reconciler.** Rejected once it was clear that the store
   already holds the state: a step has work when its output is missing or non-current and the job log does not settle it.
@@ -1149,3 +1251,23 @@ outer request timeout, leaving the server waiting on a caller that had already b
   mechanically possible; deciding which papers to retire is a policy question this design does not answer.
 - **Facts stated only in a figure.** Every text route produces markdown text, leaving facts stated only inside a figure
   image out of reach. Reading figures would be a step of its own; whether and when one is added is undecided.
+
+## Appendix: how a transcription request spends its time
+
+Five PDFs that the bulk runs of 2026-10-29 and 2026-11-06 transcribed, rendered at the sizes the transcription step
+sends, on a developer laptop. Rendering is single-threaded and a Cloud Run vCPU is slower, so read the render times as
+perhaps two to three times longer there. The read times were measured from the laptop over the internet, so they
+overstate a read from inside the same region.
+
+| PDF size | Pages | Read from the store | Render | Page images |
+| -------: | ----: | ------------------: | -----: | ----------: |
+|  17.1 MB |    18 |              0.62 s | 1.77 s |       13 MB |
+|   2.1 MB |    13 |              0.25 s | 0.75 s |       15 MB |
+|   1.2 MB |     9 |              0.17 s | 0.51 s |       10 MB |
+|   270 KB |     5 |              0.16 s | 0.31 s |        5 MB |
+|   171 KB |    12 |              0.12 s | 0.71 s |       11 MB |
+
+In the bulk runs of 2026-10-29 and 2026-11-06, the worker's request logs show transcription requests taking 35 to 90
+seconds end to end, almost all of it the model's streamed response. A Python process with the worker's libraries loaded
+held about 280 MB after rendering all five. A request adds its PDF, its page images, and the encoded request body that
+carries them to the model, which together come to tens of megabytes for a typical paper.
