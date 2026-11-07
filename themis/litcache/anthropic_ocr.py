@@ -48,8 +48,9 @@ HARNESS_VERSION = '1'
 # Sonnet balances fidelity and cost for bounded transcription (dense multi-column papers, small
 # captions, equations) against Opus; escalate the constant on observed fidelity gaps.
 _MODEL = 'claude-sonnet-5'
-# Under the Sonnet/Opus 128K output ceiling, with headroom for the newer tokenizer.
-_MAX_TOKENS = 64000
+# The model's output ceiling: a truncated turn is paid for and settles the paper FAILED, so a lower cap
+# only loses the longest papers. Observed at ~125 tokens/s, a full turn fits inside `_TIMEOUT_SECONDS`.
+_MAX_TOKENS = 128000
 # A minutes-long call must stream, and needs two bounds because httpx2 has no total-duration setting:
 # it applies its timeout to connect/read/write/pool separately, and on a streamed call `read` is the
 # gap between events. So `asyncio.timeout` bounds elapsed time and the client's bounds a silence.
