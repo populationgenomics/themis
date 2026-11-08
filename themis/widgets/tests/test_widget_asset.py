@@ -30,7 +30,7 @@ from google.protobuf import (
 )
 
 from themis.widgets import asset
-from themis.widgets.models import checklist_pb2
+from themis.widgets.models import checklist_pb2, svcv4_classification_pb2
 from themis.widgets.tests import case_files, ownership_cases
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -112,6 +112,19 @@ def test_a_payload_failing_its_rules_is_refused_both_ways(payload: checklist_pb2
         asset.encode(payload)
     with pytest.raises(asset.AssetError, match=reason):
         asset.decode(_packed(payload))
+
+
+@pytest.mark.parametrize(
+    ('payload', 'path'),
+    [
+        (_checklist(_item(label='')), 'items[0].label: '),
+        (svcv4_classification_pb2.Svcv4Classification(), '<message>: exactly one path is the one the tally counts'),
+    ],
+)
+def test_a_refusal_names_where_the_payload_broke_its_rules(payload: message.Message, path: str) -> None:
+    with pytest.raises(asset.AssetError) as raised:
+        asset.encode(payload)
+    assert path in str(raised.value)
 
 
 def test_a_message_the_option_does_not_mark_is_not_a_payload() -> None:

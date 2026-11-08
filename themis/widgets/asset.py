@@ -19,7 +19,6 @@ import typing
 import protovalidate
 from google.protobuf import any_pb2, descriptor, descriptor_pool, message, message_factory, unknown_fields
 
-from buf.validate import validate_pb2
 from themis.widgets.models import (
     checklist_pb2,  # noqa: F401  (registers the payload in the descriptor pool `decode` reads)
     svcv4_classification_pb2,  # noqa: F401  (likewise)
@@ -254,10 +253,13 @@ def _validate(payload: message.Message) -> None:
         raise AssetError(f'the {payload.DESCRIPTOR.full_name} payload fails its rules: {violations}') from error
 
 
-def _field_path(path: validate_pb2.FieldPath) -> str:
-    """A violation's field path as ``items[2].id``."""
+def _field_path(path: protovalidate.FieldPathPb | None) -> str:
+    """A violation's field path as ``items[2].id``; ``<message>`` for a message-level rule, which has none."""
+    if path is None:
+        return '<message>'
     parts = []
     for element in path.elements:
-        index = f'[{element.index}]' if element.HasField('index') else ''
+        subscript = element.subscript
+        index = f'[{subscript.value}]' if subscript is not None and subscript.field == 'index' else ''
         parts.append(f'{element.field_name}{index}')
     return '.'.join(parts) or '<message>'
