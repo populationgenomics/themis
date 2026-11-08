@@ -136,7 +136,7 @@ Cloud Monitoring enforces two limits per time series (a unique combination of me
 flowchart LR
   subgraph Producers
     MA["Managed Agents API\nbeta.sessions.list(include_archived=True)"] -->|"Cloud Scheduler\nevery 5 minutes"| CE["Cloud Run Job:\nthemis-cost-exporter"]
-    CW["Cloud Run:\nthemis-convert-worker"]
+    CW["Cloud Run:\nthemis-convert-worker,\nthemis-convert-bulk-worker"]
     CI["GitHub Actions:\nClaude Code workflows"]
   end
 
@@ -246,11 +246,11 @@ The choice of OpenTelemetry instrument type and attribution labels follows how e
 To satisfy Cloud Monitoring's 5-second sampling floor and 25,000-series cardinality limit, each producer configures its
 `prometheus_target` resource labels (`job`, `namespace`, and `instance`) to match its process lifecycle:
 
-| Producer                      | Process lifecycle                        | `instance` strategy                                                         | Export cadence                                                                                                             | Why this avoids collisions and cardinality blow-up                                                                                                                                              |
-| ----------------------------- | ---------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `themis-cost-exporter`        | Cloud Run Job triggered every 5 minutes  | Static workspace ID (`service.instance.id`)                                 | Single flush at the end of each 5-minute job execution                                                                     | Every job execution writes to the same workspace-scoped `instance` series per `agent`, and consecutive runs are 5 minutes apart, well above the 5-second floor.                                 |
-| `themis-convert-worker`       | Autoscaled Cloud Run service (`max > 1`) | Process-unique replica ID from `GoogleCloudResourceDetector`                | Buffered by `PeriodicExportingMetricReader` to every 60 seconds ([`themis/telemetry`](../../themis/telemetry/__init__.py)) | Concurrent replicas write to distinct `instance` series so they never collide, and the 60-second buffer prevents rapid back-to-back OCR calls inside one replica from writing within 5 seconds. |
-| Claude Code in GitHub Actions | Ephemeral CI runner per job              | `<github.run_id>-<github.run_attempt>` (with `namespace=<github.workflow>`) | Default 60-second periodic export plus `PeriodicExportingMetricReader.onForceFlush` on `process.exit`                      | Two concurrent PR reviews have distinct `run_id` values so their exports never collide, and total series grow only by one per workflow run, well under the 25,000 limit.                        |
+| Producer                                              | Process lifecycle                         | `instance` strategy                                                         | Export cadence                                                                                                             | Why this avoids collisions and cardinality blow-up                                                                                                                                              |
+| ----------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `themis-cost-exporter`                                | Cloud Run Job triggered every 5 minutes   | Static workspace ID (`service.instance.id`)                                 | Single flush at the end of each 5-minute job execution                                                                     | Every job execution writes to the same workspace-scoped `instance` series per `agent`, and consecutive runs are 5 minutes apart, well above the 5-second floor.                                 |
+| `themis-convert-worker`, `themis-convert-bulk-worker` | Autoscaled Cloud Run services (`max > 1`) | Process-unique replica ID from `GoogleCloudResourceDetector`                | Buffered by `PeriodicExportingMetricReader` to every 60 seconds ([`themis/telemetry`](../../themis/telemetry/__init__.py)) | Concurrent replicas write to distinct `instance` series so they never collide, and the 60-second buffer prevents rapid back-to-back OCR calls inside one replica from writing within 5 seconds. |
+| Claude Code in GitHub Actions                         | Ephemeral CI runner per job               | `<github.run_id>-<github.run_attempt>` (with `namespace=<github.workflow>`) | Default 60-second periodic export plus `PeriodicExportingMetricReader.onForceFlush` on `process.exit`                      | Two concurrent PR reviews have distinct `run_id` values so their exports never collide, and total series grow only by one per workflow run, well under the 25,000 limit.                        |
 
 ### Querying gauges and counters in PromQL
 
@@ -341,8 +341,9 @@ Each producer authenticates with the narrowest identity that its platform and ta
   `v1/sessions` and Anthropic provides no read-only workspace scope, the exporter's federation rule uses
   `workspace:developer` on its own dedicated Anthropic service account (`themis-cost-exporter-<env>`), separate from the
   application runtime's identity so its audit trail and revocation remain isolated.
-- **Convert worker (`themis-convert-worker`)**: Uses its existing Cloud Run service account, which already holds
-  `grants.TelemetryWriter` ([`infra/themis_infra/grants.py`](../../infra/themis_infra/grants.py)).
+- **Convert worker (`themis-convert-worker` and `themis-convert-bulk-worker`)**: Both services run as the worker's
+  existing Cloud Run service account, which already holds `grants.TelemetryWriter`
+  ([`infra/themis_infra/grants.py`](../../infra/themis_infra/grants.py)).
 - **Claude Code in GitHub Actions**: Authenticates to GCP through the repository's GitHub Workload Identity Pool as a
   dedicated CI telemetry service account
   ([`infra/themis_infra/ci_telemetry.py`](../../infra/themis_infra/ci_telemetry.py)). Unlike the Pulumi deploy service

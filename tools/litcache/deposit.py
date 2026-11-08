@@ -454,13 +454,13 @@ def _crosswalk_connection(project: str) -> tuple[connector.Connector, crosswalk.
 
 
 def _bulk_enqueuer(project: str) -> enqueue.Enqueuer:
-    """An enqueuer on `project`'s bulk queue into the full-text worker, as `themis-clu`.
+    """An enqueuer on `project`'s bulk queue into the full-text worker's bulk service, as `themis-clu`.
 
     The names mirror the infra that creates them (`infra/themis_infra/convert.py`).
     """
     target = enqueue.ConversionTarget(
         queue_path=f'projects/{project}/locations/{clu.REGION}/queues/themis-convert-bulk',
-        worker_url=clu.run_service_url('themis-convert-worker', project=project),
+        worker_url=clu.run_service_url('themis-convert-bulk-worker', project=project),
         invoker_service_account_email=f'themis-convert-invoker@{project}.iam.gserviceaccount.com',
     )
     client = tasks_v2.CloudTasksClient(credentials=clu.impersonated(clu.service_account(project)))

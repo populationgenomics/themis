@@ -45,8 +45,9 @@ _EXECUTOR: web.AppKey[concurrent.futures.ThreadPoolExecutor] = web.AppKey(
     'executor', concurrent.futures.ThreadPoolExecutor
 )
 
-# The series' `job` label; the Cloud Run service's name.
-_SERVICE_NAME = 'themis-convert-worker'
+# The series' `job` label: the Cloud Run service's name, which Cloud Run sets in the environment, so the
+# interactive and bulk services' spend is told apart.
+_SERVICE_NAME_ENV = 'K_SERVICE'
 # Cloud Run allows an instance ten seconds after SIGTERM; the final export has to fit inside them.
 _SHUTDOWN_TIMEOUT = datetime.timedelta(seconds=8)
 
@@ -114,7 +115,7 @@ def _credentials_from_env() -> anthropic_ocr.CredentialsFactory:
 
 def _meter_provider() -> sdk_metrics.MeterProvider:
     """The worker's metrics pipeline; a revision the detector cannot place fails its startup probe here."""
-    return telemetry_metrics.service_meter_provider(_SERVICE_NAME)
+    return telemetry_metrics.service_meter_provider(_require(_SERVICE_NAME_ENV))
 
 
 async def _on_startup(app: web.Application) -> None:

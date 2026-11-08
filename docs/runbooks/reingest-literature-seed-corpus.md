@@ -17,6 +17,9 @@ SCRATCH=$PROJECT-litcache-scratch
 INGEST_SA=themis-ingest@$PROJECT.iam.gserviceaccount.com
 IMAGE=$REGION-docker.pkg.dev/$PROJECT/themis/litcache-worker:$(git rev-parse --short HEAD)
 ME=$(gcloud config get-value account)
+# The full-text worker's bulk service, which a direct run asks for each paper it commits.
+BULK_WORKER_URL=$(gcloud run services describe themis-convert-bulk-worker --project="$PROJECT" --region="$REGION" \
+  --format='value(status.url)')
 ```
 
 ## What a re-run does to the existing cache
@@ -273,11 +276,14 @@ DirectRunner over the scratch bucket and a throwaway Postgres, for checking pipe
 ## 3. The real run
 
 `--direct` reads `ingest/` from and writes `papers/` to the store, with no staging. `--limit` is then optional and still
-honoured, so a bounded direct run is a canary against the real store before the full pass:
+honoured, so a bounded direct run is a canary against the real store before the full pass. A direct run asks the
+full-text worker for every paper it commits, on the bulk queue, so it names the worker's bulk service; it runs only the
+worker's free steps unless it also names a `--target` that spends, with the funded run's `--run-id`:
 
 ```sh
 uv run --group dataflow python -m tools.litcache.launch_dataflow \
-  --project="$PROJECT" --region="$REGION" --sdk-image="$IMAGE" --direct --limit 200
+  --project="$PROJECT" --region="$REGION" --sdk-image="$IMAGE" --direct --limit 200 \
+  --worker-url="$BULK_WORKER_URL"
 ```
 
 Then the whole corpus. Two defaults are sized for a sample: `--max-workers` (2) caps the autoscaled write stage, and
@@ -288,7 +294,7 @@ are prepared to review rather than treat the exit code as the verdict:
 ```sh
 uv run --group dataflow python -m tools.litcache.launch_dataflow \
   --project="$PROJECT" --region="$REGION" --sdk-image="$IMAGE" --direct \
-  --max-workers 8 --max-dead-letters 200
+  --worker-url="$BULK_WORKER_URL" --max-workers 8 --max-dead-letters 200
 ```
 
 Two things bound `--max-workers`. The write stage's OA fetches leave every worker in parallel, so the upstream sources

@@ -18,7 +18,7 @@ Two run shapes:
   (omit to ingest the whole corpus). A direct run into the store the full-text worker reads
   asks the worker for every paper it commits, on the bulk queue, naming each ``--target``
   given (none by default, so nothing spends) and ``--run-id`` for a funded run; it needs
-  ``--worker-url``, the worker's ``run.app`` URL.
+  ``--worker-url``, the ``run.app`` URL of the worker's bulk service (``themis-convert-bulk-worker``).
 
 Dataflow ``staging``/``temp`` live in the scratch bucket either way. The crosswalk is
 always the real shared one, so every shape exercises the production mint path.
@@ -240,7 +240,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action='store_true',
         help='read ingest/ from and write papers/ to --source-bucket directly (the real store), no staging',
     )
-    parser.add_argument('--worker-url', default=None, help="the full-text worker's run.app URL, to ask it for work")
+    parser.add_argument(
+        '--worker-url', default=None, help="the run.app URL of the full-text worker's bulk service, to ask it for work"
+    )
     parser.add_argument(
         '--target',
         dest='work_targets',

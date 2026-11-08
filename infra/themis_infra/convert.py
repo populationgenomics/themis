@@ -1,4 +1,4 @@
-"""The full-text work lane: two Cloud Tasks queues and the one worker both deliver to.
+"""The full-text work lane: two Cloud Tasks queues, each delivering to its own deployment of one worker.
 
 Architecture B (`docs/design/evidence-fulltext.md`): all fetch/convert work lives in a separate worker,
 so the evidence read image stays lean. A Cloud Task pushes `POST /convert` with a `WorkRequest` to the worker,
@@ -13,29 +13,35 @@ program's, since neither a queue nor the invoker knows its caller.
 - `WorkQueues` — the interactive and bulk Cloud Tasks queues. Their concurrency caps are capacity
   limits: they protect the worker's memory and pace its calls out, and do not bound spend; bounded
   retries stop a request that keeps failing.
-- `ConvertWorker` — the worker Cloud Run service (internal ingress, require-auth) and its runtime SA
-  (object read/write on the litcache bucket; the Claude API by workload identity federation; each
-  transcription's token counts to Cloud Monitoring through the Telemetry API).
-- `ConversionInvoker` — the identity whose OIDC token the task carries: `run.invoker` on the worker,
-  and the Cloud Tasks service agent may mint its token. Whatever enqueues needs `actAs` on it.
+- `ConvertWorker` — the worker's two Cloud Run services (internal ingress, require-auth) and the one
+  runtime SA they share (object read/write on the litcache bucket; the Claude API by workload identity
+  federation; each transcription's token counts to Cloud Monitoring through the Telemetry API). The
+  interactive service serves one request per instance; the bulk service serves many on each of a few
+  high-memory instances (`docs/design/evidence-fulltext.md`).
+- `ConversionInvoker` — the identity whose OIDC token the task carries: `run.invoker` on both
+  services, and the Cloud Tasks service agent may mint its token. Whatever enqueues needs `actAs` on it.
 - `WorkSweep` — the scheduled sweep: a Cloud Run job on the worker's image that reads every paper and
   asks, on the bulk queue, for each one on which a step has work (`themis.litcache.sweep`).
 """
 
 from __future__ import annotations
 
+import dataclasses
+
 import pulumi
 import pulumi_gcp as gcp
 
 from themis_infra import cloud_run, grants
 
-# How many requests each queue dispatches at once. The worker scales to their sum, so a full bulk queue
-# never takes an instance an interactive request needs. Tune against observed volume.
+# How many requests each queue dispatches at once. Each service has exactly the instances its queue
+# fills, so a full queue never waits for one, and neither queue's work lands on the other's instances.
 _INTERACTIVE_CONCURRENT_DISPATCHES = 5
-_BULK_CONCURRENT_DISPATCHES = 5
-# How many requests one worker instance serves at once. The worker sizes the thread pool each request's
-# producer runs on from this (THEMIS_CONVERT_CONCURRENCY), so the two are set from one value.
-_REQUEST_CONCURRENCY = 1
+# The bulk service: requests one instance serves at once, and the most instances it runs. One pdfium
+# child process per instance keeps up with about this many requests, so more concurrency is more
+# instances. The bulk queue dispatches their product.
+_BULK_REQUESTS_PER_INSTANCE = 16
+_BULK_MAX_INSTANCES = 8
+_BULK_CONCURRENT_DISPATCHES = _BULK_REQUESTS_PER_INSTANCE * _BULK_MAX_INSTANCES
 # Bounded retries. Cloud Tasks has no dead-letter destination — an exhausted task is simply deleted,
 # leaving the paper as it was for the sweep to find. 1 attempt + 4 retries at a doubling 30s spreads a
 # transient failure (model-API overload, a fetch blip) over ~7.5 minutes; the ceiling binds only if the
@@ -105,16 +111,111 @@ def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.ServiceTemplateC
     return gcp.cloudrunv2.ServiceTemplateContainerEnvArgs(name=name, value=value)
 
 
+@dataclasses.dataclass(frozen=True)
+class _Deployment:
+    """One of the worker's Cloud Run services, sized for the queue that delivers to it.
+
+    Attributes:
+        name: The service name.
+        requests_per_instance: How many requests one instance serves at once. The worker sizes the
+            thread pool each request's producer runs on from it (`THEMIS_CONVERT_CONCURRENCY`).
+        max_instances: The most instances the service runs.
+        cpu: The CPU limit per instance.
+        memory: The memory limit per instance: its requests' PDFs and page images at once, beside the
+            server and its pdfium process.
+        gen2: Whether the instance runs in the second-generation execution environment, where the
+            kernel's out-of-memory killer picks a victim inside the container rather than ending the
+            instance, so the pdfium child's preference to be killed first takes effect.
+    """
+
+    name: str
+    requests_per_instance: int
+    max_instances: int
+    cpu: str
+    memory: str
+    gen2: bool
+
+
+_INTERACTIVE = _Deployment(
+    name='themis-convert-worker',
+    requests_per_instance=1,
+    max_instances=_INTERACTIVE_CONCURRENT_DISPATCHES,
+    cpu='2',
+    memory='4Gi',
+    gen2=False,
+)
+# Memory: a request at worst holds a PDF at the open-access fetch cap (100 MB), its page images within the
+# request byte budget (~24 MB) and their encoded request body (~64 MB), so about 250 MB; sixteen of those
+# is ~4 GB, beside the server and the pdfium process holding one PDF.
+_BULK = _Deployment(
+    name='themis-convert-bulk-worker',
+    requests_per_instance=_BULK_REQUESTS_PER_INSTANCE,
+    max_instances=_BULK_MAX_INSTANCES,
+    cpu='2',
+    memory='8Gi',
+    gen2=True,
+)
+
+
+def _worker_service(
+    deployment: _Deployment,
+    *,
+    project: str,
+    region: str,
+    image: pulumi.Input[str],
+    service_account_email: pulumi.Input[str],
+    envs: list[gcp.cloudrunv2.ServiceTemplateContainerEnvArgs],
+    opts: pulumi.ResourceOptions,
+) -> gcp.cloudrunv2.Service:
+    return gcp.cloudrunv2.Service(
+        deployment.name,
+        project=project,
+        name=deployment.name,
+        location=region,
+        deletion_protection=False,
+        # Cloud Tasks in the same project pushing to the run.app URL counts as internal traffic. IAM
+        # require-auth still applies: only ConversionInvoker's SA holds run.invoker, so the task must
+        # carry its OIDC token.
+        ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
+        template=gcp.cloudrunv2.ServiceTemplateArgs(
+            service_account=service_account_email,
+            execution_environment='EXECUTION_ENVIRONMENT_GEN2' if deployment.gen2 else None,
+            scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
+                min_instance_count=0,
+                max_instance_count=deployment.max_instances,
+            ),
+            # The conversion is the request (I/O-bound on the model API); Cloud Run keeps CPU
+            # allocated for its duration, up to this timeout.
+            timeout=_REQUEST_TIMEOUT,
+            max_instance_request_concurrency=deployment.requests_per_instance,
+            containers=[
+                gcp.cloudrunv2.ServiceTemplateContainerArgs(
+                    image=image,
+                    envs=[*envs, _env('THEMIS_CONVERT_CONCURRENCY', str(deployment.requests_per_instance))],
+                    ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(container_port=8080),  # HTTP/1.1
+                    resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
+                        limits={'cpu': deployment.cpu, 'memory': deployment.memory}
+                    ),
+                    startup_probe=cloud_run.http_startup_probe('/healthz'),
+                )
+            ],
+        ),
+        opts=opts,
+    )
+
+
 class ConvertWorker(pulumi.ComponentResource):
-    """The convert worker Cloud Run service (internal ingress, IAM-gated) and its runtime SA.
+    """The convert worker's two Cloud Run services (internal ingress, IAM-gated) and their shared runtime SA.
 
     Attributes:
         service_account_email: The runtime SA's email — object read/write on the litcache bucket, and
             the `email` claim the Anthropic federation rule matches (Path B, claude-api-wif.md).
         service_account_unique_id: The runtime SA's numeric unique id — the stable `sub` claim that
             rule pins. Never reissued, so a replacement account cannot inherit the pin.
-        service_name: The Cloud Run service name, for the invoker's `run.invoker` binding.
-        url: The service's `run.app` URL — the `/convert` target the enqueuer POSTs to.
+        interactive_service_name: The interactive service's name, for the invoker's `run.invoker` binding.
+        interactive_url: Its `run.app` URL — the `/convert` target a task on the interactive queue names.
+        bulk_service_name: The bulk service's name, for the invoker's `run.invoker` binding.
+        bulk_url: Its `run.app` URL — the `/convert` target a task on the bulk queue names.
     """
 
     def __init__(
@@ -136,7 +237,7 @@ class ConvertWorker(pulumi.ComponentResource):
         # Dedicated runtime identity: the worker reads seed PDFs and writes back renderings/markers,
         # and is the Claude API's federation client. protect + retain_on_delete because the registered
         # federation rule pins this SA's unique_id, which is never reissued — a delete/replace would
-        # strand it.
+        # strand it. Both services run as it, so one rule covers both.
         service_account = gcp.serviceaccount.Account(
             'themis-convert-worker-runtime',
             project=project,
@@ -162,61 +263,39 @@ class ConvertWorker(pulumi.ComponentResource):
         # The request-token counter each transcription feeds (`themis/telemetry`).
         grants.TelemetryWriter('themis-convert-worker', member=service_account.member, project=project, opts=child)
 
-        service = gcp.cloudrunv2.Service(
-            'themis-convert-worker',
-            project=project,
-            name='themis-convert-worker',
-            location=region,
-            deletion_protection=False,
-            # Cloud Tasks in the same project pushing to the run.app URL counts as internal traffic. IAM
-            # require-auth still applies: only ConversionInvoker's SA holds run.invoker, so the task must
-            # carry its OIDC token.
-            ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
-            template=gcp.cloudrunv2.ServiceTemplateArgs(
-                service_account=service_account.email,
-                # One request per instance, so the queues together never need more instances than they dispatch at
-                # once.
-                scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
-                    min_instance_count=0,
-                    max_instance_count=_INTERACTIVE_CONCURRENT_DISPATCHES + _BULK_CONCURRENT_DISPATCHES,
-                ),
-                # The conversion is the request (I/O-bound on the model API); Cloud Run keeps CPU
-                # allocated for its duration, up to this timeout.
-                timeout=_REQUEST_TIMEOUT,
-                max_instance_request_concurrency=_REQUEST_CONCURRENCY,
-                containers=[
-                    gcp.cloudrunv2.ServiceTemplateContainerArgs(
-                        image=image,
-                        envs=[
-                            _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
-                            _env('THEMIS_CONVERT_CONCURRENCY', str(_REQUEST_CONCURRENCY)),
-                            # PDF-OCR client credentials: keyless WIF (Path B), its own svac + rule
-                            # (../../docs/runbooks/claude-api-wif.md).
-                            _env('ANTHROPIC_FEDERATION_RULE_ID', anthropic_federation_rule_id),
-                            _env('ANTHROPIC_ORGANIZATION_ID', anthropic_organization_id),
-                            _env('ANTHROPIC_SERVICE_ACCOUNT_ID', anthropic_service_account_id),
-                            _env('ANTHROPIC_WORKSPACE_ID', anthropic_workspace_id),
-                        ],
-                        ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(container_port=8080),  # HTTP/1.1
-                        # A whole PDF in memory alongside the model request drives this; tune from
-                        # observed conversion memory/CPU.
-                        resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
-                            limits={'cpu': '2', 'memory': '4Gi'}
-                        ),
-                        startup_probe=cloud_run.http_startup_probe('/healthz'),
-                    )
-                ],
-            ),
-            opts=child,
+        envs = [
+            _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
+            # PDF-OCR client credentials: keyless WIF (Path B), its own svac + rule
+            # (../../docs/runbooks/claude-api-wif.md).
+            _env('ANTHROPIC_FEDERATION_RULE_ID', anthropic_federation_rule_id),
+            _env('ANTHROPIC_ORGANIZATION_ID', anthropic_organization_id),
+            _env('ANTHROPIC_SERVICE_ACCOUNT_ID', anthropic_service_account_id),
+            _env('ANTHROPIC_WORKSPACE_ID', anthropic_workspace_id),
+        ]
+        interactive, bulk = (
+            _worker_service(
+                deployment,
+                project=project,
+                region=region,
+                image=image,
+                service_account_email=service_account.email,
+                envs=envs,
+                opts=child,
+            )
+            for deployment in (_INTERACTIVE, _BULK)
         )
-        self.service_name = service.name
-        self.url = service.uri
+        self.interactive_service_name = interactive.name
+        self.interactive_url = interactive.uri
+        self.bulk_service_name = bulk.name
+        self.bulk_url = bulk.uri
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,
                 'service_account_unique_id': self.service_account_unique_id,
-                'service_name': self.service_name,
-                'url': self.url,
+                'interactive_service_name': self.interactive_service_name,
+                'interactive_url': self.interactive_url,
+                'bulk_service_name': self.bulk_service_name,
+                'bulk_url': self.bulk_url,
             }
         )
 
@@ -236,7 +315,8 @@ class ConversionInvoker(pulumi.ComponentResource):
         *,
         project: str,
         region: str,
-        worker_service_name: pulumi.Input[str],
+        interactive_service_name: pulumi.Input[str],
+        bulk_service_name: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:ConversionInvoker', 'themis', None, opts)
@@ -252,15 +332,24 @@ class ConversionInvoker(pulumi.ComponentResource):
         self.service_account_email = service_account.email
         self.service_account_id = service_account.name
 
-        # The task's OIDC identity must be authorized to invoke the require-auth worker.
+        # The task's OIDC identity must be authorized to invoke each require-auth worker service.
         grants.ServiceInvoker(
             'themis-convert-invoker',
             member=service_account.member,
-            service=worker_service_name,
+            service=interactive_service_name,
             project=project,
             location=region,
             target='convert-worker',
             prior=grants.Prior('themis-convert-invoker-runs-worker', parent=self),
+            opts=child,
+        )
+        grants.ServiceInvoker(
+            'themis-convert-invoker',
+            member=service_account.member,
+            service=bulk_service_name,
+            project=project,
+            location=region,
+            target='convert-bulk-worker',
             opts=child,
         )
 

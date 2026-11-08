@@ -351,7 +351,8 @@ convert_worker = convert.ConvertWorker(
 convert_invoker = convert.ConversionInvoker(
     project=project,
     region=region,
-    worker_service_name=convert_worker.service_name,
+    interactive_service_name=convert_worker.interactive_service_name,
+    bulk_service_name=convert_worker.bulk_service_name,
     opts=pulumi.ResourceOptions(depends_on=[convert_worker]),
 )
 # The key every litcache lookup of a work sends, since OpenAlex meters keyless callers; the runtime reads it by
@@ -377,7 +378,7 @@ evidence_service = evidence.EvidenceService(
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
     convert_queue_path=convert_queue_path,
-    convert_worker_url=convert_worker.url,
+    convert_worker_url=convert_worker.interactive_url,
     convert_invoker_sa_email=convert_invoker.service_account_email,
     openalex_api_key=openalex,
     max_instances=evidence_max_instances,
@@ -783,7 +784,7 @@ work_sweep = convert.WorkSweep(
     image=_image(_CONVERT_WORKER_IMAGE_ENV, lambda: _live_service_image('themis-convert-worker')),
     fulltext_bucket=fulltext.name,
     bulk_queue=work_queues.bulk,
-    worker_url=convert_worker.url,
+    worker_url=convert_worker.bulk_url,
     invoker_service_account_id=convert_invoker.service_account_id,
     invoker_service_account_email=convert_invoker.service_account_email,
     scheduled=work_sweep_scheduled,
@@ -977,7 +978,9 @@ pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
 pulumi.export('convert_queue', convert_queue.name)
 pulumi.export('convert_bulk_queue', work_queues.bulk.name)
 pulumi.export('work_sweep_job_name', work_sweep.job_name)
-pulumi.export('convert_worker_url', convert_worker.url)
+pulumi.export('convert_worker_url', convert_worker.interactive_url)
+# The /convert target a bulk run names on the bulk queue (`tools.litcache.launch_dataflow --worker-url`).
+pulumi.export('convert_bulk_worker_url', convert_worker.bulk_url)
 pulumi.export('convert_worker_sa_email', convert_worker.service_account_email)
 pulumi.export('convert_worker_sa_unique_id', convert_worker.service_account_unique_id)
 # The identity a conversion task's OIDC token names — the subject of the producer's actAs grant.
