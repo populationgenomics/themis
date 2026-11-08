@@ -15,6 +15,13 @@ What a re-run guarantees, precisely, because the sidecar is read as evidence lat
 skipped only when the mirrored object is still there *and* its checksum — read back from GCS, not
 taken from the sidecar's own claim — matches what provenance recorded for this URL. So corruption
 or replacement on the bucket side is caught on the next run, cheaply and without re-downloading.
+
+Caught, not repaired: the mirror never replaces an object, so what a reader was pinned to cannot
+change under it. Anything at a destination the run cannot vouch for — a corrupted object, one
+mirrored from a URL the manifest no longer pins, an object whose sidecar never landed because a run
+stopped between the two writes — fails that entry, naming what to delete. The one exception is the
+last case with a publisher digest: an object without a sidecar whose md5 is the publisher's is
+adopted, its sidecar written, since its bytes are already proven.
 What that does **not** catch is an upstream mutating a file it already versioned: detecting that
 needs the bytes again, and a re-run does not fetch them. For an entry carrying the publisher's own
 digest the recorded value is that digest, so the mirror is pinned to the publisher's truth; for an
@@ -35,96 +42,39 @@ import argparse
 import base64
 import contextlib
 import dataclasses
-import datetime
+import datetime as dt
 import enum
 import hashlib
 import json
 import pathlib
-import re
 import sys
 import tempfile
-import tomllib
 import urllib.parse
 from collections.abc import Iterator
 
+import google.resumable_media
 import requests
+from google.api_core import exceptions as google_exceptions
 from google.cloud import storage
 
-_MANIFEST = pathlib.Path(__file__).resolve().parents[2] / 'resources' / 'reference.toml'
+from tools.resources import manifest
+
 _BUCKET_SUFFIX = 'resources'
-_PROVENANCE_SUFFIX = '.provenance.json'
+PROVENANCE_SUFFIX = '.provenance.json'
 _CHUNK = 8 * 1024 * 1024
 # A rewrite of a multi-gigabyte object returns a continuation token rather than completing, so the
 # copy loops until GCS reports it done.
 _REWRITE_ATTEMPTS = 10_000
-_MD5_HEX = re.compile(r'^[0-9a-f]{32}$')
+
+
+# What a transfer to, from or within GCS raises when it does not complete: a refused request (a write to a name
+# that exists, under a grant that cannot replace one), a download whose bytes fail their checksum, an upstream
+# fetch that failed. Each fails the one item it was for.
+TRANSFER_ERRORS = (google_exceptions.GoogleAPIError, google.resumable_media.DataCorruption, requests.RequestException)
 
 
 class MirrorError(Exception):
-    """The manifest is inconsistent, or an upstream did not match what it pinned."""
-
-
-# The filename each role takes, and the suffixes it admits. An index is absent: it never declares a
-# suffix, only the extension it adds to its genome's, so there is no combination to admit or refuse.
-_ROLE_SUFFIXES: dict[str, frozenset[str]] = {
-    # `tar.gz` is a publisher's archive of a genome, mirrored as it ships; the derived pass extracts
-    # `genome.fa` beside it, against the digest the archive carries internally.
-    'genome': frozenset({'fa', 'fa.gz', 'tar.gz'}),
-    'annotation': frozenset({'gff3.gz'}),
-    'transcripts': frozenset({'fa.gz'}),
-    'ncrna': frozenset({'fa.gz'}),
-    'proteins': frozenset({'fa.gz'}),
-    'alignments': frozenset({'bam'}),
-    'model-alignments': frozenset({'bam'}),
-    'report': frozenset({'tsv'}),
-    'summary': frozenset({'tsv.gz'}),
-    'complete-set': frozenset({'tsv'}),
-}
-# The roles an assembly may declare beside its genome, in the order the mirror walks them.
-_ASSEMBLY_ROLES = ('annotation', 'transcripts', 'ncrna', 'proteins', 'alignments', 'model-alignments', 'report')
-_ASSEMBLY_FIELDS = frozenset(
-    {'id', 'source', 'version', 'seqid', 'licence', 'consumer', 'genome', 'index', *_ASSEMBLY_ROLES}
-)
-_TABLE_FIELDS = frozenset({'id', 'source', 'version', 'role', 'suffix', 'url', 'md5', 'licence', 'consumer'})
-# What a spec nested inside an assembly may carry. `extension` is an index's alone — it takes the
-# indexed object's suffix and adds to it rather than declaring one. `index` nests an index under the
-# object it indexes (a BAM's `.bai`, a FASTA's `.fai`).
-_OBJECT_FIELDS = frozenset({'url', 'suffix', 'md5', 'extension', 'index'})
-
-
-@dataclasses.dataclass(frozen=True)
-class Entry:
-    """One pinned upstream object and where it lands.
-
-    Flattened out of the manifest rather than written there: an assembly declares its genome,
-    annotation and index together, and this is what the mirror walks. The destination is composed
-    from `source`, `version` and `role`, so every release of every source lands in the same shape
-    and a bump is additive — two versions coexist under one source, and nothing is renamed.
-    """
-
-    id: str
-    url: str
-    source: str
-    version: str
-    role: str
-    suffix: str
-    md5: str | None
-    licence: str
-    consumer: str
-
-    @property
-    def is_gcs(self) -> bool:
-        return self.url.startswith('gs://')
-
-    @property
-    def object(self) -> str:
-        """Where this lands under the dataset prefix: ``<source>/<version>/<role>.<suffix>``.
-
-        An index composes as its genome's name plus an extension, which is how htslib finds it —
-        it opens `genome.fa.fai`, and reports anything else as a missing index rather than a
-        misnamed one.
-        """
-        return f'{self.source}/{self.version}/{self.role}.{self.suffix}'
+    """An upstream did not match what the manifest pinned, or a transfer did not complete."""
 
 
 class Status(enum.Enum):
@@ -132,6 +82,7 @@ class Status(enum.Enum):
 
     SKIPPED = 'skip'
     MIRRORED = 'mirrored'
+    ADOPTED = 'adopted'
     WOULD_MIRROR = 'would mirror'
 
 
@@ -139,186 +90,9 @@ class Status(enum.Enum):
 class Outcome:
     """One entry's result."""
 
-    entry: Entry
+    entry: manifest.Entry
     status: Status
     size: int = 0
-
-
-def _require(item: dict[str, object], fields: frozenset[str], *, named: str, source: str) -> None:
-    """Raise unless `item` carries exactly the fields it may.
-
-    An unknown key is almost always a typo in an optional one, which would otherwise read as absent
-    and drop the object out of whatever that key feeds.
-    """
-    if missing := {'id', 'source', 'version', 'licence', 'consumer'} - item.keys():
-        raise MirrorError(f'{source}: {named} omits {sorted(missing)}')
-    if unknown := item.keys() - fields:
-        raise MirrorError(f'{source}: {named} carries unknown {sorted(unknown)}')
-
-
-def _object(
-    spec: dict[str, object], *, role: str, suffix: str, parent: dict[str, object], source: str, named: str
-) -> Entry:
-    """One declared object as a flat entry, inheriting what its parent declares once.
-
-    A nested spec gets the same unknown-key refusal a table gets, and for the same reason:
-    `md5sum = "…"` on a genome would otherwise read as absent, silently dropping the publisher
-    pinning the sidecar then claims for it.
-    """
-    allowed = _OBJECT_FIELDS if spec is not parent else _TABLE_FIELDS
-    if unknown := spec.keys() - allowed:
-        raise MirrorError(f'{source}: {named} carries unknown {sorted(unknown)}')
-    if 'extension' in spec and 'suffix' in spec:
-        raise MirrorError(
-            f'{source}: {named} declares both a suffix and an extension; an index declares only the latter'
-        )
-    url = spec.get('url')
-    if not isinstance(url, str) or not url.startswith(('https://', 'gs://')):
-        raise MirrorError(f'{source}: {named} has url {url!r}; only https:// and gs:// are fetched')
-    md5 = spec.get('md5')
-    if md5 is not None:
-        if not isinstance(md5, str) or not _MD5_HEX.match(md5):
-            raise MirrorError(f'{source}: {named} has md5 {md5!r}, which is not 32 hex digits')
-        if url.startswith('gs://'):
-            # Never compared: GCS reports base64 and a publisher reports hex, and a server-side copy
-            # is checksummed by GCS anyway. Accepting it would leave the object re-copying every
-            # run, which on a 3 GB assembly is not a small mistake.
-            raise MirrorError(f'{source}: {named} is a gs:// upstream, whose checksum GCS supplies; drop its md5')
-    return Entry(
-        id=named,
-        url=url,
-        source=str(parent['source']),
-        version=str(parent['version']),
-        role=role,
-        suffix=suffix,
-        md5=md5,
-        licence=str(parent['licence']),
-        consumer=str(parent['consumer']),
-    )
-
-
-def _declared_suffix(spec: dict[str, object], *, role: str, source: str, named: str) -> str:
-    """The suffix an object declares, checked against what its role admits.
-
-    Only for a declared one: an index's suffix is composed from its genome's, which has been
-    checked already, so there is nothing left to admit or refuse.
-    """
-    suffix = spec.get('suffix')
-    if not isinstance(suffix, str) or suffix not in _ROLE_SUFFIXES[role]:
-        raise MirrorError(
-            f'{source}: {named} is a {role} with suffix {suffix!r}; allowed are {sorted(_ROLE_SUFFIXES[role])}'
-        )
-    return suffix
-
-
-def _spec(item: dict[str, object], key: str, *, named: str, source: str) -> dict[str, object] | None:
-    """The table an assembly declares under `key`, or `None` when it declares none.
-
-    A present key whose value is not a table raises rather than reading as absent. `[[assembly.
-    index]]` for `[assembly.index]` is array-of-tables by muscle memory — valid TOML, and a list —
-    and dropping it silently is the failure the nesting exists to prevent: the index never mirrors,
-    the run reports clean, and htslib later calls the index missing rather than misnamed.
-    """
-    value = item.get(key)
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise MirrorError(
-            f'{source}: {named} declares {key} as {type(value).__name__}, not a table — '
-            f'`[[{named}.{key}]]` where `[{named}.{key}]` was meant?'
-        )
-    return value
-
-
-def _assembly_entries(item: dict[str, object], *, source: str) -> Iterator[Entry]:
-    """The genome one assembly declares, and the annotation, sequence sets, report and index beside it.
-
-    The index takes its genome's suffix plus the extension it adds, so the two cannot disagree:
-    htslib opens `genome.fa.fai` and reports anything else as a missing index, not a misnamed one.
-    """
-    named = str(item['id'])
-    _require(item, _ASSEMBLY_FIELDS, named=named, source=source)
-    if not item.get('seqid'):
-        raise MirrorError(f'{source}: {named} must say how it names sequences')
-    genome = _spec(item, 'genome', named=named, source=source)
-    if genome is None:
-        raise MirrorError(f'{source}: {named} declares no genome')
-    genome_suffix = _declared_suffix(genome, role='genome', source=source, named=f'{named}/genome')
-    yield _object(genome, role='genome', suffix=genome_suffix, parent=item, source=source, named=f'{named}/genome')
-    yield from _index_entries(genome, item, role='genome', suffix=genome_suffix, source=source, named=f'{named}/genome')
-    for role in _ASSEMBLY_ROLES:
-        spec = _spec(item, role, named=named, source=source)
-        if spec is not None:
-            suffix = _declared_suffix(spec, role=role, source=source, named=f'{named}/{role}')
-            yield _object(spec, role=role, suffix=suffix, parent=item, source=source, named=f'{named}/{role}')
-            yield from _index_entries(spec, item, role=role, suffix=suffix, source=source, named=f'{named}/{role}')
-    index = _spec(item, 'index', named=named, source=source)
-    if index is not None:
-        yield _index_entry(index, item, role='genome', suffix=genome_suffix, source=source, named=f'{named}/index')
-
-
-def _index_entry(
-    index: dict[str, object], item: dict[str, object], *, role: str, suffix: str, source: str, named: str
-) -> Entry:
-    """The index of one object, landing beside it as the object's name plus the extension it adds.
-
-    htslib opens `genome.fa.fai` or `alignments.bam.bai` and reports anything else as a missing
-    index rather than a misnamed one, so the name is composed, never declared.
-    """
-    extension = index.get('extension')
-    if not isinstance(extension, str) or not extension:
-        raise MirrorError(f'{source}: {named} must declare the extension it adds to the object it indexes')
-    if 'index' in index:
-        raise MirrorError(f'{source}: {named} nests an index under an index; nothing reads one')
-    return _object(index, role=role, suffix=f'{suffix}.{extension}', parent=item, source=source, named=named)
-
-
-def _index_entries(
-    spec: dict[str, object], item: dict[str, object], *, role: str, suffix: str, source: str, named: str
-) -> Iterator[Entry]:
-    """The index an object nests under itself, if it declares one."""
-    index = _spec(spec, 'index', named=named, source=source)
-    if index is not None:
-        yield _index_entry(index, item, role=role, suffix=suffix, source=source, named=f'{named}/index')
-
-
-def load_manifest(path: pathlib.Path = _MANIFEST) -> tuple[str, list[Entry]]:
-    """The dataset prefix and every object the manifest pins, flattened.
-
-    Raises:
-        MirrorError: If the file is not a manifest, something omits a required field or carries an
-            unknown one, or two objects would be written to one destination.
-    """
-    raw = tomllib.loads(path.read_text('utf-8'))
-    if 'dataset' not in raw:
-        raise MirrorError(f'{path.name}: a manifest needs a `dataset`')
-    entries: list[Entry] = []
-    for item in raw.get('assembly', []):
-        entries.extend(_assembly_entries(item, source=path.name))
-    for item in raw.get('table', []):
-        named = str(item['id'])
-        _require(item, _TABLE_FIELDS, named=named, source=path.name)
-        role = str(item.get('role'))
-        if role not in _ROLE_SUFFIXES:
-            raise MirrorError(f'{path.name}: {named} has role {role!r}; known roles are {sorted(_ROLE_SUFFIXES)}')
-        entries.append(
-            _object(
-                item,
-                role=role,
-                suffix=_declared_suffix(item, role=role, source=path.name, named=named),
-                parent=item,
-                source=path.name,
-                named=named,
-            )
-        )
-    if not entries:
-        raise MirrorError(f'{path.name}: a manifest needs at least one `[[assembly]]` or `[[table]]`')
-    written: dict[str, str] = {}
-    for entry in entries:
-        if entry.object in written:
-            raise MirrorError(f'{path.name}: {entry.id} and {written[entry.object]} both write {entry.object!r}')
-        written[entry.object] = entry.id
-    return raw['dataset'], entries
 
 
 def _hex(encoded: str | None) -> str | None:
@@ -341,13 +115,13 @@ def object_digest(blob: storage.Blob) -> tuple[str, str] | None:
 
 
 def _stored_provenance(bucket: storage.Bucket, name: str) -> dict[str, object] | None:
-    blob = bucket.blob(name + _PROVENANCE_SUFFIX)
+    blob = bucket.blob(name + PROVENANCE_SUFFIX)
     if not blob.exists():
         return None
     return json.loads(blob.download_as_bytes())
 
 
-def _up_to_date(entry: Entry, stored: dict[str, object] | None, destination: storage.Blob) -> bool:
+def _up_to_date(entry: manifest.Entry, stored: dict[str, object] | None, destination: storage.Blob) -> bool:
     """Whether the mirrored object still is what provenance says was put there for this URL."""
     if stored is None or stored.get('url') != entry.url:
         return False
@@ -357,6 +131,63 @@ def _up_to_date(entry: Entry, stored: dict[str, object] | None, destination: sto
         return False
     actual = object_digest(destination)
     return actual is not None and (stored.get('digest'), stored.get('digest_algorithm')) == actual
+
+
+@dataclasses.dataclass(frozen=True)
+class Mirrored:
+    """A mirrored object, as its provenance records it and as checked against what GCS holds.
+
+    `generation` pins the object read: a download at that generation fails rather than returning
+    bytes that replaced the ones checked.
+    """
+
+    entry: manifest.Entry
+    name: str
+    digest: str
+    digest_algorithm: str
+    generation: int
+
+    def provenance(self) -> dict[str, str]:
+        """What identifies the bytes: where they came from and their digest, the algorithm named."""
+        return {'url': self.entry.url, 'digest': self.digest, 'digest_algorithm': self.digest_algorithm}
+
+    def download(self, bucket: storage.Bucket, path: pathlib.Path) -> None:
+        """The object's bytes, written to `path` and checked against its digest in transit.
+
+        Raises:
+            google.api_core.exceptions.PreconditionFailed: If the object was replaced since it was checked.
+            google.resumable_media.DataCorruption: If the bytes that arrived do not match the digest.
+        """
+        bucket.blob(self.name).download_to_filename(
+            str(path), checksum=self.digest_algorithm, if_generation_match=self.generation
+        )
+
+
+def mirrored(entry: manifest.Entry, *, dataset: str, bucket: storage.Bucket) -> Mirrored:
+    """The mirrored object for `entry`, checked to be what the manifest pins and what provenance records.
+
+    Raises:
+        MirrorError: If the entry is not mirrored, was mirrored from another URL or against another
+            pinned digest, or the stored object no longer has the digest its provenance records.
+    """
+    name = f'{dataset}/{entry.object}'
+    stored = _stored_provenance(bucket, name)
+    if stored is None:
+        raise MirrorError(f'{entry.id}: not mirrored; no provenance at {name}{PROVENANCE_SUFFIX}')
+    if stored.get('url') != entry.url:
+        raise MirrorError(f'{entry.id}: mirrored from {stored.get("url")}, but the manifest pins {entry.url}')
+    if entry.md5 is not None and stored.get('digest') != entry.md5:
+        raise MirrorError(f'{entry.id}: provenance records {stored.get("digest")}, the manifest pins md5 {entry.md5}')
+    blob = bucket.blob(name)
+    if not blob.exists():
+        raise MirrorError(f'{entry.id}: provenance exists but the object {name} does not')
+    actual = object_digest(blob)
+    recorded = (str(stored.get('digest')), str(stored.get('digest_algorithm')))
+    if actual != recorded or blob.generation is None:
+        raise MirrorError(f'{entry.id}: {name} has digest {actual}, its provenance records {recorded}')
+    return Mirrored(
+        entry=entry, name=name, digest=recorded[0], digest_algorithm=recorded[1], generation=blob.generation
+    )
 
 
 @contextlib.contextmanager
@@ -380,19 +211,19 @@ def _downloaded(url: str) -> Iterator[tuple[pathlib.Path, str, int]]:
         yield path, digest.hexdigest(), size
 
 
-def _copy_within_gcs(client: storage.Client, entry: Entry, destination: storage.Blob) -> None:
+def _copy_within_gcs(client: storage.Client, entry: manifest.Entry, destination: storage.Blob) -> None:
     """Server-side copy of a ``gs://`` upstream; the bytes never reach this machine."""
     parsed = urllib.parse.urlparse(entry.url)
     source = client.bucket(parsed.netloc).blob(parsed.path.lstrip('/'))
     token = None
     for _ in range(_REWRITE_ATTEMPTS):
-        token, _, _ = destination.rewrite(source, token=token)
+        token, _, _ = destination.rewrite(source, token=token, if_generation_match=0)
         if token is None:
             return
     raise MirrorError(f'{entry.id}: rewrite did not complete')
 
 
-def _provenance(entry: Entry, *, digest: str, algorithm: str, size: int) -> bytes:
+def _provenance(entry: manifest.Entry, *, digest: str, algorithm: str, size: int) -> bytes:
     record = {
         'entry': entry.id,
         'url': entry.url,
@@ -403,12 +234,14 @@ def _provenance(entry: Entry, *, digest: str, algorithm: str, size: int) -> byte
         'digest_source': 'publisher' if entry.md5 else 'first-fetch',
         'size': size,
         'licence': entry.licence,
-        'mirrored_at': datetime.datetime.now(datetime.UTC).isoformat(),
+        'mirrored_at': dt.datetime.now(dt.UTC).isoformat(),
     }
     return json.dumps(record, indent=1, sort_keys=True).encode()
 
 
-def mirror(entry: Entry, *, dataset: str, bucket: storage.Bucket, client: storage.Client, dry_run: bool) -> Outcome:
+def mirror(
+    entry: manifest.Entry, *, dataset: str, bucket: storage.Bucket, client: storage.Client, dry_run: bool
+) -> Outcome:
     """Mirror one entry.
 
     Raises:
@@ -417,8 +250,19 @@ def mirror(entry: Entry, *, dataset: str, bucket: storage.Bucket, client: storag
     """
     name = f'{dataset}/{entry.object}'
     destination = bucket.blob(name)
-    if _up_to_date(entry, _stored_provenance(bucket, name), destination):
+    stored = _stored_provenance(bucket, name)
+    if _up_to_date(entry, stored, destination):
         return Outcome(entry, Status.SKIPPED)
+    adoptable = stored is None and entry.md5 is not None and destination.exists()
+    if adoptable and object_digest(destination) == (entry.md5, 'md5'):
+        if not dry_run:
+            _write_provenance(bucket, name, entry, digest=str(entry.md5), algorithm='md5', size=destination.size or 0)
+        return Outcome(entry, Status.ADOPTED, destination.size or 0)
+    if stored is not None or destination.exists():
+        raise MirrorError(
+            f'{entry.id}: gs://{bucket.name}/{name} or its sidecar is there but is not what the manifest pins, and the '
+            f'mirror never replaces an object; delete both to mirror it again'
+        )
     if dry_run:
         return Outcome(entry, Status.WOULD_MIRROR)
 
@@ -436,18 +280,52 @@ def mirror(entry: Entry, *, dataset: str, bucket: storage.Bucket, client: storag
             # `checksum='md5'` makes GCS reject the object server-side when the bytes that arrived
             # are not the bytes that were sent; the default verifies nothing, so a truncated upload
             # would land and get a sidecar asserting a digest the stored object does not have.
-            destination.upload_from_filename(str(path), checksum='md5')
+            destination.upload_from_filename(str(path), checksum='md5', if_generation_match=0)
         algorithm = 'md5'
-    bucket.blob(name + _PROVENANCE_SUFFIX).upload_from_string(
-        _provenance(entry, digest=digest, algorithm=algorithm, size=size), content_type='application/json'
-    )
+    _write_provenance(bucket, name, entry, digest=digest, algorithm=algorithm, size=size)
     return Outcome(entry, Status.MIRRORED, size)
 
 
+def _write_provenance(
+    bucket: storage.Bucket, name: str, entry: manifest.Entry, *, digest: str, algorithm: str, size: int
+) -> None:
+    bucket.blob(name + PROVENANCE_SUFFIX).upload_from_string(
+        _provenance(entry, digest=digest, algorithm=algorithm, size=size),
+        content_type='application/json',
+        if_generation_match=0,
+    )
+
+
 def _report(outcome: Outcome) -> str:
-    if outcome.status is Status.MIRRORED:
-        return f'  mirrored      {outcome.entry.id}  {outcome.size / 1e6:.1f} MB'
+    if outcome.status in (Status.MIRRORED, Status.ADOPTED):
+        return f'  {outcome.status.value:<12}  {outcome.entry.id}  {outcome.size / 1e6:.1f} MB'
     return f'  {outcome.status.value:<12}  {outcome.entry.id}'
+
+
+def resources_bucket(client: storage.Client, project: str) -> storage.Bucket:
+    """The project's resources bucket, the one the mirror and everything derived from it live in."""
+    return client.bucket(f'{project}-{_BUCKET_SUFFIX}')
+
+
+def mirror_all(
+    entries: list[manifest.Entry], *, dataset: str, bucket: storage.Bucket, client: storage.Client, dry_run: bool
+) -> list[str]:
+    """Mirror every entry, reporting each on stderr, and return the ids of those that failed.
+
+    One entry's failure does not abandon the rest: a transfer of this size is worth resuming from
+    what landed, and the caller still learns that something did not.
+    """
+    print(f'{len(entries)} entries -> gs://{bucket.name}/{dataset}/', file=sys.stderr)
+    failed: list[str] = []
+    for entry in entries:
+        try:
+            print(
+                _report(mirror(entry, dataset=dataset, bucket=bucket, client=client, dry_run=dry_run)), file=sys.stderr
+            )
+        except (MirrorError, *TRANSFER_ERRORS) as error:
+            failed.append(entry.id)
+            print(f'  FAILED        {entry.id}: {error}', file=sys.stderr)
+    return failed
 
 
 def main() -> None:
@@ -462,7 +340,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    dataset, entries = load_manifest()
+    pinned = manifest.load()
+    entries = pinned.entries
     if args.only:
         wanted = set(args.only)
         chosen = [entry for entry in entries if entry.id in wanted or entry.id.split('/')[0] in wanted]
@@ -471,20 +350,8 @@ def main() -> None:
         entries = chosen
 
     client = storage.Client(project=args.project)
-    bucket = client.bucket(f'{args.project}-{_BUCKET_SUFFIX}')
-    print(f'{len(entries)} entries -> gs://{bucket.name}/{dataset}/', file=sys.stderr)
-    # One entry's failure does not abandon the rest: a transfer of this size is worth resuming from
-    # what landed, and the exit status still reports that something did not.
-    failed: list[str] = []
-    for entry in entries:
-        try:
-            print(
-                _report(mirror(entry, dataset=dataset, bucket=bucket, client=client, dry_run=args.dry_run)),
-                file=sys.stderr,
-            )
-        except (MirrorError, requests.RequestException) as error:
-            failed.append(entry.id)
-            print(f'  FAILED        {entry.id}: {error}', file=sys.stderr)
+    bucket = resources_bucket(client, args.project)
+    failed = mirror_all(entries, dataset=pinned.dataset, bucket=bucket, client=client, dry_run=args.dry_run)
     if failed:
         print(f'{len(failed)} of {len(entries)} failed: {", ".join(failed)}', file=sys.stderr)
         raise SystemExit(1)

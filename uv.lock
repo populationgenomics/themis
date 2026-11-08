@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
@@ -18,11 +18,13 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-anchorite = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
-clinvar-proto = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+hgvs-weaver-data = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 litdown = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
-litfetch = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 postern = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+clinvar-proto = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+litfetch = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+hgvs-weaver = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
+anchorite = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 pubmed-proto = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 
 [[package]]
@@ -325,6 +327,35 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/9a/8e/82a0fe20a541c03148528be8cac2408564a6c9a0cc7e9171802bc1d26985/attrs-26.1.0.tar.gz", hash = "sha256:d03ceb89cb322a8fd706d4fb91940737b6642aa36998fe130a9bc96c985eff32", size = 952055, upload-time = "2026-03-19T14:22:25.026Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/64/b4/17d4b0b2a2dc85a6df63d1157e028ed19f90d4cd97c36717afef2bc2f395/attrs-26.1.0-py3-none-any.whl", hash = "sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309", size = 67548, upload-time = "2026-03-19T14:22:23.645Z" },
+]
+
+[[package]]
+name = "bagz"
+version = "0.3.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/f9/a9c57641a7a6e4278026890d475178f1de7dfff4e908fe6ef827a2d493c2/bagz-0.3.8.tar.gz", hash = "sha256:d6032b15cf462afcd9c3cabad0412a9e7d38bcee33d96cab21df78ea7e400763", size = 75830, upload-time = "2026-09-02T10:09:23.75Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bf/3c/36eb680e55237eb22905bf7e2d432a31530062bedbf2ab7fc0c0b35e265c/bagz-0.3.8-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:05c7e5dfd705c53eee537d40e067ed17b4641c625752920e949e3c795fb85fb2", size = 641633, upload-time = "2026-09-02T10:09:09.91Z" },
+    { url = "https://files.pythonhosted.org/packages/b5/c1/463f79b7d354c287d3ffacf3a5bda05ac0ba4b41f6729e6940747b60cdfa/bagz-0.3.8-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:160b01f5ece74588a9f5fd09676d6303e8b6194979c82ecbeec3d0a4ca7c963e", size = 898191, upload-time = "2026-09-02T10:09:11.566Z" },
+]
+
+[package.optional-dependencies]
+gcs = [
+    { name = "bagz-gcs" },
+]
+
+[[package]]
+name = "bagz-gcs"
+version = "0.3.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bagz" },
+    { name = "google-cloud-storage" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/cf/7e5956724ca24e5455d05c2d2befffa6ec703fcc743a25162ea3154c50c6/bagz_gcs-0.3.8.tar.gz", hash = "sha256:73f406c53a0872f57ee2fa475c3b3876d8872a2c0dc4861b522b5babe295ed93", size = 59469, upload-time = "2026-09-02T10:09:24.781Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/f9/0875add815bacd438ff87844e3a814192a8a27dffa3cfc7867770e060f87/bagz_gcs-0.3.8-cp312-abi3-macosx_14_0_arm64.whl", hash = "sha256:5c35529343d6bb0b590c6cccce8233c1be1365686af066d469653fe78eba0d88", size = 3836099, upload-time = "2026-09-02T10:09:20.481Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/48/8ed736b02c068e3d9df08555be1699359ae9fa54a883abcb7da4879f42e6/bagz_gcs-0.3.8-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f540e4960104d263d22b7e7040a48351e0c15b657bbb1c7471c844a8c85cc3d8", size = 1973420, upload-time = "2026-09-02T10:09:22.327Z" },
 ]
 
 [[package]]
@@ -1655,6 +1686,43 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/01/ee/02a2c011bdab74c6fb3c75474d40b3052059d95df7e73351460c8588d963/h11-0.16.0.tar.gz", hash = "sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1", size = 101250, upload-time = "2025-04-24T03:35:25.427Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/04/4b/29cac41a4d98d144bf5f6d33995617b185d14b22401f75ca86f384e87ff1/h11-0.16.0-py3-none-any.whl", hash = "sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86", size = 37515, upload-time = "2025-04-24T03:35:24.344Z" },
+]
+
+[[package]]
+name = "hgvs-weaver"
+version = "2.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f6/7c/79570b7b109ab75a9a9706f779fd0ec424c6ffa5c419680ec60306d04dfb/hgvs_weaver-2.1.0.tar.gz", hash = "sha256:7173819d9fc7cf8fecc2c993405c315dc0043a3bc652b0462e7036c037588955", size = 11431363, upload-time = "2026-11-06T08:11:31.951Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d4/af/34ead26e411e294a5e06f27e250ac5a85c9c520baa0da7e9965b7bae5fb0/hgvs_weaver-2.1.0-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:7483e7a5ec595d212b457eac3403f3b715eb1b1223c3d37d4ff65b372368c1cc", size = 1528828, upload-time = "2026-11-06T08:11:23.191Z" },
+    { url = "https://files.pythonhosted.org/packages/40/22/36a06db530c66937a6d2ea0d787ce917df19f8af441a546f18c71c4fd288/hgvs_weaver-2.1.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:14f0a47110b55185cacec0de052491efc9caaf61fcdb87df13c6508d971c2c6a", size = 1443070, upload-time = "2026-11-06T08:11:24.667Z" },
+    { url = "https://files.pythonhosted.org/packages/4e/fe/1d6d33ad8759859ea2bd9de6f10da42458bd06bea9a5bfa615e6f6e6e821/hgvs_weaver-2.1.0-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f4375fe2911d7ace572313e68429eee7e1fb685bb3931783b5d8008b1a25c17b", size = 1549820, upload-time = "2026-11-06T08:11:26.456Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/aa/a654498ed5cb30261c995d3162fea18490a209499a83f592fbe8229545fa/hgvs_weaver-2.1.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fdec2ed0f9c7a10ecbacd86881467e39690bf00e96e970e5c989ec4523d5bb80", size = 1591504, upload-time = "2026-11-06T08:11:28.087Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/90/5ad5a77d07919e8542267feb3732ed82415475a8eaafe582dcc73d565ea2/hgvs_weaver-2.1.0-cp313-cp313-win_amd64.whl", hash = "sha256:60c002fe318ce202e7d99de1317214136d12cead9aad35952327c22a514da81a", size = 1437201, upload-time = "2026-11-06T08:11:29.764Z" },
+]
+
+[[package]]
+name = "hgvs-weaver-data"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bagz" },
+    { name = "google-crc32c" },
+    { name = "hgvs-weaver" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/84/7e/ee05c3d2c6815033fc0978814305118b16906246a83ed04fb1a6acb71dd6/hgvs_weaver_data-0.1.4.tar.gz", hash = "sha256:1c932f602ac10e709c87a0b7ba621c5eaa5574602e870ac14e60f8ccc3de68c8", size = 236676, upload-time = "2026-11-01T23:35:32.693Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/ff/69a595f2440d45a37734d4504098824be5922c2b579b49a4cb0e942bd173/hgvs_weaver_data-0.1.4-py3-none-any.whl", hash = "sha256:3377ddafc12d8cee4776afc5f86f06e06f2418a65dd29e4504aca51183fc7b2a", size = 91451, upload-time = "2026-11-01T23:35:30.758Z" },
+]
+
+[package.optional-dependencies]
+build = [
+    { name = "protovalidate" },
+    { name = "pysam" },
+]
+gcs = [
+    { name = "bagz", extra = ["gcs"] },
 ]
 
 [[package]]
@@ -3409,6 +3477,32 @@ wheels = [
 ]
 
 [[package]]
+name = "pysam"
+version = "0.24.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/01/d0/e9271669f97ce454d1aa97f9ce0d3e84376295f352ad6c5d2c3998e38f66/pysam-0.24.1.tar.gz", hash = "sha256:90f612afccdb454d2447ecb5229266c6e7f991093deed4ed0a791db01f7fc994", size = 5387389, upload-time = "2026-09-07T09:08:46.447Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/dd/24b130d14e32aab94d98c0d4455464e597dbbba8d3a8371fcbf9b4d90f65/pysam-0.24.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:c7e756b8a9da0f04f6e1ccaad611513f6d52e622b1ae03dcace76af3722100a9", size = 3207985, upload-time = "2026-09-07T09:07:58.729Z" },
+    { url = "https://files.pythonhosted.org/packages/64/5d/4c9752e034e9f0e27477efd68273d2835eedcffdb6b19d9a91c427773baa/pysam-0.24.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:a52f12c808e53fd16c7f3c42d95914a9d5084a5504f3c32a5138ba08bdfa8408", size = 2966598, upload-time = "2026-09-07T09:08:00.615Z" },
+    { url = "https://files.pythonhosted.org/packages/7c/0e/3dc08db282ac19cbdc6fa464da7472a046ecf29565be3a98497f918bd0a0/pysam-0.24.1-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:817624cb93fc2373bf3d3e7298a59db88323308b25fcdfd19a0a4df6f119e8dd", size = 3779655, upload-time = "2026-09-07T09:08:02.425Z" },
+    { url = "https://files.pythonhosted.org/packages/35/ba/02b95fafb87b1ff6a4f6a79b06d70bbaf4657f86e95b993ac10104a8f804/pysam-0.24.1-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:68b742b2db84cf3982c21be69f886baf3d3cb49fbb070cb4a4c09b4d2fc907c0", size = 3965938, upload-time = "2026-09-07T09:08:04.223Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/43/b45f9f89053ad25a1bb76d391c630f5492de5dea37d36f2d96e6ab7c6f4a/pysam-0.24.1-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:fdb008b9dfe673ec029189f6394b2d60ce1380ee387c106e799ada237809b2ee", size = 3846136, upload-time = "2026-09-07T09:08:06.069Z" },
+    { url = "https://files.pythonhosted.org/packages/27/21/385b43c1b0743252bdd3a1a0228cba1648b585d3a257342e19a8f7387302/pysam-0.24.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:5cb4a0ffe496111d0acead00a60f2e7e977a4d716089367dc6cc8c0cf511fcbb", size = 4015799, upload-time = "2026-09-07T09:08:08.302Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/11/31157b5ab9b814e1c8ad6955096143bde70260177eb70ce7d73f886d739f/pysam-0.24.1-cp314-cp314-macosx_10_15_x86_64.whl", hash = "sha256:ec95cc0c4a4fbea432066d9d8e2f566ab4e1e11b4a4bb70b2143ed5b9f2fbf3b", size = 3221469, upload-time = "2026-09-07T09:08:10.172Z" },
+    { url = "https://files.pythonhosted.org/packages/48/e6/df265ba6504499a93b98f35f62227c3db1f8eb27eec51105eb48973e35a0/pysam-0.24.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:897f9a76dfc568e0a18350c5d545cc158e2200884c59ec2eb9895385e33b4315", size = 2985030, upload-time = "2026-09-07T09:08:12.065Z" },
+    { url = "https://files.pythonhosted.org/packages/61/39/530a9ebeacb19e33f8ed2f1d74696ea29e90d69015fd8c8baa3be8b185b2/pysam-0.24.1-cp314-cp314-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:9598dd5a571c5c8b4383b4fe1a27823d72b3261c5299100cf3d88dfb09b45019", size = 3807241, upload-time = "2026-09-07T09:08:13.845Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/1a/da6bfc10e301558e6ba481dcf722dbdd90daf14f4c4dfc6fb011630640e0/pysam-0.24.1-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:25ffcc2aca0a49358c02e666ddd789afe701c5cf320dcb894ac22ede7347049f", size = 3977249, upload-time = "2026-09-07T09:08:16.055Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/c2/42c4d6c889119fa89f93119dc33fdd3331a6dffccce042b6281cb0a98eee/pysam-0.24.1-cp314-cp314-musllinux_1_2_aarch64.whl", hash = "sha256:e520b7311e3822ce029adaf24472e563e724cec442314c6c702956e242dc27d4", size = 3875774, upload-time = "2026-09-07T09:08:17.839Z" },
+    { url = "https://files.pythonhosted.org/packages/86/7a/231623e056c6fc87f051880986f9d06423aea54683690d784ff535c8094f/pysam-0.24.1-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:a4e0206a6b8c2b84686f0c5f9087b69dc4c1e8d5e66c98970f86809947d7cb0a", size = 4026939, upload-time = "2026-09-07T09:08:20.143Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/ab/561b71a720a9540ea1bfc9d1d2c2a4a0282a9ff30fdbae38af87118c81d6/pysam-0.24.1-cp315-cp315-macosx_10_15_x86_64.whl", hash = "sha256:1527e9fcfbdbc72d8bf3e06970cca229a041eefe36a30bf14997f52c1f29ccf6", size = 3218749, upload-time = "2026-09-07T09:08:22.223Z" },
+    { url = "https://files.pythonhosted.org/packages/49/c8/7d533dd8f399bb5760afa78c9c6aeddea42b0d31769c171f5995853bb57f/pysam-0.24.1-cp315-cp315-macosx_11_0_arm64.whl", hash = "sha256:886f5c1a2a45b174345c217c821cbd4231311d43ecf5e8157cc7a4bee5db182a", size = 2983125, upload-time = "2026-09-07T09:08:24.618Z" },
+    { url = "https://files.pythonhosted.org/packages/67/47/ef5d14fde4f84882b6bed5241cfdbfd2971536a82e89b2b69890b64a9403/pysam-0.24.1-cp315-cp315-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:57d7921761ce2b902711e55857f861733b909155fb6299b5559da4a20a353eeb", size = 3814180, upload-time = "2026-09-07T09:08:26.609Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/10/43d5b23c54eb83649fffae04112914a033a849bb14b46a8517e097faf1b6/pysam-0.24.1-cp315-cp315-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7a22778002a2a401374733dc5698bc3552ff0a6c43d27aeaf37976048bd3d867", size = 4002990, upload-time = "2026-09-07T09:08:28.529Z" },
+    { url = "https://files.pythonhosted.org/packages/70/b7/d92607e8d302d4665a4e5eefe0a9bef8b18279f34d18e0c2e6c86614c326/pysam-0.24.1-cp315-cp315-musllinux_1_2_aarch64.whl", hash = "sha256:15dca5345f67b622dfb303ed5328e13799ffc13df12407a6d4542caab5a6ffb1", size = 3881168, upload-time = "2026-09-07T09:08:30.401Z" },
+    { url = "https://files.pythonhosted.org/packages/21/21/975bdd2e09ed82f27c5adbbf985360fc4cf637998fc6840b6b30585cea43/pysam-0.24.1-cp315-cp315-musllinux_1_2_x86_64.whl", hash = "sha256:b64fb7c97f8ad78fd5b8cd16f0d8b931d89f0c30b48a061625280ce8b2145782", size = 4052777, upload-time = "2026-09-07T09:08:32.067Z" },
+]
+
+[[package]]
 name = "pytest"
 version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4162,6 +4256,8 @@ lint = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "hgvs-weaver" },
+    { name = "hgvs-weaver-data", extra = ["build", "gcs"] },
     { name = "httpx2" },
     { name = "litdown" },
     { name = "litfetch" },
@@ -4221,6 +4317,8 @@ protoc = [
 ]
 resources = [
     { name = "google-cloud-storage" },
+    { name = "hgvs-weaver" },
+    { name = "hgvs-weaver-data", extra = ["build", "gcs"] },
     { name = "requests" },
 ]
 run-review = [
@@ -4326,6 +4424,8 @@ test = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "hgvs-weaver" },
+    { name = "hgvs-weaver-data", extra = ["build", "gcs"] },
     { name = "httpx2" },
     { name = "litdown" },
     { name = "litfetch" },
@@ -4538,6 +4638,8 @@ lint = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "hgvs-weaver", specifier = "==2.1.0" },
+    { name = "hgvs-weaver-data", extras = ["build", "gcs"], specifier = "==0.1.4" },
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.7.0" },
     { name = "litfetch", specifier = "==0.5.0" },
@@ -4595,6 +4697,8 @@ migrate = [
 protoc = [{ name = "grpcio-tools" }]
 resources = [
     { name = "google-cloud-storage" },
+    { name = "hgvs-weaver", specifier = "==2.1.0" },
+    { name = "hgvs-weaver-data", extras = ["build", "gcs"], specifier = "==0.1.4" },
     { name = "requests" },
 ]
 run-review = [
@@ -4696,6 +4800,8 @@ test = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "hgvs-weaver", specifier = "==2.1.0" },
+    { name = "hgvs-weaver-data", extras = ["build", "gcs"], specifier = "==0.1.4" },
     { name = "httpx2" },
     { name = "litdown", specifier = "==0.7.0" },
     { name = "litfetch", specifier = "==0.5.0" },

@@ -1,0 +1,110 @@
+name: reference
+run-name: reference build ${{ inputs.environment || 'prod' }}
+
+# Starts the reference-build Cloud Run Job (infra/themis_infra/reference.py), which mirrors
+# resources/reference.toml and builds the stores and genomes from it.
+# - prod: after a successful deploy of a push to `main` that changed the manifest since the previous
+#   successful one. After the deploy, not on the push: the Job runs the image that deploy put live, and
+#   that image carries the manifest, so starting it any earlier would mirror the old pins.
+# - dev or prod: by dispatch on `main`, to rerun after a failure or to fill dev.
+# Starts the Job and returns; the Job takes hours, and a failed execution pages through the alerts channel.
+# Authenticates as the environment's reference-dispatch account, which may only start the Job; its WIF
+# binding admits this workflow read from `main` alone.
+on:
+  workflow_run:
+    workflows: [deploy]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: The environment whose reference-build Job to start
+        type: choice
+        options: [dev, prod]
+        default: dev
+
+concurrency:
+  group: themis-reference-${{ inputs.environment || 'prod' }}
+  cancel-in-progress: false
+
+jobs:
+  start:
+    # A deploy run that was dispatched (a dev deploy, an images-only run) is not a prod deploy of `main`.
+    if: |
+      github.repository == 'populationgenomics/themis-internal'
+      && (github.event_name == 'workflow_dispatch'
+        || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'))
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - id: pick
+        env:
+          NAME: ${{ inputs.environment || 'prod' }}
+        run: |
+          case "${NAME}" in
+            dev) PROJECT=cpg-themis-dev; PROJECT_NUMBER=698160839187 ;;
+            prod) PROJECT=cpg-themis-prod; PROJECT_NUMBER=186726836905 ;;
+            *) echo "::error::no environment ${NAME}"; exit 1 ;;
+          esac
+          if [[ "${GITHUB_REF}" != refs/heads/main ]]; then
+            echo "::error::the reference build starts only from main; got ${GITHUB_REF}"
+            exit 1
+          fi
+          {
+            echo "project=${PROJECT}"
+            echo "project_number=${PROJECT_NUMBER}"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        if: github.event_name == 'workflow_run'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      # The successful prod deploy before this one, not the parent commit: a deploy run superseded in its queue
+      # never completes, and a manifest change it carried would otherwise be missed. Before this one, not the
+      # latest: a rerun after a later deploy would otherwise compare against a commit that already holds the change.
+      - id: changed
+        if: github.event_name == 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          PREVIOUS="$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow deploy.yml --branch main --event push \
+            --status success --limit 50 --json databaseId,headSha \
+            --jq "[.[] | select(.databaseId < ${RUN_ID})][0].headSha // empty")"
+          if [[ -z "${PREVIOUS}" ]]; then
+            echo "::notice::no earlier successful prod deploy; starting the reference build"
+            echo "start=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "${PREVIOUS}" "${HEAD_SHA}" -- resources/reference.toml; then
+            echo "::notice::resources/reference.toml is unchanged since ${PREVIOUS}; nothing to start"
+            echo "start=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "start=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: google-github-actions/auth@v3
+        if: github.event_name == 'workflow_dispatch' || steps.changed.outputs.start == 'true'
+        with:
+          project_id: ${{ steps.pick.outputs.project }}
+          workload_identity_provider: projects/${{ steps.pick.outputs.project_number }}/locations/global/workloadIdentityPools/github/providers/github
+          service_account: themis-reference-dispatch@${{ steps.pick.outputs.project }}.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v3
+        if: github.event_name == 'workflow_dispatch' || steps.changed.outputs.start == 'true'
+      # The v2 :run endpoint, which `run.invoker` on the Job admits; `gcloud run jobs execute` also reads the Job.
+      - name: Start the reference-build Job
+        if: github.event_name == 'workflow_dispatch' || steps.changed.outputs.start == 'true'
+        env:
+          PROJECT: ${{ steps.pick.outputs.project }}
+        run: |-
+          TOKEN="$(gcloud auth print-access-token)"
+          RESPONSE="$(curl --fail-with-body --silent --show-error -X POST \
+            -H "Authorization: Bearer ${TOKEN}" -H 'Content-Type: application/json' -d '{}' \
+            "https://run.googleapis.com/v2/projects/${PROJECT}/locations/australia-southeast1/jobs/themis-reference-build:run")"
+          EXECUTION="$(jq -r '.metadata.name // empty' <<< "${RESPONSE}")"
+          if [[ -z "${EXECUTION}" ]]; then
+            echo "::error::the Job did not report an execution: ${RESPONSE}"
+            exit 1
+          fi
+          echo "::notice::started ${EXECUTION}"

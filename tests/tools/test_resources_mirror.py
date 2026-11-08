@@ -1,98 +1,66 @@
-"""Tests for the manifest side of tools.resources.mirror: what a manifest may declare."""
+"""Tests for tools.resources.mirror: what is at a destination is skipped, adopted or refused, never replaced."""
 
 from __future__ import annotations
 
-import pathlib
+import hashlib
+import json
 
 import pytest
+from google.cloud import storage
 
-from tools.resources import mirror
+from tests.tools import conftest
+from tools.resources import manifest, mirror
 
-_ASSEMBLY = """
-dataset = "reference"
-
-[[assembly]]
-id = "a"
-source = "s"
-version = "1"
-seqid = "ucsc-name"
-licence = "public-domain"
-consumer = "tests"
-genome = {{ url = "https://example.org/g.fa.gz", suffix = "fa.gz" }}
-{extra}
-"""
+_BYTES = b'publisher bytes'
 
 
-def _manifest(tmp_path: pathlib.Path, extra: str = '') -> pathlib.Path:
-    path = tmp_path / 'reference.toml'
-    path.write_text(_ASSEMBLY.format(extra=extra), 'utf-8')
-    return path
+def _pinned_entry(pinned: manifest.Manifest) -> manifest.Entry:
+    entry = pinned.table('hgnc-complete-set')
+    return manifest.Entry(**{**entry.__dict__, 'md5': hashlib.md5(_BYTES).hexdigest()})  # noqa: S324
 
 
-def test_committed_manifest_loads() -> None:
-    # `load_manifest` raises on a malformed entry or a duplicate destination; non-empty rules out a
-    # vacuous pass.
-    _, entries = mirror.load_manifest()
-    assert entries
+def _mirror(entry: manifest.Entry, pinned: manifest.Manifest, bucket: storage.Bucket) -> mirror.Outcome:
+    return mirror.mirror(entry, dataset=pinned.dataset, bucket=bucket, client=bucket.client, dry_run=False)
 
 
-def test_every_declared_role_lands_under_its_assembly(tmp_path: pathlib.Path) -> None:
-    extra = '\n'.join(
-        f'{role} = {{ url = "https://example.org/{role}", suffix = "{sorted(mirror._ROLE_SUFFIXES[role])[0]}" }}'
-        for role in mirror._ASSEMBLY_ROLES
+def test_an_object_mirrored_as_pinned_is_skipped(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored
+) -> None:
+    entry = pinned.table('hgnc-complete-set')
+    put_mirrored(entry, _BYTES)
+    assert _mirror(entry, pinned, gcs_bucket).status is mirror.Status.SKIPPED
+
+
+def test_an_object_whose_sidecar_never_landed_is_adopted_when_its_md5_is_the_publishers(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest
+) -> None:
+    entry = _pinned_entry(pinned)
+    gcs_bucket.blob(f'{pinned.dataset}/{entry.object}').upload_from_string(_BYTES)
+    assert _mirror(entry, pinned, gcs_bucket).status is mirror.Status.ADOPTED
+    assert mirror.mirrored(entry, dataset=pinned.dataset, bucket=gcs_bucket).digest == entry.md5
+
+
+def test_an_object_without_a_sidecar_and_no_publisher_digest_is_refused_not_replaced(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest
+) -> None:
+    entry = pinned.table('hgnc-complete-set')
+    blob = gcs_bucket.blob(f'{pinned.dataset}/{entry.object}')
+    blob.upload_from_string(b'whatever a stopped run left')
+    blob.reload()
+    with pytest.raises(mirror.MirrorError, match='never replaces an object'):
+        _mirror(entry, pinned, gcs_bucket)
+    blob.reload()
+    assert blob.download_as_bytes() == b'whatever a stopped run left'
+
+
+def test_an_object_mirrored_from_a_url_no_longer_pinned_is_refused(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored
+) -> None:
+    entry = pinned.table('hgnc-complete-set')
+    put_mirrored(entry, _BYTES)
+    sidecar = gcs_bucket.blob(f'{pinned.dataset}/{entry.object}{mirror.PROVENANCE_SUFFIX}')
+    sidecar.upload_from_string(
+        json.dumps({**json.loads(sidecar.download_as_bytes()), 'url': 'https://example.org/old'})
     )
-    _, entries = mirror.load_manifest(_manifest(tmp_path, extra))
-    assert {entry.role for entry in entries} == {'genome', *mirror._ASSEMBLY_ROLES}
-    assert all(entry.object.startswith('s/1/') for entry in entries)
-
-
-@pytest.mark.parametrize('role', ['transcripts', 'ncrna', 'proteins'])
-def test_a_sequence_set_must_be_gzipped_fasta(tmp_path: pathlib.Path, role: str) -> None:
-    extra = f'{role} = {{ url = "https://example.org/{role}", suffix = "fa" }}'
-    with pytest.raises(mirror.MirrorError, match='allowed are'):
-        mirror.load_manifest(_manifest(tmp_path, extra))
-
-
-def test_an_unknown_role_is_refused_rather_than_ignored(tmp_path: pathlib.Path) -> None:
-    extra = 'transcript = { url = "https://example.org/t", suffix = "fa.gz" }'
-    with pytest.raises(mirror.MirrorError, match='unknown'):
-        mirror.load_manifest(_manifest(tmp_path, extra))
-
-
-def test_a_nested_index_lands_beside_its_object_under_the_composed_name(tmp_path: pathlib.Path) -> None:
-    extra = (
-        'alignments = { url = "https://example.org/a.bam", suffix = "bam", '
-        'index = { url = "https://example.org/a.bam.bai", extension = "bai" } }'
-    )
-    _, entries = mirror.load_manifest(_manifest(tmp_path, extra))
-    alignments = [entry for entry in entries if entry.role == 'alignments']
-    assert {entry.suffix for entry in alignments} == {'bam', 'bam.bai'}
-    assert len({entry.object.rsplit('.', 2)[0] for entry in alignments}) == 1
-
-
-def test_an_index_declares_only_the_extension_it_adds(tmp_path: pathlib.Path) -> None:
-    extra = (
-        'alignments = { url = "https://example.org/a.bam", suffix = "bam", '
-        'index = { url = "https://example.org/a.bai", suffix = "bai", extension = "bai" } }'
-    )
-    with pytest.raises(mirror.MirrorError, match='both a suffix and an extension'):
-        mirror.load_manifest(_manifest(tmp_path, extra))
-
-
-def test_an_index_without_an_extension_is_refused(tmp_path: pathlib.Path) -> None:
-    extra = (
-        'alignments = { url = "https://example.org/a.bam", suffix = "bam", '
-        'index = { url = "https://example.org/a.bai" } }'
-    )
-    with pytest.raises(mirror.MirrorError, match='must declare the extension'):
-        mirror.load_manifest(_manifest(tmp_path, extra))
-
-
-def test_an_index_under_an_index_is_refused(tmp_path: pathlib.Path) -> None:
-    extra = (
-        'alignments = { url = "https://example.org/a.bam", suffix = "bam", '
-        'index = { url = "https://example.org/a.bai", extension = "bai", '
-        'index = { url = "https://example.org/a.bai.x", extension = "x" } } }'
-    )
-    with pytest.raises(mirror.MirrorError, match='index under an index'):
-        mirror.load_manifest(_manifest(tmp_path, extra))
+    with pytest.raises(mirror.MirrorError, match='delete both'):
+        _mirror(entry, pinned, gcs_bucket)

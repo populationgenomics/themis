@@ -24,6 +24,10 @@
 # affected transcripts and never the substitutions. NCBI publishes the curated (NM_/NR_) and model
 # (XM_/XR_) alignments as separate BAMs; GRCh37 has only the curated one.
 #
+# An assembly a store is built from names its annotation `release`, the publisher's own name for it,
+# since the store's shard is cut under that name. NCBI writes it in the annotation's header too, and
+# the build pass refuses an annotation whose header disagrees.
+#
 # Nothing here is transformed. A derived artifact — a bgzip recompression, an index we build, a
 # subset — is a later pass writing its own prefix and citing the id it came from. Renaming a
 # sequence to make two sources agree would break equivalence with the publisher permanently, so a
@@ -47,6 +51,7 @@ dataset = "reference"
 id = "ncbi-grch38"
 source = "ncbi"
 version = "GCF_000001405.40_GRCh38.p14"
+release = "GCF_000001405.40-RS_2025_08"
 seqid = "refseq-accession"
 licence = "public-domain"
 consumer = "variants.resolve"
@@ -54,14 +59,25 @@ genome = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_0
 annotation = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_genomic.gff.gz", suffix = "gff3.gz", md5 = "24b731562b9d4cae9e37b23404b5be16" }
 transcripts = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_rna.fna.gz", suffix = "fa.gz", md5 = "b4a2ce202c90c0f24f22850c6bc7d774" }
 proteins = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_protein.faa.gz", suffix = "fa.gz", md5 = "25a880236608ad046d7f9b65e895eb4b" }
+records = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_rna.gbff.gz", suffix = "gbff.gz", md5 = "dba0915f2560e6b9d4943fac274816b9" }
 alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_knownrefseq_alns.bam", suffix = "bam", md5 = "42eccd19b4ce9d0b6c1808591e9223b7", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_knownrefseq_alns.bam.bai", extension = "bai", md5 = "e933345d2cce119dbefa158f5902b7dc" } }
 model-alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_modelrefseq_alns.bam", suffix = "bam", md5 = "c12dff0b42457ee125af155fedc257a0", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_modelrefseq_alns.bam.bai", extension = "bai", md5 = "93df11dc2c94b81ccec1e6150d24c5ea" } }
 report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_assembly_report.txt", suffix = "tsv", md5 = "21f3ac4aa8245a99eb874082051b9dde" }
+
+# NCBI's historical set: every transcript version replaced or suppressed up to RS_2024_08, placed on
+# this assembly. One paper in five cites a version the current release has replaced, and the set
+# holds all of them. GRCh38 only; NCBI publishes no GRCh37 set. Published without checksums.
+[assembly.historical]
+version = "GCF_000001405.40-RS_2024_08_historical"
+annotation = { url = "https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/historical/GRCh38/GCF_000001405.40-RS_2024_08_historical/GCF_000001405.40-RS_2024_08_genomic.gff.gz", suffix = "gff3.gz" }
+records = { url = "https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/historical/GRCh38/GCF_000001405.40-RS_2024_08_historical/GCF_000001405.40-RS_2024_08_knownrefseq_rna.gbff.gz", suffix = "gbff.gz" }
+alignments = { url = "https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/historical/GRCh38/GCF_000001405.40-RS_2024_08_historical/GCF_000001405.40-RS_2024_08_knownrefseq_alns.bam", suffix = "bam", index = { url = "https://ftp.ncbi.nlm.nih.gov/refseq/H_sapiens/historical/GRCh38/GCF_000001405.40-RS_2024_08_historical/GCF_000001405.40-RS_2024_08_knownrefseq_alns.bam.bai", extension = "bai" } }
 
 [[assembly]]
 id = "ncbi-grch37"
 source = "ncbi"
 version = "GCF_000001405.25_GRCh37.p13"
+release = "GCF_000001405.25-RS_2024_09"
 seqid = "refseq-accession"
 licence = "public-domain"
 consumer = "variants.resolve"
@@ -69,6 +85,7 @@ genome = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_0
 annotation = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_genomic.gff.gz", suffix = "gff3.gz", md5 = "44939e96b2023ec7c28a67323a8f9d22" }
 transcripts = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_rna.fna.gz", suffix = "fa.gz", md5 = "2189c58ebf11fc864939bda6f68aa928" }
 proteins = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_protein.faa.gz", suffix = "fa.gz", md5 = "07e6227d91e6435bcad2ed6e0dec41bd" }
+records = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_rna.gbff.gz", suffix = "gbff.gz", md5 = "c0c95fee1ed84fbdf6c7223ed8dd5723" }
 alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/RefSeq_transcripts_alignments/GCF_000001405.25_GRCh37.p13_knownrefseq_alns.bam", suffix = "bam", md5 = "3e11d35cc36e1e9dfb595dc9be7db01a", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/RefSeq_transcripts_alignments/GCF_000001405.25_GRCh37.p13_knownrefseq_alns.bam.bai", extension = "bai", md5 = "306256c53a88fa9a014499c61ffa3f62" } }
 report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_assembly_report.txt", suffix = "tsv", md5 = "5ded666a3acfcf7262370b7b4328badd" }
 
@@ -81,6 +98,11 @@ report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_0
 # names the RefSeq annotation release and the Ensembl release it was built from, which are what the
 # two GRCh38 annotations pin. Against any other pair some MANE transcripts are absent or differ.
 #
+# Two annotations of the GRCh38 release are mirrored. `annotation` covers the chromosomes, the scope
+# the variant annotation pipeline works in; `whole-annotation` adds the patches, haplotypes and
+# scaffolds a store places transcripts on, and `whole-annotation-gtf` is the same annotation as GTF,
+# whose tags say which CDS ends Ensembl marks incomplete.
+#
 # Ensembl publishes its transcript sequences in two files where NCBI publishes one: `cdna.all`
 # holds the protein-coding and pseudogene transcripts, `ncrna` the rest. Both are mirrored as they
 # ship; a consumer wanting every transcript reads both.
@@ -89,11 +111,14 @@ report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_0
 id = "ensembl-grch38"
 source = "ensembl"
 version = "116_GRCh38"
+release = "116"
 seqid = "ensembl-name"
 licence = "apache-2.0"
 consumer = "annotation-pipeline"
 genome = { url = "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/dna/Homo_sapiens.GRCh38.dna.primary_assembly.fa.gz", suffix = "fa.gz" }
 annotation = { url = "https://ftp.ensembl.org/pub/release-116/gff3/homo_sapiens/Homo_sapiens.GRCh38.116.chr.gff3.gz", suffix = "gff3.gz" }
+whole-annotation = { url = "https://ftp.ensembl.org/pub/release-116/gff3/homo_sapiens/Homo_sapiens.GRCh38.116.chr_patch_hapl_scaff.gff3.gz", suffix = "gff3.gz" }
+whole-annotation-gtf = { url = "https://ftp.ensembl.org/pub/release-116/gtf/homo_sapiens/Homo_sapiens.GRCh38.116.chr_patch_hapl_scaff.gtf.gz", suffix = "gtf.gz" }
 transcripts = { url = "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/cdna/Homo_sapiens.GRCh38.cdna.all.fa.gz", suffix = "fa.gz" }
 ncrna = { url = "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/ncrna/Homo_sapiens.GRCh38.ncrna.fa.gz", suffix = "fa.gz" }
 proteins = { url = "https://ftp.ensembl.org/pub/release-116/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz", suffix = "fa.gz" }

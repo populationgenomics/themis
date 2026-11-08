@@ -33,6 +33,7 @@ from themis_infra import (
     ingest,
     ingest_network,
     operator_ingress,
+    reference,
     sandbox,
     screenshots,
     secrets,
@@ -48,6 +49,7 @@ _WEB_IMAGE_ENV = 'THEMIS_WEB_IMAGE'
 _AUTH_IMAGE_ENV = 'THEMIS_AUTH_IMAGE'
 _HELLO_IMAGE_ENV = 'THEMIS_HELLO_IMAGE'
 _GENE_DISEASE_REFRESH_IMAGE_ENV = 'THEMIS_GENE_DISEASE_REFRESH_IMAGE'
+_REFERENCE_BUILD_IMAGE_ENV = 'THEMIS_REFERENCE_BUILD_IMAGE'
 _DISPATCHER_IMAGE_ENV = 'THEMIS_DISPATCHER_IMAGE'
 _SANDBOX_WORKER_IMAGE_ENV = 'THEMIS_SANDBOX_WORKER_IMAGE'
 _EVIDENCE_IMAGE_ENV = 'THEMIS_EVIDENCE_IMAGE'
@@ -181,18 +183,38 @@ def _image(env_var: str, live: Callable[[], str]) -> str:
     first bring-up passes `gcr.io/cloudrun/hello`. With no override — a PR
     `pulumi preview`, or a steady-state `up` — read the resource's live image so
     the plan shows no spurious image change. Reading the live image requires the
-    resource to already exist, so a first bring-up must pass the override.
+    resource to already exist, so a first bring-up must pass the override; a
+    preview of a PR that adds the resource plans it with the bring-up image.
     """
     return os.environ.get(env_var) or live()
 
 
+# What `deploy.yml` overrides on the first bring-up of a Cloud Run resource.
+_BRING_UP_IMAGE = 'gcr.io/cloudrun/hello'
+
+
+def _absent_in_preview(path: str, error: Exception) -> bool:
+    """Whether `error` says the Cloud Run resource at `path` does not exist yet, in a preview."""
+    return pulumi.runtime.is_dry_run() and f'{path} not found' in str(error)
+
+
 def _live_service_image(service_name: str) -> str:
-    service = gcp.cloudrunv2.get_service(name=service_name, location=region, project=project)
+    try:
+        service = gcp.cloudrunv2.get_service(name=service_name, location=region, project=project)
+    except Exception as error:  # the invoke raises a bare Exception
+        if _absent_in_preview(f'projects/{project}/locations/{region}/services/{service_name}', error):
+            return _BRING_UP_IMAGE
+        raise
     return service.templates[0].containers[0].image
 
 
 def _live_job_image(job_name: str, container_name: str) -> str:
-    job = gcp.cloudrunv2.get_job(name=job_name, location=region, project=project)
+    try:
+        job = gcp.cloudrunv2.get_job(name=job_name, location=region, project=project)
+    except Exception as error:  # the invoke raises a bare Exception
+        if _absent_in_preview(f'projects/{project}/locations/{region}/jobs/{job_name}', error):
+            return _BRING_UP_IMAGE
+        raise
     by_name = {container.name: container.image for container in job.templates[0].templates[0].containers}
     return by_name[container_name]
 
@@ -399,7 +421,7 @@ for label, invoker_sa_email in (
     )
 # The weekly reference-refresh job fetches the GenCC / ClinGen / PanelApp upstreams (public) and writes the
 # reference dumps the gene_disease live backend reads. No VPC access — only public upstreams and GCS — and
-# its own SA holds the sole write credential on the resources bucket.
+# its own SA is the only one that may replace or delete objects in the resources bucket.
 gene_disease_refresh_sa = gcp.serviceaccount.Account(
     'themis-gene-disease-refresh-runtime',
     project=project,
@@ -492,6 +514,16 @@ gcp.cloudscheduler.Job(
         ),
     ),
     opts=pulumi.ResourceOptions(depends_on=[base, gene_disease_refresh_job]),
+)
+# Mirrors resources/reference.toml and builds the hgvs-weaver-data stores and genomes from it; the reference
+# workflow starts it after a deploy that changed the manifest. Only public upstreams, Entrez and GCS: no VPC.
+reference_build = reference.ReferenceBuild(
+    project=project,
+    project_number=project_number,
+    region=region,
+    image=_image(_REFERENCE_BUILD_IMAGE_ENV, lambda: _live_job_image(reference.JOB_NAME, reference.CONTAINER_NAME)),
+    resources_bucket=resources.name,
+    opts=pulumi.ResourceOptions(depends_on=[base, resources]),
 )
 # The KMS MAC key that signs per-session tokens (§7) — a shared substrate: the web BFF derives
 # the bearer at session create, the dispatcher re-derives it at spawn.
@@ -834,7 +866,7 @@ spend_alerts = cost_alerts.CostAlerts(
 )
 # A paused sweep runs only by hand, so no later run is due to repair a failed one: it pages as an event.
 scheduled_jobs = [gene_disease_refresh_job.name, cost_exporter.job_name]
-unscheduled_jobs = [sandbox_job.job_name]
+unscheduled_jobs = [sandbox_job.job_name, reference_build.job_name]
 (scheduled_jobs if work_sweep_scheduled else unscheduled_jobs).append(work_sweep.job_name)
 alerts.OperationalAlerts(
     project=project,

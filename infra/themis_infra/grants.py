@@ -369,6 +369,39 @@ class BucketObjectReadWriter(_Capability):
         self.register_outputs({})
 
 
+class BucketObjectCreator(_Capability):
+    """May read, list and create every object in one bucket, but not overwrite or delete one.
+
+    `objectCreator` carries `storage.objects.create` without `storage.objects.delete`, and GCS treats
+    replacing an object as deleting it, so a write to a name that exists is refused whatever the
+    writer's code asks for. `objectViewer` adds the reads and the listing. Bucket-wide, as every GCS
+    grant is: the holder reads every dataset in the bucket and may add to any, but changes none.
+    """
+
+    def __init__(
+        self,
+        holder: str,
+        *,
+        member: pulumi.Input[str],
+        bucket: pulumi.Input[str],
+        target: str,
+        opts: pulumi.ResourceOptions | None = None,
+    ) -> None:
+        super().__init__(f'{holder}-adds-to-{target}', opts)
+        for slug, role in (
+            ('object-viewer', 'roles/storage.objectViewer'),
+            ('object-creator', 'roles/storage.objectCreator'),
+        ):
+            gcp.storage.BucketIAMMember(
+                f'{holder}-{slug}-{target}',
+                bucket=bucket,
+                role=role,
+                member=member,
+                opts=self._binding(None),
+            )
+        self.register_outputs({})
+
+
 class PublicObjectReader(_Capability):
     """Anyone may read an object in one bucket by its URL, with no credentials — but cannot list the bucket.
 

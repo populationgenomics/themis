@@ -77,6 +77,7 @@ VIEWS = (
             {
                 'BucketObjectReader',
                 'BucketObjectReadWriter',
+                'BucketObjectCreator',
                 'PublicObjectReader',
                 'DatabaseConnector',
                 'SecretReader',
@@ -184,7 +185,7 @@ def _target(binding: capture.Binding, project: str) -> _Node:
             return _Node(_RESOURCE, f'IAP backend {target}')
         case 'TaskEnqueuer':
             return _Node(_RESOURCE, f'queue {target}')
-        case 'BucketObjectReader' | 'BucketObjectReadWriter' | 'PublicObjectReader':
+        case 'BucketObjectReader' | 'BucketObjectReadWriter' | 'BucketObjectCreator' | 'PublicObjectReader':
             return _Node(_RESOURCE, f'bucket {target.removeprefix(f"{project}-")}')
         case 'SecretReader':
             return _Node(_RESOURCE, f'secret {target}')

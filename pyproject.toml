@@ -18,15 +18,15 @@ requires-python = ">=3.13"
 # past 7 days and Dependabot re-bumps it.
 [tool.uv]
 exclude-newer = "7 days"
-# litfetch, litdown, pubmed-proto, clinvar-proto, postern, and anchorite are CPG-owned and first-party: we cut the
-# releases, so the supply-chain window the global gate guards against (a compromised
-# third-party upload) doesn't apply. `0 days` (relative, prior-to-now) exempts them
+# litfetch, litdown, pubmed-proto, clinvar-proto, postern, anchorite, hgvs-weaver and hgvs-weaver-data are
+# CPG-owned and first-party: we cut the releases, so the supply-chain window the global gate guards against
+# (a compromised third-party upload) doesn't apply. `0 days` (relative, prior-to-now) exempts them
 # so a just-cut release is resolvable. Removing the age cushion is paired with an
 # exact pin on each (dependency-groups below): with no cushion, the pin is what
 # stops a re-lock from silently adopting a new — possibly account-compromised —
 # release; a bump is then an explicit, reviewed pyproject edit. Keep this list and
 # those pins in lock-step: anything exempted here must be exact-pinned.
-exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days", clinvar-proto = "0 days", postern = "0 days", anchorite = "0 days" }
+exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days", clinvar-proto = "0 days", postern = "0 days", anchorite = "0 days", hgvs-weaver = "0 days", hgvs-weaver-data = "0 days" }
 
 [dependency-groups]
 screen = ["pyyaml"]
@@ -205,10 +205,12 @@ guest = ["grpcio", "protobuf", "clinvar_proto==0.2.0", "pubmed_proto==0.5.0", "p
 # schema compat gate (tools/schema/buf_compat.py, .github/workflows/schema-compat.yml): protobuf reads the
 # compiled descriptor sets; protovalidate is what themis.widgets decodes a payload's ownership rules with.
 schema_compat = ["protobuf", "protovalidate"]
-# Reference mirror (tools/resources/mirror.py): the GCS client writes the resources bucket and
+# Reference mirror and build pass (tools/resources): the GCS client writes the resources bucket and
 # does the server-side copy for a gs:// upstream; requests streams an https:// one to disk while
-# hashing it. Operator tooling run against the caller's own ADC, not a deployed service.
-resources = ["google-cloud-storage", "requests"]
+# hashing it. hgvs-weaver-data's builder (the build extra) cuts the mirrored files into stores and
+# genomes, and its `status` command fetches the Entrez status table; gcs is its bucket reader. Run
+# as the reference-build Cloud Run Job, or by an operator against their own ADC.
+resources = ["google-cloud-storage", "requests", "hgvs-weaver==2.1.0", "hgvs-weaver-data[build,gcs]==0.1.4"]
 # testcontainers: the crosswalk tests mint against a throwaway Postgres (never a
 # mock — the UNIQUE-in-one-txn semantics are the thing under test), gated on a
 # reachable Docker daemon.

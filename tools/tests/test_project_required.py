@@ -9,7 +9,7 @@ import pytest
 
 from tools import bring_up, clone_analysis, pi_analysis, psql, session_token, sheaf_remote
 from tools.litcache import deposit, run_local
-from tools.resources import mirror
+from tools.resources import build, job, mirror, status
 from tools.run_review import __main__ as run_review
 
 _TOOLS: list[tuple[str, Callable[[], object], list[str]]] = [
@@ -20,6 +20,9 @@ _TOOLS: list[tuple[str, Callable[[], object], list[str]]] = [
     ('session_token', session_token.main, []),
     ('sheaf_remote', sheaf_remote.main, []),
     ('mirror', mirror.main, []),
+    ('status', status.main, []),
+    ('build', build.main, []),
+    ('job', job.main, []),
     ('deposit', deposit.main, []),
     ('run_local', run_local.main, ['--scratch-bucket', 'scratch']),
     ('run_review', run_review.main, ['prepare', '--round', '2026-10-30-0900', '--workbench-project', 'validation']),

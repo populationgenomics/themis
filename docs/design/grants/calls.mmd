@@ -3,90 +3,97 @@ flowchart TB
     n0["Cloud Tasks service agent"]
     n1["IAP service agent"]
     n2["WIF pool github: repository populationgenomics/themis-internal"]
-    n3["allAuthenticatedUsers"]
-    n4["allUsers"]
-    n5["group themis-clu"]
-    n6["themis-auth"]
-    n7["themis-ci-telemetry"]
-    n8["themis-clu"]
-    n9["themis-convert-invoker"]
-    n10["themis-convert-worker"]
-    n11["themis-cost-exporter"]
-    n12["themis-cost-report"]
-    n13["themis-cost-report-sched"]
-    n14["themis-cost-scheduler"]
-    n15["themis-dispatcher"]
-    n16["themis-evidence"]
-    n17["themis-gene-disease-refresh"]
-    n18["themis-gene-disease-scheduler"]
-    n19["themis-hello"]
-    n20["themis-ingest"]
-    n21["themis-sandbox-job"]
-    n22["themis-sheaf"]
-    n23["themis-web"]
-    n24["themis-work-sweep"]
-    n25["themis-work-sweep-scheduler"]
-    n26[("IAP backend themis-evidence-operator-backend")]
-    n27[("IAP backend themis-sheaf-operator-backend")]
-    n28[("queue themis-convert")]
-    n29[("queue themis-convert-bulk")]
-    n30[["themis-auth"]]
-    n31[["themis-convert-worker"]]
-    n32[["themis-cost-exporter"]]
-    n33[["themis-cost-report"]]
-    n34[["themis-dispatcher"]]
-    n35[["themis-evidence"]]
-    n36[["themis-gene-disease-refresh"]]
-    n37[["themis-hello"]]
-    n38[["themis-sandbox"]]
-    n39[["themis-sheaf"]]
-    n40[["themis-web"]]
-    n41[["themis-work-sweep"]]
-    n0 -->|AccountImpersonator| n9
-    n0 -->|AccountUser| n9
-    n1 -->|ServiceInvoker| n35
-    n1 -->|ServiceInvoker| n39
-    n1 -->|ServiceInvoker| n40
-    n2 -->|FederatedImpersonator| n7
-    n3 -->|IapAccessor| n40
-    n4 -->|PublicService| n34
-    n5 -->|AccountImpersonator| n8
-    n8 -->|AccountUser| n9
-    n8 -->|IapBackendAccessor| n26
-    n8 -->|IapBackendAccessor| n27
-    n8 -->|TaskEnqueuer| n29
-    n9 -->|ServiceInvoker| n31
-    n13 -->|JobRunner| n33
-    n14 -->|JobRunner| n32
-    n15 -->|SandboxSpawner| n38
-    n16 -->|AccountUser| n9
-    n16 -->|ServiceInvoker| n30
-    n16 -->|TaskEnqueuer| n28
-    n18 -->|JobRunner| n36
-    n19 -->|ServiceInvoker| n30
-    n20 -->|AccountUser| n9
-    n20 -->|TaskEnqueuer| n29
-    n21 -->|ServiceInvoker| n35
-    n21 -->|ServiceInvoker| n37
-    n21 -->|ServiceInvoker| n39
-    n22 -->|SelfSigner| n22
-    n22 -->|ServiceInvoker| n30
-    n23 -->|SelfSigner| n23
-    n23 -->|ServiceInvoker| n30
-    n23 -->|ServiceInvoker| n35
-    n23 -->|ServiceInvoker| n39
-    n24 -->|AccountUser| n9
-    n24 -->|TaskEnqueuer| n29
-    n25 -->|JobRunner| n41
-    n30 -. runs as .-> n6
-    n31 -. runs as .-> n10
-    n32 -. runs as .-> n11
-    n33 -. runs as .-> n12
-    n34 -. runs as .-> n15
-    n35 -. runs as .-> n16
-    n36 -. runs as .-> n17
-    n37 -. runs as .-> n19
-    n38 -. runs as .-> n21
-    n39 -. runs as .-> n22
-    n40 -. runs as .-> n23
-    n41 -. runs as .-> n24
+    n3["WIF pool github: workflow_ref populationgenomics/themis-internal/.github/workflows/reference.yml@refs/heads/main"]
+    n4["allAuthenticatedUsers"]
+    n5["allUsers"]
+    n6["group themis-clu"]
+    n7["themis-auth"]
+    n8["themis-ci-telemetry"]
+    n9["themis-clu"]
+    n10["themis-convert-invoker"]
+    n11["themis-convert-worker"]
+    n12["themis-cost-exporter"]
+    n13["themis-cost-report"]
+    n14["themis-cost-report-sched"]
+    n15["themis-cost-scheduler"]
+    n16["themis-dispatcher"]
+    n17["themis-evidence"]
+    n18["themis-gene-disease-refresh"]
+    n19["themis-gene-disease-scheduler"]
+    n20["themis-hello"]
+    n21["themis-ingest"]
+    n22["themis-reference-build"]
+    n23["themis-reference-dispatch"]
+    n24["themis-sandbox-job"]
+    n25["themis-sheaf"]
+    n26["themis-web"]
+    n27["themis-work-sweep"]
+    n28["themis-work-sweep-scheduler"]
+    n29[("IAP backend themis-evidence-operator-backend")]
+    n30[("IAP backend themis-sheaf-operator-backend")]
+    n31[("queue themis-convert")]
+    n32[("queue themis-convert-bulk")]
+    n33[["themis-auth"]]
+    n34[["themis-convert-worker"]]
+    n35[["themis-cost-exporter"]]
+    n36[["themis-cost-report"]]
+    n37[["themis-dispatcher"]]
+    n38[["themis-evidence"]]
+    n39[["themis-gene-disease-refresh"]]
+    n40[["themis-hello"]]
+    n41[["themis-reference-build"]]
+    n42[["themis-sandbox"]]
+    n43[["themis-sheaf"]]
+    n44[["themis-web"]]
+    n45[["themis-work-sweep"]]
+    n0 -->|AccountImpersonator| n10
+    n0 -->|AccountUser| n10
+    n1 -->|ServiceInvoker| n38
+    n1 -->|ServiceInvoker| n43
+    n1 -->|ServiceInvoker| n44
+    n2 -->|FederatedImpersonator| n8
+    n3 -->|FederatedImpersonator| n23
+    n4 -->|IapAccessor| n44
+    n5 -->|PublicService| n37
+    n6 -->|AccountImpersonator| n9
+    n9 -->|AccountUser| n10
+    n9 -->|IapBackendAccessor| n29
+    n9 -->|IapBackendAccessor| n30
+    n9 -->|TaskEnqueuer| n32
+    n10 -->|ServiceInvoker| n34
+    n14 -->|JobRunner| n36
+    n15 -->|JobRunner| n35
+    n16 -->|SandboxSpawner| n42
+    n17 -->|AccountUser| n10
+    n17 -->|ServiceInvoker| n33
+    n17 -->|TaskEnqueuer| n31
+    n19 -->|JobRunner| n39
+    n20 -->|ServiceInvoker| n33
+    n21 -->|AccountUser| n10
+    n21 -->|TaskEnqueuer| n32
+    n23 -->|JobRunner| n41
+    n24 -->|ServiceInvoker| n38
+    n24 -->|ServiceInvoker| n40
+    n24 -->|ServiceInvoker| n43
+    n25 -->|SelfSigner| n25
+    n25 -->|ServiceInvoker| n33
+    n26 -->|SelfSigner| n26
+    n26 -->|ServiceInvoker| n33
+    n26 -->|ServiceInvoker| n38
+    n26 -->|ServiceInvoker| n43
+    n27 -->|AccountUser| n10
+    n27 -->|TaskEnqueuer| n32
+    n28 -->|JobRunner| n45
+    n33 -. runs as .-> n7
+    n34 -. runs as .-> n11
+    n35 -. runs as .-> n12
+    n36 -. runs as .-> n13
+    n37 -. runs as .-> n16
+    n38 -. runs as .-> n17
+    n39 -. runs as .-> n18
+    n40 -. runs as .-> n20
+    n41 -. runs as .-> n22
+    n42 -. runs as .-> n24
+    n43 -. runs as .-> n25
+    n44 -. runs as .-> n26
+    n45 -. runs as .-> n27

@@ -8,10 +8,10 @@ deploy that failed. Every policy posts to the alerts channel, which is separate 
 through OpenTelemetry (`operational_metrics`); the rest read the platform's.
 
 Every policy but one is a state: it opens while something is wrong and closes once it is not, and both transitions
-notify. The policy on Jobs no schedule runs (the sandbox, one execution per agent session, and a paused sweep) is an
-event: no later run is due to repair a failed one, so a close would mean nothing, and it only opens. A state that a
-later event repairs (a Job's next run, the next deploy, the next ACL version) compares the time of the latest failure
-with the time of the latest success, so the incident outlasts the gap between the two.
+notify. The policy on Jobs no schedule runs (the sandbox, one execution per agent session, the reference build, and a
+paused sweep) is an event: no later run is due to repair a failed one, so a close would mean nothing, and it only
+opens. A state that a later event repairs (a Job's next run, the next deploy, the next ACL version) compares the
+time of the latest failure with the time of the latest success, so the incident outlasts the gap between the two.
 
 - `latest_run_failed` — the query that holds while a scheduled Job's latest run failed; the cost report's alert uses it.
 - `OperationalAlerts` — the alerts channel and the operational policies.
@@ -170,8 +170,8 @@ class OperationalAlerts(pulumi.ComponentResource):
             slack_channel: The alerts channel's name, `#` included.
             slack_bot_token: The bot token of the environment's Slack app, invited to the channel; a secret.
             scheduled_jobs: The Cloud Run Jobs a schedule runs, whose latest run failing pages until one succeeds.
-            unscheduled_jobs: The Cloud Run Jobs no schedule runs (the sandbox, and a sweep whose schedule is
-                paused), whose failed executions page as they happen and never close with news.
+            unscheduled_jobs: The Cloud Run Jobs no schedule runs (the sandbox, the reference build, and a sweep
+                whose schedule is paused), whose failed executions page as they happen and never close with news.
             services: The Cloud Run services whose 5xx responses page.
             sql_instance: The Cloud SQL instance's name.
             sql_tier_connections: The connection limit of the instance's tier (`sql.max_connections`).
@@ -261,7 +261,9 @@ class OperationalAlerts(pulumi.ComponentResource):
             content=(
                 'An execution of a Cloud Run Job that runs on demand or by hand failed; the incident names the Job '
                 f'as `{JOB_NAME_LABEL}`. A failed sandbox execution is one agent session that lost its sandbox; a '
-                'failed sweep run by hand left its papers unasked for. Each is a one-off that no later run repairs, so '
+                'failed sweep run by hand left its papers unasked for; a failed reference build left some pinned '
+                'reference data unmirrored or unbuilt until it is run again, and its log names each stage that failed. '
+                'Each is a one-off that no later run repairs, so '
                 'the incident closes on its own a few minutes later, not when anything recovers. Failures of one Job '
                 'within about ten minutes share this one incident and this one message, so list them all: the '
                 'failed executions, newest first, are '
