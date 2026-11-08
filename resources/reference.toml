@@ -62,7 +62,7 @@ proteins = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF
 records = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_rna.gbff.gz", suffix = "gbff.gz", md5 = "dba0915f2560e6b9d4943fac274816b9" }
 alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_knownrefseq_alns.bam", suffix = "bam", md5 = "42eccd19b4ce9d0b6c1808591e9223b7", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_knownrefseq_alns.bam.bai", extension = "bai", md5 = "e933345d2cce119dbefa158f5902b7dc" } }
 model-alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_modelrefseq_alns.bam", suffix = "bam", md5 = "c12dff0b42457ee125af155fedc257a0", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/RefSeq_transcripts_alignments/GCF_000001405.40_GRCh38.p14_modelrefseq_alns.bam.bai", extension = "bai", md5 = "93df11dc2c94b81ccec1e6150d24c5ea" } }
-report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_assembly_report.txt", suffix = "tsv", md5 = "21f3ac4aa8245a99eb874082051b9dde" }
+report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.40_GRCh38.p14/GCF_000001405.40_GRCh38.p14_assembly_report.txt", suffix = "tsv", md5 = "397f7f7c9f6b8c06600a74f7deb2e67f" }
 
 # NCBI's historical set: every transcript version replaced or suppressed up to RS_2024_08, placed on
 # this assembly. One paper in five cites a version the current release has replaced, and the set
@@ -87,7 +87,7 @@ transcripts = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/
 proteins = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_protein.faa.gz", suffix = "fa.gz", md5 = "07e6227d91e6435bcad2ed6e0dec41bd" }
 records = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_rna.gbff.gz", suffix = "gbff.gz", md5 = "c0c95fee1ed84fbdf6c7223ed8dd5723" }
 alignments = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/RefSeq_transcripts_alignments/GCF_000001405.25_GRCh37.p13_knownrefseq_alns.bam", suffix = "bam", md5 = "3e11d35cc36e1e9dfb595dc9be7db01a", index = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/RefSeq_transcripts_alignments/GCF_000001405.25_GRCh37.p13_knownrefseq_alns.bam.bai", extension = "bai", md5 = "306256c53a88fa9a014499c61ffa3f62" } }
-report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_assembly_report.txt", suffix = "tsv", md5 = "5ded666a3acfcf7262370b7b4328badd" }
+report = { url = "https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/001/405/GCF_000001405.25_GRCh37.p13/GCF_000001405.25_GRCh37.p13_assembly_report.txt", suffix = "tsv", md5 = "4ce35a17eed39ba2e62e6a4097920890" }
 
 # --- Ensembl -------------------------------------------------------------------------------------
 # What `bcftools csq` is designed against. Pinned to a release rather than `pub/grch37/current/`,
