@@ -430,11 +430,21 @@ gene_disease_refresh_sa = gcp.serviceaccount.Account(
     display_name='Themis gene-disease reference-refresh runtime',
     opts=pulumi.ResourceOptions(depends_on=[base]),
 )
+gene_disease_refresh_alert = alerts.JobAlert(
+    job_name='themis-gene-disease-refresh',
+    title='the gene-disease refresh',
+    meaning=(
+        'The evidence service stays on the previous GenCC, ClinGen and PanelApp dumps until a run succeeds; the next '
+        'scheduled run can be up to a week away.'
+    ),
+    steps=["Fix the cause the log names, then run it again with Execute on the Job's page."],
+    max_retries=1,
+)
 gene_disease_refresh_job = gcp.cloudrunv2.Job(
     'themis-gene-disease-refresh-job',
     project=project,
     location=region,
-    name='themis-gene-disease-refresh',
+    name=gene_disease_refresh_alert.job_name,
     deletion_protection=False,
     template=gcp.cloudrunv2.JobTemplateArgs(
         template=gcp.cloudrunv2.JobTemplateTemplateArgs(
@@ -442,7 +452,7 @@ gene_disease_refresh_job = gcp.cloudrunv2.Job(
             # The first full-Mendeliome PanelApp crawl is slow; sized well above it, not Cloud Run's short
             # default.
             timeout='7200s',
-            max_retries=1,
+            max_retries=gene_disease_refresh_alert.max_retries,
             containers=[
                 gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
                     name='refresh',
@@ -866,9 +876,9 @@ spend_alerts = cost_alerts.CostAlerts(
     opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/monitoring.editor']]),
 )
 # A paused sweep runs only by hand, so no later run is due to repair a failed one: it pages as an event.
-scheduled_jobs = [gene_disease_refresh_job.name, cost_exporter.job_name]
-unscheduled_jobs = [sandbox_job.job_name, reference_build.job_name]
-(scheduled_jobs if work_sweep_scheduled else unscheduled_jobs).append(work_sweep.job_name)
+scheduled_jobs = [gene_disease_refresh_alert, cost_exporter.alert]
+unscheduled_jobs = [sandbox_job.alert, reference_build.alert]
+(scheduled_jobs if work_sweep_scheduled else unscheduled_jobs).append(work_sweep.alert)
 alerts.OperationalAlerts(
     project=project,
     region=region,

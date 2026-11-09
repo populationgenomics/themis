@@ -21,7 +21,7 @@ from collections.abc import Sequence
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cloud_run, grants, secrets
+from themis_infra import alerts, cloud_run, grants, secrets
 
 # One instance drains every webhook; the rest is headroom, since Anthropic disables an endpoint after
 # ~20 consecutive failed deliveries.
@@ -303,6 +303,9 @@ def _source_rule(
 # (sandbox-worker.md §"The guest runs as a uid that owns nothing").
 _GUEST_HOST_UID = 61000
 _GUEST_HOST_GID = 61000
+_JOB_NAME = 'themis-sandbox'
+# A spawn that fails before restore leaves its work item unacked, and the dispatcher reclaims it onto a fresh spawn.
+_MAX_RETRIES = 0
 
 
 def _job_env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs:
@@ -351,6 +354,7 @@ class SandboxJob(pulumi.ComponentResource):
             over and on the hatch's forward targets, inert without the session token the worker holds; and a trace
             writer, for the spans of each session and its tool calls.
         job_name: The Job's name, for the dispatcher's ``run.jobs.run`` binding.
+        alert: The page a failed execution posts.
     """
 
     def __init__(
@@ -381,7 +385,7 @@ class SandboxJob(pulumi.ComponentResource):
             'themis-sandbox-job',
             project=project,
             location=region,
-            name='themis-sandbox',
+            name=_JOB_NAME,
             deletion_protection=False,
             template=gcp.cloudrunv2.JobTemplateArgs(
                 template=gcp.cloudrunv2.JobTemplateTemplateArgs(
@@ -389,7 +393,7 @@ class SandboxJob(pulumi.ComponentResource):
                     # The ultimate backstop, sized to the longest legitimate session (§6); not Cloud Run's
                     # short default, which would kill a long agent-backgrounded computation.
                     timeout=f'{task_timeout_seconds}s',
-                    max_retries=0,
+                    max_retries=_MAX_RETRIES,
                     # ALL_TRAFFIC so the internal-ingress hello service is reachable at its (public) run.app
                     # IP over the VPC — private-ranges-only would send that straight to the internet and the
                     # service would refuse it. Trade-off (sandbox-worker.md §"One trusted process, not two
@@ -428,4 +432,25 @@ class SandboxJob(pulumi.ComponentResource):
             opts=child,
         )
         self.job_name = job.name
+        self.alert = alerts.JobAlert(
+            job_name=_JOB_NAME,
+            title='a sandbox',
+            meaning=(
+                "An agent session's sandbox failed. If it failed before restoring the session's workspace, a fresh "
+                'sandbox takes the session over within about ten minutes; if it failed later, the work of that '
+                'session stopped.'
+            ),
+            steps=[
+                'No line "serving session <id>": the sandbox failed at startup, before taking the session, and a '
+                'fresh one takes it over. A line "isolation self-test failed, refusing to serve" means the sandbox '
+                'could not isolate its guest.',
+                'A line "restore failed; acking and stopping the work item": the session\'s repository refused the '
+                'restore, and that session has ended.',
+                'After a line "restored /workspace", the session was under way, and the lines that follow say why it '
+                'stopped.',
+                'Several sandboxes failing together point at the worker image or a service it calls, not at one '
+                'session.',
+            ],
+            max_retries=_MAX_RETRIES,
+        )
         self.register_outputs({'service_account_email': self.service_account_email, 'job_name': self.job_name})

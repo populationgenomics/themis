@@ -123,7 +123,7 @@ def test_the_reports_latest_run_failing_pages_the_spend_channel_until_a_run_succ
     assert policy['notificationChannels'] == [channel['name']]
     assert tuple(_sequence(_mapping(policy['alertStrategy'])['notificationPrompts'])) == alerts.STATE_PROMPTS
     content = str(_mapping(policy['documentation'])['content'])
-    assert f'gcloud run jobs executions list --job {cost_report.JOB_NAME}' in content
+    assert f'/{cost_report.JOB_NAME}/executions' in content
 
 
 def test_the_report_identity_reads_metrics_and_the_token_and_nothing_else(program: capture.Capture) -> None:

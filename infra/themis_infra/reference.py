@@ -20,7 +20,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants
+from themis_infra import alerts, grants
 
 JOB_NAME = 'themis-reference-build'
 CONTAINER_NAME = 'build'
@@ -40,6 +40,8 @@ _TIMEOUT_SECONDS = 6 * 3600
 # once the GRCh38 genome is built, so at worst about 18 GiB together.
 _CPU = '8'
 _MEMORY = '32Gi'
+# A retry resumes rather than repeats: every stage skips what the failed attempt finished.
+_MAX_RETRIES = 1
 
 
 def _workflow_principal_set(project_number: str) -> str:
@@ -55,6 +57,7 @@ class ReferenceBuild(pulumi.ComponentResource):
 
     Attributes:
         job_name: The Cloud Run Job's name.
+        alert: The page a failed execution posts.
         dispatcher_email: The account the reference workflow federates into to start the Job.
     """
 
@@ -105,8 +108,7 @@ class ReferenceBuild(pulumi.ComponentResource):
                 template=gcp.cloudrunv2.JobTemplateTemplateArgs(
                     service_account=runtime.email,
                     timeout=f'{_TIMEOUT_SECONDS}s',
-                    # A retry resumes rather than repeats: every stage skips what the failed attempt finished.
-                    max_retries=1,
+                    max_retries=_MAX_RETRIES,
                     containers=[
                         gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
                             name=CONTAINER_NAME,
@@ -129,6 +131,23 @@ class ReferenceBuild(pulumi.ComponentResource):
             opts=child,
         )
         self.job_name = job.name
+        self.alert = alerts.JobAlert(
+            job_name=JOB_NAME,
+            title='the reference build',
+            meaning=(
+                'Unless a retry succeeds, some of the reference data pinned in resources/reference.toml is not '
+                'mirrored or not built yet, and nothing starts another build on its own.'
+            ),
+            steps=[
+                'A line starting "not started:" means this build overlapped the execution it names and did nothing. '
+                'Run it again once that execution has finished.',
+                'Otherwise each stage that failed has a line starting "FAILED" that says why, and the last line lists '
+                'them all. Fix the cause, then run it again.',
+                f'To run it again: [the reference workflow]({alerts.workflow_url("reference.yml")}), Run workflow, '
+                'choosing this environment. Every stage skips what is already done.',
+            ],
+            max_retries=_MAX_RETRIES,
+        )
 
         dispatcher = gcp.serviceaccount.Account(
             'themis-reference-dispatch',

@@ -18,7 +18,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import grants
+from themis_infra import alerts, grants
 
 # Every five minutes: spend appears with at most one tick of latency, and a full scan of the workspace is a
 # handful of pages against the sessions API's per-minute ceiling. The dashboard's instant reads and the alerts'
@@ -29,6 +29,10 @@ _SCHEDULE = f'*/{TICK_MINUTES} * * * *'
 # backstops it with room for a write that hangs past it.
 _RUN_DEADLINE_SECONDS = 180
 _JOB_TIMEOUT_MARGIN_SECONDS = 60
+_JOB_NAME = 'themis-cost-exporter'
+# A failed run is not retried: the next tick carries the full total regardless, and a run that keeps failing is the
+# freshness alert's to notice.
+_MAX_RETRIES = 0
 
 
 def _env(name: str, value: pulumi.Input[str]) -> gcp.cloudrunv2.JobTemplateTemplateContainerEnvArgs:
@@ -44,6 +48,7 @@ class CostExporter(pulumi.ComponentResource):
         service_account_unique_id: The runtime SA's numeric unique id — the stable `sub` claim that rule
             pins; never reissued, so a recreated account with the same email does not match the rule.
         job_name: The Cloud Run Job's name, for running an export by hand.
+        alert: The page a failed run posts.
     """
 
     def __init__(
@@ -81,15 +86,13 @@ class CostExporter(pulumi.ComponentResource):
             'themis-cost-exporter',
             project=project,
             location=region,
-            name='themis-cost-exporter',
+            name=_JOB_NAME,
             deletion_protection=False,
             template=gcp.cloudrunv2.JobTemplateArgs(
                 template=gcp.cloudrunv2.JobTemplateTemplateArgs(
                     service_account=service_account.email,
                     timeout=f'{_RUN_DEADLINE_SECONDS + _JOB_TIMEOUT_MARGIN_SECONDS}s',
-                    # A failed run is not retried: the next tick carries the full total regardless, and a run that
-                    # keeps failing is the freshness alert's to notice.
-                    max_retries=0,
+                    max_retries=_MAX_RETRIES,
                     containers=[
                         gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
                             name='exporter',
@@ -116,6 +119,20 @@ class CostExporter(pulumi.ComponentResource):
             opts=child,
         )
         self.job_name = job.name
+        self.alert = alerts.JobAlert(
+            job_name=_JOB_NAME,
+            title='the cost exporter',
+            meaning=(
+                f'The spend dashboard and the spend alerts stop updating while the exporter fails. It runs every '
+                f'{TICK_MINUTES} minutes, so a single failure that the next run repairs closes on its own; one that '
+                'stays open keeps failing.'
+            ),
+            steps=[
+                "An authentication error points at the exporter's Anthropic federation: "
+                f'[Claude API workload identity]({alerts.repository_url("docs/runbooks/claude-api-wif.md")}).',
+            ],
+            max_retries=_MAX_RETRIES,
+        )
 
         # Cloud Scheduler fires the Job against the Cloud Run Admin API as its own SA, invoker-only on this Job.
         scheduler_account = gcp.serviceaccount.Account(

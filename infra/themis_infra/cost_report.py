@@ -35,6 +35,23 @@ _TIME_ZONE = 'Australia/Sydney'
 # covers the last call in full: an upload is up to three requests of 30 seconds each.
 _RUN_DEADLINE_SECONDS = 120
 _JOB_TIMEOUT_MARGIN_SECONDS = 120
+# Not retried: a retry after a post whose completion response was lost could post twice, and a lost morning pages
+# (`themis-cost-report-failed`); the next morning stands alone.
+_MAX_RETRIES = 0
+_ALERT = alerts.JobAlert(
+    job_name=JOB_NAME,
+    title='the morning spend report',
+    meaning=(
+        "This morning's report most likely did not reach the spend channel, which then looks the same as a morning "
+        "with nothing to report. The spend dashboard is unaffected and has the day's figures."
+    ),
+    steps=[
+        'Check the spend channel first: a run that failed after its post left the report there, and a second run '
+        'would post it twice.',
+        "If it is not there, fix the cause the log names, then run it again with Execute on the Job's page.",
+    ],
+    max_retries=_MAX_RETRIES,
+)
 # The day's figures are read at one instant over this window; the chart's series over this one, hour by hour.
 _DAY = '24h'
 _HOUR = '1h'
@@ -153,9 +170,7 @@ class CostReport(pulumi.ComponentResource):
                 template=gcp.cloudrunv2.JobTemplateTemplateArgs(
                     service_account=service_account.email,
                     timeout=f'{_RUN_DEADLINE_SECONDS + _JOB_TIMEOUT_MARGIN_SECONDS}s',
-                    # Not retried: a retry after a post whose completion response was lost could post twice, and a
-                    # lost morning pages (`themis-cost-report-failed` below); the next morning stands alone.
-                    max_retries=0,
+                    max_retries=_MAX_RETRIES,
                     containers=[
                         gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
                             name='report',
@@ -221,23 +236,16 @@ class CostReport(pulumi.ComponentResource):
         gcp.monitoring.AlertPolicy(
             'themis-cost-report-failed',
             project=project,
-            display_name='Themis cost: morning report failed',
+            display_name=_ALERT.subject,
             combiner='OR',
             severity='ERROR',
-            conditions=[alerts.latest_run_failed_condition([JOB_NAME])],
+            conditions=[alerts.latest_run_failed_condition([_ALERT.job_name])],
             notification_channels=[slack_notification_channel],
             alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=list(alerts.STATE_PROMPTS)),
             documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                 mime_type='text/markdown',
-                subject='Themis: the morning spend report failed',
-                content=(
-                    f'The latest run of the `{JOB_NAME}` Job failed, so a morning has no report in the channel — the '
-                    f'same silence as a morning with nothing to report, which is why the failure pages. The '
-                    f'execution and its logs: `gcloud run jobs executions list --job {JOB_NAME} --region {region} '
-                    f"--project {project}`. The dashboard is unaffected; the day's figures are there. The run is "
-                    'not retried; the incident closes about ten minutes after a later run that succeeds, the next '
-                    "morning's or one by hand."
-                ),
+                subject=_ALERT.subject,
+                content=alerts.job_page(_ALERT, project=project, region=region, scheduled=True),
                 links=[
                     gcp.monitoring.AlertPolicyDocumentationLinkArgs(display_name='Spend dashboard', url=dashboard_url)
                 ],

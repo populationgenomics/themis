@@ -242,6 +242,38 @@ def test_every_promql_condition_evaluates_no_faster_than_its_lookback_allows(
     assert checked
 
 
+def test_every_job_policy_watches_one_job(policies: dict[str, tuple[list[str], dict[str, object]]]) -> None:
+    # One Job per policy is what lets its page name the Job and say what that Job's failure means.
+    watched = [
+        (name, _watched_jobs(query)) for name, (_, policy) in policies.items() for query in _promql_queries(policy)
+    ]
+    job_policies = [(name, jobs) for name, jobs in watched if jobs]
+    assert job_policies
+    for name, jobs in job_policies:
+        assert len(jobs) == 1, (name, jobs)
+
+
+def test_every_page_is_laid_out_for_slack(policies: dict[str, tuple[list[str], dict[str, object]]]) -> None:
+    # Slack drops a Markdown code span's backticks and runs its text into the prose. The layout check also proves the
+    # content resolved: an Output's placeholder would hold no backtick either.
+    assert policies
+    for name, (_, policy) in policies.items():
+        documentation = _mapping(policy['documentation'])
+        content = str(documentation['content'])
+        assert content.startswith('**What it means**'), name
+        assert '`' not in str(documentation['subject']) + content, name
+
+
+def test_a_page_without_a_step_is_refused() -> None:
+    with pytest.raises(ValueError, match='at least one step'):
+        alerts.page(meaning='Something broke.', steps=[], closes='Never.')
+
+
+def test_a_job_alert_with_negative_retries_is_refused() -> None:
+    with pytest.raises(ValueError, match='max_retries'):
+        alerts.JobAlert(job_name='themis-x', title='x', meaning='Broke.', steps=['Fix it.'], max_retries=-1)
+
+
 def test_a_latest_run_condition_over_no_job_is_refused() -> None:
     with pytest.raises(ValueError, match='at least one Job'):
         alerts.latest_run_failed([])

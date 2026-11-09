@@ -31,7 +31,7 @@ import dataclasses
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cloud_run, grants
+from themis_infra import alerts, cloud_run, grants
 
 # How many requests each queue dispatches at once. Each service has exactly the instances its queue
 # fills, so a full queue never waits for one, and neither queue's work lands on the other's instances.
@@ -56,8 +56,11 @@ _REQUEST_TIMEOUT = '1800s'
 # Every six hours: a lost or refused request waits at most this long to be asked again. A pass asks again for every
 # paper still waiting in the queue, so a shorter period multiplies a backlog's tasks.
 _SWEEP_SCHEDULE = '0 */6 * * *'
+_SWEEP_JOB_NAME = 'themis-work-sweep'
 # One pass reads every manifest and job log; generous against a corpus in the tens of thousands.
 _SWEEP_TIMEOUT = '3000s'
+# A failed pass is not retried: the next one, scheduled or by hand, asks for the same papers.
+_SWEEP_MAX_RETRIES = 0
 
 
 def _queue(
@@ -397,6 +400,10 @@ class WorkSweep(pulumi.ComponentResource):
     store, puts tasks on the bulk queue, and acts as the conversion invoker the tasks name; a scheduler
     identity of its own may only start the job. An unscheduled sweep is the same job with its schedule paused, run by
     hand (`gcloud run jobs execute`).
+
+    Attributes:
+        job_name: The Cloud Run Job's name.
+        alert: The page a failed run posts.
     """
 
     def __init__(
@@ -449,14 +456,13 @@ class WorkSweep(pulumi.ComponentResource):
             'themis-work-sweep',
             project=project,
             location=region,
-            name='themis-work-sweep',
+            name=_SWEEP_JOB_NAME,
             deletion_protection=False,
             template=gcp.cloudrunv2.JobTemplateArgs(
                 template=gcp.cloudrunv2.JobTemplateTemplateArgs(
                     service_account=service_account.email,
                     timeout=_SWEEP_TIMEOUT,
-                    # A failed pass is not retried: the next one, scheduled or by hand, asks for the same papers.
-                    max_retries=0,
+                    max_retries=_SWEEP_MAX_RETRIES,
                     containers=[
                         gcp.cloudrunv2.JobTemplateTemplateContainerArgs(
                             name='sweep',
@@ -523,4 +529,14 @@ class WorkSweep(pulumi.ComponentResource):
             opts=child,
         )
         self.job_name = job.name
+        self.alert = alerts.JobAlert(
+            job_name=_SWEEP_JOB_NAME,
+            title='the work sweep',
+            meaning=(
+                'Papers in the literature store that still need converting were not all queued for the convert '
+                'worker. They wait until the sweep runs again.'
+            ),
+            steps=["Fix the cause the log names, then run it again with Execute on the Job's page."],
+            max_retries=_SWEEP_MAX_RETRIES,
+        )
         self.register_outputs({'job_name': job.name})

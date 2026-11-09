@@ -193,8 +193,7 @@ def test_the_freshness_condition_is_the_heartbeat_silent_for_the_configured_wind
     # A PromQL incident ignores auto-close; declaring one would promise a close that never comes.
     assert not strategy.get('autoClose')
     content = str(_mapping(freshness['documentation'])['content'])
-    assert f'--job {exporter_job_name}' in content
-    assert 'gcloud run jobs executions list' in content
+    assert f'/jobs/details/{config["gcp:region"]}/{exporter_job_name}/executions' in content
 
 
 def test_the_unpriced_condition_is_usage_on_a_model_outside_the_table(policies: dict[str, dict[str, object]]) -> None:

@@ -7,30 +7,187 @@ deploy that failed. Every policy posts to the alerts channel, which is separate 
 (`cost_alerts.CostAlerts`). The server-fault, ACL and deploy policies read metrics the services and the deploy write
 through OpenTelemetry (`operational_metrics`); the rest read the platform's.
 
-Every policy but one is a state: it opens while something is wrong and closes once it is not, and both transitions
-notify. The policy on Jobs no schedule runs (the sandbox, one execution per agent session, the reference build, and a
-paused sweep) is an event: no later run is due to repair a failed one, so a close would mean nothing, and it only
-opens. A state that a later event repairs (a Job's next run, the next deploy, the next ACL version) compares the
-time of the latest failure with the time of the latest success, so the incident outlasts the gap between the two.
+Every policy is a state, opening while something is wrong and closing once it is not, except the policies on Jobs no
+schedule runs (the sandbox, one execution per agent session, the reference build, and a paused sweep). Those are events:
+no later run is due to repair a failed one, so a close would mean nothing, and they only open. A state that a later
+event repairs (a Job's next run, the next deploy, the next ACL version) compares the time of the latest failure with the
+time of the latest success, so the incident outlasts the gap between the two.
 
+Each Job has a policy of its own, so its page names the Job and says what its failure means; the Job's owner writes that
+text as a `JobAlert`. Every page reads as `page` lays it out: what the failure means, what to do, when it closes.
+
+- `JobAlert` — what a failed run of one Job means and what to do about it.
+- `page` — a policy's documentation, laid out for Slack; `job_page` lays out a `JobAlert`'s.
 - `latest_run_failed` — the query that holds while a scheduled Job's latest run failed; the cost report's alert uses it.
 - `OperationalAlerts` — the alerts channel and the operational policies.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
+import urllib.parse
 from collections.abc import Iterable, Sequence
 
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import audit, promql
 from themis_infra import operational_metrics as metrics
+from themis_infra import promql
 
 # A state notifies as it opens and as it closes; an event only as it opens.
 STATE_PROMPTS = ('OPENED', 'CLOSED')
 EVENT_PROMPTS = ('OPENED',)
+
+_REPOSITORY_URL = 'https://github.com/populationgenomics/themis-internal'
+# Monitoring substitutes these in a policy's subject and documentation as it notifies. A PromQL result's label may be a
+# metric or a monitored-resource label; this form renders whichever exists.
+_PROMQL_LABEL = '${{metric_or_resource.label.{0}}}'
+# Kept unescaped in a link so Monitoring still finds a variable inside it.
+_URL_SAFE = '${}'
+
+
+def repository_url(path: str) -> str:
+    """A link to `path` on the repository's `main`, for a page's steps."""
+    return f'{_REPOSITORY_URL}/blob/main/{path}'
+
+
+def workflow_url(workflow: str) -> str:
+    """A link to the runs of the repository's workflow file `workflow`, where it is also run by hand."""
+    return f'{_REPOSITORY_URL}/actions/workflows/{workflow}'
+
+
+def logs_url(project: str, query: str) -> str:
+    """A Logs Explorer link to the entries matching `query`.
+
+    The console's default scope reads every entry that originated in the project, whichever log bucket holds it.
+    """
+    return (
+        'https://console.cloud.google.com/logs/viewer?'
+        f'project={project}&advancedFilter={urllib.parse.quote(query, safe=_URL_SAFE)}'
+    )
+
+
+def job_executions_url(*, project: str, region: str, job_name: str) -> str:
+    """A link to a Cloud Run Job's executions in the console, the failed ones marked."""
+    return f'https://console.cloud.google.com/run/jobs/details/{region}/{job_name}/executions?project={project}'
+
+
+def job_logs_url(*, project: str, job_name: str) -> str:
+    """A Logs Explorer link to every execution's entries of a Cloud Run Job."""
+    return logs_url(project, f'resource.type="cloud_run_job" AND resource.labels.job_name="{job_name}"')
+
+
+def in_days(duration: str) -> str:
+    """A PromQL duration in days, as a page states it: `7.5`."""
+    return f'{promql.duration(duration) / datetime.timedelta(days=1):g}'
+
+
+def _service_errors_url(project: str, service: str) -> str:
+    return logs_url(
+        project,
+        f'resource.type="cloud_run_revision" AND resource.labels.service_name="{service}" AND severity>=ERROR',
+    )
+
+
+def page(*, meaning: str, steps: Sequence[str], closes: str) -> str:
+    """A policy's documentation, in the Markdown Monitoring renders in Slack.
+
+    Slack renders bold, lists and `[text](url)` links from it, but not code spans, so a command or a log line a step
+    quotes stays plain text.
+
+    Args:
+        meaning: What the failure leaves broken, and for whom.
+        steps: What to do, in order.
+        closes: When the incident closes, and what its close does and does not mean.
+
+    Raises:
+        ValueError: `steps` is empty.
+    """
+    if not steps:
+        raise ValueError('a page needs at least one step')
+    return '\n'.join(
+        [
+            '**What it means**',
+            meaning,
+            '',
+            '**What to do**',
+            *(f'- {step}' for step in steps),
+            '',
+            '**When it closes**',
+            closes,
+        ]
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class JobAlert:
+    """What a failed run of one Cloud Run Job means and what to do about it: the text of that Job's page.
+
+    The page opens with links to the Job's executions and logs, and, for a Job that retries, what a retry means for the
+    reader; `steps` start from a failed execution's log.
+
+    Attributes:
+        job_name: The Job.
+        title: What failed, as the page's subject names it, such as `the reference build`.
+        meaning: What a failed run leaves undone, and for whom.
+        steps: What to do once the failed execution's log is open, in order.
+        max_retries: The Job's own `max_retries`. A page opens on a failed attempt, so with a retry the execution
+            may still be running, or may have succeeded, by the time someone reads it.
+
+    Raises:
+        ValueError: `max_retries` is negative.
+    """
+
+    job_name: str
+    title: str
+    meaning: str
+    steps: Sequence[str]
+    max_retries: int
+
+    def __post_init__(self) -> None:
+        if self.max_retries < 0:
+            raise ValueError(f'{self.job_name}: max_retries is {self.max_retries}, not a count of retries')
+
+    @property
+    def subject(self) -> str:
+        """The page's subject, which is also its policy's display name."""
+        return f'Themis: {self.title} failed'
+
+
+def job_page(job: JobAlert, *, project: str, region: str, scheduled: bool) -> str:
+    """The documentation of the page a failed run of `job` posts.
+
+    Args:
+        job: The Job and its page text.
+        project: The Job's project.
+        region: Where the Job runs.
+        scheduled: Whether a schedule runs the Job, so a later successful run closes the incident; otherwise the page
+            is an event that posts no close.
+    """
+    executions = job_executions_url(project=project, region=region, job_name=job.job_name)
+    logs = job_logs_url(project=project, job_name=job.job_name)
+    steps = [
+        f"Find the failed execution on [the Job's executions page]({executions}), and its lines among "
+        f"[the Job's logs]({logs})."
+    ]
+    if job.max_retries:
+        retries = 'once' if job.max_retries == 1 else f'up to {job.max_retries} times'
+        steps.append(
+            f'Cloud Run retries a failed attempt {retries}. If the execution is still running, a retry is under way: '
+            'wait for it. If it succeeded, the retry did the work and nothing more is needed.'
+        )
+    steps.extend(job.steps)
+    if scheduled:
+        closes = 'About ten minutes after a later run, scheduled or by hand, succeeds.'
+    else:
+        after_retry = ', even after a retry succeeds' if job.max_retries else ''
+        closes = (
+            f'No close follows{after_retry}: this message is the whole incident. Failures of this Job within about '
+            'ten minutes share it, so the executions page may show more than one.'
+        )
+    return page(meaning=job.meaning, steps=steps, closes=closes)
+
 
 # Cloud Run's count of finished task attempts, labelled by result. Every Themis Job runs one task, so its attempts are
 # its executions' runs, a retry included. Cloud Run's execution count is not read: it records only some executions.
@@ -154,8 +311,8 @@ class OperationalAlerts(pulumi.ComponentResource):
         region: str,
         slack_channel: str,
         slack_bot_token: pulumi.Input[str],
-        scheduled_jobs: Sequence[pulumi.Input[str]],
-        unscheduled_jobs: Sequence[pulumi.Input[str]],
+        scheduled_jobs: Sequence[JobAlert],
+        unscheduled_jobs: Sequence[JobAlert],
         services: Sequence[pulumi.Input[str]],
         sql_instance: pulumi.Input[str],
         sql_tier_connections: int,
@@ -166,7 +323,7 @@ class OperationalAlerts(pulumi.ComponentResource):
 
         Args:
             project: The project the policies watch.
-            region: Where the project's Jobs and its regional log bucket are.
+            region: Where the project's Jobs are.
             slack_channel: The alerts channel's name, `#` included.
             slack_bot_token: The bot token of the environment's Slack app, invited to the channel; a secret.
             scheduled_jobs: The Cloud Run Jobs a schedule runs, whose latest run failing pages until one succeeds.
@@ -223,58 +380,31 @@ class OperationalAlerts(pulumi.ComponentResource):
                 opts=pulumi.ResourceOptions(parent=self, aliases=list(aliases)),
             )
 
-        policy(
-            'themis-job-failed',
-            display_name="Themis: a scheduled Job's latest run failed",
-            conditions=[latest_run_failed_condition(scheduled_jobs)],
-            notification_prompts=STATE_PROMPTS,
-            subject="Themis: a scheduled Job's latest run failed",
-            content=(
-                'The latest run of a scheduled Cloud Run Job failed; the incident names the Job as '
-                f'`{JOB_NAME_LABEL}`, and closes about ten minutes after a later run, scheduled or by hand, that '
-                "succeeds. A failed gene-disease refresh leaves the evidence service on last week's dumps, a failed "
-                'sweep leaves papers unconverted until the next, and a failing cost exporter leaves the spend '
-                'dashboard stale. A Job that retries opens on a failed attempt and closes if the retry succeeds. Its '
-                'executions, and the logs of each: '
-                f'`gcloud run jobs executions list --job <job> --region {region} --project {project}`.'
-            ),
-        )
-
-        unscheduled_failures = pulumi.Output.all(*unscheduled_jobs).apply(
-            lambda names: (
-                f'sum by ({JOB_NAME_LABEL}) (increase({_attempts("failed", names)}[{_EVENT_FAILURE_WINDOW}])) > 0'
-            )
-        )
-        policy(
-            'themis-unscheduled-job-failed',
-            display_name='Themis: an execution of an unscheduled Job failed',
-            conditions=[
-                gcp.monitoring.AlertPolicyConditionArgs(
-                    display_name='An execution of a Job no schedule runs failed',
+        def job_policy(job: JobAlert, *, scheduled: bool) -> None:
+            if scheduled:
+                condition = latest_run_failed_condition([job.job_name])
+            else:
+                attempts = _attempts('failed', [job.job_name])
+                failures = f'sum by ({JOB_NAME_LABEL}) (increase({attempts}[{_EVENT_FAILURE_WINDOW}])) > 0'
+                condition = gcp.monitoring.AlertPolicyConditionArgs(
+                    display_name=f'An attempt of {job.job_name} failed',
                     condition_prometheus_query_language=_promql(
-                        unscheduled_failures, lookback=promql.duration(_EVENT_FAILURE_WINDOW)
+                        failures, lookback=promql.duration(_EVENT_FAILURE_WINDOW)
                     ),
                 )
-            ],
-            notification_prompts=EVENT_PROMPTS,
-            subject='Themis: an execution of an unscheduled Job failed',
-            content=(
-                'An execution of a Cloud Run Job that runs on demand or by hand failed; the incident names the Job '
-                f'as `{JOB_NAME_LABEL}`. A failed sandbox execution is one agent session that lost its sandbox; a '
-                'failed sweep run by hand left its papers unasked for; a failed reference build left some pinned '
-                'reference data unmirrored or unbuilt until it is run again, and its log names each stage that failed. '
-                'Each is a one-off that no later run repairs, so '
-                'the incident closes on its own a few minutes later, not when anything recovers. Failures of one Job '
-                'within about ten minutes share this one incident and this one message, so list them all: the '
-                'failed executions, newest first, are '
-                f'`gcloud run jobs executions list --job <job> --region {region} --project {project} '
-                "--filter='status.failedCount>0'`, and every one that ended in the minutes before this message and "
-                "until the incident closes belongs to it. An execution's logs say why it ended, and a sandbox "
-                "execution's name the session it served in a line `serving session <id>`: `gcloud logging read "
-                '\'labels."run.googleapis.com/execution_name"="<execution>"\' '
-                f'--project {project} --bucket {audit.LOG_BUCKET_ID} --location {region} --view _AllLogs`.'
-            ),
-        )
+            policy(
+                f'themis-{job.job_name.removeprefix("themis-")}-failed',
+                display_name=job.subject,
+                conditions=[condition],
+                notification_prompts=STATE_PROMPTS if scheduled else EVENT_PROMPTS,
+                subject=job.subject,
+                content=job_page(job, project=project, region=region, scheduled=scheduled),
+            )
+
+        for job in scheduled_jobs:
+            job_policy(job, scheduled=True)
+        for job in unscheduled_jobs:
+            job_policy(job, scheduled=False)
 
         service_filter = pulumi.Output.all(*services).apply(lambda names: ', '.join(f'"{n}"' for n in names))
         policy(
@@ -310,17 +440,23 @@ class OperationalAlerts(pulumi.ComponentResource):
                 )
             ],
             notification_prompts=STATE_PROMPTS,
-            subject='Themis: a service is answering 5xx',
-            content=(
-                'One Cloud Run service returned server errors repeatedly; the incident names it, and closes once '
-                f'{_SERVER_ERROR_WINDOW_SECONDS // 60} minutes pass with no more than {_SERVER_ERRORS_PER_WINDOW}, '
-                'or with no traffic. For a gRPC service '
-                '(auth, evidence, sheaf) this sees transport-level failures only: an application error travels as a '
-                'non-OK status in the trailers of an HTTP 200, which the server-fault policy counts instead. Its logs: '
-                '`gcloud logging read \'resource.type="cloud_run_revision" '
-                'AND resource.labels.service_name="<service>" AND severity>=ERROR\' '
-                f'--project {project} --bucket {audit.LOG_BUCKET_ID} --location {region} --view _AllLogs --limit 20`. '
-                'Runbook: `docs/runbooks/reading-a-request-trace.md`.'
+            subject='Themis: ${resource.label.service_name} is answering 5xx',
+            content=page(
+                meaning=(
+                    f'The service returned more than {_SERVER_ERRORS_PER_WINDOW} server errors in '
+                    f'{_SERVER_ERROR_WINDOW_SECONDS // 60} minutes, so requests through it are failing. For a gRPC '
+                    'service (auth, evidence, sheaf) this counts transport failures only; the "failing calls" alert '
+                    'counts the errors its handlers return.'
+                ),
+                steps=[
+                    f'Read [its error logs]({_service_errors_url(project, "${resource.label.service_name}")}).',
+                    'Follow one failing request through the services: '
+                    f'[reading a request trace]({repository_url("docs/runbooks/reading-a-request-trace.md")}).',
+                ],
+                closes=(
+                    f'Once {_SERVER_ERROR_WINDOW_SECONDS // 60} minutes pass with no more than '
+                    f'{_SERVER_ERRORS_PER_WINDOW} server errors, or with no traffic.'
+                ),
             ),
         )
 
@@ -345,15 +481,22 @@ class OperationalAlerts(pulumi.ComponentResource):
                 )
             ],
             notification_prompts=STATE_PROMPTS,
-            subject='Themis: a service is failing calls',
-            content=(
-                f'Calls to one gRPC service ended in {", ".join(_SERVER_FAULTS)}; the incident names the service as '
-                f'`job`, and closes once {_SERVER_ERROR_WINDOW_SECONDS // 60} minutes pass with no more than '
-                f'{_SERVER_ERRORS_PER_WINDOW}, or with no calls. The method and status of each failed call are '
-                f'labels on `{metrics.RPC_SERVER_CALL_DURATION}`, in Metrics Explorer. Its logs: '
-                '`gcloud logging read \'resource.type="cloud_run_revision" '
-                'AND resource.labels.service_name="<service>" AND severity>=ERROR\' '
-                f'--project {project} --bucket {audit.LOG_BUCKET_ID} --location {region} --view _AllLogs --limit 20`.'
+            subject=f'Themis: {_PROMQL_LABEL.format("job")} is failing calls',
+            content=page(
+                meaning=(
+                    f'More than {_SERVER_ERRORS_PER_WINDOW} calls to the service in '
+                    f'{_SERVER_ERROR_WINDOW_SECONDS // 60} minutes ended in a server fault '
+                    f'({", ".join(_SERVER_FAULTS)}), so its callers got errors.'
+                ),
+                steps=[
+                    f'Read [its error logs]({_service_errors_url(project, _PROMQL_LABEL.format("job"))}).',
+                    'See which method failed with which status: Metrics Explorer, metric '
+                    f'"{metrics.RPC_SERVER_CALL_DURATION}", grouped by its method and status labels.',
+                ],
+                closes=(
+                    f'Once {_SERVER_ERROR_WINDOW_SECONDS // 60} minutes pass with no more than '
+                    f'{_SERVER_ERRORS_PER_WINDOW} faults, or with no calls.'
+                ),
             ),
         )
 
@@ -377,14 +520,22 @@ class OperationalAlerts(pulumi.ComponentResource):
             ],
             notification_prompts=STATE_PROMPTS,
             subject='Themis: the auth service rejected the ACL',
-            content=(
-                'The auth service could not use the latest version of the ACL: it was unreadable, or it broke one of '
-                f'the rules the service checks. The incident names why as `{metrics.OUTCOME_LABEL}`, and closes about '
-                "ten minutes after any instance loads a version cleanly; the service's ERROR log line, which starts "
-                '`acl rejected:`, names the rule. The service answers from its last good copy until the staleness '
-                'limit (`themis:aclStalenessLimitSeconds`), then refuses everyone until a valid version loads; an '
-                'instance that starts on a rejected version does not start at all. Runbook: '
-                '`docs/runbooks/access-control.md`.'
+            content=page(
+                meaning=(
+                    'The auth service could not use the latest version of the ACL (reason: '
+                    f'{_PROMQL_LABEL.format(metrics.OUTCOME_LABEL)}). Running instances answer from their last good '
+                    'copy until the staleness limit (the stack setting themis:aclStalenessLimitSeconds), then refuse '
+                    'everyone until a valid version loads. An instance that starts on a rejected version does not '
+                    'start at all.'
+                ),
+                steps=[
+                    'Find the broken rule in the auth service\'s log line that starts "acl rejected:", among '
+                    f'[its error logs]({_service_errors_url(project, "themis-auth")}).',
+                    'Fix the ACL and publish a new version: '
+                    f'[when the auth service rejects the ACL]({repository_url("docs/runbooks/access-control.md")}'
+                    '#when-the-auth-service-rejects-the-acl).',
+                ],
+                closes='About ten minutes after any instance loads a version cleanly.',
             ),
             # The policy predates the alerts component, as a top-level resource of the same name.
             aliases=[pulumi.Alias(parent=None)],
@@ -410,13 +561,21 @@ class OperationalAlerts(pulumi.ComponentResource):
             ],
             notification_prompts=STATE_PROMPTS,
             subject='Themis: a deploy failed',
-            content=(
-                'A run of the deploy workflow failed or was cancelled after it signed in to Google Cloud, and no '
-                'deploy has succeeded since; the incident names the run as `instance`, its id and attempt, and closes '
-                'about ten minutes after the next successful deploy of this environment (a run that only builds the '
-                f'images does not count), or {_OUTCOME_LOOKBACK} after the failure if none comes. The run, and which '
-                'step failed: `gh run view <run id> --repo populationgenomics/themis-internal`. A failure before the '
-                "sign-in shows in the workflow's run list only."
+            content=page(
+                meaning=(
+                    f'Deploy run {_PROMQL_LABEL.format("instance")} (run id, then attempt) failed or was cancelled, '
+                    'and no deploy of this environment has succeeded since. The environment still runs what the last '
+                    'successful deploy put live.'
+                ),
+                steps=[
+                    f"Find the run among [the deploy workflow's runs]({workflow_url('deploy.yml')}) and see which "
+                    'step failed.',
+                    'Fix the cause and merge, or rerun the run if the failure was transient.',
+                ],
+                closes=(
+                    'About ten minutes after the next successful deploy of this environment (a run that only builds '
+                    f'the images does not count), or {in_days(_OUTCOME_LOOKBACK)} days after the failure if none comes.'
+                ),
             ),
         )
 
@@ -446,12 +605,21 @@ class OperationalAlerts(pulumi.ComponentResource):
                 ),
             )
 
-        sql_content = pulumi.Output.format(
-            'The Cloud SQL instance `{0}` is near a limit of its tier; the condition names which. The tier is the '
-            "stack's `themis:sqlTier`, and a larger one is an in-place update with a restart of a few minutes "
-            "(docs/design/infrastructure.md, What differs between dev and prod). Its metrics: the instance's "
-            'Monitoring page in the console.',
-            sql_instance,
+        sql_content = pulumi.Output.from_input(sql_instance).apply(
+            lambda instance: page(
+                meaning=(
+                    f'The Cloud SQL instance {instance} is close to a limit of its tier; the condition above says '
+                    'which. At the limit, queries slow down or new connections fail.'
+                ),
+                steps=[
+                    "Check what drives it on [the instance's overview]("
+                    f'https://console.cloud.google.com/sql/instances/{instance}/overview?project={project}).',
+                    "If the load is expected, raise themis:sqlTier in this environment's stack file "
+                    '(infra/Pulumi.<environment>.yaml) and deploy. A larger tier is an in-place update that restarts '
+                    'the instance for a few minutes.',
+                ],
+                closes='Once the condition no longer holds.',
+            )
         )
         policy(
             'themis-sql-saturated',
@@ -477,10 +645,12 @@ class OperationalAlerts(pulumi.ComponentResource):
                 ),
             ],
             notification_prompts=STATE_PROMPTS,
-            subject='Themis: the database is saturated',
+            subject='Themis: the database is near a limit of its tier',
             content=sql_content,
         )
 
+        unreachable_hours = promql.duration(_CERTIFICATE_UNREACHABLE) / datetime.timedelta(hours=1)
+        dns_handoff = f'{repository_url("docs/runbooks/fresh-environment.md")}#dns-handoff-external--it-team'
         check = gcp.monitoring.UptimeCheckConfig(
             'themis-certificate',
             project=project,
@@ -553,14 +723,23 @@ class OperationalAlerts(pulumi.ComponentResource):
                 ),
             ],
             notification_prompts=STATE_PROMPTS,
-            subject='Themis: the certificate is not renewing',
-            content=(
-                f'Either fewer than {_CERTIFICATE_DAYS_LEFT} days are left on the Google-managed certificate for '
-                f'`{domain}`, which renews about 30 days before it expires, or `https://{domain}/` has not answered '
-                'with a valid certificate for two hours; the condition says which. Both usually mean the A record no '
-                'longer points at the load balancer, which also stops renewal. Its status: '
-                f'`gcloud compute ssl-certificates list --project {project}`. '
-                'Runbook: `docs/runbooks/fresh-environment.md`, DNS handoff.'
+            subject=f'Themis: the certificate for {domain} is not renewing',
+            content=page(
+                meaning=(
+                    f'Either fewer than {_CERTIFICATE_DAYS_LEFT} days are left on the Google-managed certificate for '
+                    f'{domain}, which renews about 30 days before it expires, or https://{domain}/ has not answered '
+                    f'with a valid certificate for {unreachable_hours:g} hours; the condition above says which. Once '
+                    'the certificate expires, the site stops loading.'
+                ),
+                steps=[
+                    'Check whether the DNS A record still points at the load balancer: either condition usually means '
+                    f'it does not, which also stops renewal. See [DNS handoff]({dns_handoff}).',
+                    f"The certificate's status: gcloud compute ssl-certificates list --project {project}",
+                ],
+                closes=(
+                    f'Once more than {_CERTIFICATE_DAYS_LEFT} days are left and https://{domain}/ answers with a '
+                    'valid certificate.'
+                ),
             ),
         )
 

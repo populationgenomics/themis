@@ -30,12 +30,14 @@ import datetime
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cost_metrics, cost_promql, promql
+from themis_infra import alerts, cost_metrics, cost_promql, promql
 
 _DAY_SECONDS = 86_400
 # Longer than the worker sits idle between batches, so the incident stays open until a deploy adds the model's row
 # (the matcher is the table's) rather than closing once the unpriced calls stop.
 _UNPRICED_WINDOW = '7d'
+_DRILL_DOWN_URL = alerts.repository_url('docs/design/cost-monitoring.md') + '#appendix-per-session-drill-down'
+_PRICE_TABLE_URL = alerts.repository_url('infra/themis_infra/cost_prices.py')
 
 
 def check_tuning(*, spike_window_minutes: int, freshness_minutes: int, tick_minutes: int) -> None:
@@ -88,7 +90,7 @@ class CostAlerts(pulumi.ComponentResource):
 
         Args:
             project: The GCP project the metrics live in.
-            region: The exporter Job's region, for the freshness runbook line.
+            region: The exporter Job's region, for the freshness page's links.
             slack_channel: The Slack channel notifications post to (`#name`).
             slack_bot_token: The bot token of the Slack app that posts there; a secret.
             spike_cents: Workspace spend rising by this many cents within the window is a spike; the sessions share
@@ -165,13 +167,21 @@ class CostAlerts(pulumi.ComponentResource):
             documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                 mime_type='text/markdown',
                 subject=f'Themis: workspace spend up more than {spike_dollars} in {spike_window_minutes} min',
-                content=(
-                    f'Anthropic spend across the workspace — Managed Agents sessions, the convert worker and Claude '
-                    f'Code in CI, at list price — rose by more than {spike_dollars} in the last {spike_window_minutes} '
-                    f'minutes (`themis:costSpikeAlertCents`, `themis:costSpikeWindowMinutes`). The dashboard shows '
-                    f'how much, and which producer and agent; a session behind it is a live query against the '
-                    f'sessions API (`docs/design/cost-monitoring.md`, appendix). The incident closes once the rise '
-                    f'over the window is back under {spike_dollars}.'
+                content=pulumi.Output.from_input(dashboard_url).apply(
+                    lambda dashboard: alerts.page(
+                        meaning=(
+                            'Anthropic spend across the workspace (Managed Agents sessions, the convert worker and '
+                            f'Claude Code in CI, at list price) rose by more than {spike_dollars} in the last '
+                            f'{spike_window_minutes} minutes. The threshold and the window are the stack settings '
+                            'themis:costSpikeAlertCents and themis:costSpikeWindowMinutes.'
+                        ),
+                        steps=[
+                            f'See how much, and which producer and agent, on [the spend dashboard]({dashboard}).',
+                            'If the rise is in Managed Agents sessions, find the session behind it with a query '
+                            f'against the sessions API: [per-session drill-down]({_DRILL_DOWN_URL}).',
+                        ],
+                        closes=f'Once the rise over the window is back under {spike_dollars}.',
+                    )
                 ),
                 links=[dashboard_link],
             ),
@@ -213,14 +223,26 @@ class CostAlerts(pulumi.ComponentResource):
                 mime_type='text/markdown',
                 subject=f'Themis: cost exporter silent for {freshness_minutes} min',
                 content=pulumi.Output.from_input(exporter_job_name).apply(
-                    lambda job: (
-                        f'No heartbeat has been written for {freshness_minutes} minutes. Every successful run of '
-                        f'the `{job}` Job sets it, sessions in the workspace or none, so the exporter is not '
-                        f'running or is failing before its write — its token exchange, or the '
-                        f"sessions listing. Until it recovers the dashboard's session figures are stale and the spend "
-                        f'alert is blind to sessions. Its executions: `gcloud run jobs executions list --job {job} '
-                        f'--region {region} --project {project}`. This incident closes only once a point returns, '
-                        f'within about ten minutes.'
+                    lambda job: alerts.page(
+                        meaning=(
+                            f'The cost exporter has written no heartbeat for {freshness_minutes} minutes. Every '
+                            'successful run writes one, sessions in the workspace or none, so the exporter is not '
+                            'running, or fails before its write: in its token exchange or the sessions listing. Until '
+                            "it recovers, the dashboard's session figures are stale and the spend spike alert cannot "
+                            'see sessions.'
+                        ),
+                        steps=[
+                            "Find the failed executions on [the Job's executions page]("
+                            f'{alerts.job_executions_url(project=project, region=region, job_name=job)}), and their '
+                            f"lines among [the Job's logs]({alerts.job_logs_url(project=project, job_name=job)}). "
+                            'No executions at all means its schedule stopped firing.',
+                            "An authentication error points at the exporter's Anthropic federation: [Claude API "
+                            f'workload identity]({alerts.repository_url("docs/runbooks/claude-api-wif.md")}).',
+                        ],
+                        closes=(
+                            'About ten minutes after the first heartbeat returns. While the exporter stays silent, '
+                            'this posts again once a day.'
+                        ),
                     )
                 ),
                 links=[dashboard_link],
@@ -250,12 +272,22 @@ class CostAlerts(pulumi.ComponentResource):
             documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                 mime_type='text/markdown',
                 subject='Themis: convert worker usage on a model the price table lacks',
-                content=(
-                    f'The convert worker reported request tokens for a model the list-price table in '
-                    f'`infra/themis_infra/cost_prices.py` has no row for, so the dashboard prices that usage at '
-                    f"nothing and the workspace total under-counts it. Add the model's row to the table; the "
-                    f"dashboard's convert section shows which model. The incident closes once the deploy that adds "
-                    f'the row lands, or {_UNPRICED_WINDOW} after the last unpriced call if none does.'
+                content=pulumi.Output.from_input(dashboard_url).apply(
+                    lambda dashboard: alerts.page(
+                        meaning=(
+                            'The convert worker reported request tokens for a model the list-price table has no row '
+                            'for, so the dashboard prices that usage at nothing and the workspace total, which the '
+                            'spend spike alert reads, under-counts it.'
+                        ),
+                        steps=[
+                            f'See which model in the convert section of [the spend dashboard]({dashboard}).',
+                            f"Add the model's row to [the price table]({_PRICE_TABLE_URL}) and deploy.",
+                        ],
+                        closes=(
+                            'Once the deploy that adds the row lands, or '
+                            f'{alerts.in_days(_UNPRICED_WINDOW)} days after the last unpriced call if none does.'
+                        ),
+                    )
                 ),
                 links=[dashboard_link],
             ),
