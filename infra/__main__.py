@@ -342,11 +342,12 @@ convert_worker = convert.ConvertWorker(
     region=region,
     image=_image(_CONVERT_WORKER_IMAGE_ENV, lambda: _live_service_image('themis-convert-worker')),
     fulltext_bucket=fulltext.name,
+    resources_bucket=resources.name,
     anthropic_federation_rule_id=anthropic_worker_federation_rule_id,
     anthropic_organization_id=anthropic_organization_id,
     anthropic_service_account_id=anthropic_worker_service_account_id,
     anthropic_workspace_id=anthropic_workspace_id,
-    opts=pulumi.ResourceOptions(depends_on=[base, fulltext]),
+    opts=pulumi.ResourceOptions(depends_on=[base, fulltext, resources]),
 )
 convert_invoker = convert.ConversionInvoker(
     project=project,

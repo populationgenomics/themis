@@ -228,6 +228,7 @@ class ConvertWorker(pulumi.ComponentResource):
         region: str,
         image: pulumi.Input[str],
         fulltext_bucket: pulumi.Input[str],
+        resources_bucket: pulumi.Input[str],
         anthropic_federation_rule_id: str,
         anthropic_organization_id: str,
         anthropic_service_account_id: str,
@@ -263,11 +264,20 @@ class ConvertWorker(pulumi.ComponentResource):
             prior=grants.Prior('themis-convert-worker-fulltext', parent=self),
             opts=child,
         )
+        # The reference stores and genomes the variant steps validate against, read in place.
+        grants.BucketObjectReader(
+            'themis-convert-worker',
+            member=service_account.member,
+            bucket=resources_bucket,
+            target='resources',
+            opts=child,
+        )
         # The request-token counter each transcription feeds (`themis/telemetry`).
         grants.TelemetryWriter('themis-convert-worker', member=service_account.member, project=project, opts=child)
 
         envs = [
             _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
+            _env('THEMIS_RESOURCES_BUCKET', resources_bucket),
             # PDF-OCR client credentials: keyless WIF (Path B), its own svac + rule
             # (../../docs/runbooks/claude-api-wif.md).
             _env('ANTHROPIC_FEDERATION_RULE_ID', anthropic_federation_rule_id),
