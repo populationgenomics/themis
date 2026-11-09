@@ -1,8 +1,8 @@
 """Every alert reaches a channel: operational incidents the alerts channel, spend incidents the spend channel.
 
-Also: the operational policies watch the resources the program actually declares; every policy is a state that
-notifies as it closes, except the per-execution failure of a Job no schedule runs; and the database's connection
-condition follows the stack's tier.
+Also: the operational policies watch the resources the program actually declares; every scheduled Job pages on its
+latest run or on its silence; every policy is a state that notifies as it closes, except the per-execution failure of
+a Job no schedule runs; and the database's connection condition follows the stack's tier.
 """
 
 from __future__ import annotations
@@ -152,20 +152,39 @@ def _watched_jobs(query: str) -> set[str]:
     return {name for matcher in matchers for name in matcher.split('|')}
 
 
+def _pages_on_silence(policy: dict[str, object], *, executions_url: str) -> bool:
+    """Whether `policy` is a silence condition whose page sends the reader to the Job executions at `executions_url`."""
+    silence = any(query.startswith('absent_over_time(') for query in _promql_queries(policy))
+    return silence and executions_url in str(_mapping(policy['documentation'])['content'])
+
+
 def _prompts(policy: dict[str, object]) -> tuple[str, ...]:
     return tuple(str(p) for p in _sequence(_mapping(policy['alertStrategy'])['notificationPrompts']))
 
 
-def test_the_latest_run_conditions_watch_exactly_the_scheduled_jobs(
-    policies: dict[str, tuple[list[str], dict[str, object]]], scheduled_jobs: set[str]
+def test_every_scheduled_job_pages_on_its_latest_run_or_on_its_silence(
+    policies: dict[str, tuple[list[str], dict[str, object]]], scheduled_jobs: set[str], config: dict[str, str]
 ) -> None:
-    watched: set[str] = set()
+    latest_run: set[str] = set()
     for _, policy in policies.values():
         for query in _promql_queries(policy):
             names = _watched_jobs(query)
             if names and query == alerts.latest_run_failed(names):
-                watched |= names
-    assert watched == scheduled_jobs
+                latest_run |= names
+    silence = {
+        job
+        for job in scheduled_jobs
+        if any(
+            _pages_on_silence(
+                policy,
+                executions_url=alerts.job_executions_url(
+                    project=config['gcp:project'], region=config['gcp:region'], job_name=job
+                ),
+            )
+            for _, policy in policies.values()
+        )
+    }
+    assert latest_run | silence == scheduled_jobs
 
 
 def test_every_unscheduled_job_pages_on_each_failed_execution(

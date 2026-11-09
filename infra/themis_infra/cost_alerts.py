@@ -227,9 +227,9 @@ class CostAlerts(pulumi.ComponentResource):
                         meaning=(
                             f'The cost exporter has written no heartbeat for {freshness_minutes} minutes. Every '
                             'successful run writes one, sessions in the workspace or none, so the exporter is not '
-                            'running, or fails before its write: in its token exchange or the sessions listing. Until '
-                            "it recovers, the dashboard's session figures are stale and the spend spike alert cannot "
-                            'see sessions.'
+                            'running, or every run fails: in its token exchange, the sessions listing or the write. '
+                            "Until it recovers, the dashboard's session figures are stale and the spend spike alert "
+                            'cannot see sessions.'
                         ),
                         steps=[
                             "Find the failed executions on [the Job's executions page]("

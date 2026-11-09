@@ -13,7 +13,7 @@ no later run is due to repair a failed one, so a close would mean nothing, and t
 event repairs (a Job's next run, the next deploy, the next ACL version) compares the time of the latest failure with the
 time of the latest success, so the incident outlasts the gap between the two.
 
-Each Job has a policy of its own, so its page names the Job and says what its failure means; the Job's owner writes that
+A Job's policy is its own, so its page names the Job and says what its failure means; the Job's owner writes that
 text as a `JobAlert`. Every page reads as `page` lays it out: what the failure means, what to do, when it closes.
 
 - `JobAlert` — what a failed run of one Job means and what to do about it.

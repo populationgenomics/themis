@@ -328,7 +328,8 @@ So the program adds Cloud Monitoring alert policies, in both stacks, for the fai
 first. Every policy reads a metric, never a log line: a log-match alert depends on the exact wording and severity a
 process happens to print, which nothing tests.
 
-- A failed run of any Cloud Run job, the sandbox worker and the gene-disease refresh among them.
+- A failed run of a Cloud Run job, the sandbox worker and the gene-disease refresh among them. The cost exporter is the
+  one exception, for the reason given under [When an incident closes](#when-an-incident-closes).
 - Server errors from each service a curator's request or an agent's session passes through. For an HTTP service that is
   its 5xx count, which Cloud Run records. A gRPC service reports an application error as a status inside an HTTP 200, so
   Cloud Run sees only transport failures there. The gRPC services therefore record the standard OpenTelemetry RPC
@@ -373,6 +374,16 @@ often as every 30 seconds up to 25 hours back, every 5 minutes up to 8 days back
 stay inside the 5-minute band, so an incident opens within five minutes of the failure that decides it. Monitoring
 closes it the larger of 270 seconds and two evaluation intervals after the condition last held, so about ten minutes
 after the run that resolves it.
+
+The cost exporter is the one scheduled job with no policy on its runs. It runs every five minutes, and its next run
+repairs a single failure before anyone could act on a page. On 9 November one export to the Telemetry API failed in prod
+at 22:20 UTC and the run at 22:25 succeeded. The policy the exporter then had on its runs posted the failure and, ten
+minutes later, its close, and those two messages were the only effect. An exporter whose every run fails stops writing
+its heartbeat, and the spend monitor's freshness alert pages on that about half an hour after the last heartbeat
+([`cost-monitoring.md`](cost-monitoring.md)). That page goes to the spend channel, because the policy is the spend
+monitor's. An exporter that fails only some of its runs is not paged for. Its gauges are running totals and every read
+of them takes the newest sample inside the freshness window, so the dashboard and the spend alerts keep working, and the
+failed runs show on the job's executions page.
 
 A job that runs on demand has no next run that repairs a failure. The sandbox worker runs once per agent session, so a
 later session's success says nothing about the session that lost its sandbox. Its policy keeps the event form, with a
