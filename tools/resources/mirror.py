@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import concurrent.futures
 import contextlib
 import dataclasses
 import datetime as dt
@@ -49,6 +50,7 @@ import json
 import pathlib
 import sys
 import tempfile
+import threading
 import urllib.parse
 from collections.abc import Iterator
 
@@ -61,10 +63,18 @@ from tools.resources import manifest
 
 _BUCKET_SUFFIX = 'resources'
 PROVENANCE_SUFFIX = '.provenance.json'
-_CHUNK = 8 * 1024 * 1024
+# Small enough that a download notices its pass was abandoned within seconds even from a slow publisher; a
+# stalled one, within the read timeout.
+_CHUNK = 1024 * 1024
+_READ_TIMEOUT_SECONDS = 60
 # A rewrite of a multi-gigabyte object returns a continuation token rather than completing, so the
 # copy loops until GCS reports it done.
 _REWRITE_ATTEMPTS = 10_000
+# Entries in flight at once from one host — a publisher, or a source bucket. Most of a first run's time is a few
+# slow publishers serving one file each, well under their link's rate, so each host has slots of its own and a
+# slow one never queues behind another. A download in flight holds its file in scratch, memory on Cloud Run:
+# at most this many times the largest file over HTTPS (about 1 GB) per publisher.
+_PER_HOST = 3
 
 
 # What a transfer to, from or within GCS raises when it does not complete: a refused request (a write to a name
@@ -190,9 +200,14 @@ def mirrored(entry: manifest.Entry, *, dataset: str, bucket: storage.Bucket) -> 
     )
 
 
+def _check(abandoned: threading.Event, url: str) -> None:
+    if abandoned.is_set():
+        raise MirrorError(f'{url}: abandoned')
+
+
 @contextlib.contextmanager
-def _downloaded(url: str) -> Iterator[tuple[pathlib.Path, str, int]]:
-    """The upstream streamed to a temporary file, with its md5 and size.
+def _downloaded(url: str, abandoned: threading.Event) -> Iterator[tuple[pathlib.Path, str, int]]:
+    """The upstream streamed to a temporary file, with its md5 and size; stops if `abandoned` is set.
 
     Transport compression is declined, because a body the server gzips would be stored decoded and
     silently stop being the bytes the publisher serves.
@@ -201,22 +216,28 @@ def _downloaded(url: str) -> Iterator[tuple[pathlib.Path, str, int]]:
     size = 0
     with tempfile.TemporaryDirectory() as work:
         path = pathlib.Path(work) / 'payload'
-        with requests.get(url, stream=True, timeout=(30, 600), headers={'Accept-Encoding': 'identity'}) as response:
+        with requests.get(
+            url, stream=True, timeout=(30, _READ_TIMEOUT_SECONDS), headers={'Accept-Encoding': 'identity'}
+        ) as response:
             response.raise_for_status()
             with path.open('wb') as handle:
                 for chunk in response.iter_content(chunk_size=_CHUNK):
+                    _check(abandoned, url)
                     digest.update(chunk)
                     size += len(chunk)
                     handle.write(chunk)
         yield path, digest.hexdigest(), size
 
 
-def _copy_within_gcs(client: storage.Client, entry: manifest.Entry, destination: storage.Blob) -> None:
-    """Server-side copy of a ``gs://`` upstream; the bytes never reach this machine."""
+def _copy_within_gcs(
+    client: storage.Client, entry: manifest.Entry, destination: storage.Blob, abandoned: threading.Event
+) -> None:
+    """Server-side copy of a ``gs://`` upstream; the bytes never reach this machine. Stops if `abandoned` is set."""
     parsed = urllib.parse.urlparse(entry.url)
     source = client.bucket(parsed.netloc).blob(parsed.path.lstrip('/'))
     token = None
     for _ in range(_REWRITE_ATTEMPTS):
+        _check(abandoned, entry.url)
         token, _, _ = destination.rewrite(source, token=token, if_generation_match=0)
         if token is None:
             return
@@ -240,13 +261,19 @@ def _provenance(entry: manifest.Entry, *, digest: str, algorithm: str, size: int
 
 
 def mirror(
-    entry: manifest.Entry, *, dataset: str, bucket: storage.Bucket, client: storage.Client, dry_run: bool
+    entry: manifest.Entry,
+    *,
+    dataset: str,
+    bucket: storage.Bucket,
+    client: storage.Client,
+    dry_run: bool,
+    abandoned: threading.Event,
 ) -> Outcome:
-    """Mirror one entry.
+    """Mirror one entry, unless `abandoned` is set before its transfer ends.
 
     Raises:
-        MirrorError: If the upstream's digest is not the one the manifest pinned, or a copy did
-            not complete.
+        MirrorError: If the upstream's digest is not the one the manifest pinned, a copy did not
+            complete, or the transfer was abandoned.
     """
     name = f'{dataset}/{entry.object}'
     destination = bucket.blob(name)
@@ -267,16 +294,17 @@ def mirror(
         return Outcome(entry, Status.WOULD_MIRROR)
 
     if entry.is_gcs:
-        _copy_within_gcs(client, entry, destination)
+        _copy_within_gcs(client, entry, destination, abandoned)
         stored = object_digest(destination)
         if stored is None:
             raise MirrorError(f'{entry.id}: GCS reported no checksum for the copy, so nothing can be pinned')
         digest, algorithm = stored
         size = destination.size or 0
     else:
-        with _downloaded(entry.url) as (path, digest, size):
+        with _downloaded(entry.url, abandoned) as (path, digest, size):
             if entry.md5 is not None and digest != entry.md5:
                 raise MirrorError(f'{entry.id}: expected md5 {entry.md5}, upstream served {digest}')
+            _check(abandoned, entry.url)
             # `checksum='md5'` makes GCS reject the object server-side when the bytes that arrived
             # are not the bytes that were sent; the default verifies nothing, so a truncated upload
             # would land and get a sidecar asserting a digest the stored object does not have.
@@ -307,25 +335,87 @@ def resources_bucket(client: storage.Client, project: str) -> storage.Bucket:
     return client.bucket(f'{project}-{_BUCKET_SUFFIX}')
 
 
+class _Pass:
+    """One pass over the entries: the slots each host has, and whether the pass is abandoned.
+
+    A pass is abandoned on the way out for an exception no entry absorbs — SIGTERM, a bug — and its
+    transfers stop rather than running on, since the interpreter waits for every worker thread before it
+    exits: a download at its next chunk, a copy within GCS before its next rewrite call, and an entry not
+    yet begun before it begins. A write already begun is let finish, its sidecar with it, rather than
+    leave an object without one.
+    """
+
+    def __init__(self) -> None:
+        self.abandoned = threading.Event()
+        self._slots: dict[str, threading.Semaphore] = {}
+        self._lock = threading.Lock()
+
+    def slot(self, entry: manifest.Entry) -> threading.Semaphore:
+        host = urllib.parse.urlparse(entry.url).netloc
+        with self._lock:
+            return self._slots.setdefault(host, threading.Semaphore(_PER_HOST))
+
+
+def _mirror_one(
+    entry: manifest.Entry, *, dataset: str, bucket: storage.Bucket, client: storage.Client, dry_run: bool, run: _Pass
+) -> bool:
+    """Mirror one entry once its host has a slot, reporting it on stderr in a single write; return whether it failed."""
+    with run.slot(entry):
+        try:
+            _check(run.abandoned, entry.url)
+            outcome = mirror(
+                entry, dataset=dataset, bucket=bucket, client=client, dry_run=dry_run, abandoned=run.abandoned
+            )
+        except (MirrorError, *TRANSFER_ERRORS) as error:
+            sys.stderr.write(f'  FAILED        {entry.id}: {error}\n')
+            return True
+    sys.stderr.write(f'{_report(outcome)}\n')
+    return False
+
+
 def mirror_all(
     entries: list[manifest.Entry], *, dataset: str, bucket: storage.Bucket, client: storage.Client, dry_run: bool
 ) -> list[str]:
-    """Mirror every entry, reporting each on stderr, and return the ids of those that failed.
+    """Mirror every entry, several at once, reporting each on stderr; return the ids of those that failed, in order.
 
     One entry's failure does not abandon the rest: a transfer of this size is worth resuming from
     what landed, and the caller still learns that something did not.
     """
     print(f'{len(entries)} entries -> gs://{bucket.name}/{dataset}/', file=sys.stderr)
-    failed: list[str] = []
-    for entry in entries:
-        try:
-            print(
-                _report(mirror(entry, dataset=dataset, bucket=bucket, client=client, dry_run=dry_run)), file=sys.stderr
+    run = _Pass()
+    # A thread per entry, most of them waiting on their host's slots.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(len(entries), 1))
+    try:
+        futures = [
+            (
+                entry.id,
+                pool.submit(
+                    _mirror_one, entry, dataset=dataset, bucket=bucket, client=client, dry_run=dry_run, run=run
+                ),
             )
-        except (MirrorError, *TRANSFER_ERRORS) as error:
-            failed.append(entry.id)
-            print(f'  FAILED        {entry.id}: {error}', file=sys.stderr)
-    return failed
+            for entry in entries
+        ]
+        # Whichever entry raises what it cannot absorb, the pass is abandoned then, not when its turn comes.
+        done, _ = concurrent.futures.wait(
+            [future for _, future in futures], return_when=concurrent.futures.FIRST_EXCEPTION
+        )
+        for future in done:
+            if (error := future.exception()) is not None:
+                raise error
+        return [entry_id for entry_id, future in futures if future.result()]
+    except Exception:
+        # Wait out the writes already begun, so nothing of this attempt is still writing once the job marks
+        # it finished; abandoned, the rest stop within a read timeout.
+        run.abandoned.set()
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    except BaseException:
+        # SIGTERM: SIGKILL follows within seconds, sooner than a write in progress would end, and waiting
+        # would cost the attempt its finished marker. Its writes end with the process instead.
+        run.abandoned.set()
+        raise
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def main() -> None:
