@@ -7,7 +7,8 @@ network call, and a missing or malformed one fails the run naming it. The run re
 window's end — the total across producers, then each producer, the sessions figure split into runtime, tokens and
 web search — and posts them once with a chart of the window hour by hour, or posts nothing when no figure moved. A
 producer no series answered for reads as no data, not as nothing spent; a figure below zero is shown as it is. The
-heading names the window's end in the schedule's zone.
+heading names the window's end in the schedule's zone. A query Monitoring could not serve is asked again, a bounded
+number of times and within the deadline; the post is made once.
 """
 
 from __future__ import annotations
@@ -32,6 +33,8 @@ _TIME_ZONE_VAR = 'THEMIS_COST_REPORT_TIME_ZONE'
 
 _WINDOW = datetime.timedelta(hours=24)
 _STEP = datetime.timedelta(hours=1)
+_REQUESTS_PER_QUERY = 3
+_PAUSE_BETWEEN_REQUESTS_SECONDS = 2.0
 _SCOPES = ('https://www.googleapis.com/auth/cloud-platform',)
 
 _SESSIONS_TITLE = 'Managed Agents sessions'
@@ -155,22 +158,48 @@ def window_end(at: datetime.datetime, tz: zoneinfo.ZoneInfo) -> str:
     return f'{local:%a} {local.day} {local:%b %Y %H:%M} ({tz.key})'
 
 
+def _answer[T](label: str, ask: Callable[[], T], *, deadline: Deadline, sleep: Callable[[float], None]) -> T:
+    """What `ask` returns, asking again after a pause while the source is unavailable.
+
+    The deadline is checked before every request, so none starts once the budget is spent.
+
+    Raises:
+        promql.UnavailableError: The source was unavailable for every request the query is allowed.
+        TimeoutError: The deadline passed before a request.
+    """
+    request = 1
+    while True:
+        deadline.check()
+        try:
+            return ask()
+        except promql.UnavailableError as e:
+            if request == _REQUESTS_PER_QUERY:
+                raise
+            _logger.warning('%s: request %d of %d failed: %s', label, request, _REQUESTS_PER_QUERY, e)
+        sleep(_PAUSE_BETWEEN_REQUESTS_SECONDS)
+        request += 1
+
+
 def read_day(
-    queries: report_queries.DayQueries, source: promql.PromQL, *, at: datetime.datetime, deadline: Deadline
+    queries: report_queries.DayQueries,
+    source: promql.PromQL,
+    *,
+    at: datetime.datetime,
+    deadline: Deadline,
+    sleep: Callable[[float], None],
 ) -> Day:
     """The day's figures, each query evaluated at `at`."""
 
-    def read(query: str) -> float | None:
-        deadline.check()
-        return source.instant(query, at=at)
+    def read(name: str, query: str) -> float | None:
+        return _answer(f'day {name}', lambda: source.instant(query, at=at), deadline=deadline, sleep=sleep)
 
     return Day(
-        sessions=read(queries.sessions),
-        sessions_runtime=read(queries.sessions_runtime),
-        sessions_search=read(queries.sessions_search),
-        sessions_tokens=read(queries.sessions_tokens),
-        convert=read(queries.convert),
-        ci=read(queries.ci),
+        sessions=read('sessions', queries.sessions),
+        sessions_runtime=read('sessions_runtime', queries.sessions_runtime),
+        sessions_search=read('sessions_search', queries.sessions_search),
+        sessions_tokens=read('sessions_tokens', queries.sessions_tokens),
+        convert=read('convert', queries.convert),
+        ci=read('ci', queries.ci),
     )
 
 
@@ -181,19 +210,24 @@ def read_hourly(
     start: datetime.datetime,
     end: datetime.datetime,
     deadline: Deadline,
+    sleep: Callable[[float], None],
 ) -> list[chart.Series]:
     """Each producer's hourly series over (`start`, `end`], in dollars, as the chart draws them."""
 
-    def read(label: str, query: str) -> chart.Series:
-        deadline.check()
-        # An evaluation covers the hour ending at it, so the first is one step in: 24 bars tile the window.
-        points = source.range(query, start=start + _STEP, end=end, step=_STEP)
+    def read(name: str, label: str, query: str) -> chart.Series:
+        points = _answer(
+            f'hourly {name}',
+            # An evaluation covers the hour ending at it, so the first is one step in: 24 bars tile the window.
+            lambda: source.range(query, start=start + _STEP, end=end, step=_STEP),
+            deadline=deadline,
+            sleep=sleep,
+        )
         return chart.Series(label, [(at, money.to_dollars(value)) for at, value in points])
 
     return [
-        read(_SESSIONS_TITLE, queries.sessions),
-        read(_CONVERT_TITLE, queries.convert),
-        read(_CI_TITLE, queries.ci),
+        read('sessions', _SESSIONS_TITLE, queries.sessions),
+        read('convert', _CONVERT_TITLE, queries.convert),
+        read('ci', _CI_TITLE, queries.ci),
     ]
 
 
@@ -237,6 +271,7 @@ def run(
     channel_id: str,
     now: Callable[[], datetime.datetime],
     deadline: Deadline,
+    sleep: Callable[[float], None],
     tz: zoneinfo.ZoneInfo,
     dashboard_url: str,
 ) -> Outcome:
@@ -249,24 +284,26 @@ def run(
         channel_id: The channel posted to.
         now: The clock the window ends at, read once before any query.
         deadline: The run's time budget.
+        sleep: How the run waits before asking an unavailable source again.
         tz: The zone the report dates its window in.
         dashboard_url: The spend dashboard's console URL, which the message ends with a link to.
 
     Raises:
         ValueError: `now` returned a naive datetime.
         TimeoutError: The deadline passed between two calls.
-        Exception: Whatever the source or the channel raises; nothing is posted after a failed read.
+        Exception: Whatever the source or the channel raises (`promql.UnavailableError` only after a query's
+            last allowed request); nothing is posted after a failed read.
     """
     end = now()
     if end.tzinfo is None:
         raise ValueError('precondition failed: the clock must return a timezone-aware datetime')
     start = end - _WINDOW
-    day = read_day(queries.day, source, at=end, deadline=deadline)
+    day = read_day(queries.day, source, at=end, deadline=deadline, sleep=sleep)
     _log(day)
     if not day.moved:
         _logger.info('no figure moved in the 24 h to %s; nothing posted', end.isoformat())
         return Outcome(day=day, posted=False)
-    series = read_hourly(queries.hourly, source, start=start, end=end, deadline=deadline)
+    series = read_hourly(queries.hourly, source, start=start, end=end, deadline=deadline, sleep=sleep)
     png = chart.render(chart_title(end, tz), series, window=(start, end), tz=tz)
     deadline.check()
     channel.post(channel_id, message(day, end, tz, dashboard_url=dashboard_url), png, chart_filename(end, tz))
@@ -292,6 +329,7 @@ def main() -> None:
                 channel_id=settings.slack_channel_id,
                 now=functools.partial(datetime.datetime.now, datetime.UTC),
                 deadline=deadline,
+                sleep=time.sleep,
                 tz=settings.time_zone,
                 dashboard_url=settings.dashboard_url,
             )

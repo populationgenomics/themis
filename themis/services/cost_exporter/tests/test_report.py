@@ -56,6 +56,46 @@ class _Source(promql.PromQL):
         return tuple(self._ranges.get(query, ()))
 
 
+# More requests than a run makes for one query, and finite: a run that never stopped asking would be answered.
+_EVERY_REQUEST = 1_000
+
+
+class _Faltering(_Source):
+    """Cannot serve `query` for its first `failures` requests, then answers it from the table like any other."""
+
+    def __init__(
+        self,
+        query: str,
+        failures: int,
+        *,
+        instants: Mapping[str, float] | None = None,
+        ranges: Mapping[str, Sequence[promql.Point]] | None = None,
+    ) -> None:
+        super().__init__(instants, ranges)
+        self._query = query
+        self._failures = failures
+        self.requests = 0
+
+    def _request(self, query: str) -> None:
+        if query != self._query:
+            return
+        self.requests += 1
+        if self.requests <= self._failures:
+            raise promql.UnavailableError(f'{query} got no response')
+
+    @override
+    def instant(self, query: str, *, at: datetime.datetime) -> float | None:
+        self._request(query)
+        return super().instant(query, at=at)
+
+    @override
+    def range(
+        self, query: str, *, start: datetime.datetime, end: datetime.datetime, step: datetime.timedelta
+    ) -> tuple[promql.Point, ...]:
+        self._request(query)
+        return super().range(query, start=start, end=end, step=step)
+
+
 class _Channel(slack.ReportChannel):
     def __init__(self) -> None:
         self.posts: list[tuple[str, str, bytes, str]] = []
@@ -72,7 +112,14 @@ def _deadline(seconds: int = 60) -> report.Deadline:
 _DASHBOARD = 'https://console.example/monitoring/dashboards/builder/42?project=themis-test'
 
 
-def _run(source: _Source, channel: _Channel, *, deadline: report.Deadline | None = None) -> report.Outcome:
+def _run(
+    source: _Source,
+    channel: _Channel,
+    *,
+    deadline: report.Deadline | None = None,
+    pauses: list[float] | None = None,
+) -> report.Outcome:
+    """One run; every pause it takes is appended to `pauses` rather than waited out."""
     return report.run(
         _QUERIES,
         source,
@@ -80,6 +127,7 @@ def _run(source: _Source, channel: _Channel, *, deadline: report.Deadline | None
         channel_id='C01',
         now=lambda: _END,
         deadline=deadline or _deadline(),
+        sleep=([] if pauses is None else pauses).append,
         tz=_SYDNEY,
         dashboard_url=_DASHBOARD,
     )
@@ -192,7 +240,9 @@ def test_the_day_is_read_at_the_windows_end_and_the_hours_tile_the_window() -> N
 def test_hourly_cents_reach_the_chart_as_dollars_under_the_producers_names() -> None:
     source = _Source(ranges={'hourly/convert': _points(150, 25)})
 
-    series = report.read_hourly(_QUERIES.hourly, source, start=_END - 24 * _HOUR, end=_END, deadline=_deadline())
+    series = report.read_hourly(
+        _QUERIES.hourly, source, start=_END - 24 * _HOUR, end=_END, deadline=_deadline(), sleep=lambda _: None
+    )
 
     assert [one.label for one in series] == ['Managed Agents sessions', 'Convert worker', 'CI (Claude Code)']
     assert [value for _, value in series[1].points] == [1.5, 0.25]
@@ -220,6 +270,7 @@ def test_a_naive_clock_fails_before_any_query() -> None:
             channel_id='C01',
             now=lambda: _END.replace(tzinfo=None),
             deadline=_deadline(),
+            sleep=lambda _: None,
             tz=_SYDNEY,
             dashboard_url=_DASHBOARD,
         )
@@ -239,15 +290,66 @@ def test_a_spent_deadline_stops_the_run_before_the_next_call() -> None:
     assert channel.posts == []
 
 
-def test_a_failed_read_posts_nothing() -> None:
+def test_a_failed_read_posts_nothing_and_is_not_asked_again() -> None:
     class _Failing(_Source):
         @override
         def instant(self, query: str, *, at: datetime.datetime) -> float | None:
+            self.instant_queries.append((query, at))
             raise promql.QueryError('query did not succeed')
 
-    channel = _Channel()
+    source, channel, pauses = _Failing(), _Channel(), []
     with pytest.raises(promql.QueryError):
-        _run(_Failing(), channel)
+        _run(source, channel, pauses=pauses)
+    assert channel.posts == []
+    assert len(source.instant_queries) == 1
+    assert pauses == []
+
+
+_ANY_QUERY = pytest.mark.parametrize('query', ['day/ci', 'hourly/ci'])
+
+
+@_ANY_QUERY
+def test_a_query_the_source_could_not_serve_is_asked_again_and_the_report_posts_once(query: str) -> None:
+    source = _Faltering(query, 1, instants={'day/ci': 250}, ranges={'hourly/ci': _points(100, 150)})
+    channel = _Channel()
+    pauses: list[float] = []
+
+    outcome = _run(source, channel, pauses=pauses)
+
+    assert source.requests == 2
+    assert outcome.day.ci == 250
+    assert len(channel.posts) == 1
+    [pause] = pauses
+    assert pause > 0
+
+
+@_ANY_QUERY
+def test_a_query_the_source_never_serves_fails_the_run_after_a_bounded_number_of_requests(query: str) -> None:
+    source = _Faltering(query, _EVERY_REQUEST, instants={'day/ci': 250})
+    channel = _Channel()
+    pauses: list[float] = []
+
+    with pytest.raises(promql.UnavailableError):
+        _run(source, channel, pauses=pauses)
+
+    assert channel.posts == []
+    assert source.requests > 1
+    # No pause follows the request that ends the run.
+    assert len(pauses) == source.requests - 1
+
+
+@pytest.mark.parametrize('requests_inside_the_budget', [1, 2])
+def test_no_request_starts_once_the_deadline_is_spent(requests_inside_the_budget: int) -> None:
+    # The first tick is the start; each later one is the check before a request.
+    ticks = iter([0.0, *[1.0] * requests_inside_the_budget, 61.0])
+    deadline = report.Deadline(60, clock=lambda: next(ticks))
+    source = _Faltering('day/sessions', _EVERY_REQUEST)
+    channel = _Channel()
+
+    with pytest.raises(TimeoutError, match='60s deadline'):
+        _run(source, channel, deadline=deadline)
+
+    assert source.requests == requests_inside_the_budget
     assert channel.posts == []
 
 

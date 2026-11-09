@@ -1,7 +1,8 @@
 """Reading Prometheus API bodies as one figure, and what the live client sends and fails on.
 
-The bodies are the endpoint's documented shapes; the transport is a fake returning real `requests.Response` objects,
-so the client's handling of status and body is what is asserted, with no network.
+The bodies are the endpoint's documented shapes; the transport is a fake returning real `requests.Response` objects
+or raising real `requests` errors, so the client's handling of status, body and a request with no response is what
+is asserted, with no network.
 """
 
 from __future__ import annotations
@@ -98,13 +99,17 @@ def _response(status: int, body: object) -> requests.Response:
 
 
 class _Transport:
-    def __init__(self, response: requests.Response) -> None:
-        self._response = response
+    """Answers every request with `outcome`: a response to return, or an error to raise."""
+
+    def __init__(self, outcome: requests.Response | Exception) -> None:
+        self._outcome = outcome
         self.calls: list[tuple[str, dict[str, str], float]] = []
 
     def post(self, url: str, *, json: Mapping[str, str], timeout: float) -> requests.Response:
         self.calls.append((url, dict(json), timeout))
-        return self._response
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return self._outcome
 
 
 def test_the_client_posts_an_instant_query_as_a_json_body_to_the_projects_endpoint() -> None:
@@ -156,3 +161,59 @@ def test_a_200_that_is_not_json_is_a_query_error() -> None:
     response._content = b'<html>gateway</html>'
     with pytest.raises(promql.QueryError, match='not JSON'):
         promql.CloudMonitoringPromQL(_Transport(response), 'p').instant('q', at=_END)
+
+
+@pytest.mark.parametrize(
+    'failure',
+    [
+        pytest.param(requests.ReadTimeout('read timed out'), id='read-timeout'),
+        pytest.param(requests.ConnectTimeout('connect timed out'), id='connect-timeout'),
+        pytest.param(requests.ConnectionError('connection reset'), id='connection-lost-before-the-response'),
+        pytest.param(requests.exceptions.ChunkedEncodingError('incomplete read'), id='connection-lost-mid-body'),
+        pytest.param(requests.exceptions.ContentDecodingError('bad gzip'), id='body-that-does-not-decode'),
+    ],
+)
+def test_a_request_with_no_whole_response_is_unavailable_after_one_request(failure: Exception) -> None:
+    transport = _Transport(failure)
+
+    with pytest.raises(promql.UnavailableError, match='got no response') as raised:
+        promql.CloudMonitoringPromQL(transport, 'p').instant('q', at=_END)
+
+    assert raised.value.__cause__ is failure
+    assert len(transport.calls) == 1
+
+
+@pytest.mark.parametrize('status', [500, 503])
+def test_a_5xx_is_unavailable_carrying_its_body(status: int) -> None:
+    transport = _Transport(_response(status, {'status': 'error', 'error': 'backend unavailable'}))
+    with pytest.raises(promql.UnavailableError, match=rf'HTTP {status}.*backend unavailable'):
+        promql.CloudMonitoringPromQL(transport, 'p').range('q', start=_START, end=_END, step=_END - _START)
+
+
+@pytest.mark.parametrize(
+    'failure',
+    [
+        pytest.param(requests.exceptions.InvalidURL('no host'), id='a-request-that-cannot-be-sent'),
+        pytest.param(requests.TooManyRedirects('30 redirects'), id='a-redirect-loop'),
+        pytest.param(RuntimeError('credentials could not be refreshed'), id='not-from-requests'),
+    ],
+)
+def test_an_error_that_is_not_a_missing_response_reaches_the_caller_as_itself(failure: Exception) -> None:
+    with pytest.raises(type(failure)) as raised:
+        promql.CloudMonitoringPromQL(_Transport(failure), 'p').instant('q', at=_END)
+    assert raised.value is failure
+
+
+@pytest.mark.parametrize(
+    'answer',
+    [
+        pytest.param(_response(400, {'status': 'error', 'error': 'parse error'}), id='bad-query'),
+        pytest.param(_response(403, {'error': {'message': 'denied'}}), id='denied'),
+        pytest.param(_response(429, {'error': {'message': 'quota exceeded'}}), id='over-quota'),
+        pytest.param(_response(200, {'status': 'error', 'error': 'execution error'}), id='200-with-an-error-body'),
+    ],
+)
+def test_a_4xx_or_an_error_body_is_not_unavailable(answer: requests.Response) -> None:
+    with pytest.raises(promql.QueryError) as raised:
+        promql.CloudMonitoringPromQL(_Transport(answer), 'p').instant('q', at=_END)
+    assert not isinstance(raised.value, promql.UnavailableError)

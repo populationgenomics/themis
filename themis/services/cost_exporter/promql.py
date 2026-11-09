@@ -4,7 +4,9 @@ Monitoring serves its metrics through the Prometheus query API, so the report ru
 renders for it (`infra/themis_infra/cost_report.py`) rather than re-deriving a figure from raw points. Every query
 is an aggregate with no label left, so its result is one series or none: none is nothing to read — no producer
 wrote in the window — and two or more is a fault in the query, which fails the read. The API returns every value as
-a decimal string; a value that is not a finite number fails the read the same way.
+a decimal string; a value that is not a finite number fails the read the same way. A request the endpoint could
+not serve (a timeout, a lost connection, a 5xx) fails as `UnavailableError`: a query is a read, so its caller may ask
+again.
 """
 
 from __future__ import annotations
@@ -27,6 +29,22 @@ class QueryError(ValueError):
     """The endpoint did not answer a query with a result the report can read."""
 
 
+class UnavailableError(QueryError):
+    """The endpoint could not serve a request: no whole response arrived, or the response was a 5xx.
+
+    The query may be asked again: it is a read, and the fault was not in it.
+    """
+
+
+# What `requests` raises when no whole response arrives.
+_NO_RESPONSE = (
+    requests.Timeout,
+    requests.ConnectionError,
+    requests.exceptions.ChunkedEncodingError,
+    requests.exceptions.ContentDecodingError,
+)
+
+
 class Point(NamedTuple):
     """One figure of a range result, stamped with its evaluation instant (UTC)."""
 
@@ -35,7 +53,10 @@ class Point(NamedTuple):
 
 
 class PromQL(abc.ABC):
-    """PromQL evaluated against the project's metrics; each query yields one series or none."""
+    """PromQL evaluated against the project's metrics; each query yields one series or none.
+
+    A read the source could not serve raises `UnavailableError`, the one failure worth asking again after.
+    """
 
     @abc.abstractmethod
     def instant(self, query: str, *, at: datetime.datetime) -> float | None:
@@ -57,7 +78,8 @@ class Transport(Protocol):
 class CloudMonitoringPromQL(PromQL):
     """The live client: Monitoring's Prometheus endpoint for the project, `query` and `query_range`.
 
-    Each request's parameters go in a JSON body, the form Google's discovery schema gives the endpoint.
+    Each request's parameters go in a JSON body, the form Google's discovery schema gives the endpoint. The
+    client does not repeat a request.
     """
 
     def __init__(self, transport: Transport, project: str) -> None:
@@ -81,7 +103,12 @@ class CloudMonitoringPromQL(PromQL):
         return range_points(self._call('query_range', body))
 
     def _call(self, endpoint: str, body: Mapping[str, str]) -> object:
-        response = self._transport.post(f'{self._api}/{endpoint}', json=body, timeout=_REQUEST_TIMEOUT_SECONDS)
+        try:
+            response = self._transport.post(f'{self._api}/{endpoint}', json=body, timeout=_REQUEST_TIMEOUT_SECONDS)
+        except _NO_RESPONSE as e:
+            raise UnavailableError(f'{endpoint} got no response: {e}') from e
+        if response.status_code >= 500:
+            raise UnavailableError(f'{endpoint} answered HTTP {response.status_code}: {response.text}')
         if response.status_code != 200:
             raise QueryError(f'{endpoint} answered HTTP {response.status_code}: {response.text}')
         try:
