@@ -18,6 +18,11 @@ A prefix is complete once its last object is written — a store's ``manifest.ba
 a build that stopped partway; this pass will not skip it, since it is not the artefact, nor write
 into it, so it fails, for a person to delete.
 
+The builds run at once, each in a thread of its own. The work is the builder's subprocess, single-threaded,
+so together they take as long as the longest chain — the GRCh38 genome, then the Ensembl store placed
+against it — rather than the sum of all five; the Job's memory is sized for every build's scratch at once.
+Each line of output names the build it is from.
+
 Run from the repo root, after the mirror and the status table::
 
     uv run --group resources python -m tools.resources.build --project P [--dry-run]
@@ -26,6 +31,8 @@ Run from the repo root, after the mirror and the status table::
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import contextlib
 import dataclasses
 import functools
 import gzip
@@ -36,7 +43,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+import threading
+from collections.abc import Callable, Iterator, Mapping, Sequence
 
 from google.cloud import storage
 from weaver_data_provider import build as weaver_build
@@ -123,8 +131,9 @@ def _status_input(assembly: manifest.Assembly, *, dataset: str, bucket: storage.
     )
 
 
-# Runs one build: given each input's local path by role, and the directory to write the artefact into.
-Recipe = Callable[[Mapping[str, pathlib.Path], pathlib.Path], None]
+# Runs one build: given each input's local path by role, the directory to write the artefact into, and the
+# runner of its builder steps.
+Recipe = Callable[[Mapping[str, pathlib.Path], pathlib.Path, 'Runner'], None]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -159,26 +168,96 @@ class Build:
         return f'{self.root}/{self.entry_prefix}/{self.build_id}'
 
 
-def _cli(*args: str) -> str:
-    """Run ``weaver-data-build`` and return what it printed on stdout, its own report left on stderr.
+def _say(text: str) -> None:
+    """One line on stderr, in a single write, so lines from builds running at once do not interleave."""
+    sys.stderr.write(f'{text}\n')
+    sys.stderr.flush()
 
-    Raises:
-        BuildError: If the command exits non-zero.
+
+class Abandon:
+    """Whether the pass is abandoned, and the builder children to kill when it is.
+
+    A pass is abandoned on the way out for an exception none of its builds can absorb — SIGTERM, a bug.
+    Its builder children are killed, and its builds stop before their next download or builder step
+    rather than running on for half an hour each: the interpreter waits for every worker thread before
+    it exits. An upload already started is let finish rather than leave a partial prefix — unless the
+    process is killed first, as Cloud Run does seconds after a SIGTERM.
     """
-    command = [sys.executable, '-m', 'weaver_data_provider.build.cli', *args]
-    print(f'  $ weaver-data-build {" ".join(args)}', file=sys.stderr)
-    result = subprocess.run(command, check=False, stdout=subprocess.PIPE, text=True)  # noqa: S603 - our own CLI
-    if result.returncode != 0:
-        raise BuildError(f'weaver-data-build {args[0]} exited {result.returncode}; see its output above')
-    return result.stdout
+
+    def __init__(self) -> None:
+        self._set = threading.Event()
+        self._children: set[subprocess.Popen[str]] = set()
+        self._lock = threading.Lock()
+
+    def __call__(self) -> None:
+        with self._lock:
+            self._set.set()
+            for child in self._children:
+                child.kill()
+
+    def check(self) -> None:
+        """Raise if the pass is abandoned.
+
+        Raises:
+            BuildError: If it is.
+        """
+        if self._set.is_set():
+            raise BuildError('abandoned')
+
+    @contextlib.contextmanager
+    def watching(self, child: subprocess.Popen[str]) -> Iterator[None]:
+        """Kill `child` if the pass is abandoned while the block runs, or was already."""
+        with self._lock:
+            if self._set.is_set():
+                child.kill()
+            self._children.add(child)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._children.discard(child)
 
 
-def _shard(*args: str) -> pathlib.Path:
-    """Cut one shard and return its path, the last line the command prints."""
-    lines = _cli(*args).splitlines()
-    if not lines or not lines[-1].strip():
-        raise BuildError(f'weaver-data-build {args[0]} printed no shard path')
-    return pathlib.Path(lines[-1].strip())
+@dataclasses.dataclass(frozen=True)
+class Runner:
+    """Runs one build's ``weaver-data-build`` steps, each line of their report prefixed with the build's label."""
+
+    label: str
+    abandon: Abandon
+
+    def cli(self, *args: str) -> str:
+        """Run ``weaver-data-build`` and return what it printed on stdout, its report relayed to stderr.
+
+        Raises:
+            BuildError: If the command exits non-zero, or the pass is abandoned.
+        """
+        self.abandon.check()
+        command = [sys.executable, '-m', 'weaver_data_provider.build.cli', *args]
+        _say(f'  [{self.label}] $ weaver-data-build {" ".join(args)}')
+        with (
+            tempfile.TemporaryFile('w+') as stdout,
+            subprocess.Popen(  # noqa: S603 - our own CLI
+                command, stdout=stdout, stderr=subprocess.PIPE, text=True, errors='replace'
+            ) as process,
+            self.abandon.watching(process),
+        ):
+            assert process.stderr is not None  # noqa: S101 - stderr=PIPE
+            for line in process.stderr:
+                _say(f'  [{self.label}] {line.rstrip()}')
+            returncode = process.wait()
+            stdout.seek(0)
+            printed = stdout.read()
+        self.abandon.check()
+        if returncode != 0:
+            raise BuildError(f'weaver-data-build {args[0]} exited {returncode}; see its output above')
+        return printed
+
+    def shard(self, *args: str) -> pathlib.Path:
+        """Cut one shard and return its path, the last line the command prints."""
+        lines = self.cli(*args).splitlines()
+        if not lines or not lines[-1].strip():
+            raise BuildError(f'weaver-data-build {args[0]} printed no shard path')
+        return pathlib.Path(lines[-1].strip())
 
 
 def check_release(annotation: pathlib.Path, release: str) -> None:
@@ -204,8 +283,8 @@ def _flags(flag: str, paths: Sequence[pathlib.Path]) -> list[str]:
 
 
 def _genome(assembly: manifest.Assembly, grc: str, *, dataset: str, bucket: storage.Bucket) -> Build:
-    def recipe(local: Mapping[str, pathlib.Path], out: pathlib.Path) -> None:
-        _cli('genome', '--assembly', grc, '--fasta', str(local['genome']), '--out', str(out))
+    def recipe(local: Mapping[str, pathlib.Path], out: pathlib.Path, runner: Runner) -> None:
+        runner.cli('genome', '--assembly', grc, '--fasta', str(local['genome']), '--out', str(out))
 
     return Build(
         label=f'{assembly.id} genome',
@@ -257,7 +336,7 @@ def _refseq_store(assembly: manifest.Assembly, grc: str, *, pinned: manifest.Man
         inputs['historical/status'] = _status_input(assembly, dataset=pinned.dataset, bucket=bucket)
     releases = [release] if assembly.historical is None else [assembly.historical, release]
 
-    def recipe(local: Mapping[str, pathlib.Path], out: pathlib.Path) -> None:
+    def recipe(local: Mapping[str, pathlib.Path], out: pathlib.Path, runner: Runner) -> None:
         check_release(local['annotation'], release)
         shards = out / 'shards'
         common = [
@@ -273,7 +352,7 @@ def _refseq_store(assembly: manifest.Assembly, grc: str, *, pinned: manifest.Man
         cut: list[pathlib.Path] = []
         if assembly.historical is not None:
             cut.append(
-                _shard(
+                runner.shard(
                     'historical', *common, '--release', assembly.historical, '--prefix', _HISTORICAL_SHARD_PREFIX,
                     '--annotation', str(local['historical/annotation']),
                     '--records', str(local['historical/records']),
@@ -282,7 +361,7 @@ def _refseq_store(assembly: manifest.Assembly, grc: str, *, pinned: manifest.Man
                 )
             )  # fmt: skip
         cut.append(
-            _shard(
+            runner.shard(
                 'refseq', *common, '--release', release, '--prefix', _CURRENT_SHARD_PREFIX,
                 '--annotation', str(local['annotation']),
                 '--transcripts', str(local['transcripts']),
@@ -291,7 +370,7 @@ def _refseq_store(assembly: manifest.Assembly, grc: str, *, pinned: manifest.Man
                 *_flags('--alignments', [local[role] for role in alignments]),
             )
         )  # fmt: skip
-        _cli('index', '--assembly', grc, '--out', str(out), *map(str, cut))
+        runner.cli('index', '--assembly', grc, '--out', str(out), *map(str, cut))
 
     return Build(
         label=f'{assembly.id} store',
@@ -337,8 +416,8 @@ def _ensembl_store(
         'recipe': _RECIPE,
     }
 
-    def recipe(local: Mapping[str, pathlib.Path], out: pathlib.Path) -> None:
-        shard = _shard(
+    def recipe(local: Mapping[str, pathlib.Path], out: pathlib.Path, runner: Runner) -> None:
+        shard = runner.shard(
             'ensembl', '--assembly', grc, '--release', release,
             '--annotation', str(local['whole-annotation']),
             '--completeness', str(local['whole-annotation-gtf']),
@@ -349,7 +428,7 @@ def _ensembl_store(
             '--hgnc', str(local['hgnc']), '--mane', str(local['mane']),
             '--shards', str(out / 'shards'),
         )  # fmt: skip
-        _cli('index', '--assembly', grc, '--out', str(out), str(shard))
+        runner.cli('index', '--assembly', grc, '--out', str(out), str(shard))
 
     return Build(
         label=f'{assembly.id} store',
@@ -403,38 +482,64 @@ def _upload(bucket: storage.Bucket, build: Build, out: pathlib.Path) -> int:
     return sum(path.stat().st_size for path in files)
 
 
-def run(build: Build, *, bucket: storage.Bucket, work: pathlib.Path) -> pathlib.Path:
-    """Download the build's inputs, run it, and upload the artefact; return the local artefact directory."""
+def run(build: Build, *, bucket: storage.Bucket, work: pathlib.Path, abandon: Abandon) -> pathlib.Path:
+    """Download the build's inputs, run it, and upload the artefact; return the local artefact directory.
+
+    Raises:
+        BuildError: If the build fails, or the pass is abandoned before its upload.
+        OSError: If a local read or write fails.
+        google.api_core.exceptions.GoogleAPIError: If a transfer fails (the rest of `mirror.TRANSFER_ERRORS` too).
+    """
     inputs = work / 'inputs'
-    local = {role: value.download(bucket, inputs) for role, value in build.inputs.items()}
+    local = {}
+    for role, value in build.inputs.items():
+        abandon.check()
+        local[role] = value.download(bucket, inputs)
     out = work / 'out'
-    build.recipe(local, out)
+    build.recipe(local, out, Runner(build.label, abandon))
     size = _upload(bucket, build, out)
-    print(f'  built         {build.label} -> {build.prefix}  {size / 1e6:.1f} MB', file=sys.stderr)
+    _say(f'  built         {build.label} -> {build.prefix}  {size / 1e6:.1f} MB')
     return out
 
 
 class _Genomes:
-    """The genomes an Ensembl build is placed against: built this run, or downloaded from their prefix."""
+    """The genomes an Ensembl build is placed against: built this run, or downloaded from their prefix.
 
-    def __init__(self, bucket: storage.Bucket, root: pathlib.Path) -> None:
+    A genome this run builds is expected before the builds start; asking for it waits until its build
+    has ended, and takes the directory it built, or downloads it from its prefix if it was not built
+    here (it already existed). Every expected genome has to be settled, or whoever asks for it waits
+    for ever.
+    """
+
+    def __init__(self, bucket: storage.Bucket, root: pathlib.Path, abandon: Abandon) -> None:
         self._bucket = bucket
         self._root = root
-        self._local: dict[str, pathlib.Path] = {}
+        self._abandon = abandon
+        self._expected: dict[str, concurrent.futures.Future[pathlib.Path | None]] = {}
+        self._downloaded: dict[str, pathlib.Path] = {}
 
-    def built(self, build: Build, directory: pathlib.Path) -> None:
-        self._local[build.prefix] = directory
+    def expect(self, build: Build) -> None:
+        self._expected[build.prefix] = concurrent.futures.Future()
+
+    def settle(self, build: Build, directory: pathlib.Path | None) -> None:
+        """Record that the genome's build has ended, with what it built or None; only the first call counts."""
+        future = self._expected[build.prefix]
+        if not future.done():
+            future.set_result(directory)
 
     def __call__(self, build: Build) -> pathlib.Path:
-        if build.prefix in self._local:
-            return self._local[build.prefix]
+        if (future := self._expected.get(build.prefix)) is not None and (built := future.result()) is not None:
+            return built
+        if build.prefix in self._downloaded:
+            return self._downloaded[build.prefix]
+        self._abandon.check()
         if not exists(self._bucket, build):
             raise BuildError(f'{build.label} is not built at {build.prefix}, and an Ensembl store is placed against it')
         directory = self._root / build.build_id
+        directory.mkdir(parents=True, exist_ok=True)
         for name in (genome_mod.BLOCKS, genome_mod.CATALOGUE):
-            directory.mkdir(parents=True, exist_ok=True)
             self._bucket.blob(f'{build.prefix}/{name}').download_to_filename(str(directory / name), checksum='crc32c')
-        self._local[build.prefix] = directory
+        self._downloaded[build.prefix] = directory
         return directory
 
 
@@ -497,42 +602,92 @@ def plan(
     return planned
 
 
+def _make(
+    planned: Planned, *, bucket: storage.Bucket, genomes: _Genomes, abandon: Abandon, scratch: str, dry_run: bool
+) -> bool:
+    """Make one planned build unless it exists, reporting it on stderr; return whether it failed."""
+    try:
+        try:
+            if planned.build is None:
+                raise BuildError(planned.error)
+            build = planned.build
+            if exists(bucket, build):
+                _say(f'  skip          {build.label}  {build.prefix}')
+                return False
+            if dry_run:
+                _say(f'  would build   {build.label}  {build.prefix}')
+                return False
+            if build.prerequisite is not None:
+                genomes(build.prerequisite)
+            work = pathlib.Path(tempfile.mkdtemp(dir=scratch))
+            kept = False
+            try:
+                out = run(build, bucket=bucket, work=work, abandon=abandon)
+                if planned.keep:
+                    # The artefact is uploaded: a failure to free the inputs does not fail the build.
+                    shutil.rmtree(work / 'inputs', ignore_errors=True)
+                    genomes.settle(build, out)
+                    kept = True
+            finally:
+                if not kept:
+                    shutil.rmtree(work)
+        finally:
+            if planned.keep and planned.build is not None:
+                genomes.settle(planned.build, None)
+    except _BUILD_ERRORS as error:
+        _say(f'  FAILED        {planned.label}: {error}')
+        return True
+    return False
+
+
 def build_all(pinned: manifest.Manifest, *, bucket: storage.Bucket, dry_run: bool) -> list[str]:
-    """Make every planned build that does not exist yet; return the labels of those that failed.
+    """Make every planned build that does not exist yet, all at once; return the labels of those that failed.
 
     One build's failure does not abandon the rest, as in the mirror. Each build's inputs are deleted
     once it is uploaded: on Cloud Run the scratch disk is memory.
     """
-    failed: list[str] = []
-    with tempfile.TemporaryDirectory() as scratch:
-        genomes = _Genomes(bucket, pathlib.Path(scratch) / 'genomes')
-        for planned in plan(pinned, bucket=bucket, genomes=genomes):
-            try:
-                if planned.build is None:
-                    raise BuildError(planned.error)
-                build = planned.build
-                if exists(bucket, build):
-                    print(f'  skip          {build.label}  {build.prefix}', file=sys.stderr)
-                    continue
-                if dry_run:
-                    print(f'  would build   {build.label}  {build.prefix}', file=sys.stderr)
-                    continue
-                if build.prerequisite is not None:
-                    genomes(build.prerequisite)
-                work = pathlib.Path(tempfile.mkdtemp(dir=scratch))
-                kept = False
-                try:
-                    out = run(build, bucket=bucket, work=work)
-                    if planned.keep:
-                        shutil.rmtree(work / 'inputs')
-                        genomes.built(build, out)
-                        kept = True
-                finally:
-                    if not kept:
-                        shutil.rmtree(work)
-            except _BUILD_ERRORS as error:
-                failed.append(planned.label)
-                print(f'  FAILED        {planned.label}: {error}', file=sys.stderr)
+    abandon = Abandon()
+    # Removed only once every build has ended: on the way out for SIGTERM, builds still finishing an upload read
+    # from it, and it goes with the process.
+    scratch = tempfile.mkdtemp()
+    genomes = _Genomes(bucket, pathlib.Path(scratch) / 'genomes', abandon)
+    planned = plan(pinned, bucket=bucket, genomes=genomes)
+    for each in planned:
+        if each.keep and each.build is not None:
+            genomes.expect(each.build)
+    # A thread for every build, so one waiting on its genome never holds up the genome's own build.
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(len(planned), 1))
+    try:
+        futures = [
+            (
+                each.label,
+                pool.submit(
+                    _make, each, bucket=bucket, genomes=genomes, abandon=abandon, scratch=scratch, dry_run=dry_run
+                ),
+            )
+            for each in planned
+        ]
+        # Whichever build raises what it cannot absorb, the pass is abandoned then, not when its turn comes.
+        concurrent.futures.wait([future for _, future in futures], return_when=concurrent.futures.FIRST_EXCEPTION)
+        for label, future in futures:
+            if future.done() and (error := future.exception()) is not None:
+                error.add_note(f'raised by the {label} build')
+                raise error
+        failed = [label for label, future in futures if future.result()]
+    except Exception:
+        # Wait out the uploads already begun, so nothing of this attempt is still writing once the job marks it
+        # finished; abandoned, the rest stop at their next step.
+        abandon()
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    except BaseException:
+        # SIGTERM: SIGKILL follows within seconds, sooner than an upload in progress would end, and waiting would
+        # cost the attempt its finished marker. Its uploads end with the process instead.
+        abandon()
+        raise
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    shutil.rmtree(scratch)
     return failed
 
 

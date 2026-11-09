@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import gzip
 import json
 import pathlib
+import subprocess
+import sys
+import threading
+import time
 
 import pytest
 from google.cloud import storage
@@ -81,6 +86,161 @@ def test_an_object_mirrored_from_another_url_is_not_built_from(
     ]
     assert genome.build is None
     assert 'manifest pins' in str(genome.error)
+
+
+def test_a_store_placed_against_a_genome_built_this_run_waits_for_it(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, tmp_path: pathlib.Path
+) -> None:
+    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
+    genome = _genome(pinned, gcs_bucket)  # not built in the bucket, so only the settled directory can answer
+    genomes = build._Genomes(gcs_bucket, tmp_path, build.Abandon())
+    genomes.expect(genome)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        waiting = pool.submit(genomes, genome)
+        try:
+            with pytest.raises(concurrent.futures.TimeoutError):
+                waiting.result(timeout=0.2)
+            genomes.settle(genome, tmp_path / 'built')
+            assert waiting.result(timeout=10) == tmp_path / 'built'
+        finally:
+            genomes.settle(genome, None)  # a waiter left blocked would hang the pool's exit
+
+
+def test_a_store_placed_against_a_genome_built_earlier_downloads_it(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, tmp_path: pathlib.Path
+) -> None:
+    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
+    genome = _genome(pinned, gcs_bucket)
+    build.build_all(pinned, bucket=gcs_bucket, dry_run=False)
+    genomes = build._Genomes(gcs_bucket, tmp_path, build.Abandon())
+    genomes.expect(genome)
+    genomes.settle(genome, None)
+    directory = genomes(genome)
+    assert (directory / genome_mod.CATALOGUE).exists()
+
+
+def test_a_store_placed_against_a_genome_whose_build_failed_fails(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, tmp_path: pathlib.Path
+) -> None:
+    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
+    genome = _genome(pinned, gcs_bucket)
+    genomes = build._Genomes(gcs_bucket, tmp_path, build.Abandon())
+    genomes.expect(genome)
+    genomes.settle(genome, None)
+    with pytest.raises(build.BuildError, match='is not built'):
+        genomes(genome)
+
+
+def test_a_builder_step_names_its_build_on_every_line(
+    tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = build.Runner('some build', build.Abandon())
+    with pytest.raises(build.BuildError, match='exited'):
+        runner.cli('genome', '--assembly', 'GRCh38', '--fasta', str(tmp_path / 'absent.fa.gz'), '--out', str(tmp_path))
+    lines = [line for line in capsys.readouterr().err.splitlines() if line.strip()]
+    assert len(lines) > 1
+    assert all(line.startswith('  [some build] ') for line in lines)
+
+
+def test_abandoning_a_pass_kills_its_running_builder_children() -> None:
+    abandon = build.Abandon()
+    with (
+        subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], text=True) as child,
+        abandon.watching(child),
+    ):
+        abandon()
+        assert child.wait(timeout=10) != 0
+
+
+def test_a_kept_genome_whose_build_fails_is_settled_so_nothing_waits_for_it(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, tmp_path: pathlib.Path
+) -> None:
+    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
+    genome = _genome(pinned, gcs_bucket)
+    gcs_bucket.blob(f'{genome.prefix}/provenance.json').upload_from_string('{}')  # a build that stopped partway
+    genomes = build._Genomes(gcs_bucket, tmp_path, build.Abandon())
+    genomes.expect(genome)
+    planned = build.Planned(genome.label, genome, keep=True)
+    failed = build._make(
+        planned, bucket=gcs_bucket, genomes=genomes, abandon=build.Abandon(), scratch=str(tmp_path), dry_run=False
+    )
+    assert failed
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        asked = pool.submit(genomes, genome)
+        try:
+            with pytest.raises(build.BuildError, match='stopped before writing'):
+                asked.result(timeout=10)
+        finally:
+            genomes.settle(genome, None)  # a waiter left blocked would hang the pool's exit
+
+
+def test_an_error_no_build_absorbs_abandons_the_pass_at_once_and_waits_out_the_uploads_begun(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    seen: list[bool] = []
+
+    def make(planned: build.Planned, *, abandon: build.Abandon, **_: object) -> bool:
+        if planned.label == 'ncbi-grch38 genome':  # first in the plan: mid-upload when a later build raises
+            abandoned_in_time = abandon._set.wait(timeout=10)
+            time.sleep(0.2)  # the upload already begun, finishing
+            seen.append(abandoned_in_time)
+            return False
+        raise RuntimeError(planned.label)
+
+    monkeypatch.setattr(build, '_make', make)
+    monkeypatch.setattr(build.tempfile, 'tempdir', str(tmp_path))
+    with pytest.raises(RuntimeError):
+        build.build_all(pinned, bucket=gcs_bucket, dry_run=True)
+    assert seen == [True]
+
+
+class _Stop(BaseException):
+    """Stands in for the job's SIGTERM."""
+
+
+def test_a_stopped_pass_does_not_wait_out_the_uploads_begun(
+    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    reached, release = threading.Event(), threading.Event()
+    seen: list[bool] = []
+
+    def make(planned: build.Planned, *, abandon: build.Abandon, **_: object) -> bool:
+        if planned.label == 'ncbi-grch38 genome':
+            reached.set()
+            release.wait(timeout=10)
+            seen.append(abandon._set.is_set())
+        return False
+
+    def stop(*_: object, **__: object) -> None:
+        reached.wait(timeout=10)
+        raise _Stop
+
+    monkeypatch.setattr(build, '_make', make)
+    monkeypatch.setattr(build.tempfile, 'tempdir', str(tmp_path))
+    monkeypatch.setattr(build.concurrent.futures, 'wait', stop)
+    try:
+        with pytest.raises(_Stop):
+            build.build_all(pinned, bucket=gcs_bucket, dry_run=True)
+        assert seen == []  # returned with the upload still in progress
+    finally:
+        release.set()
+    deadline = time.monotonic() + 10
+    while not seen and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert seen == [True]
+
+
+def test_an_abandoned_pass_starts_no_more_builder_steps(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_child(*_: object, **__: object) -> None:
+        raise AssertionError('a builder step started after the pass was abandoned')
+
+    monkeypatch.setattr(build.subprocess, 'Popen', no_child)
+    abandon = build.Abandon()
+    abandon()
+    with pytest.raises(build.BuildError, match='abandoned'):
+        build.Runner('some build', abandon).cli('genome', '--out', str(tmp_path))
 
 
 def _mirror_refseq_inputs(pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored) -> None:

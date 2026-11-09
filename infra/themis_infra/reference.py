@@ -33,8 +33,11 @@ _POOL = 'github'
 # from Entrez at three requests a second, and cuts five artefacts, two of them single-threaded genome builds of
 # about twelve minutes each: a few hours, with room for a slow upstream.
 _TIMEOUT_SECONDS = 6 * 3600
-# Scratch is memory on Cloud Run: an assembly's inputs (up to 2.5 GB with its historical set), the genome kept
-# for the Ensembl build (0.9 GB) and the builder's own working set, which reads a GenBank file whole.
+# The builds run at once, a core each. Scratch is memory on Cloud Run, and each build holds its inputs (up to
+# 2.5 GB with a historical set) beside the builder's working set, which reads a GenBank file whole. Measured one
+# at a time, above a 1 GiB baseline and the 0.9 GiB GRCh38 genome kept for the Ensembl build: each genome about
+# 1.3 GiB, the GRCh37 store 2.3, the GRCh38 store 5.8 and the Ensembl store 6.4. The Ensembl build starts only
+# once the GRCh38 genome is built, so at worst about 18 GiB together.
 _CPU = '8'
 _MEMORY = '32Gi'
 
