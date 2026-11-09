@@ -6,8 +6,8 @@ import pytest
 
 from themis_infra import cost_metrics, cost_prices
 
-# `cacheRead` is the input rate over this, per model; Fable 5.1 is the one exception to a tenth.
-_CACHE_READ_DIVISOR = {'claude-fable-5-1': 40}
+# `cacheRead` is the input rate over this, per model; a tenth for a model not named here.
+_CACHE_READ_DIVISOR = {'claude-sonnet-5-5': 20, 'claude-fable-5-1': 40, 'claude-fable-5-2': 40}
 _DEFAULT_CACHE_READ_DIVISOR = 10
 # `cacheCreation` at the 5-minute write rate is five quarters of the input rate.
 _CACHE_CREATION_NUMERATOR, _CACHE_CREATION_DENOMINATOR = 5, 4

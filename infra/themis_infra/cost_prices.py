@@ -6,10 +6,10 @@ the PromQL the dashboard and the alerts read as literal multipliers (`cost_promq
 worker's token counter is priced by what stands here. A model absent from the table is not priced at zero and
 forgotten: its usage pages through the unpriced-usage alert, and the row is added when a caller starts using the
 model. Rows are keyed by the id the API reports in `message.model` — Haiku's is the dated snapshot, the others are
-undated. `cacheRead` is a tenth of the input rate, except Fable 5.1 at a fortieth; `cacheCreation` counts both cache
-lifetimes together and is priced at the 5-minute write rate, 1.25 times the input rate. The flat rates price the
-session gauges, which carry no per-model dimension. Every row names exactly the four `type` values
-(`cost_metrics.TOKEN_TYPES`) and follows those derivations; a test holds it to both.
+undated. `cacheRead` is a tenth of the input rate, except Sonnet 5.5 at a twentieth and Fable 5.1 and 5.2 at a
+fortieth; `cacheCreation` counts both cache lifetimes together and is priced at the 5-minute write rate, 1.25 times
+the input rate. The flat rates price the session gauges, which carry no per-model dimension. Every row names exactly
+the four `type` values (`cost_metrics.TOKEN_TYPES`) and follows those derivations; a test holds it to both.
 """
 
 from __future__ import annotations
@@ -18,9 +18,11 @@ from collections.abc import Mapping
 
 LIST_PRICES_CENTS_PER_MTOK: Mapping[str, Mapping[str, int]] = {
     'claude-sonnet-5': {'input': 200, 'output': 1000, 'cacheRead': 20, 'cacheCreation': 250},
+    'claude-sonnet-5-5': {'input': 200, 'output': 1000, 'cacheRead': 10, 'cacheCreation': 250},
     'claude-opus-5': {'input': 500, 'output': 2500, 'cacheRead': 50, 'cacheCreation': 625},
     'claude-opus-4-8': {'input': 500, 'output': 2500, 'cacheRead': 50, 'cacheCreation': 625},
     'claude-fable-5-1': {'input': 1000, 'output': 5000, 'cacheRead': 25, 'cacheCreation': 1250},
+    'claude-fable-5-2': {'input': 800, 'output': 4000, 'cacheRead': 20, 'cacheCreation': 1000},
     'claude-haiku-4-5-20251001': {'input': 100, 'output': 500, 'cacheRead': 10, 'cacheCreation': 125},
 }
 
