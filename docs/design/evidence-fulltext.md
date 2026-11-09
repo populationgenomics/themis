@@ -220,6 +220,7 @@ flowchart LR
     sfetch --> srender["render supplementary files<br/>— free"]
     md --> variants["extract variants<br/>— spends"]
     srender --> variants
+    variants --> verdicts["validate the extracted<br/>variants — free"]
 ```
 
 Two dependencies in this graph are non-obvious. First, locating a PDF does not depend on the XML step, so a paper whose
@@ -361,6 +362,36 @@ The worker maps its outcome to an HTTP status that Cloud Tasks reads as its retr
 done or settled, the worker returns success, even if a step settled as a permanent failure, because retrying would only
 spend again to reach the same settled state. Any transient error that a later attempt could clear propagates as a
 failure, and the queue retries it.
+
+### A spending step begins only if it can finish
+
+Committing after each step means a request that hits the deadline loses only the step it was in. When that step spends,
+the loss is the worst one the worker can have: the model has been paid, Cloud Run has ended the request, and nothing was
+committed. The retry then pays again for the same work. Transcribing a long PDF and extracting the variants of a paper
+with hundreds of them can each take most of the 30 minutes, and a request reaches a spending step only after the free
+steps before it have used some of that time.
+
+So each spending step declares the longest it can run, and enforces that with a timeout of its own. Before beginning
+one, the worker adds the time the request has already used, the step's longest run, and a minute for reading the step's
+input and committing its record. If the total is over the deadline, the worker does not begin the step. It stops,
+keeping every step it has already committed, and answers 409. Cloud Tasks retries the request after its backoff, and the
+new delivery starts with the full 30 minutes and finds the earlier steps already done.
+
+| request | free steps before extraction | extraction's longest run | used + longest + 1 min | outcome                   |
+| ------- | ---------------------------: | -----------------------: | ---------------------: | ------------------------- |
+| first   |                        8 min |                   25 min |                 34 min | deferred, answers 409     |
+| retry   |         0 min (already done) |                   25 min |                 26 min | extraction begins at once |
+
+The status is 409 because of how Cloud Tasks reads the others. It treats 429 and every 5xx as a sign that the target is
+overloaded, and slows dispatch for the whole queue
+([Cloud Tasks common pitfalls](https://cloud.google.com/tasks/docs/common-pitfalls)). A deferral says nothing about
+load, and slowing a bulk run's queue for it would delay every other paper. Cloud Tasks retries a 409 like any other
+failure, without throttling.
+
+The cost falls on the deferred paper's latency. Its retry waits out the backoff and then joins the back of the queue,
+behind every task enqueued since, so the paper finishes later than if the step had run at once. A deferral also uses one
+of the task's retry attempts. A paper whose request reaches two long spending steps, a transcription and then an
+extraction, can be deferred before each.
 
 ### Many papers at once in one instance
 
@@ -1237,10 +1268,15 @@ outer request timeout, leaving the server waiting on a caller that had already b
 - **The sweep's cadence and the census.** The scheduled sweep and the store census both read every manifest and apply
   every step's test. Whether they share one tool with two output modes, and how often the sweep runs—trading manifest
   read volume and refused model calls while at the spend limit against recovery time for lost requests—is undecided.
-- **A step that cannot fit in one request.** Committing after each step lets a paper's steps span several requests, yet
-  a single step on a pathological input (such as a very long PDF) can still exceed the 30-minute dispatch deadline and
-  settle as `FAILED` after three attempts. Whether to build a Cloud Run Job execution path for oversized inputs now or
-  wait until one appears in practice is undecided.
+- **A step that cannot fit in one request.** Committing after each step lets a paper's steps span several requests, and
+  a spending step is begun only with time to finish
+  ([A spending step begins only if it can finish](#a-spending-step-begins-only-if-it-can-finish)). A step on a
+  pathological input still ends at its own longest run, such as an extraction over a paper with more variants than one
+  conversation can record before its timeout, and settles as failed after three paid attempts. A Cloud Run Job working
+  through a computed list of papers would have no 30-minute limit, and would also suit a funded bulk run, which today
+  pays a deferral's latency on every long paper. Cloud Tasks only pushes, so such a job cannot drain a queue; it needs a
+  scheduling design of its own, for how it picks papers and how it shares the spend limit with the queues. Whether to
+  build it now or wait until oversized inputs appear in practice is undecided.
 - **Per-caller ingest bounds.** The per-call ingest limit bounds a single `MaybeIngestPapers` request, while nothing
   bounds a caller that loops across many requests: each call may bring in as many papers as the per-call bound allows,
   and each becomes a permanent corpus entry. The agent choosing those identifiers can itself be steered by the evidence

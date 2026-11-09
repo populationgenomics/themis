@@ -190,6 +190,7 @@ flowchart TB
     tasks["Cloud Tasks queues"]
     sandbox["sandbox worker job<br/>one execution per session"]
     refresh["gene-disease refresh job"]
+    refbuild["reference build job"]
     cost["cost exporter and<br/>cost report jobs"]
     ingest["literature ingest<br/>(Dataflow, launched by hand)"]
     sql[("Cloud SQL")]
@@ -229,7 +230,9 @@ flowchart TB
   tasks --> conv
   conv -->|"transcription, own identity"| ma
   conv --> fulltext
+  conv -->|"reference stores"| resources
   refresh -->|"weekly dumps"| resources
+  refbuild -->|"stores and genomes,<br/>built from the mirror"| resources
   cost --> ma
   cost --> mon
   cost --> slack
@@ -257,9 +260,11 @@ The rules for what may be public at all, and the exceptions, are in
 The jobs run to completion and nobody calls them over HTTP. The dispatcher claims each new session's work from Anthropic
 and starts one sandbox worker execution for it, handing the worker the credentials it needs to receive the session's
 tool calls. Cloud Scheduler starts the gene-disease refresh, which writes the dumps the evidence service loads at
-startup, and the cost exporter and cost report, which read Anthropic's usage and post to Slack. The convert worker is a
-service, but nothing calls it except the Cloud Tasks queues the evidence service fills. Literature ingestion runs as a
-Dataflow pipeline that an operator launches by hand.
+startup, and the cost exporter and cost report, which read Anthropic's usage and post to Slack. The reference build job
+starts after a prod deploy that changed the reference mirror's manifest, or by hand, and builds the reference stores
+from the mirror. The convert worker is a service, but nothing calls it except the Cloud Tasks queues the evidence
+service fills. It reads the reference stores straight from the resources bucket when it validates a paper's variants.
+Literature ingestion runs as a Dataflow pipeline that an operator launches by hand.
 
 ### Audit logging
 
@@ -401,8 +406,17 @@ transcription a second time. The store holds public literature and no case data,
 that dev's looser controls could have touched. Dev's seed dump, from which dev's corpus was ingested, is kept until
 prod's corpus exists.
 
-The reference mirror is loaded into prod's resources bucket by the resource mirror tool. No running service reads it
-yet, so it does not hold up anything else.
+The reference build job loads the reference mirror into each environment's resources bucket, then turns the mirrored
+files into the reference stores and genomes that the convert worker validates variants against, beside the mirror in the
+same bucket. Each build is named by a digest of its inputs and its builder's version, so the same mirror builds to the
+same names in dev and in prod. The worker's code pins the builds it opens, and the worker refuses to start when one of
+them is missing.
+
+That makes the order of two changes matter. The job starts only after a successful prod deploy, and runs for hours. A
+merge that changed the mirror's manifest and also pinned the builds made from it would deploy a worker whose builds do
+not exist yet. That worker fails to start, so the deploy fails, so the job never starts. A new build therefore takes two
+merges: the manifest change first, and the pin once prod's job has built it. Until then the worker keeps opening the
+builds it already pins, which stay in the bucket because the job only adds builds beside them.
 
 ### Budget and standing cost
 
