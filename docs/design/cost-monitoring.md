@@ -21,8 +21,9 @@ Each producer therefore exports its own usage to Cloud Monitoring in the environ
 surface reports list-price dollars directly—Managed Agents on each `Session.usage.list_cost` field and Claude Code in
 its built-in OpenTelemetry cost counter—we export those dollar figures as the headline spend, because neither can be
 reconstructed from aggregate token counts alone. A session's cost includes container runtime and web searches alongside
-tokens, and a Claude Code turn's cost depends on whether that individual request crossed the 200k-token context tier.
-Only the convert worker lacks a provider dollar figure, so it exports a request-token counter and the Pulumi program
+tokens, and a Claude Code turn's cost depends on which model served that individual request and, for a model priced by
+prompt length, on how long that request's prompt was. Only the convert worker lacks a provider dollar figure, so it
+exports a request-token counter and the Pulumi program
 ([`infra/themis_infra/cost_prices.py`](../../infra/themis_infra/cost_prices.py) and
 [`infra/themis_infra/cost_promql.py`](../../infra/themis_infra/cost_promql.py)) multiplies those token counts by a
 static price table when rendering PromQL queries.
@@ -87,9 +88,9 @@ A session's `list_cost` is the sum of three distinct charges:
   `active_seconds / 3600 * 8` cents).
 - **Web searches**: `usage.server_tool_use.web_search_requests` billed at `$10` per 1,000 searches (`1¢` per search).
 - **Tokens**: `Session.usage` reports session-wide token totals across the whole run. It does not break tokens down by
-  model when a session switches models or spawns subagents on a cheaper model, and it does not record which individual
-  turns exceeded 200k input tokens (where long-context pricing doubles the per-token rate). Subtracting the runtime and
-  web-search charges from `list_cost` in PromQL (`infra/themis_infra/cost_promql.py`) isolates the residual token spend.
+  model when a session switches models or spawns subagents on a cheaper model, and it does not record the prompt length
+  of individual turns, which the list price of Claude Haiku 5.5 depends on. Subtracting the runtime and web-search
+  charges from `list_cost` in PromQL (`infra/themis_infra/cost_promql.py`) isolates the residual token spend.
 
 ### Cloud Monitoring's ingestion constraints
 
@@ -176,6 +177,8 @@ Instead, each producer is observed where its state actually lives:
   GCP service account, it increments an in-process OpenTelemetry counter
   ([`themis/telemetry/request_tokens.py`](../../themis/telemetry/request_tokens.py)) after every stream—recording
   `stop_reason` from the final message on completion or `stop_reason='unfinished'` if the stream fails partway through.
+  It also records whether the request's prompt was over 100,000 tokens, because one model's list price depends on that
+  (see [pricing by prompt length](#pricing-a-model-by-prompt-length)).
 - **Claude Code via built-in OpenTelemetry in CI**: Each Claude Code workflow in GitHub Actions
   ([`.github/workflows/internal-review.yml`](../../.github/workflows/internal-review.yml)) authenticates to GCP via
   Workload Identity Federation (`google-github-actions/auth`) and configures Claude Code's native OTLP exporter to send
@@ -185,15 +188,16 @@ Instead, each producer is observed where its state actually lives:
 ### Decomposing provider dollars and pricing tokens
 
 A uniform pricing model would multiply every producer's token series by a static model price table in PromQL. That works
-for the convert worker—every OCR call records the model ID returned on `response.model`
-([`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py)) and renders a single PDF page well under
-the 200k-token long-context threshold—but it misprices the other two producers:
+for the convert worker, because the worker counts each request itself. It records the model ID returned on
+`response.model` ([`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py)), and whether the
+request's prompt was over 100,000 tokens. A list price depends on the model and, for one model, on that prompt length. A
+static table misprices the other two producers:
 
 - For **Managed Agents**, `Session.usage` reports only session-wide token totals. It does not record which model served
-  which turn when subagents use different models or whether any turn crossed 200k input tokens.
+  which turn when subagents use different models, or how long each turn's prompt was.
 - For **Claude Code**, `claude_code.token.usage` aggregates tokens by model across the process lifetime without
-  recording which individual turns crossed 200k tokens, whereas `claude_code.cost.usage` computes each turn's dollar
-  cost at the moment the turn finishes and sums the resulting dollars.
+  recording the prompt length of individual turns, whereas `claude_code.cost.usage` computes each turn's dollar cost at
+  the moment the turn finishes and sums the resulting dollars.
 
 We therefore use provider-reported dollars whenever the provider supplies them (`usage.list_cost` for Managed Agents
 sessions; `claude_code.cost.usage` for Claude Code) and apply our static price table only to the convert worker's token
@@ -218,6 +222,31 @@ three additive shares:
    `themis_anthropic_session_list_cost_cents` rise (`session_cents - session_runtime_cents - session_search_cents`), so
    the three shares sum to the exact provider-billed `list_cost`.
 
+#### Pricing a model by prompt length
+
+Most models have one list price per token type, whatever the request. Claude Haiku 5.5 has two. A request whose prompt
+is over 100,000 tokens pays five times as much per token as a shorter one, and it pays that on every token of the
+request, the output included. The prompt is everything the request sent: the uncached input, the cache reads and the
+cache writes.
+
+A counter that only sums tokens cannot recover which price applied. Suppose the counter shows 200,000 input tokens for
+Haiku 5.5 in an hour. Four requests of 50,000 tokens cost 2 cents at list price. One request of 200,000 tokens costs 10
+cents. The sum is the same in both cases, so the query has nothing to tell them apart.
+
+The worker therefore says which side of the boundary each request fell on. It reads the three prompt counts off the same
+`usage` it already counts, and writes the request's tokens under a `prompt_length` label of `upTo100k` or `over100k`.
+The worker applies this to every model, because it does not know which models are priced this way. The price table holds
+that knowledge. A model with one list price keeps one row, and its queries sum the tokens of both lengths. A model
+priced by prompt length has one rate card per label value, and each card prices only the tokens counted under its value.
+
+The response does not report which price it was billed at, so the worker holds the 100,000-token boundary as a constant
+of its own. That is the only prompt-length boundary on Anthropic's price list, which is why the label has two values. If
+Anthropic prices another model at a different boundary, the label needs a further value.
+
+Tokens that carry no `prompt_length` cannot be assigned to either card afterwards. A worker that does not write the
+label produces them. For a model priced by prompt length those tokens count as unpriced usage, and the alert below
+reports them, instead of being priced at one card by default.
+
 ### Metric instruments and resource identity
 
 The custom metric names and label schemas are defined in [`themis/telemetry/names.py`](../../themis/telemetry/names.py)
@@ -238,10 +267,10 @@ The choice of OpenTelemetry instrument type and attribution labels follows how e
   pagination sweep succeeds, the job writes the current Unix epoch seconds to an unlabelled heartbeat gauge
   (`themis_anthropic_exporter_last_success_timestamp_seconds`).
 - **In-process event totals are cumulative counters**: Both the convert worker (request tokens labelled by `model`,
-  `type`, and `stop_reason`) and Claude Code (built-in USD cost and token counters labelled by `model`, `type`, and
-  workflow `namespace` on `prometheus_target`) accumulate events inside a single process where totals only increase
-  until the process exits. Recording them as cumulative counters lets PromQL's `increase()` sum deltas cleanly across
-  process restarts and concurrent instances.
+  `type`, `stop_reason`, and `prompt_length`) and Claude Code (built-in USD cost and token counters labelled by `model`,
+  `type`, and workflow `namespace` on `prometheus_target`) accumulate events inside a single process where totals only
+  increase until the process exits. Recording them as cumulative counters lets PromQL's `increase()` sum deltas cleanly
+  across process restarts and concurrent instances.
 
 To satisfy Cloud Monitoring's 5-second sampling floor and 25,000-series cardinality limit, each producer configures its
 `prometheus_target` resource labels (`job`, `namespace`, and `instance`) to match its process lifecycle:
@@ -436,11 +465,16 @@ policies wired to the environment's Slack notification channel:
    when `themis_anthropic_request_tokens` records positive token usage in the last 7 days under a `model` label not
    listed in [`infra/themis_infra/cost_prices.py`](../../infra/themis_infra/cost_prices.py), ensuring a model upgrade in
    [`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py) cannot silently omit convert-worker
-   spend from the dashboard and spike alert. The price table itself has no staleness guard: this alert catches a model
-   ID outside the table, whereas a list price changed by Anthropic for an existing model ID goes unnoticed until someone
-   edits the row (accepted because Anthropic ships a new model ID at a new price rather than repricing an existing ID,
-   and list price is already an approximation of the invoice). The window is seven days so that the incident stays open
-   until a deploy adds the missing row, rather than closing an hour after the last unpriced call.
+   spend from the dashboard and spike alert. It also fires in two cases for a model priced by prompt length, because no
+   rate card selects the tokens in either. In the first case the tokens carry no `prompt_length` label, which happens
+   when a worker that does not write the label counted them. The incident then has no `prompt_length` label either. In
+   the second case the tokens carry a value that the model has no rate card for, such as a later `over200k`, and the
+   incident carries that value. The price table itself has no staleness guard: this alert catches a model ID outside the
+   table, whereas a list price changed by Anthropic for an existing model ID goes unnoticed until someone edits the row
+   (accepted because Anthropic ships a new model ID at a new price rather than repricing an existing ID, and list price
+   is already an approximation of the invoice). The window is seven days so that the incident stays open until a deploy
+   adds the missing row, rather than closing an hour after the last unpriced call. Tokens counted without a prompt
+   length stay unpriced whatever is deployed later, so an incident for those closes seven days after the last such call.
 1. **Morning report job failure (`themis-cost-report-failed`)**: Fires when the latest run of `themis-cost-report`
    failed, and closes when a later run succeeds ([`infrastructure.md`](infrastructure.md#when-an-incident-closes)).
    Because `themis-cost-report` intentionally stays silent on days with zero spend, a missing morning Slack message
@@ -478,11 +512,11 @@ Slack `files.uploadV2` call.
   `rise(W)` reports a smaller (or negative) rise for the next window `W` until the step ages past `offset W`.
   Conversely, when a brand-new `agent` series is observed for the first time inside `W`, `min_over_time(m[W])` uses that
   first poll's value as the baseline, so spend accumulated before the first 5-minute poll is not counted in `rise(W)`.
-- **Single-tier, hand-maintained convert pricing**: `cost_prices.py` prices convert-worker tokens at the base (`≤200k`
-  input token) rate. Page-by-page OCR prompts are a few thousand tokens per page, well below 200k; if a direct Messages
-  API caller ever sent >200k-token prompts, `cost_prices.py` would underprice those requests by 2x. Because the price
-  multipliers are embedded in query expressions, editing a row reprices historical queries retroactively, and the table
-  has no staleness guard against Anthropic changing the list price of an existing model ID.
+- **Hand-maintained convert pricing**: `cost_prices.py` is edited by hand when a caller starts using a model. Because
+  the price multipliers are embedded in query expressions, editing a row reprices historical queries retroactively, and
+  the table has no staleness guard against Anthropic changing the list price of an existing model ID. The 100,000-token
+  boundary has no such guard either. The worker holds it as a constant, and tokens are counted under one side of it for
+  good, so a boundary that Anthropic moved would not recount earlier requests.
 - **CI exit-flush collision and hard-killed steps**: In GitHub Actions, Claude Code exports periodically every 60
   seconds and flushes a final batch via `onForceFlush` on `process.exit`. The chance that `process.exit` lands within 5
   seconds of the preceding periodic export tick—causing Cloud Monitoring to reject the exit flush and drop the last
@@ -518,9 +552,18 @@ entire remaining workspace total as fresh spend.
 
 We considered ignoring `Session.usage.list_cost` and `claude_code.cost.usage` and pricing every producer from its token
 series via `cost_prices.py`. For Managed Agents, `Session.usage` lacks per-model attribution when subagents use
-different models and lacks per-turn context lengths for >200k-token pricing. For Claude Code, `claude_code.token.usage`
-aggregates across turns without recording which individual turns crossed 200k input tokens, whereas
+different models and lacks the per-turn prompt lengths that pricing by prompt length needs. For Claude Code,
+`claude_code.token.usage` aggregates across turns without recording each turn's prompt length, whereas
 `claude_code.cost.usage` prices each turn accurately before summing.
+
+### Pricing a model with two list prices at one of them
+
+We considered giving Claude Haiku 5.5 a single row, like every other model, at either its lower or its higher list
+price. That needs no change to the worker's counter. We rejected it because the error is five-fold, and a caller can sit
+on both sides of the boundary. One that sends a whole paper in one request crosses 100,000 tokens on a long paper and
+stays under it on a short one, so a large share of its tokens falls on each side. At the lower price the spend spike
+alert would see a fifth of the cost of the long requests. At the higher price the dashboard would show five times the
+cost of the short ones.
 
 ### Writing the price table as a runtime metric series
 
