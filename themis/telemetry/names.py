@@ -29,6 +29,7 @@ AGENT_LABEL = 'agent'
 MODEL_LABEL = 'model'
 TYPE_LABEL = 'type'
 STOP_REASON_LABEL = 'stop_reason'
+PROMPT_LENGTH_LABEL = 'prompt_length'
 
 
 class TokenType(enum.StrEnum):
@@ -41,3 +42,14 @@ class TokenType(enum.StrEnum):
     OUTPUT = 'output'
     CACHE_READ = 'cacheRead'
     CACHE_CREATION = 'cacheCreation'
+
+
+class PromptLength(enum.StrEnum):
+    """The `prompt_length` label's values: the side of 100,000 prompt tokens one request fell on.
+
+    The list price of some models turns on it, so a request's tokens are counted under the side that request was
+    billed on.
+    """
+
+    UP_TO_100K = 'upTo100k'
+    OVER_100K = 'over100k'

@@ -19,6 +19,9 @@ AGENT_LABEL = 'agent'
 MODEL_LABEL = 'model'
 TYPE_LABEL = 'type'
 STOP_REASON_LABEL = 'stop_reason'
+PROMPT_LENGTH_LABEL = 'prompt_length'
 
 # The `type` label's values, in the producers' order.
 TOKEN_TYPES = ('input', 'output', 'cacheRead', 'cacheCreation')
+# The `prompt_length` label's values, in the producers' order: the side of 100,000 prompt tokens a request fell on.
+PROMPT_LENGTHS = ('upTo100k', 'over100k')

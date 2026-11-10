@@ -232,11 +232,12 @@ def _convert_worker() -> _Section:
         title='Convert worker',
         subtitle='Direct Messages API calls; dollars derived from the price table',
         about=(
-            "The convert worker's request-token counter: every direct Messages API call's tokens, by model, token type "
-            'and stop reason. Dollars are derived at query time: the counter priced by the table in '
-            '`infra/themis_infra/cost_prices.py` (cents per million tokens by model and type, literal in the query), '
-            'so a model missing from that table prices at nothing here and raises the unpriced-usage alert. A model '
-            'appears in the by-model chart once it has usage in the window.'
+            "The convert worker's request-token counter: every direct Messages API call's tokens, by model, token "
+            'type, stop reason and prompt length. Dollars are derived at query time: the counter priced by the '
+            'tables in `infra/themis_infra/cost_prices.py` (cents per million tokens by model and type, and by '
+            'prompt length for a model whose list price depends on it, literal in the query), so usage those tables '
+            'have no rate card for prices at nothing here and raises the unpriced-usage alert. A model appears in '
+            'the by-model chart once it has usage in the window.'
         ),
         rows=[
             _Row(

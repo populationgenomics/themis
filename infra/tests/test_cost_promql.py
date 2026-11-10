@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import decimal
 import re
 from collections.abc import Callable
 
@@ -15,6 +16,10 @@ _NOT_IN_TABLE = 'claude-3-opus-20240229'
 _AWKWARD_VALUES = ('claude-3.5', 'back\\slash', 'quo"te', 'a|b')
 _GAUGES = sorted(name for name in cost_promql.METRICS if cost_promql.kind(name) is cost_promql.Kind.GAUGE)
 _COUNTERS = sorted(name for name in cost_promql.METRICS if cost_promql.kind(name) is cost_promql.Kind.COUNTER)
+
+
+# One label matcher of a selector: the label, the operator and the string literal's body.
+_MATCHER = re.compile(r'(\w+)(=~|!~|!=|=)"((?:[^"\\]|\\.)*)"')
 
 
 def _decode_string_literal(literal: str) -> str:
@@ -153,45 +158,167 @@ def test_the_workspace_total_guards_the_producers_that_can_be_empty(
     assert set(re.findall(r'\[(\w+)\]', total)) == {'1h', f'{_FRESHNESS}m'}
 
 
-def test_convert_cents_prices_each_models_four_types_at_the_table(
+def _priced_terms() -> dict[str, list[str]]:
+    """By priced model, every term its figure has to carry: one per token type of each of its rate cards."""
+    terms: dict[str, list[str]] = {}
+    for model, card in cost_prices.LIST_PRICES_CENTS_PER_MTOK.items():
+        terms[model] = [
+            f'sum(increase({cost_metrics.REQUEST_TOKENS}{{{cost_metrics.MODEL_LABEL}="{model}", '
+            f'{cost_metrics.TYPE_LABEL}="{token_type}"}}[1h])) * {price} or vector(0)'
+            for token_type, price in card.items()
+        ]
+    for model, cards in cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH.items():
+        terms[model] = [
+            f'sum(increase({cost_metrics.REQUEST_TOKENS}{{{cost_metrics.MODEL_LABEL}="{model}", '
+            f'{cost_metrics.PROMPT_LENGTH_LABEL}="{prompt_length}", '
+            f'{cost_metrics.TYPE_LABEL}="{token_type}"}}[1h])) * {price} or vector(0)'
+            for prompt_length, card in cards.items()
+            for token_type, price in card.items()
+        ]
+    return terms
+
+
+def test_convert_cents_prices_each_token_type_of_each_rate_card_at_the_tables(
     top_level_terms: Callable[[str], list[str]],
 ) -> None:
     cents = cost_promql.convert_cents('1h')
-    table = cost_prices.LIST_PRICES_CENTS_PER_MTOK
-    for model, row in table.items():
-        for token_type, price in row.items():
-            term = (
-                f'sum(increase({cost_metrics.REQUEST_TOKENS}{{{cost_metrics.MODEL_LABEL}="{model}", '
-                f'{cost_metrics.TYPE_LABEL}="{token_type}"}}[1h])) * {price} or vector(0)'
-            )
-            assert term in cents, term
+    priced = _priced_terms()
+    assert sorted(priced) == cost_prices.priced_models()
     # One never-empty figure per model, each scaled from cents per million tokens, added without a guard of its own;
-    # inside it every type term is guarded.
-    models = top_level_terms(cents)
-    assert len(models) == len(table)
-    for figure in models:
+    # inside it every term is guarded, and the terms are exactly the model's cards' token types.
+    figures = top_level_terms(cents)
+    assert len(figures) == len(priced)
+    for model, figure in zip(cost_prices.priced_models(), figures, strict=True):
         assert figure.endswith(' / 1000000'), figure
-        assert len(top_level_terms(figure.removesuffix(' / 1000000'))) == len(cost_metrics.TOKEN_TYPES)
-    assert set(re.findall(r'\* (\d+) or vector', cents)) == {str(p) for row in table.values() for p in row.values()}
+        terms = top_level_terms(figure.removesuffix(' / 1000000'))
+        assert sorted(terms) == sorted(f'({term})' for term in priced[model]), model
+
+
+def test_a_model_priced_by_prompt_length_prices_each_side_of_the_boundary_at_its_own_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A request over the boundary pays the higher card on every token of it, so neither card may price the other
+    # side's tokens, and none may be priced whatever their length.
+    monkeypatch.setattr(cost_prices, 'LIST_PRICES_CENTS_PER_MTOK', {})
+    monkeypatch.setattr(
+        cost_prices,
+        'LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH',
+        {'m': {'upTo100k': {'input': 10}, 'over100k': {'input': 50}}},
+    )
+    tokens = cost_metrics.REQUEST_TOKENS
+    assert cost_promql.convert_cents('1h') == (
+        f'((sum(increase({tokens}{{model="m", prompt_length="upTo100k", type="input"}}[1h])) * 10 or vector(0))'
+        f' + (sum(increase({tokens}{{model="m", prompt_length="over100k", type="input"}}[1h])) * 50 or vector(0)))'
+        ' / 1000000'
+    )
+
+
+def test_a_price_that_is_not_whole_cents_renders_as_written(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cost_prices, 'LIST_PRICES_CENTS_PER_MTOK', {'m': {'cacheCreation': decimal.Decimal('12.5')}})
+    monkeypatch.setattr(cost_prices, 'LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH', {})
+    assert cost_promql.convert_cents('1h').endswith('[1h])) * 12.5 / 1000000')
 
 
 def test_convert_cents_by_model_carries_the_model_label_and_drops_an_idle_model() -> None:
     by_model = cost_promql.convert_cents_by_model('1h')
     series = by_model.split(' or label_replace(')
-    assert len(series) == len(cost_prices.LIST_PRICES_CENTS_PER_MTOK)
-    for model in cost_prices.LIST_PRICES_CENTS_PER_MTOK:
+    assert len(series) == len(cost_prices.priced_models())
+    for model in cost_prices.priced_models():
         assert f', "{cost_metrics.MODEL_LABEL}", "{model}", "", "") > 0' in by_model, model
 
 
-def test_unpriced_usage_is_every_model_outside_the_table() -> None:
+def test_unpriced_usage_is_every_model_outside_the_tables() -> None:
     unpriced = cost_promql.unpriced_request_tokens('1h')
-    assert unpriced.startswith(f'sum by ({cost_metrics.MODEL_LABEL}, {cost_metrics.TYPE_LABEL}) (increase(')
+    assert f'sum by ({cost_metrics.MODEL_LABEL}, {cost_metrics.TYPE_LABEL}) (increase(' in unpriced
     [literal] = re.findall(rf'{cost_metrics.MODEL_LABEL}!~(".*?")\}}', unpriced)
     regex = re.compile(_decode_string_literal(literal))
-    for model in cost_prices.LIST_PRICES_CENTS_PER_MTOK:
+    for model in cost_prices.priced_models():
         assert regex.fullmatch(model), model
     assert not regex.fullmatch(_NOT_IN_TABLE)
-    assert literal.count('|') == len(cost_prices.LIST_PRICES_CENTS_PER_MTOK) - 1
+    assert literal.count('|') == len(cost_prices.priced_models()) - 1
+
+
+@pytest.mark.parametrize('model', sorted(cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH))
+def test_unpriced_usage_is_also_a_model_priced_by_prompt_length_counted_under_no_card(model: str) -> None:
+    # Its rate cards select by prompt length, so tokens naming none (an empty label, to a matcher) or one without a
+    # card would otherwise be priced at nothing with the model's row in place.
+    unpriced = cost_promql.unpriced_request_tokens('1h')
+    [literal] = re.findall(
+        rf'{cost_metrics.MODEL_LABEL}="{re.escape(model)}", {cost_metrics.PROMPT_LENGTH_LABEL}!~(".*?")\}}', unpriced
+    )
+    regex = re.compile(_decode_string_literal(literal))
+    for prompt_length in cost_metrics.PROMPT_LENGTHS:
+        assert regex.fullmatch(prompt_length), prompt_length
+    assert not regex.fullmatch('')
+    assert not regex.fullmatch('over200k')
+    # Split by prompt length too, so a series says which length has no card.
+    key = f'{cost_metrics.MODEL_LABEL}, {cost_metrics.TYPE_LABEL}, {cost_metrics.PROMPT_LENGTH_LABEL}'
+    of_model = f'{cost_metrics.REQUEST_TOKENS}{{{cost_metrics.MODEL_LABEL}="{model}", '
+    assert f'sum by ({key}) (increase({of_model}' in unpriced
+
+
+def _selects(matchers: str, series: dict[str, str]) -> bool:
+    """Whether a selector's matchers select `series`; a label the series lacks reads as empty, as PromQL has it."""
+    for label, operator, literal in _MATCHER.findall(matchers):
+        value = series.get(label, '')
+        text = _decode_string_literal(f'"{literal}"')
+        selected = {
+            '=': value == text,
+            '!=': value != text,
+            '=~': re.fullmatch(text, value) is not None,
+            '!~': re.fullmatch(text, value) is None,
+        }[operator]
+        if not selected:
+            return False
+    return True
+
+
+def _selecting(query: str, series: dict[str, str]) -> int:
+    """How many of the query's selectors over the request-token counter select `series`."""
+    selectors = re.findall(rf'{cost_metrics.REQUEST_TOKENS}\{{(.*?)\}}\[', query)
+    assert selectors, query
+    return sum(_selects(matchers, series) for matchers in selectors)
+
+
+@pytest.mark.parametrize('prompt_length', [*cost_metrics.PROMPT_LENGTHS, None, 'over200k'])
+@pytest.mark.parametrize('model', [*cost_prices.priced_models(), _NOT_IN_TABLE])
+def test_every_series_is_priced_by_one_rate_card_or_reported_unpriced(model: str, prompt_length: str | None) -> None:
+    # Never both and never neither: a series two terms select is counted twice, and one no term selects is spend
+    # that reaches neither the dashboard nor the alert.
+    series = {
+        cost_metrics.MODEL_LABEL: model,
+        cost_metrics.TYPE_LABEL: 'input',
+        cost_metrics.STOP_REASON_LABEL: 'end_turn',
+    }
+    if prompt_length is not None:
+        series[cost_metrics.PROMPT_LENGTH_LABEL] = prompt_length
+    priced = _selecting(cost_promql.convert_cents('1h'), series)
+    unpriced = _selecting(cost_promql.unpriced_request_tokens('1h'), series)
+    assert priced + unpriced == 1, (priced, unpriced)
+    # One rate card prices a model's tokens whatever their prompt length; a card of several prices only its own.
+    has_a_card = model in cost_prices.LIST_PRICES_CENTS_PER_MTOK or (
+        model in cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH
+        and prompt_length in cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH[model]
+    )
+    assert priced == int(has_a_card)
+
+
+def test_the_unpriced_parts_compare_as_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    # `or` binds looser than a comparison: unparenthesized, `> 0` would apply to the last part alone.
+    several = cost_promql.unpriced_request_tokens('1h')
+    assert ') or sum by (' in several
+    assert several.startswith('(sum by (')
+    assert several.endswith(')')
+    # The opening parenthesis closes at the very end, so it encloses every part.
+    depth = 0
+    for position, char in enumerate(several):
+        depth += (char == '(') - (char == ')')
+        assert depth > 0 or position == len(several) - 1, several[: position + 1]
+
+    monkeypatch.setattr(cost_prices, 'LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH', {})
+    one = cost_promql.unpriced_request_tokens('1h')
+    assert ' or ' not in one
+    assert one.startswith('sum by (')
 
 
 def test_the_session_components_price_at_the_flat_rates_and_tokens_are_the_remainder() -> None:
@@ -225,6 +352,7 @@ def test_dollars_parenthesize_what_binds_looser_than_division(cents: str, expect
 def test_a_one_row_table_still_divides_the_whole_by_model_figure(monkeypatch: pytest.MonkeyPatch) -> None:
     # With one model there is no `or` between series to force the parentheses; the `> 0` alone must.
     monkeypatch.setattr(cost_prices, 'LIST_PRICES_CENTS_PER_MTOK', {'claude-sonnet-5': {'input': 200, 'output': 1000}})
+    monkeypatch.setattr(cost_prices, 'LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH', {})
     by_model = cost_promql.convert_cents_by_model('1h')
     assert by_model.startswith('label_replace(')
     assert by_model.endswith('"", "") > 0')

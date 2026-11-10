@@ -196,12 +196,20 @@ def test_the_freshness_condition_is_the_heartbeat_silent_for_the_configured_wind
     assert f'/jobs/details/{config["gcp:region"]}/{exporter_job_name}/executions' in content
 
 
-def test_the_unpriced_condition_is_usage_on_a_model_outside_the_table(policies: dict[str, dict[str, object]]) -> None:
+def test_the_unpriced_condition_is_usage_no_rate_card_prices(policies: dict[str, dict[str, object]]) -> None:
     unpriced = policies['themis-cost-unpriced-usage']
     query = str(_promql_condition(unpriced)['query'])
+    # Every part of the unpriced figure is compared, not the last alone.
+    assert query == f'{cost_promql.unpriced_request_tokens("7d")} > 0'
     assert cost_metrics.REQUEST_TOKENS in query
-    # The table's models, and only those, are what the matcher excludes.
-    assert promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.LIST_PRICES_CENTS_PER_MTOK) in query
+    # The tables' models, and only those, are what the model matcher excludes.
+    assert promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.priced_models()) in query
+    # A model priced by prompt length is unpriced where its tokens name no length it has a card for.
+    for model, cards in cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH.items():
+        assert (
+            f'{promql.equals(cost_metrics.MODEL_LABEL, model)}, '
+            f'{promql.not_among(cost_metrics.PROMPT_LENGTH_LABEL, cards)}'
+        ) in query
     assert query.endswith(') > 0'), query
     assert _promql_condition(unpriced)['duration'] == '0s'
     assert 'infra/themis_infra/cost_prices.py' in str(_mapping(unpriced['documentation'])['content'])

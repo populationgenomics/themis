@@ -107,7 +107,8 @@ class TokenCounter(Protocol):
     """Where a transcription's token usage goes, whatever the turn's stop reason.
 
     A provider records every paid turn here before it judges the response, so a truncated or refused
-    turn is counted like any other. The convert worker binds the metrics counter in
+    turn is counted like any other. Each `add` takes one request's usage, never a sum over several: the
+    counter reads the request's prompt length off it. The convert worker binds the metrics counter in
     `themis.telemetry.request_tokens`; nothing in this package depends on it.
     """
 

@@ -19,9 +19,10 @@ the fault. A window has to exceed the tolerance, or a rise's two ends could read
 Every figure is in the producers' unit, cents, until `dollars` divides at display; nothing here is stored. The derived
 figures, each a builder below: a session's list cost is the provider's (`session_cents`), split into runtime and web
 search at the flat rates with tokens as the remainder; the convert worker's spend is its token counter priced by the
-program's table (`cost_prices`), each model's four token types at their list price as literal multipliers
-(`convert_cents`); Claude Code's is its own USD figure scaled (`ci_cents`). Wherever figures are summed each term that
-can be empty is guarded to zero (`total`, `guarded`), since a binary operator with an empty side yields nothing.
+program's tables (`cost_prices`), each model's four token types at their list price as literal multipliers, a model
+priced by prompt length once per rate card (`convert_cents`); Claude Code's is its own USD figure scaled (`ci_cents`).
+Wherever figures are summed each term that can be empty is guarded to zero (`total`, `guarded`), since a binary
+operator with an empty side yields nothing.
 """
 
 from __future__ import annotations
@@ -232,24 +233,43 @@ def total(terms: Sequence[str]) -> str:
     return summed([guarded(term) for term in terms])
 
 
+def _rate_cards(model: str) -> list[tuple[list[str], cost_prices.RateCard]]:
+    """A priced model's rate cards, each with the matchers that select the tokens it prices.
+
+    A model with one card takes every series of the model, whatever prompt length it names. A model priced by
+    prompt length takes, per card, the series counted under that card's length.
+
+    Raises:
+        KeyError: Neither table prices `model`.
+    """
+    of_model = promql.equals(cost_metrics.MODEL_LABEL, model)
+    by_prompt_length = cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH.get(model)
+    if by_prompt_length is None:
+        return [([of_model], cost_prices.LIST_PRICES_CENTS_PER_MTOK[model])]
+    return [
+        ([of_model, promql.equals(cost_metrics.PROMPT_LENGTH_LABEL, prompt_length)], card)
+        for prompt_length, card in by_prompt_length.items()
+    ]
+
+
 def _model_cents(model: str, duration: str) -> str:
     """One model's convert spend over `duration`, in cents: each token type's increase at its list price, summed."""
-    of_model = promql.equals(cost_metrics.MODEL_LABEL, model)
     priced = [
-        f'{increase(cost_metrics.REQUEST_TOKENS, duration, of_model, of_type)} * {cents}'
-        for token_type, cents in cost_prices.LIST_PRICES_CENTS_PER_MTOK[model].items()
+        f'{increase(cost_metrics.REQUEST_TOKENS, duration, *matchers, of_type)} * {cents}'
+        for matchers, card in _rate_cards(model)
+        for token_type, cents in card.items()
         for of_type in [promql.equals(cost_metrics.TYPE_LABEL, token_type)]
     ]
     return f'{total(priced)} / {_TOKENS_PER_MTOK}'
 
 
 def convert_cents(duration: str) -> str:
-    """The convert worker's direct-call spend over `duration`, in cents, over every model the price table prices.
+    """The convert worker's direct-call spend over `duration`, in cents, over every model the price tables price.
 
-    A model's figure is a sum of guarded terms and so never empty; the models add bare. A model the table lacks
-    contributes nothing — priced at nothing — which `unpriced_request_tokens` watches for.
+    A model's figure is a sum of guarded terms and so never empty; the models add bare. Tokens no rate card prices
+    contribute nothing — priced at nothing — which `unpriced_request_tokens` watches for.
     """
-    return summed([_model_cents(model, duration) for model in sorted(cost_prices.LIST_PRICES_CENTS_PER_MTOK)])
+    return summed([_model_cents(model, duration) for model in cost_prices.priced_models()])
 
 
 def convert_cents_by_model(duration: str) -> str:
@@ -261,15 +281,30 @@ def convert_cents_by_model(duration: str) -> str:
     """
     return ' or '.join(
         f'label_replace({_model_cents(model, duration)}, "{cost_metrics.MODEL_LABEL}", "{model}", "", "") > 0'
-        for model in sorted(cost_prices.LIST_PRICES_CENTS_PER_MTOK)
+        for model in cost_prices.priced_models()
     )
 
 
 def unpriced_request_tokens(duration: str) -> str:
-    """Request tokens over `duration`, by model and type, for every model the price table has no row for."""
-    outside_table = promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.LIST_PRICES_CENTS_PER_MTOK)
+    """Request tokens over `duration`, by model and type, that no rate card prices.
+
+    Those are the tokens of a model neither table has, and the tokens of a model priced by prompt length whose
+    series names a length it has no card for or names none, as a worker that does not record prompt length writes
+    them. The second kind is also split by prompt length, so a series says which length lacks a card and carries no
+    such label where the tokens named none. The parts are joined with `or` and parenthesized, so a comparison applies
+    to all of them.
+    """
     key = (cost_metrics.MODEL_LABEL, cost_metrics.TYPE_LABEL)
-    return increase(cost_metrics.REQUEST_TOKENS, duration, outside_table, by=key)
+    outside_tables = promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.priced_models())
+    unpriced = [increase(cost_metrics.REQUEST_TOKENS, duration, outside_tables, by=key)]
+    for model, cards in sorted(cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH.items()):
+        of_model = promql.equals(cost_metrics.MODEL_LABEL, model)
+        outside_cards = promql.not_among(cost_metrics.PROMPT_LENGTH_LABEL, cards)
+        by_length = (*key, cost_metrics.PROMPT_LENGTH_LABEL)
+        unpriced.append(increase(cost_metrics.REQUEST_TOKENS, duration, of_model, outside_cards, by=by_length))
+    if len(unpriced) == 1:
+        return unpriced[0]
+    return '(' + ' or '.join(unpriced) + ')'
 
 
 def ci_dollars(duration: str, *, by: Sequence[str] = ()) -> str:

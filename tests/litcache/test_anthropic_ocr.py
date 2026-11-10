@@ -161,6 +161,11 @@ def _counter() -> tuple[request_tokens.RequestTokens, metrics_export.InMemoryMet
     return request_tokens.RequestTokens(provider.get_meter('test')), reader
 
 
+def _input_series(*, model: str, stop_reason: str) -> in_memory_metrics.Labels:
+    """The input-token series of a call whose prompt is a few thousand tokens, as every call here is."""
+    return in_memory_metrics.labels(model=model, type='input', stop_reason=stop_reason, prompt_length='upTo100k')
+
+
 def _tokens() -> request_tokens.RequestTokens:
     """A counter for a call whose tokens the test does not read back."""
     return _counter()[0]
@@ -487,7 +492,9 @@ def test_the_turn_reports_what_it_cost(monkeypatch: pytest.MonkeyPatch, caplog: 
     with caplog.at_level(logging.INFO, logger='themis.litcache.anthropic_ocr'):
         asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
 
-    series = functools.partial(in_memory_metrics.labels, model='claude-sonnet-5-20260101', stop_reason='end_turn')
+    series = functools.partial(
+        in_memory_metrics.labels, model='claude-sonnet-5-20260101', stop_reason='end_turn', prompt_length='upTo100k'
+    )
     assert in_memory_metrics.collected(reader)[names.REQUEST_TOKENS] == {
         series(type='input'): usage.input_tokens,
         series(type='output'): usage.output_tokens,
@@ -518,7 +525,7 @@ def test_a_terminal_stop_raises_ocr_error(
     (record,) = caplog.records
     assert message.usage.input_tokens in record.args  # type: ignore[operator]
     counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
-    assert counted[in_memory_metrics.labels(model='claude-sonnet-5', type='input', stop_reason=stop_reason)] == 4321
+    assert counted[_input_series(model='claude-sonnet-5', stop_reason=stop_reason)] == 4321
 
 
 def test_a_final_message_without_a_stop_reason_is_a_precondition_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -647,7 +654,7 @@ def test_a_stream_failing_after_message_start_was_paid_for(error: Exception, mon
     assert raised.value.__cause__ is error
     # Paid for, so counted, as far as the stream got.
     counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
-    assert counted[in_memory_metrics.labels(model='m', type='input', stop_reason='unfinished')] == 4321
+    assert counted[_input_series(model='m', stop_reason='unfinished')] == 4321
 
 
 def test_a_stream_blocked_after_message_start_settles_and_was_paid_for(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -659,7 +666,7 @@ def test_a_stream_blocked_after_message_start_settles_and_was_paid_for(monkeypat
         asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
     assert raised.value.__cause__ is _BLOCKED
     counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
-    assert counted[in_memory_metrics.labels(model='m', type='input', stop_reason='unfinished')] == 4321
+    assert counted[_input_series(model='m', stop_reason='unfinished')] == 4321
 
 
 def test_an_sse_error_event_after_message_start_is_read_as_a_block(monkeypatch: pytest.MonkeyPatch) -> None:

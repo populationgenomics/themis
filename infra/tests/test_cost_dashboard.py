@@ -25,8 +25,8 @@ _KEYWORDS = frozenset({'and', 'or', 'unless', 'bool', 'offset', 'group_left', 'g
 # Label matchers (a `${variable}` inside them has braces of its own), string literals, grouping lists and ranges:
 # identifiers inside them are labels, variables or arguments, not metrics.
 _NOT_A_METRIC = re.compile(r'\{(?:[^{}]|\$\{[^}]*\})*\}|"[^"]*"|\b(?:by|on|ignoring|without)\s*\([^)]*\)|\[[^\]]*\]')
-# A literal multiplier on a token figure: the price a table row supplies.
-_MULTIPLIER = re.compile(r'\) \* (\d+)\b')
+# A literal multiplier on a token figure: the price a rate card supplies, whole cents or not.
+_MULTIPLIER = re.compile(r'\) \* (\d+(?:\.\d+)?)(?![\d.])')
 # The cents-to-dollars division, as distinct from the per-million-tokens one.
 _CENTS_TO_DOLLARS = re.compile(r'/ 100(?!\d)')
 # The gauges that carry the agent label.
@@ -201,7 +201,15 @@ def test_every_dollar_figure_divides_cents_by_100_exactly_once(dashboard: dict[s
 
 
 def _table_prices() -> set[str]:
-    return {str(cents) for row in cost_prices.LIST_PRICES_CENTS_PER_MTOK.values() for cents in row.values()}
+    cards = [
+        *cost_prices.LIST_PRICES_CENTS_PER_MTOK.values(),
+        *(
+            card
+            for cards in cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH.values()
+            for card in cards.values()
+        ),
+    ]
+    return {str(cents) for card in cards for cents in card.values()}
 
 
 def test_every_convert_multiplier_is_a_table_price(dashboard: dict[str, object]) -> None:

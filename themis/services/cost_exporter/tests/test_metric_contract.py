@@ -1,7 +1,7 @@
 """The vocabulary the producers write under is the one the infrastructure's queries read — and nothing else.
 
 The Pulumi program runs in its own interpreter and imports nothing from `themis`, and the producers
-import nothing from the program, so each names the metrics, the labels and the token types on its own;
+import nothing from the program, so each names the metrics, the labels and their fixed values on its own;
 this holds the two together both ways, the way `tests/test_images_manifest.py` holds the image
 overrides to the program. The program's module is loaded by path, not through its package, whose
 `__init__` imports the Pulumi SDK.
@@ -37,6 +37,7 @@ def test_the_infrastructure_names_exactly_what_the_producers_write() -> None:
     constants = _producer_constants()
     vocabulary: dict[str, object] = {name: value for name, value in constants.items() if name not in _NOT_VOCABULARY}
     vocabulary['TOKEN_TYPES'] = tuple(token_type.value for token_type in names.TokenType)
+    vocabulary['PROMPT_LENGTHS'] = tuple(prompt_length.value for prompt_length in names.PromptLength)
     assert len(vocabulary) > 1  # a vocabulary of nothing would hold trivially
 
     assert _infra_vocabulary() == vocabulary

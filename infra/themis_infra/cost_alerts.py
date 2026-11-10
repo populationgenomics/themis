@@ -7,9 +7,10 @@ conditions take no window delta of a gauge, so the figure is the dashboard's own
 `absent_over_time` of the exporter's heartbeat — the gauge every successful run sets once, sessions in the workspace
 or none, so its silence covers every way the exporter can die without a healthy exporter over an empty workspace
 reading as dead; the counters are silent whenever their callers are idle, by design, and get no freshness policy.
-Unpriced usage is the convert worker reporting tokens for a model the program's price table (`cost_prices`) has no
-row for — spend the dashboard shows as nothing — matched statically against the table's model ids, over a week, so
-the incident closes when a deploy adds the row rather than when the worker falls idle. PromQL
+Unpriced usage is the convert worker reporting tokens the program's price tables (`cost_prices`) have no rate card
+for — spend the dashboard shows as nothing — matched statically against the tables' model ids and, for a model
+priced by prompt length, its prompt lengths, over a week, so the incident closes when a deploy adds the row rather
+than when the worker falls idle. PromQL
 throughout, rather than Monitoring's absence condition for freshness,
 because only a PromQL condition can be declared before its metric exists: a fresh environment's first `pulumi up`
 runs before the first point. For the same reason the freshness condition must hold for one tick before it fires:
@@ -258,7 +259,7 @@ class CostAlerts(pulumi.ComponentResource):
             severity='WARNING',
             conditions=[
                 gcp.monitoring.AlertPolicyConditionArgs(
-                    display_name=f'Request tokens in the last {_UNPRICED_WINDOW} for a model the price table lacks',
+                    display_name=f'Request tokens in the last {_UNPRICED_WINDOW} with no rate card in the price table',
                     condition_prometheus_query_language=condition(
                         f'{cost_promql.unpriced_request_tokens(_UNPRICED_WINDOW)} > 0',
                         lookback=promql.duration(_UNPRICED_WINDOW),
@@ -267,25 +268,36 @@ class CostAlerts(pulumi.ComponentResource):
                 )
             ],
             notification_channels=[channel.name],
-            # The close says the table now prices every model the worker used in the window.
+            # The close says the tables now price every token the worker counted in the window.
             alert_strategy=gcp.monitoring.AlertPolicyAlertStrategyArgs(notification_prompts=['OPENED', 'CLOSED']),
             documentation=gcp.monitoring.AlertPolicyDocumentationArgs(
                 mime_type='text/markdown',
-                subject='Themis: convert worker usage on a model the price table lacks',
+                subject='Themis: convert worker usage the price table has no rate card for',
                 content=pulumi.Output.from_input(dashboard_url).apply(
                     lambda dashboard: alerts.page(
                         meaning=(
-                            'The convert worker reported request tokens for a model the list-price table has no row '
-                            'for, so the dashboard prices that usage at nothing and the workspace total, which the '
-                            'spend spike alert reads, under-counts it.'
+                            'The convert worker reported request tokens the list-price table has no rate card for, '
+                            'so the dashboard prices that usage at nothing and the workspace total, which the spend '
+                            'spike alert reads, under-counts it. Either the model has no row, or its price depends '
+                            'on prompt length and these tokens name no prompt length it has a rate card for.'
                         ),
                         steps=[
                             f'See which model in the convert section of [the spend dashboard]({dashboard}).',
-                            f"Add the model's row to [the price table]({_PRICE_TABLE_URL}) and deploy.",
+                            f'If [the price table]({_PRICE_TABLE_URL}) lacks the model, add its row and deploy.',
+                            (
+                                'If the table has the model and the incident names a prompt_length, add the rate '
+                                'card for that length and deploy.'
+                            ),
+                            (
+                                'If the table has the model and the incident names no prompt_length, the tokens '
+                                'were counted without one. Check that the deployed convert worker records it; '
+                                'tokens already counted without one cannot be priced afterwards.'
+                            ),
                         ],
                         closes=(
-                            'Once the deploy that adds the row lands, or '
-                            f'{alerts.in_days(_UNPRICED_WINDOW)} days after the last unpriced call if none does.'
+                            'Once the deploy that adds the row or the rate card lands. An incident for tokens '
+                            f'counted without a prompt length closes {alerts.in_days(_UNPRICED_WINDOW)} days after '
+                            'the last such call, as does any that no deploy answers.'
                         ),
                     )
                 ),
