@@ -10,6 +10,7 @@ package themis.litcache.models.litcache;
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "pubmed_proto/pubmed.proto";
+import "themis/litcache/models/variants.proto";
 
 enum SourceKind {
   SOURCE_KIND_UNSPECIFIED = 0;
@@ -134,6 +135,8 @@ message Record {
     option (buf.validate.oneof).required = true;
 
     RenderingConstruction rendering = 10;
+    themis.litcache.models.variants.VariantExtractionConstruction variant_extraction = 11;  // a MentionSet
+    themis.litcache.models.variants.VariantValidationConstruction variant_validation = 12;  // a Verdicts
   }
 }
 

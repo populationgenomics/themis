@@ -1,0 +1,365 @@
+// A paper's variant mentions and weaver's verdicts on them: two records in the paper's manifest
+// (design: docs/design/variant-extraction.md).
+// A durable, authored contract: binary proto at rest, gated additively. This proto is the source of
+// truth; the committed themis/litcache/models/variants_pb2 stubs are generated from it.
+//
+// How the messages make up a paper's two records. Each is a Record in the paper's Manifest
+// (litcache.proto), keyed by the sha256 of its blob, its deps the record it was read from, and named
+// by a ref:
+//
+//   Manifest
+//     refs["markdown"] ──► records[R]   a rendering
+//     refs["variants"] ──► records[M]   construction: VariantExtractionConstruction   deps: [R], and the
+//                                       pdf revision when the agent also read its pages
+//     refs["verdicts"] ──► records[V]   construction: VariantValidationConstruction   deps: [M]
+//
+//   variants/<M>.pb: MentionSet                    verdicts/<V>.pb: Verdicts
+//     references[]  DeclaredReference
+//     builds[]      DeclaredBuild
+//     conventions[] DeclaredConvention
+//     dismissals[]  Dismissal
+//     mentions[i]   Mention  ◄─────── same i ───────► mentions[i]  MentionVerdict
+//       occurrences[]  Occurrence                      candidates[j]  CandidateVerdict
+//         box          Box                             derived[]      Candidate
+//       candidates[j]  Candidate  ◄──── same j ─────── (j < n: the mention's own n candidates;
+//         rewrites[]   Rewrite                          j ≥ n: derived[j - n])
+//                                                      chosen ─► an index j, when choice is CHOSEN
+//                                                      nucleotide_vrs_id, protein_vrs_id: the chosen allele
+//
+// The verdicts never change the mention set: candidates the validation step derives live in the
+// verdicts, so the mention set's hash, which a citation carries, stays fixed across re-validations.
+// The verdicts hold what was decided, not the working: validation is deterministic, so rerunning it
+// with the weaver version and store builds its construction names reproduces everything else.
+
+syntax = "proto3";
+
+package themis.litcache.models.variants;
+
+import "buf/validate/validate.proto";
+
+// How the extraction step made a mention set: a Record.construction arm.
+message VariantExtractionConstruction {
+  string model = 1 [(buf.validate.field).string.min_len = 1];  // the model id the API reported
+  // The prompt, the tool surface and the scan's patterns; a mention set made by any other gives the extraction step
+  // work for a run that names it.
+  string harness_version = 2 [(buf.validate.field).string.min_len = 1];
+  // What the agent read is in the record's deps: the rendering, and the pdf revision when it read pages.
+}
+
+// A reference store the validation step consulted, at the release it read.
+message StoreVersion {
+  string name = 1 [(buf.validate.field).string.min_len = 1];  // e.g. "refseq-grch38"
+  string release = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// How the validation step made a set of verdicts: a Record.construction arm. A worker running any other weaver,
+// store build or validator version than these finds validation work on the paper; builds are digests, with no order.
+message VariantValidationConstruction {
+  string weaver_version = 1 [(buf.validate.field).string.min_len = 1];
+  repeated StoreVersion stores = 2 [(buf.validate.field).repeated.min_items = 1];
+  string validator_version = 3 [(buf.validate.field).string.min_len = 1];  // the anchor and choice rules
+}
+
+// A reference sequence the paper names that the harness's accession pattern does not find in the rendering (a GenBank
+// accession, one broken across lines), with the sentence that names it. Every transcript and protein accession the
+// rendering prints is stated without one; a declared accession is stated only where this sentence occurs in it.
+message DeclaredReference {
+  string accession = 1 [(buf.validate.field).string.min_len = 1];  // as printed, version included if printed
+  optional string gene = 2;
+  string sentence = 3 [(buf.validate.field).string.min_len = 1];  // verbatim
+}
+
+// A genome build the paper states for its genomic coordinates.
+message DeclaredBuild {
+  string build = 1 [(buf.validate.field).string.min_len = 1];  // as printed: "hg19", "GRCh38", "NCBI36"
+  string sentence = 2 [(buf.validate.field).string.min_len = 1];  // verbatim
+}
+
+// A numbering convention the paper declares, such as residues counted from the mature protein.
+message DeclaredConvention {
+  optional string gene = 1;  // unset when it governs every gene in the paper
+  string sentence = 2 [(buf.validate.field).string.min_len = 1];  // verbatim
+}
+
+enum Disposition {
+  DISPOSITION_UNSPECIFIED = 0;
+  DISPOSITION_HAS_CANDIDATES = 1;
+  DISPOSITION_NOT_WRITABLE = 2;  // not expressible in HGVS from what the paper states; reason says why
+  DISPOSITION_REGISTRY = 3;  // an rsID or a star allele: an allele named through a registry
+  DISPOSITION_NOT_SEQUENCE_CHANGE = 4;  // a karyotype, a repeat count, an eponym
+}
+
+// The organism a variant is in, for the ones the literature names most; each value is the NCBI Taxonomy id, so a
+// reader joins on taxonomy with no table. An organism outside the list is Mention.printed_species.
+enum Species {
+  SPECIES_UNSPECIFIED = 0;
+  SPECIES_BUDDING_YEAST = 4932;  // Saccharomyces cerevisiae
+  SPECIES_NEMATODE = 6239;  // Caenorhabditis elegans
+  SPECIES_FRUIT_FLY = 7227;  // Drosophila melanogaster
+  SPECIES_ZEBRAFISH = 7955;  // Danio rerio
+  SPECIES_HUMAN = 9606;  // Homo sapiens
+  SPECIES_MOUSE = 10090;  // Mus musculus
+  SPECIES_RAT = 10116;  // Rattus norvegicus
+}
+
+// What one printing says of the variant. A mention's occurrences can differ: a variant cited in the introduction can be
+// observed in the results.
+enum Context {
+  CONTEXT_UNSPECIFIED = 0;
+  CONTEXT_OBSERVED = 1;  // found in the paper's own individuals, families, cohorts or samples
+  CONTEXT_CITED = 2;  // reported by other work: background, comparison, a database's or another paper's list
+  CONTEXT_ENGINEERED = 3;  // made for an experiment: a construct, site-directed mutagenesis, a model organism's allele
+  CONTEXT_UNCLEAR = 4;  // the sentence and its surroundings do not say
+}
+
+// What kind of change a rewrite made; its note says exactly what.
+enum RewriteKind {
+  REWRITE_KIND_UNSPECIFIED = 0;
+  // The same change written as HGVS: spacing or punctuation repaired, a prose description or a bare number written
+  // with its coordinate system.
+  REWRITE_KIND_NOTATION = 1;
+  // The position renumbered: from the mature protein, from the mRNA's first base, from IVS numbering, or by another
+  // offset.
+  REWRITE_KIND_NUMBERING = 2;
+  // A reference the mention does not print, supplied: an accession, or a build for a genomic coordinate.
+  REWRITE_KIND_REFERENCE = 3;
+  // The change of another candidate, moved to the transcript the paper's mentions of the gene fit; made by the
+  // validation step, never by the agent.
+  REWRITE_KIND_TRANSCRIPT_FIT = 4;
+  // The change of another candidate, moved from an older version of its accession to the newest, where the two
+  // project it to one genomic allele or are the same around it; made by the validation step, never by the agent.
+  REWRITE_KIND_VERSION_UPDATE = 5;
+}
+
+// One change the agent made in getting from the printed mention to a candidate.
+message Rewrite {
+  option (buf.validate.message).cel = {
+    id: "rewrite.derived_has_source"
+    message: "a rewrite the validation step made (TRANSCRIPT_FIT, VERSION_UPDATE) names its source"
+    expression: "(this.kind != 4 && this.kind != 5) || has(this.source)"
+  };
+
+  RewriteKind kind = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  bool declared = 2;  // the paper declares it (a DeclaredConvention, build or reference); false: assumed
+  string note = 3;  // what was done, in a sentence
+  // For a rewrite the validation step made, the candidate it was made from, as its expression.
+  optional string source = 4;
+}
+
+// One HGVS expression the agent wrote for a mention. A candidate states only bases and residues the
+// paper states; weaver's verdict on it is in the Verdicts record, not here.
+message Candidate {
+  string hgvs = 1 [(buf.validate.field).string.min_len = 1];  // accession included: "NP_000032.1:p.Lys164Gln"
+  repeated Rewrite rewrites = 2;
+  // The stretch of bases the position was located by, when it was located that way: the
+  // validation step accepts it only where it is printed on one of the mention's lines.
+  optional string flanking = 3;
+}
+
+// A region of a page, as fractions of its width and height measured from the top-left corner.
+message Box {
+  option (buf.validate.message).cel = {
+    id: "box.ordered"
+    message: "a box must have left < right and top < bottom"
+    expression: "this.left < this.right && this.top < this.bottom"
+  };
+
+  float left = 1 [(buf.validate.field).float = {
+    gte: 0
+    lte: 1
+  }];
+  float top = 2 [(buf.validate.field).float = {
+    gte: 0
+    lte: 1
+  }];
+  float right = 3 [(buf.validate.field).float = {
+    gte: 0
+    lte: 1
+  }];
+  float bottom = 4 [(buf.validate.field).float = {
+    gte: 0
+    lte: 1
+  }];
+}
+
+// One place the paper prints a mention. Cited by its line in the rendering wherever the rendering prints it, which a
+// reader can open and the validation step can check; by its pdf page, best effort, only where the rendering does not,
+// as for a string read from a figure's image.
+message Occurrence {
+  option (buf.validate.message).cel = {
+    id: "occurrence.located"
+    message: "an occurrence names its line or, failing that, its page: exactly one"
+    expression: "has(this.line) != has(this.page)"
+  };
+  option (buf.validate.message).cel = {
+    id: "occurrence.box_on_a_page"
+    message: "a box needs the page it is on"
+    expression: "!has(this.box) || has(this.page)"
+  };
+
+  Context context = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  // The rendering's line it is printed on, 1-based, counting newlines; the line it starts on, for a string broken
+  // across two.
+  optional int32 line = 2 [(buf.validate.field).int32.gt = 0];
+  // The pdf page it is printed on, 1-based, as the agent read it off the page images, for a string the rendering does
+  // not print.
+  optional int32 page = 3 [(buf.validate.field).int32.gt = 0];
+  Box box = 4;  // where on that page, for a string read from a figure's image
+}
+
+// One printed string naming a variant in one gene, wherever the paper prints it. Two strings are never merged into
+// one mention, however likely they are to name the same variant: that is the validation step's call, by allele. A
+// string that prints no position ('Arg→His' in a table cell of its own) is a mention per line, sentence or row, since
+// what it names depends on them; a table that prints the position in the cell before gives the two cells joined.
+message Mention {
+  option (buf.validate.message).cel = {
+    id: "mention.unwritable_says_why"
+    message: "a disposition other than HAS_CANDIDATES (=1) gives a reason and carries no candidates"
+    expression: "this.disposition == 1 || (this.reason != '' && size(this.candidates) == 0)"
+  };
+
+  string verbatim = 1 [(buf.validate.field).string.min_len = 1];  // exactly as printed
+  optional string gene = 2;  // the gene the paper attaches it to, as printed
+  Disposition disposition = 3 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  string reason = 4;  // why, for a disposition other than has-candidates
+  // The agent's, in the order it wrote them, failed ones included. Candidates the validation step derives are in
+  // MentionVerdict.derived. Empty under HAS_CANDIDATES only while the agent is still recording: the extraction step
+  // does not finish, and so commits no mention set, while one remains.
+  repeated Candidate candidates = 5;
+  reserved 6;
+  reserved "species";
+  repeated Occurrence occurrences = 7 [(buf.validate.field).repeated.min_items = 1];  // in the order found
+  oneof organism {
+    option (buf.validate.oneof).required = true;
+    Species known_species = 8 [(buf.validate.field).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    string printed_species = 9 [(buf.validate.field).string.min_len = 1];  // any other organism, as printed
+  }
+}
+
+// A string the harness's pattern scan flagged in the rendering that the agent judged not to be a variant mention. A
+// flagged string a recorded mention prints is covered by that mention, and is not dismissed.
+message Dismissal {
+  string text = 1 [(buf.validate.field).string.min_len = 1];  // as the scan matched it
+  int32 line = 2 [(buf.validate.field).int32.gt = 0];  // the rendering's line it is first printed on, from 1
+  string reason = 3 [(buf.validate.field).string.min_len = 1];  // "a patient id", "a figure panel label"
+}
+
+// The variant mentions the extraction agent found in a paper: what it read and what it wrote.
+message MentionSet {
+  repeated DeclaredReference references = 1;
+  repeated DeclaredBuild builds = 2;
+  repeated DeclaredConvention conventions = 3;
+  repeated Mention mentions = 4;
+  repeated Dismissal dismissals = 5;
+}
+
+enum Outcome {
+  OUTCOME_UNSPECIFIED = 0;
+  OUTCOME_VALIDATED = 1;  // the stated reference base or residue is the sequence's
+  OUTCOME_NOTHING_TO_CHECK = 2;  // parsed and in range, but it states no reference base
+  OUTCOME_REFERENCE_DISAGREES = 3;  // the sequence holds something other than the candidate states
+  OUTCOME_NOT_CHECKED = 4;  // weaver could not run the check; detail says why
+  OUTCOME_UNPARSEABLE = 5;  // not HGVS weaver can parse
+  OUTCOME_REFERENCE_NOT_HELD = 6;  // no store holds the accession at that version
+  // The candidate states the mention's printed substitution backwards, at its printed position: the printed new
+  // residue or base as the reference. Made by the validation step, whatever weaver says of the candidate.
+  OUTCOME_REVERSES_PRINTED = 7;
+}
+
+// The sequence a candidate was checked against, as the validation step computes it. Ordered from the
+// most trusted; the choice of a mention's allele reads this order.
+enum Anchor {
+  ANCHOR_UNSPECIFIED = 0;
+  // Printed anywhere in the rendering, or in a declaring sentence the rendering holds; or the protein such a
+  // transcript encodes.
+  ANCHOR_STATED_ACCESSION = 1;
+  ANCHOR_MANE = 2;  // the gene's MANE transcript or its protein, nothing stated
+  ANCHOR_GENOMIC_STATED_BUILD = 3;  // a chromosome on a build the paper declares
+  ANCHOR_STATED_OTHER_VERSION = 4;  // a stated accession, at a version other than the one stated
+  ANCHOR_FLANKING = 5;  // located by a printed stretch of flanking sequence that matches the gene once
+  ANCHOR_OTHER_TRANSCRIPT = 6;  // a transcript of the gene the paper does not name
+  ANCHOR_GENOMIC_UNSTATED_BUILD = 7;  // a chromosome on a build the paper does not declare
+  ANCHOR_GENE_FIT = 8;  // a transcript the paper's mentions of the gene single out, or its protein
+}
+
+message CandidateVerdict {
+  option (buf.validate.message).cel = {
+    id: "candidate_verdict.anchored_iff_parsed"
+    message: "anchor must be unspecified iff outcome is OUTCOME_UNPARSEABLE (=5)"
+    expression: "(this.outcome == 5) == (this.anchor == 0)"
+  };
+
+  Outcome outcome = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  Anchor anchor = 2 [(buf.validate.field).enum.defined_only = true];  // unspecified when not parsed
+  string detail = 3;  // weaver's message, for an outcome other than validated
+}
+
+enum Choice {
+  CHOICE_UNSPECIFIED = 0;
+  CHOICE_CHOSEN = 1;  // one candidate is the allele: chosen names it
+  CHOICE_AMBIGUOUS = 2;  // candidates left level imply different alleles
+  CHOICE_NONE = 3;  // no candidate qualifies
+}
+
+message MentionVerdict {
+  option (buf.validate.message).cel = {
+    id: "mention_verdict.chosen_iff_chosen"
+    message: "chosen must be set iff choice is CHOICE_CHOSEN (=1)"
+    expression: "(this.choice == 1) == has(this.chosen)"
+  };
+  option (buf.validate.message).cel = {
+    id: "mention_verdict.chosen_in_range"
+    message: "chosen must index into candidates"
+    expression: "!has(this.chosen) || this.chosen < size(this.candidates)"
+  };
+  option (buf.validate.message).cel = {
+    id: "mention_verdict.derived_covered"
+    message: "every derived candidate has a verdict"
+    expression: "size(this.candidates) >= size(this.derived)"
+  };
+  option (buf.validate.message).cel = {
+    id: "mention_verdict.vrs_only_when_chosen"
+    message: "VRS ids are set only when choice is CHOICE_CHOSEN (=1)"
+    expression: "this.choice == 1 || (!has(this.nucleotide_vrs_id) && !has(this.protein_vrs_id))"
+  };
+
+  // Parallel to the mention's candidates, and then to `derived`: an index past the mention's own names a derived one.
+  repeated CandidateVerdict candidates = 1;
+  Choice choice = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  optional int32 chosen = 3 [(buf.validate.field).int32.gte = 0];  // index into candidates
+  // The chosen candidate's GA4GH VRS identifiers, made by weaver; equal identifiers name one allele, across papers.
+  // A nucleotide change's is on its GRCh38 primary-assembly chromosome, so one allele has one whatever build,
+  // transcript or version it was written on; unset where the change has no projection there (a GRCh37 coordinate, a
+  // version placed only on a patch or alternate locus). A protein change's is on its protein's sequence, and a c.
+  // change's predicted protein change is given too. Unset where weaver makes none: a frameshift or p.? has no VRS
+  // allele.
+  optional string nucleotide_vrs_id = 4 [(buf.validate.field).string.prefix = "ga4gh:"];
+  optional string protein_vrs_id = 5 [(buf.validate.field).string.prefix = "ga4gh:"];
+  // The candidates this step derived from the mention's (a version update, a change moved to the transcript the fit
+  // singles out), in order. They are made again on every validation, so they live here rather than in the mention set
+  // the extraction step wrote.
+  repeated Candidate derived = 6;
+}
+
+// weaver's verdicts on a mention set: one entry per mention, in the mention set's order.
+message Verdicts {
+  repeated MentionVerdict mentions = 1;
+}
