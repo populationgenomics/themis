@@ -45,10 +45,11 @@ screenshot = ["google-cloud-storage"]
 # and Crossref metadata-resolution calls; anthropic — the PDF LLM-OCR converter
 # (produce.py's pdf-without-xml branch); pillow — pdf.py encodes its page rasters
 # through it; google-cloud-tasks — enqueue.py creates the convert worker's
-# task. litfetch/litdown/pubmed_proto are exact-pinned
+# task; hgvs-weaver — parses, projects and validates the variant extractor's HGVS candidates, over
+# the reference stores hgvs-weaver-data reads; jsonschema — checks the agent's tool inputs. litfetch/litdown/pubmed_proto/hgvs-weaver(-data) are exact-pinned
 # because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate>=2.1", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate>=2.1", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", "hgvs-weaver==2.1.0", "hgvs-weaver-data[gcs]==0.1.4", "jsonschema>=4.26,<5", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -137,7 +138,9 @@ evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate>=2.1"
 # transcription's token counts to Cloud Monitoring. google-cloud-tasks is the sweep's (litcache.sweep), whose
 # job runs this image and puts its requests on the bulk queue. Deliberately not the `litcache` group: docling-core
 # and the cloudsql connector belong to paths this worker never takes, and carry pandas and numpy behind
-# them.
+# them. hgvs-weaver and hgvs-weaver-data are the variant steps': the agent's tools and the validation read the
+# reference stores through them, from the resources bucket (the gcs extra), and jsonschema checks the agent's tool
+# inputs.
 convert_worker = [
     "aiohttp",
     "google-auth",
@@ -152,6 +155,9 @@ convert_worker = [
     "anthropic",
     "pypdfium2",
     "pillow",
+    "hgvs-weaver==2.1.0",
+    "hgvs-weaver-data[gcs]==0.1.4",
+    "jsonschema>=4.26,<5",
     { include-group = "telemetry" },
 ]
 # cost exporter (themis/services/cost_exporter): the workspace-spend monitor's Cloud Run Job. anthropic lists the

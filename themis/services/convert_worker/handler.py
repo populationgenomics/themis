@@ -39,6 +39,10 @@ from themis.litcache.models import work_pb2
 
 _OK = 200
 _BAD_REQUEST = 400
+# Deliver again: Cloud Tasks retries any status but 2xx after the queue's backoff, ahead of the queue's new tasks.
+# A 4xx other than 429, because Cloud Tasks reads 429 and every 5xx from an HTTP target as overload and slows the
+# whole queue, and a deferral is routine in a funded run.
+_DEFERRED = 409
 
 # The headers Cloud Tasks sets on an HTTP target's request, naming the delivery.
 _QUEUE_HEADER = 'X-CloudTasks-QueueName'
@@ -137,7 +141,8 @@ async def process_conversion(
 
     Returns:
         200 once the producer returns, or for a paper the corpus does not hold; 400 for a body that is
-        malformed, a target no step answers to, or a request Cloud Tasks did not deliver.
+        malformed, a target no step answers to, or a request Cloud Tasks did not deliver; 409 for a request that
+        stopped before a spending step it had too little time left to finish, so the delivery after runs it.
 
     Raises:
         Exception: Whatever `produce` raises (a fetch/convert/GCS failure) propagates so the HTTP layer
@@ -164,5 +169,8 @@ async def process_conversion(
         # and propagates as a 500, so the task retries rather than being dropped undiagnosed.
         _logger.error('dropping a /convert task for %s: no such paper in the corpus', request.doc_id)
         return _OK
+    except produce_mod.DeferredError as e:
+        _logger.info('deferring %s for %s: %s', request.doc_id, list(request.targets), e)
+        return _DEFERRED
     _logger.info('ran %s for %s -> %s', request.doc_id, list(request.targets), readiness.value)
     return _OK

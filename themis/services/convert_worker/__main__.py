@@ -32,14 +32,16 @@ from google.cloud import storage
 from opentelemetry.sdk import metrics as sdk_metrics
 
 from themis.clients import anthropic_wif
-from themis.litcache import anthropic_ocr, ocr
+from themis.litcache import anthropic_ocr, ocr, variant_extract, variant_reference, variant_validate
 from themis.litcache import produce as produce_mod
+from themis.litcache.models import variants_pb2
 from themis.services.convert_worker import handler as handler_mod
 from themis.telemetry import metrics as telemetry_metrics
 from themis.telemetry import names, request_tokens
 
 _BUCKET: web.AppKey[storage.Bucket] = web.AppKey('bucket', storage.Bucket)
 _CONVERT_PDF: web.AppKey[ocr.PdfConverter] = web.AppKey('convert_pdf')
+_VARIANTS: web.AppKey[produce_mod.Variants] = web.AppKey('variants', produce_mod.Variants)
 _METER_PROVIDER: web.AppKey[sdk_metrics.MeterProvider] = web.AppKey('meter_provider', sdk_metrics.MeterProvider)
 _EXECUTOR: web.AppKey[concurrent.futures.ThreadPoolExecutor] = web.AppKey(
     'executor', concurrent.futures.ThreadPoolExecutor
@@ -64,7 +66,7 @@ async def _healthz(_request: web.Request) -> web.Response:
 
 
 async def _convert(request: web.Request) -> web.Response:
-    produce = functools.partial(produce_mod.run, convert_pdf=request.app[_CONVERT_PDF])
+    produce = functools.partial(produce_mod.run, convert_pdf=request.app[_CONVERT_PDF], variants=request.app[_VARIANTS])
     status = await handler_mod.process_conversion(
         request.app[_BUCKET],
         await request.read(),
@@ -96,6 +98,41 @@ def _bucket_from_env() -> storage.Bucket:
     return bucket
 
 
+def _references_from_env() -> variant_reference.References:
+    """Open the pinned builds of the reference stores in the bucket `THEMIS_RESOURCES_BUCKET` names."""
+    root = f'gs://{_require("THEMIS_RESOURCES_BUCKET")}'
+    try:
+        return variant_reference.References(root, variant_reference.BUILDS)
+    except (FileNotFoundError, ValueError) as e:
+        raise SystemExit(f'{root} lacks a pinned reference build: {e}') from e
+
+
+def _variants(
+    references: variant_reference.References,
+    *,
+    credentials: anthropic_ocr.CredentialsFactory,
+    tokens: ocr.TokenCounter,
+) -> produce_mod.Variants:
+    """The variant steps' collaborators, over `references`."""
+
+    def validate(
+        mention_set: variants_pb2.MentionSet, text: str
+    ) -> tuple[
+        variants_pb2.MentionSet,
+        variants_pb2.Verdicts,
+        variants_pb2.VariantValidationConstruction,
+    ]:
+        return variant_validate.validate(mention_set, text=text, references=references)
+
+    return produce_mod.Variants(
+        extract=functools.partial(
+            variant_extract.extract_markdown, references=references, tokens=tokens, credentials=credentials
+        ),
+        validate=validate,
+        validation=variant_validate.construction(references),
+    )
+
+
 def _credentials_from_env() -> anthropic_ocr.CredentialsFactory:
     """Bind the worker's Anthropic federation identity, for the Claude converter to authenticate with.
 
@@ -123,12 +160,14 @@ async def _on_startup(app: web.Application) -> None:
     # rather than behind a connection failure.
     credentials = _credentials_from_env()
     concurrency = _concurrency_from_env()
+    references = _references_from_env()
     app[_BUCKET] = _bucket_from_env()
     app[_EXECUTOR] = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix='convert')
     provider = _meter_provider()
     app[_METER_PROVIDER] = provider
     tokens = request_tokens.RequestTokens(provider.get_meter(names.METER_NAME))
     app[_CONVERT_PDF] = functools.partial(anthropic_ocr.convert_pdf, credentials=credentials, tokens=tokens)
+    app[_VARIANTS] = _variants(references, credentials=credentials, tokens=tokens)
 
 
 async def _on_cleanup(app: web.Application) -> None:

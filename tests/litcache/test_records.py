@@ -8,7 +8,7 @@ import pytest
 from google.protobuf import timestamp_pb2
 
 from themis.litcache import records
-from themis.litcache.models import litcache_pb2
+from themis.litcache.models import litcache_pb2, variants_pb2
 
 
 def _record(
@@ -159,3 +159,23 @@ def test_bytes_held_as_one_kind_are_refused_as_another() -> None:
         records.put_record(
             manifest, 'm1', litcache_pb2.Record(deps=['rev'], created_at=timestamp_pb2.Timestamp(seconds=9)), None
         )
+
+
+def test_a_mention_set_from_a_superseded_rendering_never_takes_the_ref_from_one_on_the_current() -> None:
+    # A slow extraction on a rendering since replaced can finish after the one on its successor.
+    manifest = _holding(
+        old=_record(litcache_pb2.Converter.CONVERTER_DOCLING), new=_record(litcache_pb2.Converter.CONVERTER_LITDOWN)
+    )
+    manifest.refs[records.MARKDOWN_REF] = 'new'
+    construction = variants_pb2.VariantExtractionConstruction(model='m', harness_version='1')
+
+    on_current = litcache_pb2.Record(
+        deps=['new'], created_at=timestamp_pb2.Timestamp(seconds=100), variant_extraction=construction
+    )
+    records.put_record(manifest, 'v-new', on_current, records.VARIANTS_REF)
+    late = litcache_pb2.Record(
+        deps=['old'], created_at=timestamp_pb2.Timestamp(seconds=200), variant_extraction=construction
+    )
+    records.put_record(manifest, 'v-old', late, records.VARIANTS_REF)
+
+    assert manifest.refs[records.VARIANTS_REF] == 'v-new'

@@ -195,7 +195,7 @@ async def render(pdf_bytes: bytes) -> list[pdf.PageImage]:
         _LOG.info('%d pages encode to %d bytes; re-rendering at a %dpx edge', page_count, encoded, max_edge)
 
 
-def _page_blocks(
+def page_blocks(
     pages: Sequence[pdf.PageImage],
 ) -> list[anthropic.types.TextBlockParam | anthropic.types.ImageBlockParam]:
     """The page images as content blocks, each labelled with the page it is."""
@@ -215,7 +215,7 @@ def _page_blocks(
     return blocks
 
 
-def _spend_refused(error: anthropic.APIStatusError) -> bool:
+def spend_refused(error: anthropic.APIStatusError) -> bool:
     """Whether the API refused the call at a spend limit or for billing, rather than for the request or a rate."""
     inner = error.body.get('error') if isinstance(error.body, dict) else None
     if not isinstance(inner, dict):
@@ -230,7 +230,11 @@ def _spend_refused(error: anthropic.APIStatusError) -> bool:
 
 
 async def convert_pdf(
-    pdf_bytes: bytes, *, tokens: ocr.TokenCounter, credentials: CredentialsFactory | None = None
+    pdf_bytes: bytes,
+    *,
+    tokens: ocr.TokenCounter,
+    credentials: CredentialsFactory | None = None,
+    timeout: float | None = None,
 ) -> ocr.OcrRendering:
     """Transcribe a research-paper PDF to markdown via an Anthropic vision model.
 
@@ -242,6 +246,7 @@ async def convert_pdf(
             counted as far as the stream got, under the stop reason `unfinished`.
         credentials: Builds the access-token provider for this call. `None` leaves the SDK to
             resolve credentials from the environment its own way.
+        timeout: The seconds the caller has for the call, when fewer than `_TIMEOUT_SECONDS`.
 
     Returns:
         The transcription and the model id that produced it.
@@ -274,6 +279,7 @@ async def convert_pdf(
     # An explicit provider is total: given one, the client reads no credential env var at all. Given
     # none, it resolves from the environment. The client closes the provider it was given, along with
     # its own connection pool.
+    limit = _TIMEOUT_SECONDS if timeout is None else min(timeout, _TIMEOUT_SECONDS)
     try:
         async with (
             anthropic.AsyncAnthropic(
@@ -281,12 +287,12 @@ async def convert_pdf(
                 timeout=_STALL_SECONDS,
                 max_retries=0,
             ) as client,
-            asyncio.timeout(_TIMEOUT_SECONDS),
+            asyncio.timeout(limit),
             client.messages.stream(
                 model=_MODEL,
                 max_tokens=_MAX_TOKENS,
                 messages=[
-                    {'role': 'user', 'content': [*_page_blocks(pages), {'type': 'text', 'text': ocr.INSTRUCTION}]}
+                    {'role': 'user', 'content': [*page_blocks(pages), {'type': 'text', 'text': ocr.INSTRUCTION}]}
                 ],
             ) as stream,
         ):
@@ -299,7 +305,7 @@ async def convert_pdf(
         if snapshot is None:
             raise
         tokens.add(snapshot.usage, model=snapshot.model, stop_reason=_UNFINISHED)
-        raise ocr.SpentError(f'PDF transcription exceeded {_TIMEOUT_SECONDS:.0f}s') from e
+        raise ocr.SpentError(f'PDF transcription exceeded {limit:.0f}s') from e
     except Exception as e:
         # Once the stream is being read the SDK wraps nothing: a silence or a dropped connection arrives as
         # httpx2's own error, so whatever fails after `message_start` is a paid call that failed.
@@ -308,7 +314,7 @@ async def convert_pdf(
             if isinstance(e, anthropic.APIStatusError) and e.type == _OUTPUT_REJECTED_ERROR_TYPE:
                 raise ocr.OcrError(f'the transcription was rejected mid-stream (request {e.request_id}): {e}') from e
             raise ocr.SpentError(f'the transcription stream failed after the model answered: {e!r}') from e
-        if isinstance(e, anthropic.APIStatusError) and _spend_refused(e):
+        if isinstance(e, anthropic.APIStatusError) and spend_refused(e):
             raise ocr.SpendRefusedError(str(e)) from e
         raise
 

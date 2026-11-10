@@ -24,6 +24,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --group convert_worker --python 3.13
 
 FROM base AS runtime
+# bagz's GCS plugin (hgvs-weaver-data's gcs extra) loads libcurl at import, and native libcurl looks for its CA
+# bundle at the RHEL path, which Debian does not populate.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libcurl4 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /etc/pki/tls/certs \
+    && ln -s /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt
 WORKDIR /app
 COPY --from=build /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
@@ -45,6 +51,8 @@ RUN python -m compileall -q -x /site-packages/ /app
 # Import the entrypoint at build time: a module the COPY set misses is otherwise only found when the
 # deployed revision crash-loops, since nothing else imports the image's own tree.
 RUN python -c 'import themis.services.convert_worker.__main__'
+# bagz only logs a plugin that fails to load, so a missing native library would surface as an unregistered gs://.
+RUN python -c 'import importlib.metadata as m; [e.load() for e in m.entry_points(group="bagz.plugins")]'
 # The sweep's job runs this image too.
 RUN python -c 'import themis.litcache.sweep'
 # Serve unprivileged (defense-in-depth): the venv + copied trees are read-only at runtime.

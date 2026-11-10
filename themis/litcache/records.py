@@ -14,6 +14,10 @@ from themis.litcache.models import litcache_pb2
 
 # The ref naming the rendering a reader of the paper's text is served.
 MARKDOWN_REF = 'markdown'
+# The ref naming the variant mention set the extraction agent wrote from the paper.
+VARIANTS_REF = 'variants'
+# The ref naming weaver's verdicts on the mention set the `variants` ref names.
+VERDICTS_REF = 'verdicts'
 
 # Rendering fidelity, best first: an xml-faithful litdown rendering over a pdf-derived one, and llm-ocr over the legacy
 # docling route. A converter missing here ranks below every listed one rather than raising: during a deploy, a writer on
@@ -26,16 +30,35 @@ _CONVERTER_RANK = {
 _CONVERTER_RANK_MISS = max(_CONVERTER_RANK.values()) + 1
 
 
-def _rendering_key(key: str, record: litcache_pb2.Record) -> tuple[int, int, int, str]:
+def _rendering_key(
+    _manifest: litcache_pb2.Manifest, key: str, record: litcache_pb2.Record
+) -> tuple[int, int, int, str]:
     # Lower is better: converter fidelity, then the newer record, then the hash, a total order because protobuf-map
     # iteration order is unspecified.
     rank = _CONVERTER_RANK.get(record.rendering.converter, _CONVERTER_RANK_MISS)
     return (rank, -record.created_at.seconds, -record.created_at.nanos, key)
 
 
+def _made_from(upstream: str) -> Callable[[litcache_pb2.Manifest, str, litcache_pb2.Record], tuple[int, int, int, str]]:
+    """A derived kind's ranking: made from what `upstream` names now first, then the newest, then the hash.
+
+    Recency alone is not enough: a slow run on an input since superseded can finish after the run on its successor.
+    """
+
+    def rank(manifest: litcache_pb2.Manifest, key: str, record: litcache_pb2.Record) -> tuple[int, int, int, str]:
+        current = upstream in manifest.refs and manifest.refs[upstream] in record.deps
+        return (0 if current else 1, -record.created_at.seconds, -record.created_at.nanos, key)
+
+    return rank
+
+
 # Each kind's ranking, by its construction arm: a sort key, lower is better. A kind with none can be held but not
 # named by a ref.
-_RANKINGS: dict[str, Callable[[str, litcache_pb2.Record], tuple[int, int, int, str]]] = {'rendering': _rendering_key}
+_RANKINGS: dict[str, Callable[[litcache_pb2.Manifest, str, litcache_pb2.Record], tuple[int, int, int, str]]] = {
+    'rendering': _rendering_key,
+    'variant_extraction': _made_from(MARKDOWN_REF),
+    'variant_validation': _made_from(VARIANTS_REF),
+}
 
 
 class RecordRefusedError(ValueError):
@@ -61,7 +84,7 @@ def _move_ref(manifest: litcache_pb2.Manifest, ref: str, key: str) -> bool:
             raise RecordRefusedError(
                 f'manifest {manifest.doc_id}: the {ref} ref names {named!r}, which is not a {kind} it holds'
             )
-        if rank(named, current) <= rank(key, record):
+        if rank(manifest, named, current) <= rank(manifest, key, record):
             return False
     manifest.refs[ref] = key
     return True
@@ -119,6 +142,26 @@ def markdown(manifest: litcache_pb2.Manifest) -> tuple[str, litcache_pb2.Record]
         raise ValueError(
             f'manifest {manifest.doc_id}: the markdown ref names {key!r}, which is not a rendering it holds'
         )
+    return key, record
+
+
+def named(manifest: litcache_pb2.Manifest, ref: str, kind: str) -> tuple[str, litcache_pb2.Record] | None:
+    """The record `ref` names, as `(key, record)`, or None when the ref is unset.
+
+    Args:
+        manifest: The paper's manifest.
+        ref: The ref to follow.
+        kind: The construction arm the named record must have.
+
+    Raises:
+        ValueError: If the ref names a record the manifest does not hold, or one of another kind: a corrupt manifest.
+    """
+    key = manifest.refs.get(ref)
+    if key is None:
+        return None
+    record = manifest.records.get(key)
+    if record is None or record.WhichOneof('construction') != kind:
+        raise ValueError(f'manifest {manifest.doc_id}: the {ref} ref names {key!r}, which is not a {kind} it holds')
     return key, record
 
 

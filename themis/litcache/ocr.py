@@ -23,7 +23,7 @@ version it first records, however much it changed on the way there.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from typing import Protocol
 
 import anthropic.types
@@ -114,6 +114,15 @@ class TokenCounter(Protocol):
     def add(self, usage: anthropic.types.Usage, *, model: str, stop_reason: str) -> None: ...
 
 
-PdfConverter = Callable[[bytes], Awaitable[OcrRendering]]
-"""The injected transcriber. A provider whose `convert_pdf` takes configuration is bound to this
-shape by the caller that supplies it."""
+class PdfConverter(Protocol):
+    """The injected transcriber.
+
+    A provider whose `convert_pdf` takes configuration is bound to this shape by the caller that supplies it.
+    """
+
+    def __call__(self, pdf_bytes: bytes, /, *, timeout: float | None) -> Awaitable[OcrRendering]:
+        """Transcribe `pdf_bytes`, ending the call after `timeout` seconds, or the provider's own bound if sooner.
+
+        A call ended by the timeout after the model answered raises `SpentError`.
+        """
+        ...

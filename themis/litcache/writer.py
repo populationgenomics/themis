@@ -677,6 +677,55 @@ def add_rendering(bucket: gcs.Bucket, doc_id: str, rendering: RenderingInput) ->
     )
 
 
+def add_record(
+    bucket: gcs.Bucket,
+    doc_id: str,
+    *,
+    directory: str,
+    extension: str,
+    data: bytes,
+    record: litcache_pb2.Record,
+    ref: str,
+) -> str:
+    """Add a derived artifact other than a rendering to an existing paper by `commit`, competing for `ref`.
+
+    Writes `data` content-addressed under the paper's `directory` (idempotent, so safe before the manifest), then holds
+    `record` under its hash by `records.put_record`.
+
+    Args:
+        bucket: The cache bucket holding the paper.
+        doc_id: The paper.
+        directory: The kind's directory in the paper's, e.g. `variants`.
+        extension: The blob's extension, e.g. `pb`.
+        data: The artifact's bytes.
+        record: How they were made; every dep a hash the manifest holds.
+        ref: The ref the record competes for.
+
+    Returns:
+        The artifact's hash: its `Manifest.records` key.
+
+    Raises:
+        google.api_core.exceptions.NotFound: If the paper's manifest is absent.
+        ManifestRefusedError: If the manifest would break its own constraints, or `put_record` refuses the record
+            (permanent — do not retry).
+        ConcurrentWriteError: If the RMW lost its generation race the whole retry budget (contention — retryable).
+    """
+    name = storage.put_content_addressed(bucket, data, posixpath.join(paper_dir(doc_id), directory), extension)
+    key = posixpath.splitext(posixpath.basename(name))[0]
+    commit(bucket, doc_id, lambda manifest: _put_record(manifest, key, record, ref))
+    return key
+
+
+def rendering_path(doc_id: str, key: str) -> str:
+    """Where the markdown of the rendering whose hash is `key` is stored."""
+    return posixpath.join(paper_dir(doc_id), _RENDERINGS_DIR, f'{key}.md')
+
+
+def record_path(doc_id: str, directory: str, key: str, extension: str) -> str:
+    """Where `add_record` wrote the artifact whose hash is `key`."""
+    return posixpath.join(paper_dir(doc_id), directory, f'{key}.{extension}')
+
+
 def add_source_and_rendering(
     bucket: gcs.Bucket, doc_id: str, source: SourceInput, rendering: RenderingInput
 ) -> AddRenderingResult:

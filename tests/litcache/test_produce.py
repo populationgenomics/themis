@@ -9,9 +9,12 @@ production path uses.
 from __future__ import annotations
 
 import asyncio
+import collections
+import dataclasses
 import datetime
 import hashlib
 import pathlib
+import uuid
 from collections.abc import Callable, Coroutine
 
 import litdown
@@ -21,8 +24,9 @@ from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from litfetch import ids
 
-from themis.litcache import joblog, metadata_fields, oa, ocr, outcome, produce, work, writer
-from themis.litcache.models import litcache_pb2, work_pb2
+from themis.litcache import joblog, metadata_fields, oa, ocr, outcome, produce, variant_extract, work, writer
+from themis.litcache.models import litcache_pb2, variants_pb2, work_pb2
+from themis.testing import litcache_variants
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _CAPTURED_AT = datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC)
@@ -161,7 +165,8 @@ def _ocr_returning(
     converter_version: str = '1.1',
     captured: dict[str, bytes] | None = None,
 ) -> ocr.PdfConverter:
-    async def convert(pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def convert(pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         if captured is not None:
             captured['pdf'] = pdf_bytes
         return ocr.OcrRendering(markdown=markdown, model=model, converter_version=converter_version)
@@ -169,7 +174,8 @@ def _ocr_returning(
     return convert
 
 
-async def _ocr_boom(_pdf_bytes: bytes) -> ocr.OcrRendering:
+async def _ocr_boom(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+    del timeout
     raise AssertionError('convert_pdf must not be called')
 
 
@@ -198,6 +204,7 @@ def _produce(
     fetch_pdf: produce.PdfFetcher = _pdf_boom,
     fetch_supplementary: produce.SupplementFetcher = _no_supplements,
     convert_pdf: ocr.PdfConverter = _ocr_boom,
+    variants: produce.Variants = litcache_variants.UNUSED,
     now: Callable[[], datetime.datetime] = lambda: _CAPTURED_AT,
 ) -> Coroutine[object, object, outcome.Readiness]:
     """`produce.run` for this attempt, asking for the main text, with every collaborator refusing to be called."""
@@ -210,6 +217,7 @@ def _produce(
         fetch_pdf=fetch_pdf,
         fetch_supplementary=fetch_supplementary,
         convert_pdf=convert_pdf,
+        variants=variants,
         now=now,
     )
 
@@ -449,7 +457,8 @@ def test_produce_records_failed_when_the_located_pdf_will_not_transcribe(gcs_buc
     # Locating commits the PDF; its transcription is a step of its own, which settles FAILED.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
 
-    async def refuse(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def refuse(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise ocr.OcrError('refused')
 
     readiness = asyncio.run(
@@ -559,7 +568,8 @@ def test_produce_records_failed_on_a_permanent_ocr_error(gcs_bucket: gcs.Bucket)
     # the paper goes terminal, instead of retrying and re-billing the model to the same dead end.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
 
-    async def convert(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def convert(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise ocr.OcrError('model refused to transcribe the PDF')
 
     readiness = asyncio.run(
@@ -579,7 +589,8 @@ def test_produce_propagates_a_transient_convert_error_for_retry(gcs_bucket: gcs.
     # and Cloud Tasks retries, and no terminal marker is written (the paper stays PENDING for the retry).
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
 
-    async def convert(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def convert(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise RuntimeError('transient upstream blip')
 
     with pytest.raises(RuntimeError, match='transient'):
@@ -684,7 +695,8 @@ def test_a_redelivery_runs_no_settled_step_again(gcs_bucket: gcs.Bucket) -> None
     # ladder or paying for the transcription again.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
 
-    async def refuse(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def refuse(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise ocr.OcrError('refused')
 
     first = asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=refuse))
@@ -894,7 +906,8 @@ def test_a_transcription_spent_three_times_settles_failed_without_a_fourth(gcs_b
 def test_a_transcription_interrupted_before_the_model_answered_is_logged_unspent(gcs_bucket: gcs.Bucket) -> None:
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
 
-    async def overloaded(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def overloaded(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise RuntimeError('overloaded')
 
     with pytest.raises(RuntimeError, match='overloaded'):
@@ -1028,7 +1041,8 @@ def test_a_failure_the_log_cannot_record_still_surfaces(
             raise joblog.LogContentionError('lost every race')
         real_append(bucket, doc_id, entries)
 
-    async def overloaded(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def overloaded(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise RuntimeError('overloaded')
 
     monkeypatch.setattr(joblog, 'append', append_all_but_failures)
@@ -1040,7 +1054,8 @@ def test_a_transcription_refused_at_the_spend_limit_is_left_undone(gcs_bucket: g
     # The limit resets on the 1st, long after the queue's retries run out, so the request ends with the step undone.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
 
-    async def refused(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def refused(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise ocr.SpendRefusedError('You have reached your specified workspace API usage limits')
 
     readiness = asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=refused))
@@ -1057,7 +1072,8 @@ def test_a_transcription_refused_at_the_spend_limit_is_left_undone(gcs_bucket: g
 def test_refusals_never_use_up_a_transcriptions_attempts(gcs_bucket: gcs.Bucket) -> None:
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
 
-    async def refused(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def refused(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise ocr.SpendRefusedError('You have reached your specified workspace API usage limits')
 
     for n in range(4):
@@ -1071,7 +1087,8 @@ def test_refusals_never_use_up_a_transcriptions_attempts(gcs_bucket: gcs.Bucket)
 def test_a_transcription_the_model_answered_and_that_then_failed_is_logged_spent(gcs_bucket: gcs.Bucket) -> None:
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
 
-    async def cut_off(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def cut_off(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise ocr.SpentError('the transcription stream failed after the model answered')
 
     with pytest.raises(ocr.SpentError):
@@ -1167,3 +1184,330 @@ def test_a_supplement_that_cannot_be_downloaded_is_tried_again_then_settled(gcs_
         (work_pb2.JOB_EVENT_FAILED, work_pb2.SETTLED_OUTCOME_UNSPECIFIED),
         (work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE),
     ]
+
+
+# --- variants
+
+_VARIANT_MARKDOWN = '# Results\n\nThe proband carried c.123A>G in GENE1.\n'
+_EXTRACTED = variants_pb2.VariantExtractionConstruction(
+    model='claude-test', harness_version=variant_extract.HARNESS_VERSION
+)
+
+
+def _mention_set() -> variants_pb2.MentionSet:
+    mentions = variants_pb2.MentionSet()
+    mention = mentions.mentions.add(
+        verbatim='c.123A>G',
+        gene='GENE1',
+        disposition=variants_pb2.DISPOSITION_HAS_CANDIDATES,
+        known_species=variants_pb2.SPECIES_HUMAN,
+    )
+    mention.candidates.add(hgvs='NM_000001.1:c.123A>G')
+    mention.occurrences.add(context=variants_pb2.CONTEXT_OBSERVED, line=3)
+    return mentions
+
+
+def _write_variant_paper(bucket: gcs.Bucket, markdown: str = _VARIANT_MARKDOWN) -> None:
+    rendering = dataclasses.replace(_docling_rendering(), markdown=markdown)
+    _write_paper(bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), renderings=[rendering])
+
+
+@dataclasses.dataclass
+class _Variants:
+    """Variant collaborators that record what they were given, deriving one candidate per mention."""
+
+    validation: variants_pb2.VariantValidationConstruction = dataclasses.field(
+        default_factory=lambda: variants_pb2.VariantValidationConstruction(
+            weaver_version='2.1.0',
+            stores=[variants_pb2.StoreVersion(name='refseq', release='r1')],
+            validator_version='9',
+        )
+    )
+    extracted: list[str] = dataclasses.field(default_factory=list)
+    validated: list[tuple[variants_pb2.MentionSet, str]] = dataclasses.field(default_factory=list)
+    extract_error: Exception | None = None
+
+    async def extract(self, markdown: str) -> variant_extract.Extraction:
+        self.extracted.append(markdown)
+        if self.extract_error is not None:
+            raise self.extract_error
+        construction = variants_pb2.VariantExtractionConstruction()
+        construction.CopyFrom(_EXTRACTED)
+        construction.harness_version = variant_extract.HARNESS_VERSION  # the harness running now, as the agent's is
+        return variant_extract.Extraction(
+            mention_set=_mention_set(), construction=construction, turns=3, tool_calls=collections.Counter(), usage=[]
+        )
+
+    def validate(
+        self, mention_set: variants_pb2.MentionSet, text: str
+    ) -> tuple[variants_pb2.MentionSet, variants_pb2.Verdicts, variants_pb2.VariantValidationConstruction]:
+        self.validated.append((mention_set, text))
+        completed = variants_pb2.MentionSet()
+        completed.CopyFrom(mention_set)
+        verdicts = variants_pb2.Verdicts()
+        for mention in completed.mentions:
+            mention.candidates.add(
+                hgvs='NM_000001.2:c.123A>G',
+                rewrites=[variants_pb2.Rewrite(kind=variants_pb2.REWRITE_KIND_VERSION_UPDATE)],
+            )
+            verdict = verdicts.mentions.add(choice=variants_pb2.CHOICE_CHOSEN, chosen=1)
+            for _ in mention.candidates:
+                verdict.candidates.add(outcome=variants_pb2.OUTCOME_VALIDATED)
+        return completed, verdicts, self.validation
+
+    def seam(self) -> produce.Variants:
+        return produce.Variants(extract=self.extract, validate=self.validate, validation=self.validation)
+
+
+def _named(bucket: gcs.Bucket, ref: str, directory: str) -> bytes:
+    key = _load_manifest(bucket).refs[ref]
+    return bucket.blob(writer.record_path(_DOC_ID, directory, key, 'pb')).download_as_bytes()
+
+
+def test_a_request_for_variants_extracts_from_the_served_text_then_validates(gcs_bucket: gcs.Bucket) -> None:
+    _write_variant_paper(gcs_bucket)
+    variants = _Variants()
+
+    asyncio.run(
+        _produce(
+            gcs_bucket, _DOC_ID, targets=(produce.VARIANTS_STEP,), fetch=_returning(None), variants=variants.seam()
+        )
+    )
+
+    assert variants.extracted == [_VARIANT_MARKDOWN]
+    manifest = _load_manifest(gcs_bucket)
+    extraction = manifest.records[manifest.refs['variants']]
+    assert list(extraction.deps) == [manifest.refs['markdown']]
+    assert extraction.variant_extraction == _EXTRACTED
+    assert variants_pb2.MentionSet.FromString(_named(gcs_bucket, 'variants', 'variants')) == _mention_set()
+    # Validation read the agent's mention set and the text it was read from.
+    assert variants.validated == [(_mention_set(), _VARIANT_MARKDOWN)]
+    validation = manifest.records[manifest.refs['verdicts']]
+    assert list(validation.deps) == [manifest.refs['variants']]
+    assert validation.variant_validation == variants.validation
+    # The candidate validation derived is kept with its verdicts, after the agent's own.
+    (verdict,) = variants_pb2.Verdicts.FromString(_named(gcs_bucket, 'verdicts', 'verdicts')).mentions
+    assert [c.hgvs for c in verdict.derived] == ['NM_000001.2:c.123A>G']
+    assert len(verdict.candidates) == 2
+
+
+def test_a_request_without_the_variants_target_spends_nothing_on_them(gcs_bucket: gcs.Bucket) -> None:
+    _write_variant_paper(gcs_bucket)
+
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, targets=(), fetch=_returning(None)))
+
+    assert 'variants' not in _load_manifest(gcs_bucket).refs
+
+
+def test_a_text_the_scan_finds_no_variant_in_settles_without_the_agent(gcs_bucket: gcs.Bucket) -> None:
+    _write_variant_paper(gcs_bucket, markdown='# Methods\n\nNo variants here.\n')
+
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, targets=(produce.VARIANTS_STEP,), fetch=_returning(None)))
+
+    assert (produce.VARIANTS_STEP, work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_NOTHING) in _log(gcs_bucket)
+
+
+def test_an_extraction_the_model_will_not_finish_settles_as_failed(gcs_bucket: gcs.Bucket) -> None:
+    _write_variant_paper(gcs_bucket)
+    variants = _Variants(
+        extract_error=variant_extract.ExtractionError('turn 2 stopped with refusal', partial=_mention_set(), turns=2)
+    )
+
+    asyncio.run(
+        _produce(
+            gcs_bucket, _DOC_ID, targets=(produce.VARIANTS_STEP,), fetch=_returning(None), variants=variants.seam()
+        )
+    )
+
+    entries = [(e.event, e.outcome) for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == 'variants']
+    assert entries == [
+        (work_pb2.JOB_EVENT_BEGUN, work_pb2.SETTLED_OUTCOME_UNSPECIFIED),
+        (work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE),
+    ]
+    assert 'variants' not in _load_manifest(gcs_bucket).refs
+
+
+def test_an_extraction_refused_at_the_spend_limit_is_left_undone(gcs_bucket: gcs.Bucket) -> None:
+    _write_variant_paper(gcs_bucket)
+    variants = _Variants(extract_error=ocr.SpendRefusedError('workspace limit'))
+
+    asyncio.run(
+        _produce(
+            gcs_bucket, _DOC_ID, targets=(produce.VARIANTS_STEP,), fetch=_returning(None), variants=variants.seam()
+        )
+    )
+
+    events = [e.event for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == 'variants']
+    assert events == [work_pb2.JOB_EVENT_BEGUN, work_pb2.JOB_EVENT_REFUSED]
+
+
+def _late(by: datetime.timedelta) -> Callable[[], datetime.datetime]:
+    """A clock for a request that starts at `_CAPTURED_AT` and has run for `by` at every later reading."""
+    readings = iter([_CAPTURED_AT])
+    return lambda: next(readings, _CAPTURED_AT + by)
+
+
+def test_a_transcription_begun_late_is_given_only_the_time_its_request_has_left(gcs_bucket: gcs.Bucket) -> None:
+    # Begun 20 minutes into a 30-minute request: it may run until a minute before the end, to commit.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    timeouts: list[float | None] = []
+
+    async def convert(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        timeouts.append(timeout)
+        return ocr.OcrRendering(markdown='# OCR\n', model='claude-sonnet-5', converter_version='1.1')
+
+    asyncio.run(
+        _produce(
+            gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=convert, now=_late(datetime.timedelta(minutes=20))
+        )
+    )
+
+    assert timeouts == [datetime.timedelta(minutes=9).total_seconds()]
+
+
+def test_a_request_with_less_than_a_transcriptions_expected_time_left_defers_it(gcs_bucket: gcs.Bucket) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    with pytest.raises(produce.DeferredError):
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), now=_late(datetime.timedelta(minutes=28))))
+
+    assert not [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == produce.TRANSCRIPTION_STEP]
+
+
+def test_a_request_without_the_time_to_finish_an_extraction_does_not_begin_it(gcs_bucket: gcs.Bucket) -> None:
+    _write_variant_paper(gcs_bucket)
+    variants = _Variants()
+
+    with pytest.raises(produce.DeferredError):
+        asyncio.run(
+            _produce(
+                gcs_bucket,
+                _DOC_ID,
+                targets=(produce.VARIANTS_STEP,),
+                fetch=_returning(None),
+                variants=variants.seam(),
+                now=_late(datetime.timedelta(minutes=10)),
+            )
+        )
+
+    assert variants.extracted == []
+    assert not [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == produce.VARIANTS_STEP]
+
+
+def test_a_text_with_nothing_variant_like_settles_however_late_in_its_request(gcs_bucket: gcs.Bucket) -> None:
+    # The scan spends nothing, so it runs before the time check: such a paper is never deferred.
+    _write_variant_paper(gcs_bucket, markdown='# Methods\n\nNo variants here.\n')
+
+    asyncio.run(
+        _produce(
+            gcs_bucket,
+            _DOC_ID,
+            targets=(produce.VARIANTS_STEP,),
+            fetch=_returning(None),
+            now=_late(datetime.timedelta(minutes=29)),
+        )
+    )
+
+    assert (produce.VARIANTS_STEP, work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_NOTHING) in _log(gcs_bucket)
+
+
+def _new_harness(monkeypatch: pytest.MonkeyPatch, version: str) -> None:
+    monkeypatch.setattr(variant_extract, 'HARNESS_VERSION', version)
+    monkeypatch.setattr(produce, '_HARNESS_INPUT', hashlib.sha256(version.encode()).hexdigest())
+
+
+def _extract_variants(bucket: gcs.Bucket, variants: _Variants, *, days: int) -> None:
+    # Each a delivery of its own, days apart: long past the dispatch deadline of any attempt before it.
+    at = _CAPTURED_AT + datetime.timedelta(days=days)
+    attempt = joblog.Attempt(id=str(uuid.UUID(int=days)), queue='bulk', task=f'task-{days}', retry_count=0)
+    asyncio.run(
+        _produce(
+            bucket,
+            _DOC_ID,
+            targets=(produce.VARIANTS_STEP,),
+            fetch=_returning(None),
+            variants=variants.seam(),
+            attempt=attempt,
+            now=lambda: at,
+        )
+    )
+
+
+def test_each_new_harness_extracts_the_same_rendering_once(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Extractions committed under earlier harnesses are not attempts that paid and committed nothing.
+    _write_variant_paper(gcs_bucket)
+    variants = _Variants()
+    for day in range(1, 5):
+        _new_harness(monkeypatch, f'h{day}')
+        _extract_variants(gcs_bucket, variants, days=day)
+    assert len(variants.extracted) == 4
+
+
+def test_a_new_harness_tries_again_an_extraction_that_failed_under_the_old(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_variant_paper(gcs_bucket)
+    variants = _Variants(extract_error=variant_extract.ExtractionError('no end', partial=_mention_set(), turns=80))
+    _extract_variants(gcs_bucket, variants, days=1)
+
+    variants.extract_error = None
+    _new_harness(monkeypatch, 'next')
+    _extract_variants(gcs_bucket, variants, days=2)
+
+    assert len(variants.extracted) == 2
+    assert 'variants' in _load_manifest(gcs_bucket).refs
+
+
+def test_verdicts_made_another_way_are_made_again_by_any_request(gcs_bucket: gcs.Bucket) -> None:
+    # A weaver, store or validator change re-validates for free; the agent is not run again.
+    _write_variant_paper(gcs_bucket)
+    first = _Variants()
+    asyncio.run(
+        _produce(gcs_bucket, _DOC_ID, targets=(produce.VARIANTS_STEP,), fetch=_returning(None), variants=first.seam())
+    )
+    newer = _Variants()
+    newer.validation.validator_version = '10'
+
+    later = _CAPTURED_AT + datetime.timedelta(hours=1)
+
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, attempt=_OTHER, targets=(), variants=newer.seam(), now=lambda: later))
+
+    assert newer.extracted == []
+    assert len(newer.validated) == 1
+    manifest = _load_manifest(gcs_bucket)
+    assert manifest.records[manifest.refs['verdicts']].variant_validation.validator_version == '10'
+
+
+def test_a_caller_that_cannot_say_how_verdicts_are_made_counts_any_as_current(gcs_bucket: gcs.Bucket) -> None:
+    # The sweep holds no reference stores; it must not see validation work on every pass.
+    _write_variant_paper(gcs_bucket)
+    asyncio.run(
+        _produce(
+            gcs_bucket, _DOC_ID, targets=(produce.VARIANTS_STEP,), fetch=_returning(None), variants=_Variants().seam()
+        )
+    )
+
+    work_left = produce.would_run(
+        (),
+        _load_manifest(gcs_bucket),
+        joblog.read(gcs_bucket, _DOC_ID),
+        now=_CAPTURED_AT,
+        deadline=work.DISPATCH_DEADLINE,
+    )
+
+    assert produce.VERDICTS_STEP not in work_left
+
+
+def test_a_newer_rendering_gives_the_variants_step_work_again() -> None:
+    manifest = _manifest(pdf=True, converters=(litcache_pb2.Converter.CONVERTER_DOCLING,))
+    held = manifest.refs['markdown']
+    manifest.records['v' * 64].CopyFrom(litcache_pb2.Record(deps=[held], variant_extraction=_EXTRACTED))
+    manifest.refs['variants'] = 'v' * 64
+    assert produce.reach((produce.VARIANTS_STEP,), manifest) == frozenset()
+
+    manifest.records['n' * 64].CopyFrom(manifest.records[held])
+    manifest.refs['markdown'] = 'n' * 64
+
+    assert produce.reach((produce.VARIANTS_STEP,), manifest) == {produce.VARIANTS_STEP}

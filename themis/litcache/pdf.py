@@ -359,6 +359,36 @@ def _render_page(page: pypdfium2.PdfPage, number: int, fit: PageFit) -> PageImag
     return PageImage(number=number, width=width_px, height=height_px, png=buffer.getvalue())
 
 
+def _text_layer(pdf_bytes: bytes) -> str:
+    parts: list[str] = []
+    with _document(pdf_bytes) as doc:
+        for page in doc:
+            with contextlib.closing(page), contextlib.closing(page.get_textpage()) as textpage:
+                parts.append(textpage.get_text_bounded())
+    return '\n'.join(parts)
+
+
+def _render_region(pdf_bytes: bytes, page: int, box: tuple[float, float, float, float], max_edge: int) -> PageImage:
+    left, top, right, bottom = box
+    if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+        raise ValueError(f'the box {box} is not a region of the page')
+    if max_edge <= 0:
+        raise ValueError(f'max_edge {max_edge} is not positive')
+    with _document(pdf_bytes) as doc:
+        if not 1 <= page <= len(doc):
+            raise ValueError(f'the pdf has no page {page}')
+        with contextlib.closing(doc[page - 1]) as pdf_page:
+            width_pt, height_pt = pdf_page.get_size()
+            region_w, region_h = (right - left) * width_pt, (bottom - top) * height_pt
+            scale = max_edge / max(region_w, region_h)
+            # pdfium crops in points from each edge, before scaling.
+            crop = (left * width_pt, (1 - bottom) * height_pt, (1 - right) * width_pt, top * height_pt)
+            image = pdf_page.render(scale=scale, crop=crop).to_pil()
+    buffer = io.BytesIO()
+    image.save(buffer, format='PNG')
+    return PageImage(number=page, width=image.width, height=image.height, png=buffer.getvalue())
+
+
 def _doi_from_xmp(pdf_bytes: bytes) -> str | None:
     """Read a DOI from the XMP packet's `prism:doi` / `dc:identifier`, if present."""
     for tag in _XMP_DOI_TAGS:
@@ -502,3 +532,32 @@ def doi_from_metadata(pdf_bytes: bytes) -> concurrent.futures.Future[str | None]
         are not a loadable pdf and no XMP DOI was found (the document-info fallback loads the pdf).
     """
     return _PDFIUM.submit(_doi_from_metadata, pdf_bytes)
+
+
+def text_layer(pdf_bytes: bytes) -> concurrent.futures.Future[str]:
+    """Every page's text layer, in page order; empty for a scan with none.
+
+    Returns:
+        A future of the text. It raises `pypdfium2.PdfiumError` if the bytes are not a loadable pdf.
+    """
+    return _PDFIUM.submit(_text_layer, pdf_bytes)
+
+
+def render_region(
+    pdf_bytes: bytes, *, page: int, box: tuple[float, float, float, float], max_edge: int
+) -> concurrent.futures.Future[PageImage]:
+    """Rasterize part of one page, enlarged so its longer side is `max_edge` pixels.
+
+    Args:
+        pdf_bytes: The raw pdf source bytes.
+        page: The 1-based page number.
+        box: The region as fractions of the page, `(left, top, right, bottom)`, each in 0..1, measured
+            from the page's top-left corner.
+        max_edge: The longer side of the result, in pixels.
+
+    Returns:
+        A future of the region as a png, its `number` the page's. It raises `pypdfium2.PdfiumError` if
+        the bytes are not a loadable pdf, and `ValueError` if the page does not exist, or the box is
+        empty or outside the page.
+    """
+    return _PDFIUM.submit(_render_region, pdf_bytes, page, box, max_edge)

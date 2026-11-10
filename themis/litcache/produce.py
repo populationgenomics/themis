@@ -44,10 +44,24 @@ from collections.abc import Awaitable, Callable, Collection, Iterable
 import litdown
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
+from google.protobuf import timestamp_pb2
 from litfetch import resolvers
 
-from themis.litcache import identity, joblog, oa, ocr, outcome, pdf, records, work, writer
-from themis.litcache.models import litcache_pb2, work_pb2
+from themis.litcache import (
+    identity,
+    joblog,
+    oa,
+    ocr,
+    outcome,
+    pdf,
+    records,
+    variant_extract,
+    variant_scan,
+    variant_validate,
+    work,
+    writer,
+)
+from themis.litcache.models import litcache_pb2, variants_pb2, work_pb2
 
 # The fetched XML lands as its own lineage; the litdown rendering is produced from it.
 _XML_HANDLE = 'xml'
@@ -66,12 +80,41 @@ XML_STEP = 'xml'
 LOCATE_STEP = 'locate'
 TRANSCRIPTION_STEP = 'transcription'
 SUPPLEMENTS_STEP = 'supplements'
+VARIANTS_STEP = 'variants'
+VERDICTS_STEP = 'verdicts'
+# The kinds' directories in a paper's.
+_VARIANTS_DIR = 'variants'
+_VERDICTS_DIR = 'verdicts'
+# Beyond a spending step's own run: the source read before it and the commit after.
+_COMMIT_MARGIN = datetime.timedelta(seconds=60)
 # Attempts on one XML revision that may fail to download a listed supplementary file before the step settles.
 SUPPLEMENT_ATTEMPTS_LIMIT = 3
+# About the median transcription in dev (4,302 runs to 2026-11: median 2.0 min, p99 6.0, longest 10.0). A request with
+# less left defers it; one with more runs it to the request's end, past which it fails and is logged as paid for.
+_TRANSCRIPTION_EXPECTED = datetime.timedelta(minutes=2)
 
 Fetcher = Callable[..., Awaitable[oa.OaSource | None]]
 PdfFetcher = Callable[..., Awaitable[oa.OaPdf | None]]
 SupplementFetcher = Callable[..., Awaitable[list[oa.SupplementaryFile]]]
+Validation = variants_pb2.VariantValidationConstruction
+
+
+@dataclasses.dataclass(frozen=True)
+class Variants:
+    """What the variant steps call out to; injected so the loop runs offline in tests.
+
+    Attributes:
+        extract: Runs the extraction agent over a rendering's markdown (`variant_extract.extract_markdown`, bound).
+        validate: weaver's verdicts on a mention set, given the text it was read from (`variant_validate.validate`,
+            bound to the reference stores).
+        validation: How verdicts this worker makes now are made; verdicts made otherwise are stale.
+    """
+
+    extract: Callable[[str], Awaitable[variant_extract.Extraction]]
+    validate: Callable[
+        [variants_pb2.MentionSet, str], tuple[variants_pb2.MentionSet, variants_pb2.Verdicts, Validation]
+    ]
+    validation: Validation
 
 
 class PaperNotInCorpusError(Exception):
@@ -80,6 +123,13 @@ class PaperNotInCorpusError(Exception):
     Distinguishes the one `NotFound` a retry cannot clear from every other missing object — a seed
     revision blob, a manifest that vanished mid-write — which are operational faults rather than a
     paper the corpus does not hold, and must stay retryable.
+    """
+
+
+class DeferredError(Exception):
+    """A spending step could not finish in the time this request has left; nothing was begun or spent.
+
+    Committed steps stand. A later delivery, with its own time, runs the step.
     """
 
 
@@ -108,8 +158,11 @@ class _Run:
     fetch_pdf: PdfFetcher
     fetch_supplementary: SupplementFetcher
     convert_pdf: ocr.PdfConverter
+    variants: Variants
     now: Callable[[], datetime.datetime]
     deadline: datetime.timedelta
+    started: datetime.datetime
+    time_limit: datetime.timedelta | None
 
     def settle(self, step: str, inputs: Iterable[str], settled: _SettledError) -> None:
         joblog.append(
@@ -171,16 +224,20 @@ class _Step:
         spends: Whether running it costs model spend; only a request reaching it may run it.
         needs: The steps whose output it reads; a request reaching it reaches them.
         inputs: The hashes of what it would read now, off the manifest; None when it has nothing to work on.
-        produced: Whether its output is present on its current inputs.
+        produced: Whether its output is present on its current inputs, given how this worker validates variants;
+            None for a caller that cannot say, which counts verdicts made any way as present.
         run: Runs it on those inputs, committing its record or raising `_SettledError`.
+        expected: For a spending step, the time a request must have left to begin it. A step that runs longer is
+            ended when the request's time runs out, and the attempt is logged as paid for and failed.
     """
 
     name: str
     spends: bool
     needs: tuple[str, ...]
     inputs: Callable[[litcache_pb2.Manifest], tuple[str, ...] | None]
-    produced: Callable[[litcache_pb2.Manifest], bool]
+    produced: Callable[[litcache_pb2.Manifest, Validation | None], bool]
     run: Callable[[_Run, litcache_pb2.Manifest, tuple[str, ...]], Awaitable[None]]
+    expected: datetime.timedelta | None = None
 
 
 def _utcnow() -> datetime.datetime:
@@ -240,7 +297,7 @@ def _pdf_source(manifest: litcache_pb2.Manifest) -> litcache_pb2.Source | None:
 # --- xml
 
 
-def _xml_produced(manifest: litcache_pb2.Manifest) -> bool:
+def _xml_produced(manifest: litcache_pb2.Manifest, _validation: Validation | None) -> bool:
     return bool(_renderings_by(manifest, litcache_pb2.Converter.CONVERTER_LITDOWN))
 
 
@@ -324,30 +381,47 @@ def _transcription_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | 
     return None if source is None else (_current_revision(source).hash,)
 
 
-def _transcription_produced(manifest: litcache_pb2.Manifest) -> bool:
+def _transcription_produced(manifest: litcache_pb2.Manifest, _validation: Validation | None) -> bool:
     """Whether the text was converted from XML, or the current PDF is already transcribed."""
     inputs = _transcription_inputs(manifest)
     transcribed = any(
         inputs is not None and inputs[0] in record.deps
         for record in _renderings_by(manifest, litcache_pb2.Converter.CONVERTER_LLM_OCR)
     )
-    return _xml_produced(manifest) or transcribed
+    return _xml_produced(manifest, None) or transcribed
 
 
-async def _run_transcription(run: _Run, manifest: litcache_pb2.Manifest, inputs: tuple[str, ...]) -> None:
+def _time_left(run: _Run) -> datetime.timedelta | None:
+    """What this request has left for a spending step, after the margin for its read and commit; None if unbounded."""
+    if run.time_limit is None:
+        return None
+    return run.time_limit - (run.now() - run.started) - _COMMIT_MARGIN
+
+
+def _begin(run: _Run, step: str, inputs: tuple[str, ...]) -> bool:
+    """Log a spending step as begun; return whether this request is to run it.
+
+    Raises:
+        DeferredError: The step could run past this request's time limit: begun and killed, it would be paid for and
+            commit nothing.
+        _SettledError: The step has been paid for `joblog.SPENT_ATTEMPTS_LIMIT` times and committed nothing.
+    """
+    expected = _STEPS_BY_NAME[step].expected
+    left = _time_left(run)
+    if left is not None and expected is not None and left < expected:
+        raise DeferredError(f'{step} is expected to run {expected}, and this request has {left} left')
     verdict = joblog.begin(
-        run.bucket,
-        run.doc_id,
-        step=TRANSCRIPTION_STEP,
-        inputs=inputs,
-        attempt=run.attempt,
-        now=run.now(),
-        deadline=run.deadline,
+        run.bucket, run.doc_id, step=step, inputs=inputs, attempt=run.attempt, now=run.now(), deadline=run.deadline
     )
     if verdict is joblog.Verdict.SPENT:
         raise _permanent(f'{joblog.SPENT_ATTEMPTS_LIMIT} attempts were paid for and committed nothing')
-    if verdict is not joblog.Verdict.BEGUN:
-        return  # settled or running since this request read the log; either way it is not this request's to run
+    # Settled or running since this request read the log; either way it is not this request's to run.
+    return verdict is joblog.Verdict.BEGUN
+
+
+async def _run_transcription(run: _Run, manifest: litcache_pb2.Manifest, inputs: tuple[str, ...]) -> None:
+    if not _begin(run, TRANSCRIPTION_STEP, inputs):
+        return
     source = _pdf_source(manifest)
     if source is None:
         raise ValueError(f'transcription of {run.doc_id} began with no PDF')  # its inputs said there was one
@@ -356,7 +430,8 @@ async def _run_transcription(run: _Run, manifest: litcache_pb2.Manifest, inputs:
         pdf_bytes = run.bucket.blob(
             writer.source_revision_path(run.doc_id, source.handle, revision.hash, source.media_type)
         ).download_as_bytes()
-        result = await run.convert_pdf(pdf_bytes)
+        left = _time_left(run)
+        result = await run.convert_pdf(pdf_bytes, timeout=None if left is None else left.total_seconds())
     except ocr.OcrError as e:
         # A refusal, truncation or block: the model answered, and would answer the same way again.
         raise _permanent(str(e)) from e
@@ -407,7 +482,7 @@ def _supplements_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | No
     return None if source is None else (_current_revision(source).hash,)
 
 
-def _supplements_produced(manifest: litcache_pb2.Manifest) -> bool:
+def _supplements_produced(manifest: litcache_pb2.Manifest, _validation: Validation | None) -> bool:
     supplementary = litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_SUPPLEMENTARY
     return any(f.role == supplementary and f.hash for f in manifest.files)
 
@@ -445,6 +520,127 @@ async def _run_supplements(run: _Run, manifest: litcache_pb2.Manifest, inputs: t
     _commit(lambda: writer.add_files(run.bucket, run.doc_id, files))
 
 
+# --- variants
+
+
+# The harness is part of what an extraction attempt is on, beside the rendering: the job log keys entries by their
+# inputs, and a new harness must start with none, as a new rendering does. Inputs are sha256 hex, so it enters as one.
+_HARNESS_INPUT = hashlib.sha256(f'variant extraction harness {variant_extract.HARNESS_VERSION}'.encode()).hexdigest()
+
+
+def _variants_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | None:
+    named = records.markdown(manifest)
+    return None if named is None else (named[0], _HARNESS_INPUT)
+
+
+def _variants_produced(manifest: litcache_pb2.Manifest, _validation: Validation | None) -> bool:
+    """Whether the current rendering has a mention set from the current harness."""
+    inputs = _variants_inputs(manifest)
+    return inputs is not None and any(
+        record.WhichOneof('construction') == 'variant_extraction'
+        and inputs[0] in record.deps
+        and record.variant_extraction.harness_version == variant_extract.HARNESS_VERSION
+        for record in manifest.records.values()
+    )
+
+
+def _created(run: _Run) -> timestamp_pb2.Timestamp:
+    created = timestamp_pb2.Timestamp()
+    created.FromDatetime(run.now())
+    return created
+
+
+async def _run_variants(run: _Run, _manifest: litcache_pb2.Manifest, inputs: tuple[str, ...]) -> None:
+    markdown_key, _harness = inputs
+    markdown = run.bucket.blob(writer.rendering_path(run.doc_id, markdown_key)).download_as_text()
+    # The pattern scan is the free screen: a rendering it finds no variant-like string in is not worth an agent.
+    if not variant_scan.scan(markdown):
+        raise _nothing('the pattern scan finds no variant-like string in the rendering')
+    if not _begin(run, VARIANTS_STEP, inputs):
+        return
+    try:
+        extraction = await run.variants.extract(markdown)
+    except variant_extract.ExtractionError as e:
+        raise _permanent(f'{e} after {e.turns} turns') from e
+    except ocr.SpendRefusedError as e:
+        run.refuse(VARIANTS_STEP, inputs, e)
+        return
+    except ocr.SpentError as e:
+        run.fail(VARIANTS_STEP, inputs, e, model_answered=True)
+        raise
+    except Exception as e:
+        run.fail(VARIANTS_STEP, inputs, e, model_answered=False)
+        raise
+    record = litcache_pb2.Record(
+        deps=[markdown_key], created_at=_created(run), variant_extraction=extraction.construction
+    )
+    data = extraction.mention_set.SerializeToString(deterministic=True)
+    try:
+        _commit(
+            lambda: writer.add_record(
+                run.bucket,
+                run.doc_id,
+                directory=_VARIANTS_DIR,
+                extension='pb',
+                data=data,
+                record=record,
+                ref=records.VARIANTS_REF,
+            )
+        )
+    except _SettledError:
+        raise
+    except Exception as e:
+        run.fail(VARIANTS_STEP, inputs, e, model_answered=True)  # paid for, and not committed
+        raise
+
+
+def _verdicts_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | None:
+    named = records.named(manifest, records.VARIANTS_REF, 'variant_extraction')
+    return None if named is None else (named[0],)
+
+
+def _verdicts_produced(manifest: litcache_pb2.Manifest, validation: Validation | None) -> bool:
+    """Whether the current mention set has verdicts made the way this worker makes them, or any way for None."""
+    inputs = _verdicts_inputs(manifest)
+    return inputs is not None and any(
+        record.WhichOneof('construction') == 'variant_validation'
+        and inputs[0] in record.deps
+        and (validation is None or record.variant_validation == validation)
+        for record in manifest.records.values()
+    )
+
+
+async def _run_verdicts(run: _Run, manifest: litcache_pb2.Manifest, inputs: tuple[str, ...]) -> None:
+    (variants_key,) = inputs
+    extraction = manifest.records[variants_key]
+    if len(extraction.deps) != 1:
+        raise _permanent(f'the mention set {variants_key} was read from {len(extraction.deps)} inputs, not a rendering')
+    (markdown_key,) = extraction.deps
+    text = run.bucket.blob(writer.rendering_path(run.doc_id, markdown_key)).download_as_text()
+    agents = variants_pb2.MentionSet.FromString(
+        run.bucket.blob(writer.record_path(run.doc_id, _VARIANTS_DIR, variants_key, 'pb')).download_as_bytes()
+    )
+    try:
+        completed, verdicts, construction = run.variants.validate(agents, text)
+    except variant_validate.MisplacedOccurrenceError as e:
+        raise _permanent(str(e)) from e
+    for own, mention, verdict in zip(agents.mentions, completed.mentions, verdicts.mentions, strict=True):
+        verdict.derived.extend(mention.candidates[len(own.candidates) :])
+    record = litcache_pb2.Record(deps=[variants_key], created_at=_created(run), variant_validation=construction)
+    data = verdicts.SerializeToString(deterministic=True)
+    _commit(
+        lambda: writer.add_record(
+            run.bucket,
+            run.doc_id,
+            directory=_VERDICTS_DIR,
+            extension='pb',
+            data=data,
+            record=record,
+            ref=records.VERDICTS_REF,
+        )
+    )
+
+
 # Declared so that every step comes after the steps whose output it reads.
 STEPS: tuple[_Step, ...] = (
     _Step(XML_STEP, spends=False, needs=(), inputs=lambda _m: (), produced=_xml_produced, run=_run_xml),
@@ -453,7 +649,7 @@ STEPS: tuple[_Step, ...] = (
         spends=False,
         needs=(),
         inputs=lambda _m: (),
-        produced=lambda m: _pdf_source(m) is not None,
+        produced=lambda m, _v: _pdf_source(m) is not None,
         run=_run_locate,
     ),
     _Step(
@@ -463,6 +659,7 @@ STEPS: tuple[_Step, ...] = (
         inputs=_transcription_inputs,
         produced=_transcription_produced,
         run=_run_transcription,
+        expected=_TRANSCRIPTION_EXPECTED,
     ),
     _Step(
         SUPPLEMENTS_STEP,
@@ -471,6 +668,23 @@ STEPS: tuple[_Step, ...] = (
         inputs=_supplements_inputs,
         produced=_supplements_produced,
         run=_run_supplements,
+    ),
+    _Step(
+        VARIANTS_STEP,
+        spends=True,
+        needs=(work.MAIN_TEXT_TARGET,),
+        inputs=_variants_inputs,
+        produced=_variants_produced,
+        run=_run_variants,
+        expected=variant_extract.LONGEST,
+    ),
+    _Step(
+        VERDICTS_STEP,
+        spends=False,
+        needs=(VARIANTS_STEP,),
+        inputs=_verdicts_inputs,
+        produced=_verdicts_produced,
+        run=_run_verdicts,
     ),
 )
 _STEPS_BY_NAME = {step.name: step for step in STEPS}
@@ -485,8 +699,12 @@ def _main_text_met(manifest: litcache_pb2.Manifest) -> bool:
     return records.MARKDOWN_REF in manifest.refs
 
 
-def reach(targets: Collection[str], manifest: litcache_pb2.Manifest) -> frozenset[str]:
+def reach(
+    targets: Collection[str], manifest: litcache_pb2.Manifest, validation: Validation | None = None
+) -> frozenset[str]:
     """The steps a request naming `targets` reaches on `manifest`: the targets and what they read, back to a met step.
+
+    `validation` is how the asking worker validates variants (`_Step.produced`).
 
     Raises:
         UnknownTargetError: If a target is neither a step nor the main text.
@@ -500,7 +718,7 @@ def reach(targets: Collection[str], manifest: litcache_pb2.Manifest) -> frozense
                     visit(route)
             return
         step = _STEPS_BY_NAME[name]
-        if name in reached or step.produced(manifest):
+        if name in reached or step.produced(manifest, validation):
             return
         reached.add(name)
         for need in step.needs:
@@ -522,9 +740,10 @@ def _step_has_work(
     attempt: joblog.Attempt,
     now: datetime.datetime,
     deadline: datetime.timedelta,
+    validation: Validation | None,
 ) -> bool:
     inputs = step.inputs(manifest)
-    if inputs is None or step.produced(manifest):
+    if inputs is None or step.produced(manifest, validation):
         return False
     verdict = joblog.assess(log, step=step.name, inputs=inputs, attempt=attempt, now=now, deadline=deadline)
     return verdict in (joblog.Verdict.WORK, joblog.Verdict.SPENT, joblog.Verdict.BEGUN)
@@ -536,7 +755,15 @@ def _runs(step: _Step, reached: Collection[str]) -> bool:
 
 
 def _has_work(run: _Run, step: _Step, manifest: litcache_pb2.Manifest, log: work_pb2.JobLog) -> bool:
-    return _step_has_work(step, manifest, log, attempt=run.attempt, now=run.now(), deadline=run.deadline)
+    return _step_has_work(
+        step,
+        manifest,
+        log,
+        attempt=run.attempt,
+        now=run.now(),
+        deadline=run.deadline,
+        validation=run.variants.validation,
+    )
 
 
 # An attempt that is no delivery: assessing as it, a begun entry is never its own nor an earlier delivery's.
@@ -566,7 +793,7 @@ def outstanding(
     """
 
     def has_work(step: _Step) -> bool:
-        return _step_has_work(step, manifest, log, attempt=_OBSERVER, now=now, deadline=deadline)
+        return _step_has_work(step, manifest, log, attempt=_OBSERVER, now=now, deadline=deadline, validation=None)
 
     towards_main_text = (_STEPS_BY_NAME[name] for name in (XML_STEP, LOCATE_STEP, TRANSCRIPTION_STEP))
     return Outstanding(
@@ -595,7 +822,8 @@ def would_run(
     return frozenset(
         step.name
         for step in STEPS
-        if _runs(step, reached) and _step_has_work(step, manifest, log, attempt=_OBSERVER, now=now, deadline=deadline)
+        if _runs(step, reached)
+        and _step_has_work(step, manifest, log, attempt=_OBSERVER, now=now, deadline=deadline, validation=None)
     )
 
 
@@ -615,7 +843,7 @@ def _next_step(
     log read since then can only show that attempt dying or giving up, which is its own task's to pick up.
     """
     log = joblog.read(run.bucket, run.doc_id)
-    reached = reach(targets, manifest)
+    reached = reach(targets, manifest, run.variants.validation)
     with_work = [
         step for step in STEPS if step.name not in ran and _runs(step, reached) and _has_work(run, step, manifest, log)
     ]
@@ -672,12 +900,14 @@ async def run(
     targets: Collection[str],
     attempt: joblog.Attempt,
     convert_pdf: ocr.PdfConverter,
+    variants: Variants,
     resolver: resolvers.Resolver | None = None,
     fetch: Fetcher = oa.fetch_oa_source,
     fetch_pdf: PdfFetcher = oa.fetch_oa_pdf,
     fetch_supplementary: SupplementFetcher = oa.fetch_supplementary_resolving,
     now: Callable[[], datetime.datetime] = _utcnow,
     deadline: datetime.timedelta = work.DISPATCH_DEADLINE,
+    time_limit: datetime.timedelta | None = work.DISPATCH_DEADLINE,
 ) -> outcome.Readiness:
     """Run every step `targets` reach and every free step, until none has work; return the paper's readiness.
 
@@ -690,6 +920,7 @@ async def run(
         targets: The request's targets: step names, or the main text. Empty reaches no spending step.
         attempt: This request, as the job log names it.
         convert_pdf: The PDF → markdown converter the transcription step calls.
+        variants: What the variant extraction and validation steps call out to.
         resolver: The litfetch id resolver the XML fetch uses to fill missing ids; defaults to
             `oa.default_resolver` (doi/pmid → pmcid).
         fetch: The OA body fetcher. Injected so tests run offline.
@@ -698,6 +929,8 @@ async def run(
             tests run offline.
         now: The clock for log entries, captured/created times and the marker.
         deadline: The dispatch deadline, past which a begun attempt has been killed.
+        time_limit: How long this request may run, from its start; a spending step that could run past it is not
+            begun. None for a runner with no limit.
 
     Returns:
         READY once the main text is met; NO_FULL_TEXT or FAILED once every route to it has settled, the marker
@@ -705,6 +938,7 @@ async def run(
 
     Raises:
         PaperNotInCorpusError: If the corpus holds no manifest for `doc_id` — settled, not retryable.
+        DeferredError: A spending step could not finish in `time_limit`; what ran before it is committed.
         UnknownTargetError: If a target is neither a step nor the main text.
         google.api_core.exceptions.NotFound: If an object the manifest names is absent (a seed
             revision blob, say). Operational, so it propagates and stays retryable.
@@ -717,10 +951,22 @@ async def run(
         joblog.LogContentionError: A log append did the same (retryable).
     """
     work_run = _Run(
-        bucket, doc_id, attempt, resolver, fetch, fetch_pdf, fetch_supplementary, convert_pdf, now, deadline
+        bucket,
+        doc_id,
+        attempt,
+        resolver,
+        fetch,
+        fetch_pdf,
+        fetch_supplementary,
+        convert_pdf,
+        variants,
+        now,
+        deadline,
+        started=now(),
+        time_limit=time_limit,
     )
     manifest = _read_manifest(bucket, doc_id)
-    reach(targets, manifest)  # an unknown target fails before any work
+    reach(targets, manifest, variants.validation)  # an unknown target fails before any work
     # Every write checks the whole manifest, so one already breaking its constraints refuses every write:
     # settle it before paying for a fetch or a transcription whose result could not be committed.
     try:

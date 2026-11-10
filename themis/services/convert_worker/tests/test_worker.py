@@ -42,7 +42,7 @@ from themis.litcache.models import litcache_pb2, work_pb2
 from themis.services.convert_worker import __main__ as main_mod
 from themis.services.convert_worker import handler as handler_mod
 from themis.telemetry import names, request_tokens
-from themis.testing import in_memory_metrics
+from themis.testing import in_memory_metrics, litcache_variants
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _OTHER_DOC_ID = '9f3a0000-0000-4000-8000-000000000011'
@@ -76,11 +76,24 @@ _FEDERATION_ENV = {
 }
 
 
+class _References:
+    """What startup reads of the reference stores, without opening any."""
+
+    @staticmethod
+    def weaver_version() -> str:
+        return litcache_variants.VALIDATION.weaver_version
+
+    @staticmethod
+    def versions() -> list[object]:
+        return list(litcache_variants.VALIDATION.stores)
+
+
 def _set_startup_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Set every variable startup reads before the bucket: the federation ids and the request concurrency."""
+    """Set every variable startup reads before the bucket, and stand in for the reference stores it opens."""
     for name, value in _FEDERATION_ENV.items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv('THEMIS_CONVERT_CONCURRENCY', '4')
+    monkeypatch.setattr(main_mod, '_references_from_env', _References)
 
 
 class _Provider(sdk_metrics.MeterProvider):
@@ -286,6 +299,17 @@ def test_a_paper_not_in_the_corpus_is_settled_at_2xx() -> None:
     assert _run(json.dumps({'doc_id': _DOC_ID}).encode(), produce) == 200
 
 
+def test_a_request_deferred_before_a_spending_step_is_delivered_again() -> None:
+    async def produce(_bucket: storage.Bucket, _doc_id: str, /, **_request: object) -> outcome_mod.Readiness:
+        raise produce_mod.DeferredError('variants is expected to run 0:25:00')
+
+    status = _run(_request(targets=('variants',)), produce, content_type=work.WORK_REQUEST_MEDIA_TYPE)
+
+    # Retried, as any status but 2xx is; and not 429 or a 5xx, which Cloud Tasks reads as overload and slows the queue.
+    assert 400 <= status < 500
+    assert status != 429
+
+
 def test_a_missing_object_other_than_the_manifest_is_retried_not_dropped() -> None:
     # The seed blob a manifest names, absent from the bucket: a live paper, not an unknown one. It
     # must reach the transport as a 500 — settling it at 200 deletes the task and strands the paper
@@ -338,14 +362,20 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
     async def fetch(_article_ids: object, **_kwargs: object) -> None:
         return None  # no OA XML: force the PDF LLM-OCR branch
 
-    async def convert(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def convert(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         return ocr.OcrRendering(markdown='# OCR full text\n', model='claude-sonnet-5', converter_version='1.1')
 
     async def no_pdf_located(_article_ids: object) -> None:
         return None
 
     produce = functools.partial(
-        produce_mod.run, fetch=fetch, fetch_pdf=no_pdf_located, convert_pdf=convert, now=lambda: _CAPTURED_AT
+        produce_mod.run,
+        fetch=fetch,
+        fetch_pdf=no_pdf_located,
+        convert_pdf=convert,
+        variants=litcache_variants.UNUSED,
+        now=lambda: _CAPTURED_AT,
     )
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         status = asyncio.run(
@@ -646,7 +676,8 @@ def test_a_converter_failure_that_is_not_terminal_leaves_the_paper_pending(gcs_b
     async def no_oa(_article_ids: object, **_kwargs: object) -> None:
         return None  # no OA XML: reach the PDF branch
 
-    async def refused(_pdf_bytes: bytes) -> ocr.OcrRendering:
+    async def refused(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        del timeout
         raise anthropic_credentials.WorkloadIdentityError('invalid_grant', status_code=400)
 
     assert not issubclass(anthropic_credentials.WorkloadIdentityError, ocr.OcrError)
@@ -659,6 +690,7 @@ def test_a_converter_failure_that_is_not_terminal_leaves_the_paper_pending(gcs_b
                 attempt=joblog.Attempt(id=str(uuid.uuid4()), queue='q', task='t', retry_count=0),
                 fetch=no_oa,
                 convert_pdf=refused,
+                variants=litcache_variants.UNUSED,
                 now=lambda: _CAPTURED_AT,
             )
         )
