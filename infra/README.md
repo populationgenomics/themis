@@ -17,6 +17,7 @@ differences live in `Pulumi.<stack>.yaml`.
 | `themis_infra/cloud_run.py`           | The run.app URL a service is dialed at and checks its callers' ID-token audience against.                                                                                                              |
 | `themis_infra/auth.py`                | The auth data-plane gRPC service (internal-ingress Cloud Run, reading the ACL secret the site owns) + its runtime SA and Cloud SQL IAM DB login; the alert on a rejected ACL.                          |
 | `themis_infra/sheaf.py`               | The sheaf data-plane gRPC service (internal and load-balancer ingress), its bucket of repositories, and its runtime SA, an object-user on that bucket.                                                 |
+| `themis_infra/sample_metadata.py`     | The account the sample metadata service will run as, which the site grants read on its sample registry; the module declares the account alone.                                                         |
 | `themis_infra/sql.py`                 | Cloud SQL (Postgres) instance, IAM database auth, backups + PITR; the app data store.                                                                                                                  |
 | `themis_infra/storage.py`             | The durable GCS buckets shared across the data plane: the literature full-text store, the resources bucket.                                                                                            |
 | `themis_infra/convert.py`             | The on-demand full-text conversion lane: the Cloud Tasks queue, the pushed convert worker (Cloud Run), and the task invoker identity.                                                                  |
@@ -202,8 +203,9 @@ to another environment's service account, so the convert worker deploys healthy 
 transcribe. `themis:iapOauthClientId` (with its secret) names the OAuth client IAP signs people in through for one
 deployment, and each environment has its own. `themis:aclSecret` names the secret the site creates in the deployment's
 project and writes the ACL into ([`access-control.md`](../docs/runbooks/access-control.md)); the site grants the auth
-service's account read on it and the sandbox job's account read on the datasets, so a new environment's first `up`
-deploys those accounts alone. The full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
+service's account read on it, the sandbox job's account read on the datasets, and the account the sample metadata
+service will run as read on its sample registry, so a new environment's first `up` deploys those accounts alone. The
+full sequence is [`fresh-environment.md`](../docs/runbooks/fresh-environment.md).
 
 ## Local development
 

@@ -34,6 +34,7 @@ from themis_infra import (
     ingest_network,
     operator_ingress,
     reference,
+    sample_metadata,
     sandbox,
     screenshots,
     secrets,
@@ -260,10 +261,13 @@ automation_user = clu.AutomationUser(
     migrator_db_role=migrator_db_user.name,
     opts=pulumi.ResourceOptions(depends_on=[base, database, migrator_db_user]),
 )
-# Deployed alone ahead of the rest on a fresh environment, so the site can grant them read, on the ACL secret and on
-# the datasets, before their workloads first start (docs/runbooks/fresh-environment.md).
+# Deployed alone ahead of the rest on a fresh environment, so the site can grant them read, on the ACL secret, on the
+# datasets and on its sample registry, before their workloads first start (docs/runbooks/fresh-environment.md).
 auth_account = auth.runtime_account(project=project, opts=pulumi.ResourceOptions(depends_on=[base]))
 sandbox_job_account = sandbox.job_account(project=project, opts=pulumi.ResourceOptions(depends_on=[base]))
+sample_metadata_account = sample_metadata.runtime_account(
+    project=project, opts=pulumi.ResourceOptions(depends_on=[base])
+)
 auth_service = auth.AuthService(
     project=project,
     project_number=project_number,
@@ -984,6 +988,8 @@ pulumi.export('anthropic_deploy_federation_rule_id', anthropic_deploy_federation
 pulumi.export('anthropic_deploy_service_account_id', anthropic_deploy_service_account_id)
 pulumi.export('sandbox_job_name', sandbox_job.job_name)
 pulumi.export('sandbox_job_sa_email', sandbox_job.service_account_email)
+# The site grants this account read on its sample registry.
+pulumi.export('sample_metadata_sa_email', sample_metadata_account.email)
 pulumi.export('dispatcher_webhook_url', pulumi.Output.concat(site.url, sandbox.DISPATCHER_WEBHOOK_PATH))
 pulumi.export('dispatcher_sa_email', dispatcher_service.service_account_email)
 pulumi.export('convert_queue', convert_queue.name)

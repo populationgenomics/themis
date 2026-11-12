@@ -165,14 +165,15 @@ def first_targets(env: Environment) -> list[str]:
     """The registry and the accounts the site grants read: everything a run needs before any image or the ACL exists.
 
     The registry depends on every API the baseline enables, so the whole baseline comes with it. The auth
-    service's and the sandbox job's accounts go now, because the site's deploy, which runs while the images
-    build, grants them read on the ACL secret and on the datasets. The deploy account's registry role goes
-    now so the workflow can push the images.
+    service's, the sandbox job's and the sample metadata service's accounts go now, because the site's deploy,
+    which runs while the images build, grants them read on the ACL secret, on the datasets and on its sample
+    registry. The deploy account's registry role goes now so the workflow can push the images.
     """
     return [
         env.urn('themis:infra:Baseline'),
         env.urn('gcp:serviceaccount/account:Account', 'themis-auth-runtime'),
         env.urn('gcp:serviceaccount/account:Account', 'themis-sandbox-job'),
+        env.urn('gcp:serviceaccount/account:Account', 'themis-sample-metadata-runtime'),
         env.urn('themis:grants:DeployAccountBuilder', 'themis-deploy-builds-the-project'),
         env.urn(
             'themis:grants:DeployAccountBuilder$gcp:projects/iAMMember:IAMMember',

@@ -483,10 +483,11 @@ and once, after the full `up`, for a whole deploy, which runs the migrations. Un
 environment's deploy runs only when dispatched; deploying every merge starts afterwards, so that no merge meets an
 environment that does not exist yet.
 
-Two accounts come before all of that. The site's deploy creates the ACL secret, writes the ACL into it, and grants read
-on it to the auth service's account and read on the datasets to the sandbox job's. Google Cloud refuses a grant to an
-account that does not exist, so the first targeted `up` creates both accounts, and the bring-up waits for the site's
-first version, because the auth service refuses to start without a valid ACL
+Three accounts come before all of that. The site's deploy creates the ACL secret, writes the ACL into it, and grants
+read on it to the auth service's account and read on the datasets to the sandbox job's. It also grants read on its
+sample registry to the account the sample metadata service will run as. Google Cloud refuses a grant to an account that
+does not exist, so the first targeted `up` creates all three accounts, and the bring-up waits for the site's first
+version, because the auth service refuses to start without a valid ACL
 ([`access-control.md`](access-control.md#the-site-owns-the-acls-secret)). Anthropic's webhook, on the other hand, does
 not wait for the stack. Its URL is the environment's hostname followed by a fixed path, known from config before any
 `up`, so it can be registered as soon as the hostname is chosen. Deliveries start once DNS and the certificate are in

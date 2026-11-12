@@ -28,8 +28,9 @@ stack itself grants anything on the ACL secret. The repository holds only the se
 because the ACL names people.
 
 A fresh deployment's auth service refuses to start without a valid ACL, and the site's grants name the auth service's
-and the sandbox job's accounts, so the stack deploys those accounts alone first, and the site deploys before the rest of
-the stack ([`fresh-environment.md`](fresh-environment.md#2-first-bring-up-once-per-environment)).
+account, the sandbox job's, and the account the sample metadata service will run as. So the stack deploys those three
+accounts alone first, and the site deploys before the rest of the stack
+([`fresh-environment.md`](fresh-environment.md#2-first-bring-up-once-per-environment)).
 
 ## Giving someone access
 

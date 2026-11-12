@@ -85,9 +85,10 @@ not satisfy. These come from outside the repo:
   scopes `chat:write` and `files:write` (the morning report uploads its chart), and the bot has to be invited to both
   channels, since Slack refuses a post from a bot that is not in the channel and Cloud Monitoring does not report it.
 - The site's config for the environment: it creates `projects/<project>/secrets/acl`, writes the ACL into it, and grants
-  read on it to the auth service's account and read on the datasets to the sandbox job's. Google Cloud refuses a grant
-  to an account that does not exist, so the site deploys once the tool's first step has created both accounts; the tool
-  waits for the first version.
+  read on it to the auth service's account and read on the datasets to the sandbox job's. It also grants read on its
+  sample registry to the account the sample metadata service will run as. Google Cloud refuses a grant to an account
+  that does not exist, so the site deploys once the tool's first step has created all three accounts; the tool waits for
+  the first version.
 
 ```sh
 cd infra
@@ -207,9 +208,11 @@ gcloud compute addresses describe themis-ip --global --project=<project> --forma
 
 ## 4. Hand off to CI
 
-Once bootstrap + the first bring-up are done, CI owns deploys: PRs get a read-only preview comment; `deploy` builds the
-images and `pulumi up`s when `deployed/<env>` is pushed, or when dispatched on `main`. Merging does not deploy
-([`../design/deployment.md`](../design/deployment.md)).
+Once bootstrap + the first bring-up are done, CI owns deploys: PRs get a read-only preview comment, and `deploy` builds
+the images and `pulumi up`s. Every push to `main`, which each merge is, deploys `prod`, once lint, the tests, the web
+checks and both schema checks pass on that commit. A push to `deployed/dev` deploys `dev`, and a dispatch on `main`
+deploys the environment it names. Merging does not deploy `dev`
+([`../design/deployment.md`](../design/deployment.md#deploy-triggers)).
 
 ### Enabling the ad-hoc deploy branch
 
