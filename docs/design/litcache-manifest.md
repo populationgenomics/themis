@@ -126,6 +126,8 @@ papers/{doc_id}/
     {sha256}.{ext}                     # extracted or fetched figure images
   supplementary/
     {sha256}.{ext}                     # lazily fetched supplementary files
+  {kind}/
+    {sha256}.pb                        # derived records, a directory per kind (variants, figure-sets, ...)
 ```
 
 Writing a paper directory takes multiple GCS uploads, and GCS has no multi-object transactions. To prevent readers from

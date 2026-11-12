@@ -61,10 +61,12 @@ Themis makes billable Anthropic calls across three execution surfaces:
    `session.usage`. The typed `usage` object carries `list_cost` (whole-cent USD `BetaManagedAgentsCost`),
    `active_seconds`, `server_tool_use.web_search_requests`, `input_tokens`, `output_tokens`, `cache_read_input_tokens`,
    and `cache_creation` split into `ephemeral_1h_input_tokens` and `ephemeral_5m_input_tokens`.
-1. **The PDF convert worker** ([`evidence-fulltext.md`](evidence-fulltext.md)):
-   [`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py) is the only place in the codebase that
-   calls the Messages API directly (`client.messages.stream(...)`), running page OCR outside any Managed Agents session.
-   Each completed stream yields a final message carrying `usage` (`input_tokens`, `output_tokens`,
+1. **The literature cache's workers** ([`evidence-fulltext.md`](evidence-fulltext.md)): they are the only callers of the
+   Messages API directly (`client.messages.stream(...)`), outside any Managed Agents session. The PDF convert worker's
+   page OCR is [`themis/litcache/anthropic_ocr.py`](../../themis/litcache/anthropic_ocr.py); the spending steps that
+   read a paper's variants ([`variant-extraction.md`](variant-extraction.md)), figures
+   ([`figure-annotation.md`](figure-annotation.md)) and pedigrees ([`pedigree-extraction.md`](pedigree-extraction.md))
+   are the others. Each completed stream yields a final message carrying `usage` (`input_tokens`, `output_tokens`,
    `cache_read_input_tokens`, and `cache_creation_input_tokens`), `model`, and `stop_reason` (while a stream interrupted
    mid-flight records tokens seen so far under `stop_reason='unfinished'`).
 1. **Claude Code in GitHub Actions**: Outside the Python codebase,
