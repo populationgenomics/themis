@@ -3,6 +3,8 @@ import datetime
 from buf.validate import validate_pb2 as _validate_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from pubmed_proto import pubmed_pb2 as _pubmed_pb2
+from themis.litcache.models import figures_pb2 as _figures_pb2
+from themis.litcache.models import pedigrees_pb2 as _pedigrees_pb2
 from themis.litcache.models import variants_pb2 as _variants_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
@@ -159,18 +161,22 @@ class RenderingConstruction(_message.Message):
     def __init__(self, converter: _Optional[_Union[Converter, str]] = ..., converter_version: _Optional[str] = ..., model: _Optional[str] = ...) -> None: ...
 
 class Record(_message.Message):
-    __slots__ = ("deps", "created_at", "rendering", "variant_extraction", "variant_validation")
+    __slots__ = ("deps", "created_at", "rendering", "variant_extraction", "variant_validation", "pedigree_extraction", "figure_annotation")
     DEPS_FIELD_NUMBER: _ClassVar[int]
     CREATED_AT_FIELD_NUMBER: _ClassVar[int]
     RENDERING_FIELD_NUMBER: _ClassVar[int]
     VARIANT_EXTRACTION_FIELD_NUMBER: _ClassVar[int]
     VARIANT_VALIDATION_FIELD_NUMBER: _ClassVar[int]
+    PEDIGREE_EXTRACTION_FIELD_NUMBER: _ClassVar[int]
+    FIGURE_ANNOTATION_FIELD_NUMBER: _ClassVar[int]
     deps: _containers.RepeatedScalarFieldContainer[str]
     created_at: _timestamp_pb2.Timestamp
     rendering: RenderingConstruction
     variant_extraction: _variants_pb2.VariantExtractionConstruction
     variant_validation: _variants_pb2.VariantValidationConstruction
-    def __init__(self, deps: _Optional[_Iterable[str]] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., rendering: _Optional[_Union[RenderingConstruction, _Mapping]] = ..., variant_extraction: _Optional[_Union[_variants_pb2.VariantExtractionConstruction, _Mapping]] = ..., variant_validation: _Optional[_Union[_variants_pb2.VariantValidationConstruction, _Mapping]] = ...) -> None: ...
+    pedigree_extraction: _pedigrees_pb2.PedigreeExtractionConstruction
+    figure_annotation: _figures_pb2.FigureAnnotationConstruction
+    def __init__(self, deps: _Optional[_Iterable[str]] = ..., created_at: _Optional[_Union[datetime.datetime, _timestamp_pb2.Timestamp, _Mapping]] = ..., rendering: _Optional[_Union[RenderingConstruction, _Mapping]] = ..., variant_extraction: _Optional[_Union[_variants_pb2.VariantExtractionConstruction, _Mapping]] = ..., variant_validation: _Optional[_Union[_variants_pb2.VariantValidationConstruction, _Mapping]] = ..., pedigree_extraction: _Optional[_Union[_pedigrees_pb2.PedigreeExtractionConstruction, _Mapping]] = ..., figure_annotation: _Optional[_Union[_figures_pb2.FigureAnnotationConstruction, _Mapping]] = ...) -> None: ...
 
 class ExternalIds(_message.Message):
     __slots__ = ("doi", "pmid", "pmcid", "arxiv", "biorxiv", "bookid")

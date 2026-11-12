@@ -10,6 +10,8 @@ package themis.litcache.models.litcache;
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "pubmed_proto/pubmed.proto";
+import "themis/litcache/models/figures.proto";
+import "themis/litcache/models/pedigrees.proto";
 import "themis/litcache/models/variants.proto";
 
 enum SourceKind {
@@ -137,6 +139,8 @@ message Record {
     RenderingConstruction rendering = 10;
     themis.litcache.models.variants.VariantExtractionConstruction variant_extraction = 11;  // a MentionSet
     themis.litcache.models.variants.VariantValidationConstruction variant_validation = 12;  // a Verdicts
+    themis.litcache.models.pedigrees.PedigreeExtractionConstruction pedigree_extraction = 13;  // a grus PedigreeSet
+    themis.litcache.models.figures.FigureAnnotationConstruction figure_annotation = 14;  // a FigureSet
   }
 }
 

@@ -1,0 +1,54 @@
+// How a paper's pedigrees were read (docs/design/pedigree-extraction.md).
+//
+// The record's bytes are a grus.models.pedigree.PedigreeSet, the grus library's own contract: every pedigree read from
+// the paper, the conditions they share, and the citations that say where each was read. Themis owns only how the set
+// was made. Each citation's document_id in the set is the hash of the pdf revision its page belongs to.
+//
+//   Manifest
+//     refs["pedigrees"] ──► records[P]   construction: PedigreeExtractionConstruction
+//                                        deps: [the rendering, the pdf revision, the figure set F,
+//                                               the variant verdicts, when the paper has any]
+//     PedigreeFigure.figure ──► FigureSet(F).figures[i]
+
+syntax = "proto3";
+
+package themis.litcache.models.pedigrees;
+
+import "buf/validate/validate.proto";
+
+// How the pedigree step made a paper's pedigree set: a Record.construction arm.
+message PedigreeExtractionConstruction {
+  string model = 1 [(buf.validate.field).string.min_len = 1];  // the model id the API reported
+  // The prompt, the tool surface and the grus version the set was checked against; a set made by any other gives the
+  // extraction step work for a run that names it.
+  string harness_version = 2 [(buf.validate.field).string.min_len = 1];
+  // Every figure the model was shown, each once, whether or not it held a pedigree. One that is absent was never read.
+  // A paper with no figure to show gets no record: the step's settled job-log entry marks it done.
+  repeated PedigreeFigure figures_read = 3 [
+    (buf.validate.field).repeated.min_items = 1,
+    (buf.validate.field).cel = {
+      id: "figures_read.unique"
+      message: "a figure is listed once"
+      expression: "this.map(f, f.figure).unique()"
+    }
+  ];
+}
+
+// One figure the model read, a page at a time.
+message PedigreeFigure {
+  int32 figure = 1 [(buf.validate.field).int32.gte = 0];  // its index in the figure set among the record's deps
+  // Each of the figure's pages whose answer was not accepted, once. Empty when every page's was. The set holds the
+  // pedigrees of the pages that were accepted and none from those that were not.
+  repeated PageFailure failures = 2 [(buf.validate.field).cel = {
+    id: "failures.unique_pages"
+    message: "a page fails once"
+    expression: "this.map(f, f.pdf_page).unique()"
+  }];
+}
+
+// One page of a figure whose answer was not accepted.
+message PageFailure {
+  int32 pdf_page = 1 [(buf.validate.field).int32.gt = 0];  // 1-based, as the figure set's places count
+  // Why: a refusal, or an answer still rejected after its repairs.
+  string reason = 2 [(buf.validate.field).string.min_len = 1];
+}

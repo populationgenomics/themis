@@ -25,10 +25,12 @@ _sym_db = _symbol_database.Default()
 from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 from pubmed_proto import pubmed_pb2 as pubmed__proto_dot_pubmed__pb2
+from themis.litcache.models import figures_pb2 as themis_dot_litcache_dot_models_dot_figures__pb2
+from themis.litcache.models import pedigrees_pb2 as themis_dot_litcache_dot_models_dot_pedigrees__pb2
 from themis.litcache.models import variants_pb2 as themis_dot_litcache_dot_models_dot_variants__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n%themis/litcache/models/litcache.proto\x12\x1fthemis.litcache.models.litcache\x1a\x1b\x62uf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x19pubmed_proto/pubmed.proto\x1a%themis/litcache/models/variants.proto\"\x0c\n\nFreeToRead\"&\n\x08Licensed\x12\x1a\n\tpublisher\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\"\x15\n\x13InstitutionCaptured\"\x0f\n\rUnknownAccess\"\xb4\x02\n\x06\x41\x63\x63\x65ss\x12\x43\n\x0c\x66ree_to_read\x18\x01 \x01(\x0b\x32+.themis.litcache.models.litcache.FreeToReadH\x00\x12=\n\x08licensed\x18\x02 \x01(\x0b\x32).themis.litcache.models.litcache.LicensedH\x00\x12T\n\x14institution_captured\x18\x03 \x01(\x0b\x32\x34.themis.litcache.models.litcache.InstitutionCapturedH\x00\x12\x41\n\x07unknown\x18\x04 \x01(\x0b\x32..themis.litcache.models.litcache.UnknownAccessH\x00\x42\r\n\x04kind\x12\x05\xbaH\x02\x08\x01\"\xdc\x01\n\x08Revision\x12\x0c\n\x04hash\x18\x01 \x01(\t\x12\x17\n\norigin_url\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x39\n\x04kind\x18\x03 \x01(\x0e\x32+.themis.litcache.models.litcache.SourceKind\x12/\n\x0b\x63\x61ptured_at\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12\x1b\n\x0ehas_text_layer\x18\x05 \x01(\x08H\x01\x88\x01\x01\x42\r\n\x0b_origin_urlB\x11\n\x0f_has_text_layer\"\xbb\x02\n\x06Source\x12\x0e\n\x06handle\x18\x01 \x01(\t\x12\x41\n\nmedia_type\x18\x02 \x01(\x0e\x32-.themis.litcache.models.litcache.SourceFormat\x12\x0f\n\x07licence\x18\x03 \x01(\t\x12\x44\n\rlicence_basis\x18\x04 \x01(\x0e\x32-.themis.litcache.models.litcache.LicenceBasis\x12?\n\x06\x61\x63\x63\x65ss\x18\x05 \x01(\x0b\x32\'.themis.litcache.models.litcache.AccessB\x06\xbaH\x03\xc8\x01\x01\x12\x46\n\trevisions\x18\x06 \x03(\x0b\x32).themis.litcache.models.litcache.RevisionB\x08\xbaH\x05\x92\x01\x02\x08\x01\"\xee\x02\n\tRendering\x12\x13\n\x0b\x66rom_source\x18\x01 \x01(\t\x12\x15\n\rfrom_revision\x18\x02 \x01(\t\x12=\n\tconverter\x18\x03 \x01(\x0e\x32*.themis.litcache.models.litcache.Converter\x12\x19\n\x11\x63onverter_version\x18\x04 \x01(\t\x12\x12\n\x05model\x18\x05 \x01(\tH\x00\x88\x01\x01\x12.\n\ncreated_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.Timestamp:\x8c\x01\xbaH\x88\x01\x1a\x85\x01\n\x1brendering.model_iff_llm_ocr\x12\x39model must be set iff converter is CONVERTER_LLM_OCR (=3)\x1a+(this.converter == 3) == (this.model != \'\')B\x08\n\x06_model\"\xab\x02\n\x15RenderingConstruction\x12=\n\tconverter\x18\x01 \x01(\x0e\x32*.themis.litcache.models.litcache.Converter\x12\x19\n\x11\x63onverter_version\x18\x02 \x01(\t\x12\x12\n\x05model\x18\x03 \x01(\tH\x00\x88\x01\x01:\x99\x01\xbaH\x95\x01\x1a\x92\x01\n(rendering_construction.model_iff_llm_ocr\x12\x39model must be set iff converter is CONVERTER_LLM_OCR (=3)\x1a+(this.converter == 3) == (this.model != \'\')B\x08\n\x06_model\"\xe6\x02\n\x06Record\x12\x0c\n\x04\x64\x65ps\x18\x01 \x03(\t\x12.\n\ncreated_at\x18\x02 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12K\n\trendering\x18\n \x01(\x0b\x32\x36.themis.litcache.models.litcache.RenderingConstructionH\x00\x12\\\n\x12variant_extraction\x18\x0b \x01(\x0b\x32>.themis.litcache.models.variants.VariantExtractionConstructionH\x00\x12\\\n\x12variant_validation\x18\x0c \x01(\x0b\x32>.themis.litcache.models.variants.VariantValidationConstructionH\x00\x42\x15\n\x0c\x63onstruction\x12\x05\xbaH\x02\x08\x01\"\xc1\x01\n\x0b\x45xternalIds\x12\x10\n\x03\x64oi\x18\x01 \x01(\tH\x00\x88\x01\x01\x12\x11\n\x04pmid\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x12\n\x05pmcid\x18\x03 \x01(\tH\x02\x88\x01\x01\x12\x12\n\x05\x61rxiv\x18\x04 \x01(\tH\x03\x88\x01\x01\x12\x14\n\x07\x62iorxiv\x18\x05 \x01(\tH\x04\x88\x01\x01\x12\x13\n\x06\x62ookid\x18\x06 \x01(\tH\x05\x88\x01\x01\x42\x06\n\x04_doiB\x07\n\x05_pmidB\x08\n\x06_pmcidB\x08\n\x06_arxivB\n\n\x08_biorxivB\t\n\x07_bookid\"6\n\x0b\x45quivalence\x12\r\n\x05\x65\x64ges\x18\x01 \x03(\t\x12\x18\n\x10\x63\x61nonical_doc_id\x18\x02 \x01(\t\"n\n\nRetraction\x12\x16\n\tretracted\x18\x01 \x01(\x08H\x00\x88\x01\x01\x12\x13\n\x06source\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x11\n\x04\x64\x61te\x18\x03 \x01(\tH\x02\x88\x01\x01\x42\x0c\n\n_retractedB\t\n\x07_sourceB\x07\n\x05_date\"\xe4\x01\n\x0e\x41ssociatedFile\x12\x41\n\x04role\x18\x01 \x01(\x0e\x32\x33.themis.litcache.models.litcache.AssociatedFileRole\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x17\n\nsource_url\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x11\n\x04path\x18\x04 \x01(\tH\x01\x88\x01\x01\x12\x0c\n\x04hash\x18\x05 \x01(\t\x12/\n\x0b\x63\x61ptured_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\r\n\x0b_source_urlB\x07\n\x05_path\"\x86\t\n\x08Manifest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x42\n\x0c\x65xternal_ids\x18\x02 \x01(\x0b\x32,.themis.litcache.models.litcache.ExternalIds\x12\x11\n\tclaim_key\x18\x03 \x01(\t\x12\x41\n\x0b\x65quivalence\x18\x04 \x01(\x0b\x32,.themis.litcache.models.litcache.Equivalence\x12?\n\nretraction\x18\x05 \x01(\x0b\x32+.themis.litcache.models.litcache.Retraction\x12\x38\n\x07sources\x18\x06 \x03(\x0b\x32\'.themis.litcache.models.litcache.Source\x12>\n\x05\x66iles\x18\x08 \x03(\x0b\x32/.themis.litcache.models.litcache.AssociatedFile\x12G\n\x07records\x18\t \x03(\x0b\x32\x36.themis.litcache.models.litcache.Manifest.RecordsEntry\x12\x41\n\x04refs\x18\n \x03(\x0b\x32\x33.themis.litcache.models.litcache.Manifest.RefsEntry\x1aW\n\x0cRecordsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x36\n\x05value\x18\x02 \x01(\x0b\x32\'.themis.litcache.models.litcache.Record:\x02\x38\x01\x1a+\n\tRefsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01:\xf0\x03\xbaH\xec\x03\x1as\n\x15manifest.refs_resolve\x12$every ref must name a key of records\x1a\x34this.refs.all(name, this.refs[name] in this.records)\x1a\xf4\x02\n\x15manifest.deps_resolve\x12severy record needs a dep, and each dep must be a held revision hash, a fetched file\'s hash, or another record\'s key\x1a\xe5\x01this.records.all(k, this.records[k].deps.size() > 0 && this.records[k].deps.all(d, d != k && (d in this.records || this.sources.exists(s, s.revisions.exists(r, r.hash == d)) || this.files.exists(f, f.hash != \'\' && f.hash == d))))J\x04\x08\x07\x10\x08R\nrenderings\"z\n\x0cPubmedRecord\x12(\n\x07\x61rticle\x18\x01 \x01(\x0b\x32\x15.pubmed.PubmedArticleH\x00\x12\x31\n\x0c\x62ook_article\x18\x02 \x01(\x0b\x32\x19.pubmed.PubmedBookArticleH\x00\x42\r\n\x04kind\x12\x05\xbaH\x02\x08\x01\"\x9f\x01\n\x0fSourcedMetadata\x12\x43\n\x08metadata\x18\x01 \x01(\x0b\x32).themis.litcache.models.litcache.MetadataB\x06\xbaH\x03\xc8\x01\x01\x12G\n\x06source\x18\x02 \x01(\x0b\x32/.themis.litcache.models.litcache.MetadataSourceB\x06\xbaH\x03\xc8\x01\x01\"\x9e\x03\n\x0eMetadataSource\x12=\n\x06pubmed\x18\x01 \x01(\x0b\x32-.themis.litcache.models.litcache.PubmedRecord\x12#\n\rcrossref_json\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x02H\x00\x88\x01\x01\x12#\n\ropenalex_json\x18\x03 \x01(\tB\x07\xbaH\x04r\x02\x10\x02H\x01\x88\x01\x01:\xde\x01\xbaH\xda\x01\x1a\xd7\x01\n\x17metadata_source.indexes\x12@a record must be set, and at most one of PubMed\'s and Crossref\'s\x1az(has(this.pubmed) || has(this.crossref_json) || has(this.openalex_json)) && !(has(this.pubmed) && has(this.crossref_json))B\x10\n\x0e_crossref_jsonB\x10\n\x0e_openalex_json\"\xd0\x06\n\x08Metadata\x12\r\n\x05title\x18\x01 \x01(\t\x12\x41\n\x07\x61uthors\x18\x02 \x03(\x0b\x32\x30.themis.litcache.models.litcache.Metadata.Author\x12\"\n\x04year\x18\x03 \x01(\tB\x14\xbaH\x11r\x0f\x32\r^([0-9]{4})?$\x12\x17\n\x0f\x63ontainer_title\x18\x04 \x01(\t\x12\x10\n\x08\x61\x62stract\x18\x05 \x01(\t\x12L\n\rmesh_headings\x18\x06 \x03(\x0b\x32\x35.themis.litcache.models.litcache.Metadata.MeshHeading\x12\'\n\x11publication_types\x18\x07 \x03(\tB\x0c\xbaH\t\x92\x01\x06\"\x04r\x02\x10\x01\x1a\x65\n\x06\x41uthor\x12\x15\n\x04name\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x44\n\x05orcid\x18\x02 \x01(\tB5\xbaH2r02.^([0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{3}[0-9X])?$\x1a\xf5\x02\n\x0bMeshHeading\x12\xb1\x01\n\ndescriptor\x18\x01 \x01(\x0b\x32\x32.themis.litcache.models.litcache.Metadata.MeshTermBi\xbaHf\xba\x01`\n\x1cmesh_heading.descriptor_kind\x12\'a heading\'s descriptor must be a D term\x1a\x17this.ui.startsWith(\'D\')\xc8\x01\x01\x12\xb1\x01\n\nqualifiers\x18\x02 \x03(\x0b\x32\x32.themis.litcache.models.litcache.Metadata.MeshTermBi\xbaHf\x92\x01\x63\"a\xba\x01^\n\x1bmesh_heading.qualifier_kind\x12&a heading\'s qualifiers must be Q terms\x1a\x17this.ui.startsWith(\'Q\')\x1aM\n\x08MeshTerm\x12,\n\x02ui\x18\x01 \x01(\tB \xbaH\x1dr\x1b\x32\x19^[DQ]([0-9]{6}|[0-9]{9})$\x12\x13\n\x0bmajor_topic\x18\x02 \x01(\x08*\x85\x02\n\nSourceKind\x12\x1b\n\x17SOURCE_KIND_UNSPECIFIED\x10\x00\x12\x19\n\x15SOURCE_KIND_PMC_OA_S3\x10\x01\x12\x1a\n\x16SOURCE_KIND_EUROPE_PMC\x10\x02\x12\x1b\n\x17SOURCE_KIND_ELSEVIER_OA\x10\x03\x12\x17\n\x13SOURCE_KIND_BIORXIV\x10\x04\x12\x16\n\x12SOURCE_KIND_UPLOAD\x10\x05\x12\x14\n\x10SOURCE_KIND_SEED\x10\x06\x12$\n SOURCE_KIND_EUROPE_PMC_BOOKSHELF\x10\x07\x12\x19\n\x15SOURCE_KIND_UNPAYWALL\x10\x08*[\n\x0cSourceFormat\x12\x1d\n\x19SOURCE_FORMAT_UNSPECIFIED\x10\x00\x12\x15\n\x11SOURCE_FORMAT_XML\x10\x01\x12\x15\n\x11SOURCE_FORMAT_PDF\x10\x02*e\n\x0cLicenceBasis\x12\x1d\n\x19LICENCE_BASIS_UNSPECIFIED\x10\x00\x12\x1a\n\x16LICENCE_BASIS_ARTIFACT\x10\x01\x12\x1a\n\x16LICENCE_BASIS_ASSERTED\x10\x02*k\n\tConverter\x12\x19\n\x15\x43ONVERTER_UNSPECIFIED\x10\x00\x12\x15\n\x11\x43ONVERTER_LITDOWN\x10\x01\x12\x15\n\x11\x43ONVERTER_DOCLING\x10\x02\x12\x15\n\x11\x43ONVERTER_LLM_OCR\x10\x03*\x83\x01\n\x12\x41ssociatedFileRole\x12$\n ASSOCIATED_FILE_ROLE_UNSPECIFIED\x10\x00\x12\x1f\n\x1b\x41SSOCIATED_FILE_ROLE_FIGURE\x10\x01\x12&\n\"ASSOCIATED_FILE_ROLE_SUPPLEMENTARY\x10\x02\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n%themis/litcache/models/litcache.proto\x12\x1fthemis.litcache.models.litcache\x1a\x1b\x62uf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x19pubmed_proto/pubmed.proto\x1a$themis/litcache/models/figures.proto\x1a&themis/litcache/models/pedigrees.proto\x1a%themis/litcache/models/variants.proto\"\x0c\n\nFreeToRead\"&\n\x08Licensed\x12\x1a\n\tpublisher\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\"\x15\n\x13InstitutionCaptured\"\x0f\n\rUnknownAccess\"\xb4\x02\n\x06\x41\x63\x63\x65ss\x12\x43\n\x0c\x66ree_to_read\x18\x01 \x01(\x0b\x32+.themis.litcache.models.litcache.FreeToReadH\x00\x12=\n\x08licensed\x18\x02 \x01(\x0b\x32).themis.litcache.models.litcache.LicensedH\x00\x12T\n\x14institution_captured\x18\x03 \x01(\x0b\x32\x34.themis.litcache.models.litcache.InstitutionCapturedH\x00\x12\x41\n\x07unknown\x18\x04 \x01(\x0b\x32..themis.litcache.models.litcache.UnknownAccessH\x00\x42\r\n\x04kind\x12\x05\xbaH\x02\x08\x01\"\xdc\x01\n\x08Revision\x12\x0c\n\x04hash\x18\x01 \x01(\t\x12\x17\n\norigin_url\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x39\n\x04kind\x18\x03 \x01(\x0e\x32+.themis.litcache.models.litcache.SourceKind\x12/\n\x0b\x63\x61ptured_at\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12\x1b\n\x0ehas_text_layer\x18\x05 \x01(\x08H\x01\x88\x01\x01\x42\r\n\x0b_origin_urlB\x11\n\x0f_has_text_layer\"\xbb\x02\n\x06Source\x12\x0e\n\x06handle\x18\x01 \x01(\t\x12\x41\n\nmedia_type\x18\x02 \x01(\x0e\x32-.themis.litcache.models.litcache.SourceFormat\x12\x0f\n\x07licence\x18\x03 \x01(\t\x12\x44\n\rlicence_basis\x18\x04 \x01(\x0e\x32-.themis.litcache.models.litcache.LicenceBasis\x12?\n\x06\x61\x63\x63\x65ss\x18\x05 \x01(\x0b\x32\'.themis.litcache.models.litcache.AccessB\x06\xbaH\x03\xc8\x01\x01\x12\x46\n\trevisions\x18\x06 \x03(\x0b\x32).themis.litcache.models.litcache.RevisionB\x08\xbaH\x05\x92\x01\x02\x08\x01\"\xee\x02\n\tRendering\x12\x13\n\x0b\x66rom_source\x18\x01 \x01(\t\x12\x15\n\rfrom_revision\x18\x02 \x01(\t\x12=\n\tconverter\x18\x03 \x01(\x0e\x32*.themis.litcache.models.litcache.Converter\x12\x19\n\x11\x63onverter_version\x18\x04 \x01(\t\x12\x12\n\x05model\x18\x05 \x01(\tH\x00\x88\x01\x01\x12.\n\ncreated_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.Timestamp:\x8c\x01\xbaH\x88\x01\x1a\x85\x01\n\x1brendering.model_iff_llm_ocr\x12\x39model must be set iff converter is CONVERTER_LLM_OCR (=3)\x1a+(this.converter == 3) == (this.model != \'\')B\x08\n\x06_model\"\xab\x02\n\x15RenderingConstruction\x12=\n\tconverter\x18\x01 \x01(\x0e\x32*.themis.litcache.models.litcache.Converter\x12\x19\n\x11\x63onverter_version\x18\x02 \x01(\t\x12\x12\n\x05model\x18\x03 \x01(\tH\x00\x88\x01\x01:\x99\x01\xbaH\x95\x01\x1a\x92\x01\n(rendering_construction.model_iff_llm_ocr\x12\x39model must be set iff converter is CONVERTER_LLM_OCR (=3)\x1a+(this.converter == 3) == (this.model != \'\')B\x08\n\x06_model\"\xa2\x04\n\x06Record\x12\x0c\n\x04\x64\x65ps\x18\x01 \x03(\t\x12.\n\ncreated_at\x18\x02 \x01(\x0b\x32\x1a.google.protobuf.Timestamp\x12K\n\trendering\x18\n \x01(\x0b\x32\x36.themis.litcache.models.litcache.RenderingConstructionH\x00\x12\\\n\x12variant_extraction\x18\x0b \x01(\x0b\x32>.themis.litcache.models.variants.VariantExtractionConstructionH\x00\x12\\\n\x12variant_validation\x18\x0c \x01(\x0b\x32>.themis.litcache.models.variants.VariantValidationConstructionH\x00\x12_\n\x13pedigree_extraction\x18\r \x01(\x0b\x32@.themis.litcache.models.pedigrees.PedigreeExtractionConstructionH\x00\x12Y\n\x11\x66igure_annotation\x18\x0e \x01(\x0b\x32<.themis.litcache.models.figures.FigureAnnotationConstructionH\x00\x42\x15\n\x0c\x63onstruction\x12\x05\xbaH\x02\x08\x01\"\xc1\x01\n\x0b\x45xternalIds\x12\x10\n\x03\x64oi\x18\x01 \x01(\tH\x00\x88\x01\x01\x12\x11\n\x04pmid\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x12\n\x05pmcid\x18\x03 \x01(\tH\x02\x88\x01\x01\x12\x12\n\x05\x61rxiv\x18\x04 \x01(\tH\x03\x88\x01\x01\x12\x14\n\x07\x62iorxiv\x18\x05 \x01(\tH\x04\x88\x01\x01\x12\x13\n\x06\x62ookid\x18\x06 \x01(\tH\x05\x88\x01\x01\x42\x06\n\x04_doiB\x07\n\x05_pmidB\x08\n\x06_pmcidB\x08\n\x06_arxivB\n\n\x08_biorxivB\t\n\x07_bookid\"6\n\x0b\x45quivalence\x12\r\n\x05\x65\x64ges\x18\x01 \x03(\t\x12\x18\n\x10\x63\x61nonical_doc_id\x18\x02 \x01(\t\"n\n\nRetraction\x12\x16\n\tretracted\x18\x01 \x01(\x08H\x00\x88\x01\x01\x12\x13\n\x06source\x18\x02 \x01(\tH\x01\x88\x01\x01\x12\x11\n\x04\x64\x61te\x18\x03 \x01(\tH\x02\x88\x01\x01\x42\x0c\n\n_retractedB\t\n\x07_sourceB\x07\n\x05_date\"\xe4\x01\n\x0e\x41ssociatedFile\x12\x41\n\x04role\x18\x01 \x01(\x0e\x32\x33.themis.litcache.models.litcache.AssociatedFileRole\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\x17\n\nsource_url\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x11\n\x04path\x18\x04 \x01(\tH\x01\x88\x01\x01\x12\x0c\n\x04hash\x18\x05 \x01(\t\x12/\n\x0b\x63\x61ptured_at\x18\x06 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\r\n\x0b_source_urlB\x07\n\x05_path\"\x86\t\n\x08Manifest\x12\x0e\n\x06\x64oc_id\x18\x01 \x01(\t\x12\x42\n\x0c\x65xternal_ids\x18\x02 \x01(\x0b\x32,.themis.litcache.models.litcache.ExternalIds\x12\x11\n\tclaim_key\x18\x03 \x01(\t\x12\x41\n\x0b\x65quivalence\x18\x04 \x01(\x0b\x32,.themis.litcache.models.litcache.Equivalence\x12?\n\nretraction\x18\x05 \x01(\x0b\x32+.themis.litcache.models.litcache.Retraction\x12\x38\n\x07sources\x18\x06 \x03(\x0b\x32\'.themis.litcache.models.litcache.Source\x12>\n\x05\x66iles\x18\x08 \x03(\x0b\x32/.themis.litcache.models.litcache.AssociatedFile\x12G\n\x07records\x18\t \x03(\x0b\x32\x36.themis.litcache.models.litcache.Manifest.RecordsEntry\x12\x41\n\x04refs\x18\n \x03(\x0b\x32\x33.themis.litcache.models.litcache.Manifest.RefsEntry\x1aW\n\x0cRecordsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\x36\n\x05value\x18\x02 \x01(\x0b\x32\'.themis.litcache.models.litcache.Record:\x02\x38\x01\x1a+\n\tRefsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01:\xf0\x03\xbaH\xec\x03\x1as\n\x15manifest.refs_resolve\x12$every ref must name a key of records\x1a\x34this.refs.all(name, this.refs[name] in this.records)\x1a\xf4\x02\n\x15manifest.deps_resolve\x12severy record needs a dep, and each dep must be a held revision hash, a fetched file\'s hash, or another record\'s key\x1a\xe5\x01this.records.all(k, this.records[k].deps.size() > 0 && this.records[k].deps.all(d, d != k && (d in this.records || this.sources.exists(s, s.revisions.exists(r, r.hash == d)) || this.files.exists(f, f.hash != \'\' && f.hash == d))))J\x04\x08\x07\x10\x08R\nrenderings\"z\n\x0cPubmedRecord\x12(\n\x07\x61rticle\x18\x01 \x01(\x0b\x32\x15.pubmed.PubmedArticleH\x00\x12\x31\n\x0c\x62ook_article\x18\x02 \x01(\x0b\x32\x19.pubmed.PubmedBookArticleH\x00\x42\r\n\x04kind\x12\x05\xbaH\x02\x08\x01\"\x9f\x01\n\x0fSourcedMetadata\x12\x43\n\x08metadata\x18\x01 \x01(\x0b\x32).themis.litcache.models.litcache.MetadataB\x06\xbaH\x03\xc8\x01\x01\x12G\n\x06source\x18\x02 \x01(\x0b\x32/.themis.litcache.models.litcache.MetadataSourceB\x06\xbaH\x03\xc8\x01\x01\"\x9e\x03\n\x0eMetadataSource\x12=\n\x06pubmed\x18\x01 \x01(\x0b\x32-.themis.litcache.models.litcache.PubmedRecord\x12#\n\rcrossref_json\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x02H\x00\x88\x01\x01\x12#\n\ropenalex_json\x18\x03 \x01(\tB\x07\xbaH\x04r\x02\x10\x02H\x01\x88\x01\x01:\xde\x01\xbaH\xda\x01\x1a\xd7\x01\n\x17metadata_source.indexes\x12@a record must be set, and at most one of PubMed\'s and Crossref\'s\x1az(has(this.pubmed) || has(this.crossref_json) || has(this.openalex_json)) && !(has(this.pubmed) && has(this.crossref_json))B\x10\n\x0e_crossref_jsonB\x10\n\x0e_openalex_json\"\xd0\x06\n\x08Metadata\x12\r\n\x05title\x18\x01 \x01(\t\x12\x41\n\x07\x61uthors\x18\x02 \x03(\x0b\x32\x30.themis.litcache.models.litcache.Metadata.Author\x12\"\n\x04year\x18\x03 \x01(\tB\x14\xbaH\x11r\x0f\x32\r^([0-9]{4})?$\x12\x17\n\x0f\x63ontainer_title\x18\x04 \x01(\t\x12\x10\n\x08\x61\x62stract\x18\x05 \x01(\t\x12L\n\rmesh_headings\x18\x06 \x03(\x0b\x32\x35.themis.litcache.models.litcache.Metadata.MeshHeading\x12\'\n\x11publication_types\x18\x07 \x03(\tB\x0c\xbaH\t\x92\x01\x06\"\x04r\x02\x10\x01\x1a\x65\n\x06\x41uthor\x12\x15\n\x04name\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\x44\n\x05orcid\x18\x02 \x01(\tB5\xbaH2r02.^([0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{3}[0-9X])?$\x1a\xf5\x02\n\x0bMeshHeading\x12\xb1\x01\n\ndescriptor\x18\x01 \x01(\x0b\x32\x32.themis.litcache.models.litcache.Metadata.MeshTermBi\xbaHf\xba\x01`\n\x1cmesh_heading.descriptor_kind\x12\'a heading\'s descriptor must be a D term\x1a\x17this.ui.startsWith(\'D\')\xc8\x01\x01\x12\xb1\x01\n\nqualifiers\x18\x02 \x03(\x0b\x32\x32.themis.litcache.models.litcache.Metadata.MeshTermBi\xbaHf\x92\x01\x63\"a\xba\x01^\n\x1bmesh_heading.qualifier_kind\x12&a heading\'s qualifiers must be Q terms\x1a\x17this.ui.startsWith(\'Q\')\x1aM\n\x08MeshTerm\x12,\n\x02ui\x18\x01 \x01(\tB \xbaH\x1dr\x1b\x32\x19^[DQ]([0-9]{6}|[0-9]{9})$\x12\x13\n\x0bmajor_topic\x18\x02 \x01(\x08*\x85\x02\n\nSourceKind\x12\x1b\n\x17SOURCE_KIND_UNSPECIFIED\x10\x00\x12\x19\n\x15SOURCE_KIND_PMC_OA_S3\x10\x01\x12\x1a\n\x16SOURCE_KIND_EUROPE_PMC\x10\x02\x12\x1b\n\x17SOURCE_KIND_ELSEVIER_OA\x10\x03\x12\x17\n\x13SOURCE_KIND_BIORXIV\x10\x04\x12\x16\n\x12SOURCE_KIND_UPLOAD\x10\x05\x12\x14\n\x10SOURCE_KIND_SEED\x10\x06\x12$\n SOURCE_KIND_EUROPE_PMC_BOOKSHELF\x10\x07\x12\x19\n\x15SOURCE_KIND_UNPAYWALL\x10\x08*[\n\x0cSourceFormat\x12\x1d\n\x19SOURCE_FORMAT_UNSPECIFIED\x10\x00\x12\x15\n\x11SOURCE_FORMAT_XML\x10\x01\x12\x15\n\x11SOURCE_FORMAT_PDF\x10\x02*e\n\x0cLicenceBasis\x12\x1d\n\x19LICENCE_BASIS_UNSPECIFIED\x10\x00\x12\x1a\n\x16LICENCE_BASIS_ARTIFACT\x10\x01\x12\x1a\n\x16LICENCE_BASIS_ASSERTED\x10\x02*k\n\tConverter\x12\x19\n\x15\x43ONVERTER_UNSPECIFIED\x10\x00\x12\x15\n\x11\x43ONVERTER_LITDOWN\x10\x01\x12\x15\n\x11\x43ONVERTER_DOCLING\x10\x02\x12\x15\n\x11\x43ONVERTER_LLM_OCR\x10\x03*\x83\x01\n\x12\x41ssociatedFileRole\x12$\n ASSOCIATED_FILE_ROLE_UNSPECIFIED\x10\x00\x12\x1f\n\x1b\x41SSOCIATED_FILE_ROLE_FIGURE\x10\x01\x12&\n\"ASSOCIATED_FILE_ROLE_SUPPLEMENTARY\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -81,62 +83,62 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_METADATA'].fields_by_name['year']._serialized_options = b'\272H\021r\0172\r^([0-9]{4})?$'
   _globals['_METADATA'].fields_by_name['publication_types']._loaded_options = None
   _globals['_METADATA'].fields_by_name['publication_types']._serialized_options = b'\272H\t\222\001\006\"\004r\002\020\001'
-  _globals['_SOURCEKIND']._serialized_start=5491
-  _globals['_SOURCEKIND']._serialized_end=5752
-  _globals['_SOURCEFORMAT']._serialized_start=5754
-  _globals['_SOURCEFORMAT']._serialized_end=5845
-  _globals['_LICENCEBASIS']._serialized_start=5847
-  _globals['_LICENCEBASIS']._serialized_end=5948
-  _globals['_CONVERTER']._serialized_start=5950
-  _globals['_CONVERTER']._serialized_end=6057
-  _globals['_ASSOCIATEDFILEROLE']._serialized_start=6060
-  _globals['_ASSOCIATEDFILEROLE']._serialized_end=6191
-  _globals['_FREETOREAD']._serialized_start=202
-  _globals['_FREETOREAD']._serialized_end=214
-  _globals['_LICENSED']._serialized_start=216
-  _globals['_LICENSED']._serialized_end=254
-  _globals['_INSTITUTIONCAPTURED']._serialized_start=256
-  _globals['_INSTITUTIONCAPTURED']._serialized_end=277
-  _globals['_UNKNOWNACCESS']._serialized_start=279
-  _globals['_UNKNOWNACCESS']._serialized_end=294
-  _globals['_ACCESS']._serialized_start=297
-  _globals['_ACCESS']._serialized_end=605
-  _globals['_REVISION']._serialized_start=608
-  _globals['_REVISION']._serialized_end=828
-  _globals['_SOURCE']._serialized_start=831
-  _globals['_SOURCE']._serialized_end=1146
-  _globals['_RENDERING']._serialized_start=1149
-  _globals['_RENDERING']._serialized_end=1515
-  _globals['_RENDERINGCONSTRUCTION']._serialized_start=1518
-  _globals['_RENDERINGCONSTRUCTION']._serialized_end=1817
-  _globals['_RECORD']._serialized_start=1820
-  _globals['_RECORD']._serialized_end=2178
-  _globals['_EXTERNALIDS']._serialized_start=2181
-  _globals['_EXTERNALIDS']._serialized_end=2374
-  _globals['_EQUIVALENCE']._serialized_start=2376
-  _globals['_EQUIVALENCE']._serialized_end=2430
-  _globals['_RETRACTION']._serialized_start=2432
-  _globals['_RETRACTION']._serialized_end=2542
-  _globals['_ASSOCIATEDFILE']._serialized_start=2545
-  _globals['_ASSOCIATEDFILE']._serialized_end=2773
-  _globals['_MANIFEST']._serialized_start=2776
-  _globals['_MANIFEST']._serialized_end=3934
-  _globals['_MANIFEST_RECORDSENTRY']._serialized_start=3285
-  _globals['_MANIFEST_RECORDSENTRY']._serialized_end=3372
-  _globals['_MANIFEST_REFSENTRY']._serialized_start=3374
-  _globals['_MANIFEST_REFSENTRY']._serialized_end=3417
-  _globals['_PUBMEDRECORD']._serialized_start=3936
-  _globals['_PUBMEDRECORD']._serialized_end=4058
-  _globals['_SOURCEDMETADATA']._serialized_start=4061
-  _globals['_SOURCEDMETADATA']._serialized_end=4220
-  _globals['_METADATASOURCE']._serialized_start=4223
-  _globals['_METADATASOURCE']._serialized_end=4637
-  _globals['_METADATA']._serialized_start=4640
-  _globals['_METADATA']._serialized_end=5488
-  _globals['_METADATA_AUTHOR']._serialized_start=4932
-  _globals['_METADATA_AUTHOR']._serialized_end=5033
-  _globals['_METADATA_MESHHEADING']._serialized_start=5036
-  _globals['_METADATA_MESHHEADING']._serialized_end=5409
-  _globals['_METADATA_MESHTERM']._serialized_start=5411
-  _globals['_METADATA_MESHTERM']._serialized_end=5488
+  _globals['_SOURCEKIND']._serialized_start=5757
+  _globals['_SOURCEKIND']._serialized_end=6018
+  _globals['_SOURCEFORMAT']._serialized_start=6020
+  _globals['_SOURCEFORMAT']._serialized_end=6111
+  _globals['_LICENCEBASIS']._serialized_start=6113
+  _globals['_LICENCEBASIS']._serialized_end=6214
+  _globals['_CONVERTER']._serialized_start=6216
+  _globals['_CONVERTER']._serialized_end=6323
+  _globals['_ASSOCIATEDFILEROLE']._serialized_start=6326
+  _globals['_ASSOCIATEDFILEROLE']._serialized_end=6457
+  _globals['_FREETOREAD']._serialized_start=280
+  _globals['_FREETOREAD']._serialized_end=292
+  _globals['_LICENSED']._serialized_start=294
+  _globals['_LICENSED']._serialized_end=332
+  _globals['_INSTITUTIONCAPTURED']._serialized_start=334
+  _globals['_INSTITUTIONCAPTURED']._serialized_end=355
+  _globals['_UNKNOWNACCESS']._serialized_start=357
+  _globals['_UNKNOWNACCESS']._serialized_end=372
+  _globals['_ACCESS']._serialized_start=375
+  _globals['_ACCESS']._serialized_end=683
+  _globals['_REVISION']._serialized_start=686
+  _globals['_REVISION']._serialized_end=906
+  _globals['_SOURCE']._serialized_start=909
+  _globals['_SOURCE']._serialized_end=1224
+  _globals['_RENDERING']._serialized_start=1227
+  _globals['_RENDERING']._serialized_end=1593
+  _globals['_RENDERINGCONSTRUCTION']._serialized_start=1596
+  _globals['_RENDERINGCONSTRUCTION']._serialized_end=1895
+  _globals['_RECORD']._serialized_start=1898
+  _globals['_RECORD']._serialized_end=2444
+  _globals['_EXTERNALIDS']._serialized_start=2447
+  _globals['_EXTERNALIDS']._serialized_end=2640
+  _globals['_EQUIVALENCE']._serialized_start=2642
+  _globals['_EQUIVALENCE']._serialized_end=2696
+  _globals['_RETRACTION']._serialized_start=2698
+  _globals['_RETRACTION']._serialized_end=2808
+  _globals['_ASSOCIATEDFILE']._serialized_start=2811
+  _globals['_ASSOCIATEDFILE']._serialized_end=3039
+  _globals['_MANIFEST']._serialized_start=3042
+  _globals['_MANIFEST']._serialized_end=4200
+  _globals['_MANIFEST_RECORDSENTRY']._serialized_start=3551
+  _globals['_MANIFEST_RECORDSENTRY']._serialized_end=3638
+  _globals['_MANIFEST_REFSENTRY']._serialized_start=3640
+  _globals['_MANIFEST_REFSENTRY']._serialized_end=3683
+  _globals['_PUBMEDRECORD']._serialized_start=4202
+  _globals['_PUBMEDRECORD']._serialized_end=4324
+  _globals['_SOURCEDMETADATA']._serialized_start=4327
+  _globals['_SOURCEDMETADATA']._serialized_end=4486
+  _globals['_METADATASOURCE']._serialized_start=4489
+  _globals['_METADATASOURCE']._serialized_end=4903
+  _globals['_METADATA']._serialized_start=4906
+  _globals['_METADATA']._serialized_end=5754
+  _globals['_METADATA_AUTHOR']._serialized_start=5198
+  _globals['_METADATA_AUTHOR']._serialized_end=5299
+  _globals['_METADATA_MESHHEADING']._serialized_start=5302
+  _globals['_METADATA_MESHHEADING']._serialized_end=5675
+  _globals['_METADATA_MESHTERM']._serialized_start=5677
+  _globals['_METADATA_MESHTERM']._serialized_end=5754
 # @@protoc_insertion_point(module_scope)

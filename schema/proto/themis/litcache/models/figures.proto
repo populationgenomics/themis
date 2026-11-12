@@ -1,0 +1,119 @@
+// A paper's figures: where each is in the paper's pdf, where its legend is, and what each panel shows
+// (design: docs/design/figure-annotation.md).
+// A durable, authored contract: binary proto at rest, gated additively. This proto is the source of
+// truth; the committed themis/litcache/models/figures_pb2 stubs are generated from it.
+//
+//   Manifest
+//     refs["figures"] ──► records[F]   construction: FigureAnnotationConstruction   deps: [the pdf revision]
+//
+//   figure-sets/<F>.pb: FigureSet
+//     figures[i]   Figure     a step that reads a figure names it by i
+//       legend     Place
+//       panels[]   Panel
+//         place    Place
+//           box    Box
+
+syntax = "proto3";
+
+package themis.litcache.models.figures;
+
+import "buf/validate/validate.proto";
+
+// How the annotation step made a figure set: a Record.construction arm.
+message FigureAnnotationConstruction {
+  string model = 1 [(buf.validate.field).string.min_len = 1];  // the model id the API reported
+  // The prompt, the kind list, the tool surface and the size pages are rendered at; a set made by any other gives the
+  // annotation step work for a run that names it.
+  string harness_version = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// Every figure the model found in the paper's pdf, in the order it reported them. Empty for a paper with none.
+message FigureSet {
+  repeated Figure figures = 1;  // a figure's index here is how other records name it
+}
+
+// One figure: its printed label, its legend, and its panels on every page it is drawn on.
+message Figure {
+  string label = 1;  // as printed ("Figure 2", "Fig. S1"); empty for a figure the paper does not label
+  Place legend = 2;  // absent when the model found no legend for it
+  // At least one. A figure drawn across pages has panels on each of them.
+  repeated Panel panels = 3 [(buf.validate.field).repeated.min_items = 1];
+}
+
+// One separately drawn part of a figure; a figure with a single image is one panel.
+message Panel {
+  string label = 1;  // the panel's letter as printed; empty when it has none
+  // Every kind drawn in the panel: a pedigree with a sequence trace under each person is both.
+  repeated FigureKind kinds = 2 [
+    (buf.validate.field).repeated = {
+      min_items: 1
+      unique: true
+      items: {
+        enum: {defined_only: true}
+      }
+    },
+    // protovalidate 1.2 skips enum rules on repeated items, so this one is a CEL rule.
+    (buf.validate.field).cel = {
+      id: "panel.kinds_specified"
+      message: "a panel kind must be specified"
+      expression: "this.all(k, k != 0)"
+    }
+  ];
+  Place place = 3 [(buf.validate.field).required = true];  // where the panel is drawn
+}
+
+// A region of one pdf page. The model draws boxes by eye, so a box can clip its figure's edge or take in some margin:
+// a reader pads it.
+message Place {
+  int32 pdf_page = 1 [(buf.validate.field).int32.gt = 0];  // 1-based
+  Box box = 2 [(buf.validate.field).required = true];  // the region on that page
+}
+
+// Fractions of the page from its top-left corner, so a reader can re-render the region at any size.
+message Box {
+  option (buf.validate.message).cel = {
+    id: "box.ordered"
+    message: "a box must have left < right and top < bottom"
+    expression: "this.left < this.right && this.top < this.bottom"
+  };
+
+  // The left edge, as a fraction of the page's width.
+  float left = 1 [(buf.validate.field).float = {
+    gte: 0
+    lte: 1
+  }];
+  // The top edge, as a fraction of the page's height.
+  float top = 2 [(buf.validate.field).float = {
+    gte: 0
+    lte: 1
+  }];
+  // The right edge, as a fraction of the page's width.
+  float right = 3 [(buf.validate.field).float = {
+    gte: 0
+    lte: 1
+  }];
+  // The bottom edge, as a fraction of the page's height.
+  float bottom = 4 [(buf.validate.field).float = {
+    gte: 0
+    lte: 1
+  }];
+}
+
+// What a panel shows. A kind added here leaves existing sets valid; the harness version changes with it.
+enum FigureKind {
+  FIGURE_KIND_UNSPECIFIED = 0;  // never written; a panel names at least one kind
+  // A drawn family tree: individuals as squares, circles or diamonds, joined by partner and descent lines.
+  FIGURE_KIND_PEDIGREE = 1;
+  FIGURE_KIND_CLINICAL_PHOTOGRAPH = 2;  // a photograph of a patient or of an affected part
+  FIGURE_KIND_MEDICAL_IMAGING = 3;  // MRI, CT, X-ray, ultrasound
+  FIGURE_KIND_MICROSCOPY = 4;  // histology, immunofluorescence, electron microscopy
+  FIGURE_KIND_SEQUENCE_CHROMATOGRAM = 5;  // a Sanger trace
+  FIGURE_KIND_GEL_OR_BLOT = 6;  // an electrophoresis gel, or a western, southern or northern blot
+  FIGURE_KIND_SEQUENCE_ALIGNMENT = 7;  // aligned sequences, as for conservation across species
+  FIGURE_KIND_GENE_OR_PROTEIN_SCHEMATIC = 8;  // a gene's exons or a protein's domains, drawn as a track
+  FIGURE_KIND_PROTEIN_STRUCTURE = 9;  // a rendered 3D structure or model
+  FIGURE_KIND_CHART = 10;  // a plot, bar chart or curve
+  FIGURE_KIND_TABLE_IMAGE = 11;  // a table pasted in as an image; a table set as text is not a figure
+  FIGURE_KIND_DIAGRAM = 12;  // a flowchart, pathway or other drawn diagram
+  FIGURE_KIND_OTHER = 13;  // none of the above
+}
