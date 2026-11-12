@@ -1,14 +1,17 @@
 ### Concern: second review
 
-Design docs, interface changes, and database schema changes get their own PR and another maintainer's review
-([`docs/design/review-policy.md`](docs/design/review-policy.md)). The machinery only holds the merge for a review that
-was *requested* — it cannot notice the PR the author didn't realise qualifies. You are that notice.
+Design docs, interface changes, database schema changes, and agent-capability additions get their own PR and another
+maintainer's review ([`docs/design/review-policy.md`](docs/design/review-policy.md)). The machinery only holds the merge
+for a review that was *requested* — it cannot notice the PR the author didn't realise qualifies. You are that notice.
 
 Second-review content is:
 
 - a design doc: anything under `docs/design/`
 - an interface change: an authored proto contract (`schema/proto/`), or a data-contract doc
 - a database schema change: a migration (`themis/migrate/migrations/`)
+- an agent-capability addition: a change to an agent definition's `tools` (`agents/*.agent.yaml`) that lets the agent
+  use a tool it could not use before, or a host added to the evidence destinations list
+  (`themis/services/evidence/upstreams/destinations.py`). Removing, disabling or re-stating one is not.
 
 Flag either of the following. Both are T2 by construction — once the PR merges, the review this concern exists to prompt
 can no longer gate anything:

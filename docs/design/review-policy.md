@@ -13,10 +13,10 @@ migrations. This doc splits contributors into two review tiers and encodes them 
 ([`.github/workflows/review-gate.yml`](../../.github/workflows/review-gate.yml)) rather than a flat GitHub approval
 count. Maintainers (direct admin collaborators) normally merge their own implementation PRs after reading the diff
 themselves; a review from another maintainer is expected when changing design docs, interface contracts, or database
-migrations, and allowed on any PR. Every other contributor (other organization members and bots) requires an approving
-review from a maintainer. Encoding the two tiers in `review gate` lets maintainers merge routine implementation PRs
-without ticking the admin bypass checkbox on every landing, reserving the ruleset bypass for genuine check-level
-exceptions while keeping direct pushes to `main` closed.
+migrations, or adding an agent capability, and allowed on any PR. Every other contributor (other organization members
+and bots) requires an approving review from a maintainer. Encoding the two tiers in `review gate` lets maintainers merge
+routine implementation PRs without ticking the admin bypass checkbox on every landing, reserving the ruleset bypass for
+genuine check-level exceptions while keeping direct pushes to `main` closed.
 
 ## Background
 
@@ -41,14 +41,14 @@ collaborator on the repository:
 - **Maintainers (direct admin collaborators).** Maintainer PRs do not require approval from another maintainer by
   default. Because code in this repository is largely agent-written, the author's own read of the diff serves as the
   human review for an implementation PR: the author opens the PR as a draft and marks it ready for review only after
-  completing that read. Design docs, interface changes to proto contracts or data-contract docs, and database migrations
-  ship in their own PR and get an explicit review request from another maintainer while the PR is still a draft, after
-  the author has vetted the diff and stopped churning. Manual review requests survive the draft phase (unlike
-  `CODEOWNERS` auto-requests, which wait until a PR is marked ready), so the request is on record before CI checks and
-  the review bot first run. A maintainer can also request a review on any implementation PR (e.g. when touching an
-  unfamiliar area). Once a review is requested, waiting for it is enforced by `review gate`: the check stays red until
-  the requested reviewer submits an approving review or the request is withdrawn, and a comment-only review does not
-  satisfy it.
+  completing that read. Design docs, interface changes to proto contracts or data-contract docs, database migrations,
+  and changes that add or widen an agent capability ([`tool-surface.md`](tool-surface.md)) ship in their own PR and get
+  an explicit review request from another maintainer while the PR is still a draft, after the author has vetted the diff
+  and stopped churning. Manual review requests survive the draft phase (unlike `CODEOWNERS` auto-requests, which wait
+  until a PR is marked ready), so the request is on record before CI checks and the review bot first run. A maintainer
+  can also request a review on any implementation PR (e.g. when touching an unfamiliar area). Once a review is
+  requested, waiting for it is enforced by `review gate`: the check stays red until the requested reviewer submits an
+  approving review or the request is withdrawn, and a comment-only review does not satisfy it.
 - **Every other contributor (organization members with write access and bots such as
   [`doc-garden`](../plans/doc-garden.md)).** PRs from non-maintainers require one approving review, which in practice
   comes from a maintainer. Nothing automatically requests a review when a PR opens; maintainers pick up these PRs by
@@ -56,12 +56,12 @@ collaborator on the repository:
 
 Deciding whether a maintainer PR needs a second review is a human judgment call backed by a machine reminder. The
 PR-time LLM review includes a second-review concern
-([`.github/review/second-review.md`](../../.github/review/second-review.md)) that flags design, interface, or migration
-changes when no reviewer has been requested, and flags implementation code mixed into a contract PR beyond the bounds
-below. Each flag is posted as a review thread, so the ruleset's required thread resolution blocks merging until the
-author requests a review, splits the PR, or resolves the thread with a written reason. This polarity is deliberate: a
-machine verdict that grants merge permission would have to be hardened against tampering, whereas a machine flag that
-opens a review thread only needs a visible override recorded on the PR.
+([`.github/review/second-review.md`](../../.github/review/second-review.md)) that flags design, interface, migration, or
+agent-capability changes when no reviewer has been requested, and flags implementation code mixed into a contract PR
+beyond the bounds below. Each flag is posted as a review thread, so the ruleset's required thread resolution blocks
+merging until the author requests a review, splits the PR, or resolves the thread with a written reason. This polarity
+is deliberate: a machine verdict that grants merge permission would have to be hardened against tampering, whereas a
+machine flag that opens a review thread only needs a visible override recorded on the PR.
 
 ### What an interface or migration PR can carry alongside the contract
 

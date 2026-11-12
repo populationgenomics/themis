@@ -80,15 +80,16 @@ Worktrees go in `.claude/worktrees/` (gitignored), never `../` siblings.
 See [`docs/plans/screen-and-mirror-workflow.md`](docs/plans/screen-and-mirror-workflow.md) for the screen-and-mirror
 design.
 
-- **Design docs, interfaces, and database schemas get their own PR and a second maintainer's review; a maintainer's
-  implementation PRs don't need one.** Split design docs, interface changes (proto contracts, data-contract docs), and
-  database schema changes (migrations) into their own PR and request that review after the author's read, before the
-  draft goes ready (a request survives the draft phase); a maintainer's implementation PRs are normally merged by their
-  author after the adversarial review passes, the PR screen, and the author's own read of the diff — the human review of
-  agent-written code, so open PRs as drafts and leave going ready to the author. Requesting a review for any PR is fine.
-  Any other contributor's PR — implementation included — needs a maintainer's approving review. The split is
-  additive-first — a retirement, and an addition an exhaustiveness test binds, land with the code; the doc names each
-  bound and the check that enforces it. Policy and encoding:
+- **Design docs, interfaces, database schemas and agent-capability additions get their own PR and a second maintainer's
+  review; a maintainer's implementation PRs don't need one.** Split design docs, interface changes (proto contracts,
+  data-contract docs), database schema changes (migrations), and changes that add or widen an agent capability
+  ([`docs/design/tool-surface.md`](docs/design/tool-surface.md)) into their own PR and request that review after the
+  author's read, before the draft goes ready (a request survives the draft phase); a maintainer's implementation PRs are
+  normally merged by their author after the adversarial review passes, the PR screen, and the author's own read of the
+  diff — the human review of agent-written code, so open PRs as drafts and leave going ready to the author. Requesting a
+  review for any PR is fine. Any other contributor's PR — implementation included — needs a maintainer's approving
+  review. The split is additive-first — a retirement, and an addition an exhaustiveness test binds, land with the code;
+  the doc names each bound and the check that enforces it. Policy and encoding:
   [`docs/design/review-policy.md`](docs/design/review-policy.md).
 - **Adversarially review before opening a PR.** For any change with non-trivial code or logic, run adversarial review
   passes in subagents with fresh context — the reviewer sees only the diff, not the authoring conversation — and fix the

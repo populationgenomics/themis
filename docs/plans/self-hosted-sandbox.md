@@ -41,8 +41,8 @@ The design is held to four requirements:
   holds no credential; an injector it cannot inspect adds the `Authorization` header, scoped to that session's paths.
 - **Sandbox-originated egress under our policy.** The sandbox's own egress is an allowlist we control, not Anthropic's —
   a core reason we self-host. It bounds what agent code can reach *from the sandbox*, not every exfil path: the
-  Anthropic-side `web_search`/`web_fetch` server tools (§2) and a residual DNS channel (§8) do not traverse it, and are
-  named where they bite.
+  Anthropic-side `web_search` server tool (§2) and a residual DNS channel (§8) do not traverse it, and are named where
+  they bite.
 - **Scale-to-zero.** No standing compute while no session runs: no warm pool, no always-on poller, no tunnel host.
   Anthropic's work queue holds a session until a worker claims it, so waking on a webhook loses no work — a missed or
   slow spawn re-surfaces on the reclaim path (§5). There is no interactive-latency budget to trade against: a curation
@@ -89,14 +89,11 @@ What Anthropic gives us, condensed from the
   but the docs do not state the execution locus for self-hosted sandboxes, so this is inferred, not documented, and
   wants an empirical confirmation (§12). Either way there is no MCP call and no Anthropic-reached server of ours, since
   the working document is a file in the Analysis repository (§9), so the worker's required egress is the Anthropic API
-  (its stream) plus the internal services it calls (§8). Both web tools stay enabled, and exfiltration through them is
-  bounded by the tools themselves. `web_fetch` only retrieves URLs **already present in the conversation** — it cannot
-  fetch a URL the model fabricates, so the high-bandwidth attack (a prompt-injected agent posting the working document
-  to a crafted `attacker.com/?d=…` URL) is blocked at the source. `web_search` carries only a query to a provider whose
-  logs an attacker cannot read. The residual is narrow — a poisoned page could plant a collector URL for a later fetch,
-  and low-bandwidth staged channels survive — and is accepted and monitored (output/citation monitoring; synthetic data
-  this slice), not an unmanaged hole: the egress lockdown (§8) governs sandbox-originated egress, and the web tools are
-  a separate, bounded, monitored channel, not a gap it leaves open.
+  (its stream) plus the internal services it calls (§8). The egress lockdown (§8) governs sandbox-originated egress
+  only, so which web tools the agent is granted is decided separately, in
+  [`tool-surface.md`](../design/tool-surface.md): `web_search` is granted, since its query goes to a provider whose logs
+  an attacker cannot read, and `web_fetch` is not. On Managed Agents `web_fetch` fetches a URL the agent printed through
+  its own `shell` tool, so a prompt-injected agent could post the working document to a crafted `attacker.com/?d=…` URL.
   [Memory](https://platform.claude.com/docs/en/managed-agents/memory) is unsupported self-hosted (not used by the wiring
   slice).
 
@@ -316,11 +313,11 @@ the only git in it"), and the workbench reads the working document from its own 
   ours now), applied by the existing control-plane apply. It is **the** environment for the slice — the wiring plan's
   cloud environment is dropped (self-hosted from the first synthetic scenarios, §1). (A cloud environment can serve as a
   throwaway dev/test harness for app iteration while the sandbox is de-risked, but it is not a shipped path.) The agent
-  YAML drops `mcp_toolset` and `mcp_servers`, enables the prebuilt file tools and the `web_search` / `web_fetch` server
-  tools (default `always_allow`), and replaces the prebuilt `bash` with a custom `shell` tool carrying a model-stated
-  `intent` (§2); the system prompt teaches the contract path (§9). The BFF stops parking the session token in an
-  Anthropic vault (`vault_ids` disappears from session create) and records only the bearer's hash — the bearer is
-  derived per spawn, not stored (§7).
+  YAML drops `mcp_toolset` and `mcp_servers`, enables the prebuilt file tools and the `web_search` server tool by name
+  (default `always_allow`; `web_fetch` is not granted, per [`tool-surface.md`](../design/tool-surface.md)), and replaces
+  the prebuilt `bash` with a custom `shell` tool carrying a model-stated `intent` (§2); the system prompt teaches the
+  contract path (§9). The BFF stops parking the session token in an Anthropic vault (`vault_ids` disappears from session
+  create) and records only the bearer's hash — the bearer is derived per spawn, not stored (§7).
 - **`infra/themis_infra/sandbox.py`** (new module): the dispatcher service + SA, the sandbox job + its minimal SA
   (`run.invoker` on the sandbox-reachable services only), the environment-key secret plumbing, the VPC egress wiring,
   the Cloud DNS response policy, and the egress-IP allowlist. Prerequisite: the baseline has no VPC/subnet today —
@@ -426,11 +423,9 @@ The open items that gate the build, ordered by weight (worker mechanics: §2; th
   audience. (2) Smoke-test the gRPC handshake: the LB presents the self-signed leaf and the proxy trusts that same PEM
   as its root — confirm the directly-trusted self-signed server certificate is accepted and its SAN matches the dialed
   hostname.
-- **Web-tool exfil (decided; residual monitored)** — both `web_search` and `web_fetch` stay enabled. The channel is
-  bounded by `web_fetch`'s "URLs already in the conversation" property and `web_search`'s low bandwidth (§2), so it is
-  accepted and monitored, not a gate. The remaining build checks are functional, not go/no-go: confirm the web tools
-  execute under `self_hosted` at all, and stand up the output/citation monitoring that watches the residual (planted-URL
-  and low-bandwidth staged channels). Revisit the acceptance at the non-synthetic-data gate.
+- **Web-tool exfil (decided)** — `web_search` is granted and `web_fetch` is not, for the reasons in
+  [`tool-surface.md`](../design/tool-surface.md). The remaining build check is functional: confirm `web_search` executes
+  under `self_hosted` at all.
 - **Upstream TLS verification** — confirm the proxy validates the upstream certificate against the public CA chain on
   every leg: the Anthropic leg via Google Trust Services (the SDK's default), the internal legs via the load balancer's
   self-signed root (§6).

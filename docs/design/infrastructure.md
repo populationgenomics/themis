@@ -67,8 +67,9 @@ docs were accepted on the condition that the data is synthetic, and prod breaks 
 - The log of calls to upstream evidence services names the variant each call is about and is readable by every project
   log viewer; [`security.md`](security.md) restates that acceptance for prod.
 - What is kept, and for how long, was left open; [`data-retention.md`](data-retention.md) decides it.
-- The residual exfiltration channel through the agent's web tools was accepted with synthetic data in mind; it is one of
-  the conditions under [Real data in prod](#real-data-in-prod).
+- The residual exfiltration channel through the agent's web tools was accepted with synthetic data in mind;
+  [`tool-surface.md`](tool-surface.md) now decides what those tools may do, which is one of the conditions under
+  [Real data in prod](#real-data-in-prod).
 
 ## Non-goals
 
@@ -455,12 +456,9 @@ following holds. Each condition is owned by the doc linked from it.
   the Project's dataset storage read-only and binds only the sample files the agent asks for into its guest
   ([`access-control.md`](access-control.md#the-agent-reads-its-projects-dataset-as-files)). That path is what confines a
   session to its own Project's data, so a dataset is listed only once the path exists and is the agent's only way in.
-- **The residual exfiltration channel through the agent's web tools is accepted for real data.** A page the agent reads
-  can plant links, and a later fetch can reveal which of them the agent chose. For example, a poisoned page lists one
-  link per possible answer to "does this case carry variant X", and the fetch of one link tells the page's author the
-  answer. The channel was accepted, together with the output and citation monitoring that watches it, with synthetic
-  data in mind ([`../plans/self-hosted-sandbox.md`](../plans/self-hosted-sandbox.md#2-the-self-hosted-contract)). A real
-  dataset is listed only once that acceptance has been made for real data, or the channel has been closed.
+- **The agent's web tools are the ones the tool policy admits.**
+  [`tool-surface.md`](tool-surface.md#web-search-and-web-fetch) decides what the agent's web tools may do, and owns the
+  reasons: web search is admitted, and web fetch is not.
 - **The dataset's participant metadata carries no direct identifiers.** The agent may read the site's participant
   metadata in Metamist, CPG's sample registry, and relies on the convention that identifiers, free-form metadata and
   phenotype notes hold no name, date of birth, medical record number or address. Metamist does not enforce the

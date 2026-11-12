@@ -133,7 +133,8 @@ Several properties that look related do not determine whether a call is an exfil
   catch malformed inputs early. However, input validation does not close an exfiltration channel, and most free-text
   identifiers (such as HGVS descriptors or search queries) have no finite domain. Validating a gene symbol against an
   HGNC list can improve error messages at the cost of rejecting newly renamed genes, which is a usability trade-off
-  rather than a confidentiality control.
+  rather than a confidentiality control. The trade-off has one more side, which is accidental disclosure: a validated
+  symbol cannot carry a person's name by mistake ([`tool-surface.md`](tool-surface.md)).
 
 Applying this criterion per RPC leaves three residual risks that explain why we evaluate each upstream explicitly:
 
@@ -145,6 +146,17 @@ Applying this criterion per RPC leaves three residual risks that explain why we 
 1. **Data-derived destinations.** A destination stops being fixed the moment code constructs a URL from fetched data
    (such as following a host read from a database record, chasing an arbitrary HTTP redirect, or fetching a link from a
    search result). The criterion exists specifically to flag and forbid that pattern.
+
+   One instance of the pattern is accepted. To bring a paper into the literature corpus, the ingestion worker asks
+   Unpaywall, an open-access index, where the paper's open copy is. It fetches the PDF from the address in that record
+   and follows redirects ([`evidence-fulltext.md`](evidence-fulltext.md)), so the destination is derived from data. We
+   accept it because the request carries no text the agent wrote. The agent's only influence is which published paper is
+   asked for, and the fetch is made only for a paper that a public index already holds a record of. What a host can
+   learn is that this deployment requested one of its papers. A narrow channel remains: a party that controls the
+   open-access location of several indexed papers, and has also steered the agent, could read from its access log which
+   of them was requested, which is a few bits for each request. The criterion stands for everything else, and any
+   further destination derived from data needs its own argument here.
+   [`tool-surface.md`](tool-surface.md#residual-risks) lists this fetch among the agent's residual risks.
 
 1. **Request timing and count.** Even when request contents are unseen by the attacker, anyone who can observe the
    upstream's traffic or side effects could infer a few bits of information from whether and when Themis queries a
@@ -181,10 +193,10 @@ initialized with the admitted host set from
 [`destinations.py`](../../themis/services/evidence/upstreams/destinations.py) and raises an error before sending any
 request to an unlisted host. What keeps calls on that client, though, is the shape of the adapters — each is handed the
 shared client via dependency injection rather than building its own — and not a mechanical rule that fires when someone
-builds a standalone `httpx` client, which is the weaker form the chokepoint rule above warns about. Two batch components
-deliberately construct their own clients outside this set because neither carries caller-supplied text: the gene-disease
-refresh job, which fetches constant URLs and follows upstream redirects outside the admitted set, and the `litcache`
-ingestion pipeline.
+builds a standalone `httpx` client, which is the weaker form the chokepoint rule above warns about. Two components
+deliberately construct their own clients outside this set. The gene-disease refresh job carries no caller-supplied text:
+it fetches constant URLs and follows upstream redirects outside the admitted set. The `litcache` ingestion code carries
+the identifiers of the paper a caller named, and nothing else the caller wrote.
 
 *Where the text lands inside that host's URL* is not held by a chokepoint at all. Each adapter percent-encodes its own
 path segments and hands its own query parameters to the client, adapter by adapter, and one unencoded interpolation is
@@ -411,6 +423,9 @@ Each boundary in the system applies the rules above through a concrete mechanism
   services VPC allows outbound internet traffic, what an exposed RPC may dial is bounded by the evidence image's shared
   HTTP client, which admits only the upstream hosts recorded in
   [`destinations.py`](../../themis/services/evidence/upstreams/destinations.py).
+- **Agent capabilities** ([`tool-surface.md`](tool-surface.md)) are default-deny: the agent definition grants no tool by
+  default and names each one it enables. Every capability, Anthropic's server tools included, is measured against the
+  exfiltration channel criterion above.
 - **Public ingress** passes through IAP or matches a named exception with compensating controls, enforced across all
   Pulumi resource declarations by [`infra/tests/test_public_ingress.py`](../../infra/tests/test_public_ingress.py).
 - **Cross-Project data isolation** ([`workspace-model.md`](workspace-model.md), [`../PRODUCT.md`](../PRODUCT.md) §7)
