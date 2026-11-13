@@ -18,6 +18,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+grus = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 hgvs-weaver-data = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 litdown = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
 postern = { timestamp = "0001-01-01T00:00:00Z", span = "PT0S" }
@@ -1631,6 +1632,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/64/4e/4eae98d02148cb6f9f452f09942afba407afa6851e6c1fddc5ae9ec0b4ed/grpcio_tools-1.81.1-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:21bb3ba90e6d8df1ff663d4ee39a4e5b25a64e8ed4902476ca9ded0954d3917a", size = 3370525, upload-time = "2026-06-11T12:51:12.678Z" },
     { url = "https://files.pythonhosted.org/packages/e0/3e/2206e597a128da6a03a6106d2eaf2c3e72c7d80843d4be933e3a3d10d02a/grpcio_tools-1.81.1-cp314-cp314-win32.whl", hash = "sha256:3dca56016d90a710c4d9861bae793dc089c1430a90c79ce672e948ddb65fa539", size = 1030582, upload-time = "2026-06-11T12:51:14.906Z" },
     { url = "https://files.pythonhosted.org/packages/cf/f2/bbeef86c687225b7bbc7c0acdfbd25c8bcaa3f5b1c941db053e5c3d9e859/grpcio_tools-1.81.1-cp314-cp314-win_amd64.whl", hash = "sha256:cb08172b7b629e75cb33866928d319a3196540a725eaab628ba721007140f1af", size = 1207490, upload-time = "2026-06-11T12:51:17.598Z" },
+]
+
+[[package]]
+name = "grus"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "protobuf" },
+    { name = "protovalidate" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/34/d8/4ceb136843fcaf6d89ba71fadb64f9f852d470d804694671c1ccf6953376/grus-0.4.0.tar.gz", hash = "sha256:4878f7c9006b8b5b05f5afcf5c57c437933bb7d910bf384db3f462ab44275914", size = 403496, upload-time = "2026-11-12T02:37:55.137Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d9/9f/417d09932552529a36055d897b112bf51e214c81e78fc9c5f411650e9fef/grus-0.4.0-py3-none-any.whl", hash = "sha256:de863acc9201c38d70e2c1c787a6b63f274059403324db7bc52cbf9790d7553c", size = 174787, upload-time = "2026-11-12T02:37:53.582Z" },
 ]
 
 [[package]]
@@ -4141,6 +4155,7 @@ convert-worker = [
     { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
+    { name = "grus" },
     { name = "hgvs-weaver" },
     { name = "hgvs-weaver-data", extra = ["gcs"] },
     { name = "jsonschema" },
@@ -4181,6 +4196,7 @@ dataflow = [
     { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
+    { name = "grus" },
     { name = "hgvs-weaver" },
     { name = "hgvs-weaver-data", extra = ["gcs"] },
     { name = "httpx2" },
@@ -4268,6 +4284,7 @@ lint = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "grus" },
     { name = "hgvs-weaver" },
     { name = "hgvs-weaver-data", extra = ["build", "gcs"] },
     { name = "httpx2" },
@@ -4311,6 +4328,7 @@ litcache = [
     { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
+    { name = "grus" },
     { name = "hgvs-weaver" },
     { name = "hgvs-weaver-data", extra = ["gcs"] },
     { name = "httpx2" },
@@ -4440,6 +4458,7 @@ test = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "grus" },
     { name = "hgvs-weaver" },
     { name = "hgvs-weaver-data", extra = ["build", "gcs"] },
     { name = "httpx2" },
@@ -4534,6 +4553,7 @@ convert-worker = [
     { name = "google-auth" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
+    { name = "grus", specifier = "==0.4.0" },
     { name = "hgvs-weaver", specifier = "==2.1.0" },
     { name = "hgvs-weaver-data", extras = ["gcs"], specifier = "==0.1.4" },
     { name = "jsonschema", specifier = ">=4.26,<5" },
@@ -4574,6 +4594,7 @@ dataflow = [
     { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
+    { name = "grus", specifier = "==0.4.0" },
     { name = "hgvs-weaver", specifier = "==2.1.0" },
     { name = "hgvs-weaver-data", extras = ["gcs"], specifier = "==0.1.4" },
     { name = "httpx2" },
@@ -4661,6 +4682,7 @@ lint = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "grus", specifier = "==0.4.0" },
     { name = "hgvs-weaver", specifier = "==2.1.0" },
     { name = "hgvs-weaver-data", extras = ["build", "gcs"], specifier = "==0.1.4" },
     { name = "hgvs-weaver-data", extras = ["gcs"], specifier = "==0.1.4" },
@@ -4705,6 +4727,7 @@ litcache = [
     { name = "google-cloud-secret-manager" },
     { name = "google-cloud-storage" },
     { name = "google-cloud-tasks" },
+    { name = "grus", specifier = "==0.4.0" },
     { name = "hgvs-weaver", specifier = "==2.1.0" },
     { name = "hgvs-weaver-data", extras = ["gcs"], specifier = "==0.1.4" },
     { name = "httpx2" },
@@ -4828,6 +4851,7 @@ test = [
     { name = "grpcio" },
     { name = "grpcio-health-checking" },
     { name = "grpcio-tools" },
+    { name = "grus", specifier = "==0.4.0" },
     { name = "hgvs-weaver", specifier = "==2.1.0" },
     { name = "hgvs-weaver-data", extras = ["build", "gcs"], specifier = "==0.1.4" },
     { name = "hgvs-weaver-data", extras = ["gcs"], specifier = "==0.1.4" },

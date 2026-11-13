@@ -39,21 +39,24 @@ import datetime
 import hashlib
 import importlib.metadata
 import logging
-from collections.abc import Awaitable, Callable, Collection, Iterable
+from collections.abc import Awaitable, Callable, Collection, Iterable, Sequence
 
 import litdown
+import pypdfium2
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from litfetch import resolvers
 
 from themis.litcache import (
+    figure_annotate,
     identity,
     joblog,
     oa,
     ocr,
     outcome,
     pdf,
+    pedigree_extract,
     records,
     variant_extract,
     variant_scan,
@@ -61,7 +64,7 @@ from themis.litcache import (
     work,
     writer,
 )
-from themis.litcache.models import litcache_pb2, variants_pb2, work_pb2
+from themis.litcache.models import figures_pb2, litcache_pb2, variants_pb2, work_pb2
 
 # The fetched XML lands as its own lineage; the litdown rendering is produced from it.
 _XML_HANDLE = 'xml'
@@ -82,9 +85,13 @@ TRANSCRIPTION_STEP = 'transcription'
 SUPPLEMENTS_STEP = 'supplements'
 VARIANTS_STEP = 'variants'
 VERDICTS_STEP = 'verdicts'
+FIGURES_STEP = 'figures'
+PEDIGREES_STEP = 'pedigrees'
 # The kinds' directories in a paper's.
 _VARIANTS_DIR = 'variants'
 _VERDICTS_DIR = 'verdicts'
+_FIGURES_DIR = 'figure-sets'
+_PEDIGREES_DIR = 'pedigrees'
 # Beyond a spending step's own run: the source read before it and the commit after.
 _COMMIT_MARGIN = datetime.timedelta(seconds=60)
 # Attempts on one XML revision that may fail to download a listed supplementary file before the step settles.
@@ -115,6 +122,29 @@ class Variants:
         [variants_pb2.MentionSet, str], tuple[variants_pb2.MentionSet, variants_pb2.Verdicts, Validation]
     ]
     validation: Validation
+
+
+@dataclasses.dataclass(frozen=True)
+class Figures:
+    """What the figure step calls out to; injected so the loop runs offline in tests.
+
+    Attributes:
+        annotate: Annotates every figure of a pdf, given its bytes and its pages' layouts
+            (`figure_annotate.annotate_paper`, bound).
+    """
+
+    annotate: Callable[[bytes, Sequence[pdf.PageLayout]], Awaitable[figure_annotate.Annotation]]
+
+
+@dataclasses.dataclass(frozen=True)
+class Pedigrees:
+    """What the pedigree step calls out to; injected so the loop runs offline in tests.
+
+    Attributes:
+        read: Reads a paper's pedigree figures into one pedigree set (`pedigree_extract.read_paper`, bound).
+    """
+
+    read: Callable[[pedigree_extract.PaperInput], Awaitable[pedigree_extract.Reading]]
 
 
 class PaperNotInCorpusError(Exception):
@@ -159,6 +189,8 @@ class _Run:
     fetch_supplementary: SupplementFetcher
     convert_pdf: ocr.PdfConverter
     variants: Variants
+    figures: Figures
+    pedigrees: Pedigrees
     now: Callable[[], datetime.datetime]
     deadline: datetime.timedelta
     started: datetime.datetime
@@ -229,6 +261,8 @@ class _Step:
         run: Runs it on those inputs, committing its record or raising `_SettledError`.
         expected: For a spending step, the time a request must have left to begin it. A step that runs longer is
             ended when the request's time runs out, and the attempt is logged as paid for and failed.
+        waits: Steps whose output it reads when there is any: it has no work while one of them has, so it reads that
+            output if the step makes it, and goes without it if the step settles without one.
     """
 
     name: str
@@ -238,6 +272,7 @@ class _Step:
     produced: Callable[[litcache_pb2.Manifest, Validation | None], bool]
     run: Callable[[_Run, litcache_pb2.Manifest, tuple[str, ...]], Awaitable[None]]
     expected: datetime.timedelta | None = None
+    waits: tuple[str, ...] = ()
 
 
 def _utcnow() -> datetime.datetime:
@@ -641,6 +676,310 @@ async def _run_verdicts(run: _Run, manifest: litcache_pb2.Manifest, inputs: tupl
     )
 
 
+# --- figures
+
+
+_FIGURE_HARNESS_INPUT = hashlib.sha256(
+    f'figure annotation harness {figure_annotate.HARNESS_VERSION}'.encode()
+).hexdigest()
+
+
+def _figures_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | None:
+    """The current pdf revision and the harness; None for a paper with no pdf."""
+    source = _pdf_source(manifest)
+    return None if source is None else (_current_revision(source).hash, _FIGURE_HARNESS_INPUT)
+
+
+def _figures_produced(manifest: litcache_pb2.Manifest, _validation: Validation | None) -> bool:
+    """Whether the current pdf revision has a figure set from the current harness."""
+    inputs = _figures_inputs(manifest)
+    return inputs is not None and any(
+        record.WhichOneof('construction') == 'figure_annotation'
+        and inputs[0] in record.deps
+        and record.figure_annotation.harness_version == figure_annotate.HARNESS_VERSION
+        for record in manifest.records.values()
+    )
+
+
+def _pdf_bytes(run: _Run, manifest: litcache_pb2.Manifest, pdf_hash: str) -> bytes:
+    """The bytes of the pdf revision with this hash.
+
+    Raises:
+        _SettledError: No pdf lineage of the manifest holds the revision.
+    """
+    for source in manifest.sources:
+        if source.media_type != litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF:
+            continue
+        if any(r.hash == pdf_hash for r in source.revisions):
+            path = writer.source_revision_path(run.doc_id, source.handle, pdf_hash, source.media_type)
+            return run.bucket.blob(path).download_as_bytes()
+    raise _permanent(f'no pdf lineage holds the revision {pdf_hash}')
+
+
+async def _layouts(pdf_bytes: bytes) -> list[pdf.PageLayout]:
+    """Every page's layout.
+
+    Raises:
+        _SettledError: pdfium cannot read the pdf, or it has no pages.
+    """
+    try:
+        layouts = await asyncio.wrap_future(pdf.page_layouts(pdf_bytes))
+    except pypdfium2.PdfiumError as e:
+        raise _permanent(f'the pdf cannot be read: {e}') from e
+    if not layouts:
+        raise _permanent('the pdf has no pages')
+    return layouts
+
+
+async def _run_figures(run: _Run, manifest: litcache_pb2.Manifest, inputs: tuple[str, ...]) -> None:
+    pdf_hash, _harness = inputs
+    pdf_bytes = _pdf_bytes(run, manifest, pdf_hash)
+    layouts = await _layouts(pdf_bytes)
+    if len(layouts) > figure_annotate.MAX_PAGES:
+        raise _permanent(f'the pdf has {len(layouts)} pages; at most {figure_annotate.MAX_PAGES} are annotated')
+    if not _begin(run, FIGURES_STEP, inputs):
+        return
+    try:
+        annotation = await run.figures.annotate(pdf_bytes, layouts)
+    except figure_annotate.AnnotationError as e:
+        raise _permanent(str(e)) from e
+    except pypdfium2.PdfiumError as e:
+        raise _permanent(f'the pdf cannot be rendered: {e}') from e  # before any request: nothing was spent
+    except ocr.SpendRefusedError as e:
+        run.refuse(FIGURES_STEP, inputs, e)
+        return
+    except ocr.SpentError as e:
+        run.fail(FIGURES_STEP, inputs, e, model_answered=True)
+        raise
+    except Exception as e:
+        run.fail(FIGURES_STEP, inputs, e, model_answered=False)
+        raise
+    record = litcache_pb2.Record(deps=[pdf_hash], created_at=_created(run), figure_annotation=annotation.construction)
+    data = annotation.figure_set.SerializeToString(deterministic=True)
+    try:
+        _commit(
+            lambda: writer.add_record(
+                run.bucket,
+                run.doc_id,
+                directory=_FIGURES_DIR,
+                extension='pb',
+                data=data,
+                record=record,
+                ref=records.FIGURES_REF,
+            )
+        )
+    except _SettledError:
+        raise
+    except Exception as e:
+        run.fail(FIGURES_STEP, inputs, e, model_answered=True)  # paid for, and not committed
+        raise
+
+
+# --- pedigrees
+
+
+# Conversations a paper is read in, one per figure and page it draws pedigrees on: a bound on what an unusual paper
+# spends. A figure left out is absent from the record's `figures_read`.
+MAX_PEDIGREE_READS = 8
+_PEDIGREE_HARNESS_INPUT = hashlib.sha256(
+    f'pedigree extraction harness {pedigree_extract.HARNESS_VERSION}'.encode()
+).hexdigest()
+
+
+# The pedigree step's input where the paper has no validated variants: its variant steps settled without them. A
+# hash, as every job log input is.
+_NO_VARIANTS = hashlib.sha256(b'no validated variants').hexdigest()
+
+
+def _current_verdicts(manifest: litcache_pb2.Manifest, markdown_key: str) -> str | None:
+    """The verdicts on the current rendering's mention set, or None when the paper has none."""
+    variants = records.named(manifest, records.VARIANTS_REF, 'variant_extraction')
+    verdicts = records.named(manifest, records.VERDICTS_REF, 'variant_validation')
+    if variants is None or verdicts is None:
+        return None
+    if markdown_key not in variants[1].deps or variants[0] not in verdicts[1].deps:
+        return None
+    return verdicts[0]
+
+
+def _pedigrees_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | None:
+    """The rendering, the figure set the `figures` ref names, the current pdf revision, the verdicts, the harness.
+
+    The verdicts are those on the current rendering's mentions, or `_NO_VARIANTS`: the step waits on the variant steps
+    (`_Step.waits`), so it goes without verdicts only once they have settled without any.
+
+    None until both exist, and while the figure set is not from the current pdf revision: a new revision is read
+    once its figures are. The revision is an input of its own because a new revision's figure set can be byte for
+    byte the old one's, and so the same record.
+    """
+    markdown = records.markdown(manifest)
+    figures = records.named(manifest, records.FIGURES_REF, 'figure_annotation')
+    source = _pdf_source(manifest)
+    if markdown is None or figures is None or source is None:
+        return None
+    pdf_hash = _current_revision(source).hash
+    if pdf_hash not in figures[1].deps:
+        return None
+    verdicts = _current_verdicts(manifest, markdown[0]) or _NO_VARIANTS
+    return (markdown[0], figures[0], pdf_hash, verdicts, _PEDIGREE_HARNESS_INPUT)
+
+
+def _pedigrees_produced(manifest: litcache_pb2.Manifest, _validation: Validation | None) -> bool:
+    """Whether the current rendering, figure set, pdf revision and verdicts have a pedigree set from this harness.
+
+    The figure set and verdicts are those the refs name, current or not: a new figure or variant harness re-reads a
+    paper's pedigrees only once a request for that step has replaced its record, as the verdicts step treats its
+    mention set. A cheap upstream change does not buy a paid re-read of every paper a pedigree request names.
+    """
+    inputs = _pedigrees_inputs(manifest)
+    return inputs is not None and any(
+        record.WhichOneof('construction') == 'pedigree_extraction'
+        and set(inputs[:-1]) - {_NO_VARIANTS} <= set(record.deps)
+        and record.pedigree_extraction.harness_version == pedigree_extract.HARNESS_VERSION
+        for record in manifest.records.values()
+    )
+
+
+def _pedigree_figures(
+    figure_set: figures_pb2.FigureSet, layouts: Sequence[pdf.PageLayout]
+) -> list[pedigree_extract.FigurePage]:
+    """Each page of each figure with a pedigree panel, in figure order: whole figures, while `MAX_PEDIGREE_READS` holds.
+
+    Raises:
+        _SettledError: A place names a page the pdf does not have: the figure set was made from another pdf.
+    """
+
+    def layout(number: int) -> pdf.PageLayout:
+        if not 1 <= number <= len(layouts):
+            raise _permanent(f'the figure set names page {number} of a {len(layouts)}-page pdf')
+        return layouts[number - 1]
+
+    units: list[pedigree_extract.FigurePage] = []
+    for index, figure in enumerate(figure_set.figures):
+        panels = [p for p in figure.panels if figures_pb2.FIGURE_KIND_PEDIGREE in p.kinds]
+        if not panels:
+            continue
+        by_page: dict[int, list[tuple[float, float, float, float]]] = {}
+        for panel in panels:
+            box = panel.place.box
+            by_page.setdefault(panel.place.pdf_page, []).append((box.left, box.top, box.right, box.bottom))
+        legend = layout(figure.legend.pdf_page) if figure.HasField('legend') else None
+        pages = [
+            pedigree_extract.FigurePage(
+                figure=index,
+                label=figure.label,
+                page=layout(number),
+                boxes=boxes,
+                legend=legend if legend is not None and legend.number != number else None,
+            )
+            for number, boxes in sorted(by_page.items())
+        ]
+        if len(units) + len(pages) > MAX_PEDIGREE_READS:
+            _LOG.warning(
+                'figure %d needs %d more reads, past the cap of %d: not read', index, len(pages), MAX_PEDIGREE_READS
+            )
+            continue
+        units.extend(pages)
+    return units
+
+
+def _known_variants(
+    run: _Run, manifest: litcache_pb2.Manifest, verdicts_key: str, markdown: str
+) -> list[pedigree_extract.KnownVariant]:
+    """The paper's validated variants in people or unspecified species, each with the lines that print it.
+
+    Variants the paper observed come before those it cites, so a list cut at the reader's bound keeps the family's.
+
+    Raises:
+        _SettledError: The verdicts were not made from one mention set.
+    """
+    deps = manifest.records[verdicts_key].deps
+    if len(deps) != 1:
+        raise _permanent(f'the verdicts {verdicts_key} were made from {len(deps)} records, not a mention set')
+    (variants_key,) = deps
+    mentions = variants_pb2.MentionSet.FromString(
+        run.bucket.blob(writer.record_path(run.doc_id, _VARIANTS_DIR, variants_key, 'pb')).download_as_bytes()
+    )
+    verdicts = variants_pb2.Verdicts.FromString(
+        run.bucket.blob(writer.record_path(run.doc_id, _VERDICTS_DIR, verdicts_key, 'pb')).download_as_bytes()
+    )
+    lines = markdown.split('\n')
+    known: list[tuple[bool, pedigree_extract.KnownVariant]] = []
+    for mention, verdict in zip(mentions.mentions, verdicts.mentions, strict=True):
+        if not verdict.HasField('chosen'):
+            continue
+        if mention.known_species not in (variants_pb2.SPECIES_UNSPECIFIED, variants_pb2.SPECIES_HUMAN):
+            continue
+        printing = dict.fromkeys(
+            ' '.join(lines[o.line - 1 : o.line + 1]).strip()
+            for o in mention.occurrences
+            if o.HasField('line') and o.line <= len(lines)
+        )
+        observed = any(o.context == variants_pb2.CONTEXT_OBSERVED for o in mention.occurrences)
+        variant = pedigree_extract.KnownVariant(
+            printed=mention.verbatim,
+            checked=(list(mention.candidates) + list(verdict.derived))[verdict.chosen].hgvs,
+            gene=mention.gene,
+            lines=tuple(printing),
+        )
+        known.append((observed, variant))
+    return [variant for observed, variant in known if observed] + [v for observed, v in known if not observed]
+
+
+async def _run_pedigrees(run: _Run, manifest: litcache_pb2.Manifest, inputs: tuple[str, ...]) -> None:
+    markdown_key, figures_key, pdf_hash, verdicts_key, _harness = inputs
+    figure_set = figures_pb2.FigureSet.FromString(
+        run.bucket.blob(writer.record_path(run.doc_id, _FIGURES_DIR, figures_key, 'pb')).download_as_bytes()
+    )
+    # The figure set is the free screen: a paper it finds no pedigree in is not worth a model.
+    if not any(figures_pb2.FIGURE_KIND_PEDIGREE in p.kinds for f in figure_set.figures for p in f.panels):
+        raise _nothing('the figure set has no pedigree panel')
+    markdown = run.bucket.blob(writer.rendering_path(run.doc_id, markdown_key)).download_as_text()
+    pdf_bytes = _pdf_bytes(run, manifest, pdf_hash)
+    units = _pedigree_figures(figure_set, await _layouts(pdf_bytes))
+    if not units:
+        raise _permanent(f'every pedigree figure needs more than {MAX_PEDIGREE_READS} reads')
+    variants = [] if verdicts_key == _NO_VARIANTS else _known_variants(run, manifest, verdicts_key, markdown)
+    paper = pedigree_extract.PaperInput(
+        markdown=markdown, pdf_bytes=pdf_bytes, pdf_hash=pdf_hash, figures=units, variants=variants
+    )
+    if not _begin(run, PEDIGREES_STEP, inputs):
+        return
+    try:
+        reading = await run.pedigrees.read(paper)
+    except pedigree_extract.ExtractionError as e:
+        raise _permanent(str(e)) from e
+    except ocr.SpendRefusedError as e:
+        run.refuse(PEDIGREES_STEP, inputs, e)
+        return
+    except ocr.SpentError as e:
+        run.fail(PEDIGREES_STEP, inputs, e, model_answered=True)
+        raise
+    except Exception as e:
+        run.fail(PEDIGREES_STEP, inputs, e, model_answered=False)
+        raise
+    deps = [markdown_key, figures_key, pdf_hash] + ([] if verdicts_key == _NO_VARIANTS else [verdicts_key])
+    record = litcache_pb2.Record(deps=deps, created_at=_created(run), pedigree_extraction=reading.construction)
+    data = reading.pedigree_set.SerializeToString(deterministic=True)
+    try:
+        _commit(
+            lambda: writer.add_record(
+                run.bucket,
+                run.doc_id,
+                directory=_PEDIGREES_DIR,
+                extension='pb',
+                data=data,
+                record=record,
+                ref=records.PEDIGREES_REF,
+            )
+        )
+    except _SettledError:
+        raise
+    except Exception as e:
+        run.fail(PEDIGREES_STEP, inputs, e, model_answered=True)  # paid for, and not committed
+        raise
+
+
 # Declared so that every step comes after the steps whose output it reads.
 STEPS: tuple[_Step, ...] = (
     _Step(XML_STEP, spends=False, needs=(), inputs=lambda _m: (), produced=_xml_produced, run=_run_xml),
@@ -686,6 +1025,25 @@ STEPS: tuple[_Step, ...] = (
         produced=_verdicts_produced,
         run=_run_verdicts,
     ),
+    _Step(
+        FIGURES_STEP,
+        spends=True,
+        needs=(LOCATE_STEP,),
+        inputs=_figures_inputs,
+        produced=_figures_produced,
+        run=_run_figures,
+        expected=figure_annotate.LONGEST,
+    ),
+    _Step(
+        PEDIGREES_STEP,
+        spends=True,
+        needs=(work.MAIN_TEXT_TARGET, FIGURES_STEP, VERDICTS_STEP),
+        inputs=_pedigrees_inputs,
+        produced=_pedigrees_produced,
+        run=_run_pedigrees,
+        expected=pedigree_extract.LONGEST,
+        waits=(VARIANTS_STEP, VERDICTS_STEP, FIGURES_STEP),
+    ),
 )
 _STEPS_BY_NAME = {step.name: step for step in STEPS}
 
@@ -721,7 +1079,7 @@ def reach(
         if name in reached or step.produced(manifest, validation):
             return
         reached.add(name)
-        for need in step.needs:
+        for need in step.needs + step.waits:
             visit(need)
 
     unknown = set(targets) - TARGETS
@@ -745,8 +1103,35 @@ def _step_has_work(
     inputs = step.inputs(manifest)
     if inputs is None or step.produced(manifest, validation):
         return False
+    if any(
+        _unsettled(
+            _STEPS_BY_NAME[name], manifest, log, attempt=attempt, now=now, deadline=deadline, validation=validation
+        )
+        for name in step.waits
+    ):
+        return False
     verdict = joblog.assess(log, step=step.name, inputs=inputs, attempt=attempt, now=now, deadline=deadline)
     return verdict in (joblog.Verdict.WORK, joblog.Verdict.SPENT, joblog.Verdict.BEGUN)
+
+
+def _unsettled(
+    step: _Step,
+    manifest: litcache_pb2.Manifest,
+    log: work_pb2.JobLog,
+    *,
+    attempt: joblog.Attempt,
+    now: datetime.datetime,
+    deadline: datetime.timedelta,
+    validation: Validation | None,
+) -> bool:
+    """Whether a step another waits on may still change its output: it has work, or another attempt is running it."""
+    if _step_has_work(step, manifest, log, attempt=attempt, now=now, deadline=deadline, validation=validation):
+        return True
+    inputs = step.inputs(manifest)
+    if inputs is None or step.produced(manifest, validation):
+        return False
+    verdict = joblog.assess(log, step=step.name, inputs=inputs, attempt=attempt, now=now, deadline=deadline)
+    return verdict is joblog.Verdict.RUNNING
 
 
 def _runs(step: _Step, reached: Collection[str]) -> bool:
@@ -901,6 +1286,8 @@ async def run(
     attempt: joblog.Attempt,
     convert_pdf: ocr.PdfConverter,
     variants: Variants,
+    figures: Figures,
+    pedigrees: Pedigrees,
     resolver: resolvers.Resolver | None = None,
     fetch: Fetcher = oa.fetch_oa_source,
     fetch_pdf: PdfFetcher = oa.fetch_oa_pdf,
@@ -921,6 +1308,8 @@ async def run(
         attempt: This request, as the job log names it.
         convert_pdf: The PDF → markdown converter the transcription step calls.
         variants: What the variant extraction and validation steps call out to.
+        figures: What the figure step calls out to.
+        pedigrees: What the pedigree step calls out to.
         resolver: The litfetch id resolver the XML fetch uses to fill missing ids; defaults to
             `oa.default_resolver` (doi/pmid → pmcid).
         fetch: The OA body fetcher. Injected so tests run offline.
@@ -960,6 +1349,8 @@ async def run(
         fetch_supplementary,
         convert_pdf,
         variants,
+        figures,
+        pedigrees,
         now,
         deadline,
         started=now(),

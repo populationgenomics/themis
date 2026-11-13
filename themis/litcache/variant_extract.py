@@ -21,7 +21,7 @@ from typing import Any, Literal
 import anthropic
 import anthropic.types
 
-from themis.litcache import anthropic_ocr, ocr, variant_reference, variant_scan, variant_tools
+from themis.litcache import anthropic_ocr, claude_turns, ocr, variant_reference, variant_scan, variant_tools
 from themis.litcache.models import variants_pb2
 
 _LOG = logging.getLogger(__name__)
@@ -39,7 +39,6 @@ _TIMEOUT_SECONDS = 1500.0
 LONGEST = datetime.timedelta(seconds=_TIMEOUT_SECONDS)
 # No byte from the API for this long ends a turn: the SDK's read timeout.
 _STALL_SECONDS = 300.0
-_UNFINISHED = 'unfinished'
 Effort = Literal['low', 'medium', 'high', 'xhigh', 'max']
 # What the agent reads: the rendering, the pdf's pages as images, or both.
 Reading = Literal['markdown', 'markdown_and_pages', 'pages']
@@ -204,16 +203,6 @@ class ExtractionError(Exception):
         self.turns = turns
         self.refusal = refusal
         self.tool_calls = tool_calls if tool_calls is not None else collections.Counter()
-
-
-def _refusal(message: anthropic.types.Message, request_id: str | None) -> dict[str, str | None]:
-    details = message.stop_details
-    return {
-        'category': details.category if details is not None else None,
-        'explanation': details.explanation if details is not None else None,
-        'request_id': request_id,
-        'message_id': message.id,
-    }
 
 
 @dataclasses.dataclass(frozen=True)
@@ -400,35 +389,19 @@ async def extract(
     usage: list[anthropic.types.Usage] = []
     reported_model = model
     for turn in range(1, max_turns + 1):
-        # The turn as far as the stream got, from `message_start` on: what a turn that fails after it was paid for.
-        snapshot: anthropic.types.Message | None = None
-        try:
-            async with client.messages.stream(
-                model=model,
-                max_tokens=_MAX_TOKENS,
-                system=system,
-                tools=toolbox.definitions,
-                messages=messages,
-                cache_control={'type': 'ephemeral'},
-                output_config=anthropic.types.OutputConfigParam(effort=effort)
-                if effort is not None
-                else anthropic.omit,
-            ) as stream:
-                async for event in stream:
-                    if snapshot is not None or event.type == 'message_start':
-                        snapshot = stream.current_message_snapshot
-                message = await stream.get_final_message()
-                request_id = stream.request_id
-        except BaseException as error:
-            # A cancellation (the conversation's timeout) included: whatever ends a turn the model began, it was billed.
-            if snapshot is not None:
-                tokens.add(snapshot.usage, model=snapshot.model, stop_reason=_UNFINISHED)
-                if isinstance(error, Exception):
-                    raise ocr.SpentError(f'turn {turn} failed after the model answered: {error!r}') from error
-            raise
+        message, request_id = await claude_turns.stream(
+            client,
+            tokens=tokens,
+            model=model,
+            max_tokens=_MAX_TOKENS,
+            system=system,
+            tools=toolbox.definitions,
+            messages=messages,
+            cached=True,
+            effort=effort,
+        )
         reported_model = message.model
         usage.append(message.usage)
-        tokens.add(message.usage, model=message.model, stop_reason=message.stop_reason or _UNFINISHED)
         messages.append({'role': 'assistant', 'content': message.content})
         if message.stop_reason in ('tool_use', 'pause_turn'):
             if message.stop_reason == 'tool_use':
@@ -452,24 +425,12 @@ async def extract(
             f'turn {turn} stopped with {message.stop_reason}',
             partial=toolbox.mention_set,
             turns=turn,
-            refusal=_refusal(message, request_id) if message.stop_reason == 'refusal' else None,
+            refusal=claude_turns.refusal(message, request_id) if message.stop_reason == 'refusal' else None,
             tool_calls=calls,
         )
     raise ExtractionError(
         f'no end after {max_turns} turns', partial=toolbox.mention_set, turns=max_turns, tool_calls=calls
     )
-
-
-@dataclasses.dataclass
-class _Billed:
-    """A `TokenCounter` passing usage on, and remembering whether any turn was paid for."""
-
-    tokens: ocr.TokenCounter
-    paid: bool = False
-
-    def add(self, usage: anthropic.types.Usage, *, model: str, stop_reason: str) -> None:
-        self.paid = True
-        self.tokens.add(usage, model=model, stop_reason=stop_reason)
 
 
 async def extract_markdown(
@@ -500,7 +461,7 @@ async def extract_markdown(
         anthropic.APIError: The first turn failed before the model answered; nothing was spent.
         TimeoutError: The conversation ran past `_TIMEOUT_SECONDS` before the model answered; nothing was spent.
     """
-    billed = _Billed(tokens)
+    billed = claude_turns.Billed(tokens)
     try:
         async with (
             anthropic.AsyncAnthropic(
@@ -518,9 +479,5 @@ async def extract_markdown(
             )
     except (ExtractionError, ocr.SpentError):
         raise
-    except Exception as e:
-        if billed.paid:
-            raise ocr.SpentError(f'the extraction failed after a paid turn: {e!r}') from e
-        if isinstance(e, anthropic.APIStatusError) and anthropic_ocr.spend_refused(e):
-            raise ocr.SpendRefusedError(str(e)) from e
-        raise
+    except Exception as e:  # noqa: BLE001 — classified and re-raised, never swallowed
+        claude_turns.raise_classified(e, billed)

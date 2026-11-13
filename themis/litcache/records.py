@@ -18,6 +18,10 @@ MARKDOWN_REF = 'markdown'
 VARIANTS_REF = 'variants'
 # The ref naming weaver's verdicts on the mention set the `variants` ref names.
 VERDICTS_REF = 'verdicts'
+# The ref naming the paper's figure set: where each figure of its pdf is, and what kind each panel is.
+FIGURES_REF = 'figures'
+# The ref naming the paper's pedigree set: every pedigree read from its figures.
+PEDIGREES_REF = 'pedigrees'
 
 # Rendering fidelity, best first: an xml-faithful litdown rendering over a pdf-derived one, and llm-ocr over the legacy
 # docling route. A converter missing here ranks below every listed one rather than raising: during a deploy, a writer on
@@ -39,17 +43,43 @@ def _rendering_key(
     return (rank, -record.created_at.seconds, -record.created_at.nanos, key)
 
 
-def _made_from(upstream: str) -> Callable[[litcache_pb2.Manifest, str, litcache_pb2.Record], tuple[int, int, int, str]]:
-    """A derived kind's ranking: made from what `upstream` names now first, then the newest, then the hash.
+def _made_from(
+    *upstreams: str,
+    optional: tuple[str, ...] = (),
+) -> Callable[[litcache_pb2.Manifest, str, litcache_pb2.Record], tuple[int, int, int, str]]:
+    """A derived kind's ranking: made from what each of `upstreams` names now first, then the newest, then the hash.
+
+    An `optional` upstream counts only while its ref is set: a record made without it is current when there is none.
 
     Recency alone is not enough: a slow run on an input since superseded can finish after the run on its successor.
     """
 
     def rank(manifest: litcache_pb2.Manifest, key: str, record: litcache_pb2.Record) -> tuple[int, int, int, str]:
-        current = upstream in manifest.refs and manifest.refs[upstream] in record.deps
+        current = all(ref in manifest.refs and manifest.refs[ref] in record.deps for ref in upstreams) and all(
+            ref not in manifest.refs or manifest.refs[ref] in record.deps for ref in optional
+        )
         return (0 if current else 1, -record.created_at.seconds, -record.created_at.nanos, key)
 
     return rank
+
+
+def _newest_pdf(manifest: litcache_pb2.Manifest) -> str | None:
+    """The hash of the most recently captured revision of any pdf lineage, or None for a paper with no pdf."""
+    revisions = [
+        r for s in manifest.sources if s.media_type == litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF for r in s.revisions
+    ]
+    if not revisions:
+        return None
+    return max(revisions, key=lambda r: r.captured_at.ToDatetime()).hash
+
+
+def _made_from_newest_pdf(
+    manifest: litcache_pb2.Manifest, key: str, record: litcache_pb2.Record
+) -> tuple[int, int, int, str]:
+    """A kind made from a pdf: from the newest pdf revision first, then the newest, then the hash."""
+    newest = _newest_pdf(manifest)
+    current = newest is not None and newest in record.deps
+    return (0 if current else 1, -record.created_at.seconds, -record.created_at.nanos, key)
 
 
 # Each kind's ranking, by its construction arm: a sort key, lower is better. A kind with none can be held but not
@@ -58,6 +88,8 @@ _RANKINGS: dict[str, Callable[[litcache_pb2.Manifest, str, litcache_pb2.Record],
     'rendering': _rendering_key,
     'variant_extraction': _made_from(MARKDOWN_REF),
     'variant_validation': _made_from(VARIANTS_REF),
+    'figure_annotation': _made_from_newest_pdf,
+    'pedigree_extraction': _made_from(MARKDOWN_REF, FIGURES_REF, optional=(VERDICTS_REF,)),
 }
 
 

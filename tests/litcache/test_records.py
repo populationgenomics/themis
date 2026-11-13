@@ -8,7 +8,7 @@ import pytest
 from google.protobuf import timestamp_pb2
 
 from themis.litcache import records
-from themis.litcache.models import litcache_pb2, variants_pb2
+from themis.litcache.models import figures_pb2, litcache_pb2, pedigrees_pb2, variants_pb2
 
 
 def _record(
@@ -179,3 +179,73 @@ def test_a_mention_set_from_a_superseded_rendering_never_takes_the_ref_from_one_
     records.put_record(manifest, 'v-old', late, records.VARIANTS_REF)
 
     assert manifest.refs[records.VARIANTS_REF] == 'v-new'
+
+
+def test_a_figure_set_from_a_superseded_pdf_never_takes_the_ref_from_one_on_the_newest() -> None:
+    # A slow annotation of a pdf revision since replaced can finish after the one on its successor.
+    pdf = litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF
+    manifest = litcache_pb2.Manifest(doc_id='d')
+    manifest.sources.add(
+        handle='pdf',
+        media_type=pdf,
+        revisions=[
+            litcache_pb2.Revision(hash='old', captured_at=timestamp_pb2.Timestamp(seconds=1)),
+            litcache_pb2.Revision(hash='new', captured_at=timestamp_pb2.Timestamp(seconds=2)),
+        ],
+    )
+    construction = figures_pb2.FigureAnnotationConstruction(model='m', harness_version='1')
+
+    on_newest = litcache_pb2.Record(
+        deps=['new'], created_at=timestamp_pb2.Timestamp(seconds=100), figure_annotation=construction
+    )
+    records.put_record(manifest, 'f-new', on_newest, records.FIGURES_REF)
+    late = litcache_pb2.Record(
+        deps=['old'], created_at=timestamp_pb2.Timestamp(seconds=200), figure_annotation=construction
+    )
+    records.put_record(manifest, 'f-old', late, records.FIGURES_REF)
+
+    assert manifest.refs[records.FIGURES_REF] == 'f-new'
+
+
+def test_a_pedigree_set_is_current_only_when_made_from_both_the_text_and_the_figures_named() -> None:
+    manifest = litcache_pb2.Manifest(doc_id='d')
+    manifest.refs[records.MARKDOWN_REF] = 'md'
+    manifest.refs[records.FIGURES_REF] = 'figs'
+    construction = pedigrees_pb2.PedigreeExtractionConstruction(
+        model='m', harness_version='1', figures_read=[pedigrees_pb2.PedigreeFigure(figure=0)]
+    )
+
+    on_both = litcache_pb2.Record(
+        deps=['md', 'figs'], created_at=timestamp_pb2.Timestamp(seconds=100), pedigree_extraction=construction
+    )
+    records.put_record(manifest, 'p-both', on_both, records.PEDIGREES_REF)
+    stale_figures = litcache_pb2.Record(
+        deps=['md', 'old-figs'], created_at=timestamp_pb2.Timestamp(seconds=200), pedigree_extraction=construction
+    )
+    records.put_record(manifest, 'p-stale', stale_figures, records.PEDIGREES_REF)
+
+    assert manifest.refs[records.PEDIGREES_REF] == 'p-both'
+
+
+def test_a_pedigree_set_made_without_verdicts_stays_current_only_while_the_paper_has_none() -> None:
+    manifest = litcache_pb2.Manifest(doc_id='d')
+    manifest.refs[records.MARKDOWN_REF] = 'md'
+    manifest.refs[records.FIGURES_REF] = 'figs'
+    construction = pedigrees_pb2.PedigreeExtractionConstruction(
+        model='m', harness_version='1', figures_read=[pedigrees_pb2.PedigreeFigure(figure=0)]
+    )
+    without = litcache_pb2.Record(
+        deps=['md', 'figs'], created_at=timestamp_pb2.Timestamp(seconds=200), pedigree_extraction=construction
+    )
+    records.put_record(manifest, 'p-without', without, records.PEDIGREES_REF)
+    assert manifest.refs[records.PEDIGREES_REF] == 'p-without'
+
+    manifest.refs[records.VERDICTS_REF] = 'verdicts'
+    with_verdicts = litcache_pb2.Record(
+        deps=['md', 'figs', 'verdicts'],
+        created_at=timestamp_pb2.Timestamp(seconds=100),
+        pedigree_extraction=construction,
+    )
+    records.put_record(manifest, 'p-with', with_verdicts, records.PEDIGREES_REF)
+
+    assert manifest.refs[records.PEDIGREES_REF] == 'p-with'  # older, but made from the verdicts the paper now has

@@ -42,7 +42,7 @@ from themis.litcache.models import litcache_pb2, work_pb2
 from themis.services.convert_worker import __main__ as main_mod
 from themis.services.convert_worker import handler as handler_mod
 from themis.telemetry import names, request_tokens
-from themis.testing import in_memory_metrics, litcache_variants
+from themis.testing import in_memory_metrics, litcache_pedigrees, litcache_variants
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _OTHER_DOC_ID = '9f3a0000-0000-4000-8000-000000000011'
@@ -375,6 +375,8 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
         fetch_pdf=no_pdf_located,
         convert_pdf=convert,
         variants=litcache_variants.UNUSED,
+        figures=litcache_pedigrees.UNUSED_FIGURES,
+        pedigrees=litcache_pedigrees.UNUSED,
         now=lambda: _CAPTURED_AT,
     )
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -691,6 +693,8 @@ def test_a_converter_failure_that_is_not_terminal_leaves_the_paper_pending(gcs_b
                 fetch=no_oa,
                 convert_pdf=refused,
                 variants=litcache_variants.UNUSED,
+                figures=litcache_pedigrees.UNUSED_FIGURES,
+                pedigrees=litcache_pedigrees.UNUSED,
                 now=lambda: _CAPTURED_AT,
             )
         )

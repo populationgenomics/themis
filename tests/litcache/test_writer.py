@@ -939,3 +939,21 @@ def test_add_files_refuses_a_file_it_cannot_place(gcs_bucket: gcs.Bucket) -> Non
 
     with pytest.raises(writer.ManifestRefusedError, match='extension'):
         writer.add_files(gcs_bucket, _DOC_ID, [_supplement(name='table_s1')])
+
+
+@pytest.mark.parametrize('directory', ['sources', 'renderings', 'figures', 'supplementary'])
+def test_add_record_refuses_a_directory_the_writer_keeps_other_objects_in(
+    gcs_bucket: gcs.Bucket, directory: str
+) -> None:
+    writer.write_paper(gcs_bucket, _paper())
+
+    with pytest.raises(ValueError, match='not records'):
+        writer.add_record(
+            gcs_bucket,
+            _DOC_ID,
+            directory=directory,
+            extension='pb',
+            data=b'record',
+            record=litcache_pb2.Record(),
+            ref='figures',
+        )

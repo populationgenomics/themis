@@ -118,6 +118,23 @@ class PageImage:
     png: bytes
 
 
+@dataclasses.dataclass(frozen=True)
+class PageLayout:
+    """One pdf page's size and text layer.
+
+    Attributes:
+        number: The 1-based page number.
+        width: The page's width in points.
+        height: The page's height in points.
+        text: The page's text layer; empty for a scanned page with none.
+    """
+
+    number: int
+    width: float
+    height: float
+    text: str
+
+
 class PdfiumCrashedError(pypdfium2.PdfiumError):
     """This job's pdf crashes pdfium, hangs it, or exhausts memory rendering.
 
@@ -429,6 +446,16 @@ def _page_count(pdf_bytes: bytes) -> int:
         return len(doc)
 
 
+def _page_layouts(pdf_bytes: bytes) -> list[PageLayout]:
+    layouts: list[PageLayout] = []
+    with _document(pdf_bytes) as doc:
+        for index, page in enumerate(doc, start=1):
+            with contextlib.closing(page), contextlib.closing(page.get_textpage()) as textpage:
+                width, height = page.get_size()
+                layouts.append(PageLayout(number=index, width=width, height=height, text=textpage.get_text_bounded()))
+    return layouts
+
+
 def _render_pages(pdf_bytes: bytes, fit: PageFit) -> list[PageImage]:
     pages: list[PageImage] = []
     with _document(pdf_bytes) as doc:
@@ -541,6 +568,15 @@ def text_layer(pdf_bytes: bytes) -> concurrent.futures.Future[str]:
         A future of the text. It raises `pypdfium2.PdfiumError` if the bytes are not a loadable pdf.
     """
     return _PDFIUM.submit(_text_layer, pdf_bytes)
+
+
+def page_layouts(pdf_bytes: bytes) -> concurrent.futures.Future[list[PageLayout]]:
+    """Each page's size in points and its text layer, in page order.
+
+    Returns:
+        A future of the layouts. It raises `pypdfium2.PdfiumError` if the bytes are not a loadable pdf.
+    """
+    return _PDFIUM.submit(_page_layouts, pdf_bytes)
 
 
 def render_region(

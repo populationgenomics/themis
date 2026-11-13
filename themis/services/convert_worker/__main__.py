@@ -32,7 +32,15 @@ from google.cloud import storage
 from opentelemetry.sdk import metrics as sdk_metrics
 
 from themis.clients import anthropic_wif
-from themis.litcache import anthropic_ocr, ocr, variant_extract, variant_reference, variant_validate
+from themis.litcache import (
+    anthropic_ocr,
+    figure_annotate,
+    ocr,
+    pedigree_extract,
+    variant_extract,
+    variant_reference,
+    variant_validate,
+)
 from themis.litcache import produce as produce_mod
 from themis.litcache.models import variants_pb2
 from themis.services.convert_worker import handler as handler_mod
@@ -42,6 +50,8 @@ from themis.telemetry import names, request_tokens
 _BUCKET: web.AppKey[storage.Bucket] = web.AppKey('bucket', storage.Bucket)
 _CONVERT_PDF: web.AppKey[ocr.PdfConverter] = web.AppKey('convert_pdf')
 _VARIANTS: web.AppKey[produce_mod.Variants] = web.AppKey('variants', produce_mod.Variants)
+_FIGURES: web.AppKey[produce_mod.Figures] = web.AppKey('figures', produce_mod.Figures)
+_PEDIGREES: web.AppKey[produce_mod.Pedigrees] = web.AppKey('pedigrees', produce_mod.Pedigrees)
 _METER_PROVIDER: web.AppKey[sdk_metrics.MeterProvider] = web.AppKey('meter_provider', sdk_metrics.MeterProvider)
 _EXECUTOR: web.AppKey[concurrent.futures.ThreadPoolExecutor] = web.AppKey(
     'executor', concurrent.futures.ThreadPoolExecutor
@@ -66,7 +76,13 @@ async def _healthz(_request: web.Request) -> web.Response:
 
 
 async def _convert(request: web.Request) -> web.Response:
-    produce = functools.partial(produce_mod.run, convert_pdf=request.app[_CONVERT_PDF], variants=request.app[_VARIANTS])
+    produce = functools.partial(
+        produce_mod.run,
+        convert_pdf=request.app[_CONVERT_PDF],
+        variants=request.app[_VARIANTS],
+        figures=request.app[_FIGURES],
+        pedigrees=request.app[_PEDIGREES],
+    )
     status = await handler_mod.process_conversion(
         request.app[_BUCKET],
         await request.read(),
@@ -168,6 +184,12 @@ async def _on_startup(app: web.Application) -> None:
     tokens = request_tokens.RequestTokens(provider.get_meter(names.METER_NAME))
     app[_CONVERT_PDF] = functools.partial(anthropic_ocr.convert_pdf, credentials=credentials, tokens=tokens)
     app[_VARIANTS] = _variants(references, credentials=credentials, tokens=tokens)
+    app[_FIGURES] = produce_mod.Figures(
+        annotate=functools.partial(figure_annotate.annotate_paper, tokens=tokens, credentials=credentials)
+    )
+    app[_PEDIGREES] = produce_mod.Pedigrees(
+        read=functools.partial(pedigree_extract.read_paper, tokens=tokens, credentials=credentials)
+    )
 
 
 async def _on_cleanup(app: web.Application) -> None:

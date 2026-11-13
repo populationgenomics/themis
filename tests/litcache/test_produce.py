@@ -15,18 +15,32 @@ import datetime
 import hashlib
 import pathlib
 import uuid
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 
 import litdown
 import pytest
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
+from grus.models import pedigree_pb2
 from litfetch import ids
 
-from themis.litcache import joblog, metadata_fields, oa, ocr, outcome, produce, variant_extract, work, writer
-from themis.litcache.models import litcache_pb2, variants_pb2, work_pb2
-from themis.testing import litcache_variants
+from themis.litcache import (
+    figure_annotate,
+    joblog,
+    metadata_fields,
+    oa,
+    ocr,
+    outcome,
+    pdf,
+    pedigree_extract,
+    produce,
+    variant_extract,
+    work,
+    writer,
+)
+from themis.litcache.models import figures_pb2, litcache_pb2, pedigrees_pb2, variants_pb2, work_pb2
+from themis.testing import litcache_pedigrees, litcache_variants
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
 _CAPTURED_AT = datetime.datetime(2026, 7, 1, tzinfo=datetime.UTC)
@@ -205,6 +219,8 @@ def _produce(
     fetch_supplementary: produce.SupplementFetcher = _no_supplements,
     convert_pdf: ocr.PdfConverter = _ocr_boom,
     variants: produce.Variants = litcache_variants.UNUSED,
+    figures: produce.Figures = litcache_pedigrees.UNUSED_FIGURES,
+    pedigrees: produce.Pedigrees = litcache_pedigrees.UNUSED,
     now: Callable[[], datetime.datetime] = lambda: _CAPTURED_AT,
 ) -> Coroutine[object, object, outcome.Readiness]:
     """`produce.run` for this attempt, asking for the main text, with every collaborator refusing to be called."""
@@ -218,6 +234,8 @@ def _produce(
         fetch_supplementary=fetch_supplementary,
         convert_pdf=convert_pdf,
         variants=variants,
+        figures=figures,
+        pedigrees=pedigrees,
         now=now,
     )
 
@@ -1511,3 +1529,366 @@ def test_a_newer_rendering_gives_the_variants_step_work_again() -> None:
     manifest.refs['markdown'] = 'n' * 64
 
     assert produce.reach((produce.VARIANTS_STEP,), manifest) == {produce.VARIANTS_STEP}
+
+
+# --- figures and pedigrees
+
+_FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
+_FIGURE_PDF = (_FIXTURES / 'oa' / 'source.pdf').read_bytes()
+
+
+def _write_figure_paper(bucket: gcs.Bucket, pdf_bytes: bytes = _FIGURE_PDF, markdown: str = '# Results\n') -> str:
+    source = dataclasses.replace(_pdf_source(), data=pdf_bytes)
+    rendering = dataclasses.replace(
+        _docling_rendering(), from_revision=hashlib.sha256(pdf_bytes).hexdigest(), markdown=markdown
+    )
+    _write_paper(
+        bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[source], renderings=[rendering]
+    )
+    return hashlib.sha256(pdf_bytes).hexdigest()
+
+
+def _panel(kind: figures_pb2.FigureKind, page: int) -> figures_pb2.Panel:
+    box = figures_pb2.Box(left=0.1, top=0.1, right=0.9, bottom=0.5)
+    return figures_pb2.Panel(kinds=[kind], place=figures_pb2.Place(pdf_page=page, box=box))
+
+
+def _legend(page: int) -> figures_pb2.Place:
+    return figures_pb2.Place(pdf_page=page, box=figures_pb2.Box(left=0.1, top=0.6, right=0.9, bottom=0.7))
+
+
+# Figure 1 draws a pedigree on page 2 with its legend on page 3; Figure 2 is a chart.
+_A_PEDIGREE_FIGURE = figures_pb2.FigureSet(
+    figures=[
+        figures_pb2.Figure(label='Figure 1', legend=_legend(3), panels=[_panel(figures_pb2.FIGURE_KIND_PEDIGREE, 2)]),
+        figures_pb2.Figure(label='Figure 2', legend=_legend(5), panels=[_panel(figures_pb2.FIGURE_KIND_CHART, 5)]),
+    ]
+)
+
+
+@dataclasses.dataclass
+class _Figures:
+    """The figure collaborator, recording the pdfs it was asked to annotate and answering with a fixed set."""
+
+    figure_set: figures_pb2.FigureSet = dataclasses.field(default_factory=lambda: _A_PEDIGREE_FIGURE)
+    error: Exception | None = None
+    annotated: list[int] = dataclasses.field(default_factory=list)
+
+    async def annotate(self, _pdf: bytes, layouts: Sequence[pdf.PageLayout]) -> figure_annotate.Annotation:
+        self.annotated.append(len(layouts))
+        if self.error is not None:
+            raise self.error
+        construction = figures_pb2.FigureAnnotationConstruction(
+            model='claude-haiku-5-5', harness_version=figure_annotate.HARNESS_VERSION
+        )
+        return figure_annotate.Annotation(figure_set=self.figure_set, construction=construction, usage=[])
+
+    def seam(self) -> produce.Figures:
+        return produce.Figures(annotate=self.annotate)
+
+
+@dataclasses.dataclass
+class _Pedigrees:
+    """The pedigree collaborator, recording what it was asked to read and answering with one pedigree."""
+
+    read_papers: list[pedigree_extract.PaperInput] = dataclasses.field(default_factory=list)
+    error: Exception | None = None
+
+    async def read(self, paper: pedigree_extract.PaperInput) -> pedigree_extract.Reading:
+        self.read_papers.append(paper)
+        if self.error is not None:
+            raise self.error
+        pedigree_set = pedigree_pb2.PedigreeSet()
+        pedigree_set.pedigrees.add().individuals.add(generation=1, index=1, gender=pedigree_pb2.GENDER_MAN)
+        construction = pedigrees_pb2.PedigreeExtractionConstruction(
+            model='claude-sonnet-5-5',
+            harness_version=pedigree_extract.HARNESS_VERSION,
+            figures_read=[pedigrees_pb2.PedigreeFigure(figure=f) for f in sorted({u.figure for u in paper.figures})],
+        )
+        return pedigree_extract.Reading(pedigree_set=pedigree_set, construction=construction, usage=[])
+
+    def seam(self) -> produce.Pedigrees:
+        return produce.Pedigrees(read=self.read)
+
+
+def _request_pedigrees(
+    bucket: gcs.Bucket,
+    figures: _Figures,
+    pedigrees: _Pedigrees | None = None,
+    *,
+    at: datetime.datetime = _CAPTURED_AT,
+    variants: _Variants | None = None,
+) -> None:
+    asyncio.run(
+        _produce(
+            bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            targets=(produce.PEDIGREES_STEP,),
+            figures=figures.seam(),
+            pedigrees=(pedigrees or _Pedigrees()).seam(),
+            variants=(variants or _Variants()).seam(),
+            now=lambda: at,
+        )
+    )
+
+
+def test_a_request_for_pedigrees_reads_the_paper_variants_first_and_names_them_to_the_reader(
+    gcs_bucket: gcs.Bucket,
+) -> None:
+    pdf_hash = _write_figure_paper(gcs_bucket, markdown=_VARIANT_MARKDOWN)
+    variants, pedigrees = _Variants(), _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(), pedigrees, variants=variants)
+
+    assert variants.extracted == [_VARIANT_MARKDOWN]
+    (paper,) = pedigrees.read_papers
+    assert list(paper.variants) == [
+        pedigree_extract.KnownVariant(
+            printed='c.123A>G',
+            checked='NM_000001.2:c.123A>G',
+            gene='GENE1',
+            lines=('The proband carried c.123A>G in GENE1.',),
+        )
+    ]
+    manifest = _load_manifest(gcs_bucket)
+    record = manifest.records[manifest.refs['pedigrees']]
+    assert list(record.deps) == [
+        manifest.refs['markdown'],
+        manifest.refs['figures'],
+        pdf_hash,
+        manifest.refs['verdicts'],
+    ]
+
+
+def test_a_paper_with_no_variant_is_read_for_pedigrees_without_any(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(), pedigrees)
+
+    (paper,) = pedigrees.read_papers
+    assert not paper.variants
+    manifest = _load_manifest(gcs_bucket)
+    assert 'verdicts' not in manifest.refs
+    record = manifest.records[manifest.refs['pedigrees']]
+    assert len(record.deps) == 3  # the rendering, the figure set and the pdf: no verdicts to depend on
+
+
+def test_a_request_for_pedigrees_annotates_the_figures_then_reads_the_pedigree_figure(gcs_bucket: gcs.Bucket) -> None:
+    pdf_hash = _write_figure_paper(gcs_bucket)
+    figures, pedigrees = _Figures(), _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, figures, pedigrees)
+
+    (paper,) = pedigrees.read_papers
+    (unit,) = paper.figures
+    assert (unit.figure, unit.label, unit.page.number) == (0, 'Figure 1', 2)
+    assert unit.legend is not None
+    assert unit.legend.number == 3
+    assert paper.pdf_hash == pdf_hash
+    manifest = _load_manifest(gcs_bucket)
+    assert list(manifest.records[manifest.refs['figures']].deps) == [pdf_hash]
+    record = manifest.records[manifest.refs['pedigrees']]
+    assert list(record.deps) == [manifest.refs['markdown'], manifest.refs['figures'], pdf_hash]
+    assert [r.figure for r in record.pedigree_extraction.figures_read] == [0]
+    stored = figures_pb2.FigureSet.FromString(_named(gcs_bucket, 'figures', 'figure-sets'))
+    assert stored == _A_PEDIGREE_FIGURE
+
+
+def test_a_paper_whose_figures_hold_no_pedigree_settles_without_a_reading(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    no_pedigree = figures_pb2.FigureSet(figures=[_A_PEDIGREE_FIGURE.figures[1]])
+
+    _request_pedigrees(gcs_bucket, _Figures(figure_set=no_pedigree), _Pedigrees())
+
+    assert ('pedigrees', work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_NOTHING) in _log(gcs_bucket)
+    refs = _load_manifest(gcs_bucket).refs
+    assert 'figures' in refs
+    assert 'pedigrees' not in refs
+
+
+def test_a_request_without_the_targets_spends_nothing_on_figures_or_pedigrees(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), targets=()))
+
+    assert not {'figures', 'pedigrees'} & {step for step, _, _ in _log(gcs_bucket)}
+
+
+def test_a_figure_drawn_across_two_pages_is_read_on_each_and_counted_once(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    spread = figures_pb2.Figure(
+        label='Figure 1',
+        legend=_legend(4),
+        panels=[_panel(figures_pb2.FIGURE_KIND_PEDIGREE, 2), _panel(figures_pb2.FIGURE_KIND_PEDIGREE, 3)],
+    )
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(figure_set=figures_pb2.FigureSet(figures=[spread])), pedigrees)
+
+    (paper,) = pedigrees.read_papers
+    assert [(u.figure, u.page.number) for u in paper.figures] == [(0, 2), (0, 3)]
+
+
+def test_a_paper_is_read_on_at_most_the_capped_number_of_pedigree_figures(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    many = figures_pb2.FigureSet(
+        figures=[
+            figures_pb2.Figure(label=f'Figure {n}', panels=[_panel(figures_pb2.FIGURE_KIND_PEDIGREE, 2)])
+            for n in range(produce.MAX_PEDIGREE_READS + 3)
+        ]
+    )
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(figure_set=many), pedigrees)
+
+    (paper,) = pedigrees.read_papers
+    assert [u.figure for u in paper.figures] == list(range(produce.MAX_PEDIGREE_READS))
+
+
+def test_a_figure_that_does_not_fit_under_the_cap_is_left_out_whole(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    wide = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, page) for page in range(2, 2 + produce.MAX_PEDIGREE_READS)]
+    one_page = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, 2)]
+    figure_set = figures_pb2.FigureSet(
+        figures=[
+            figures_pb2.Figure(label='Figure 1', panels=one_page),
+            figures_pb2.Figure(label='Figure 2', panels=wide),
+            figures_pb2.Figure(label='Figure 3', panels=one_page),
+        ]
+    )
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(figure_set=figure_set), pedigrees)
+
+    (paper,) = pedigrees.read_papers
+    assert [u.figure for u in paper.figures] == [0, 2]
+
+
+def test_a_paper_whose_only_pedigree_figure_is_over_the_cap_settles_without_a_reading(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    wide = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, page) for page in range(1, 2 + produce.MAX_PEDIGREE_READS)]
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(
+        gcs_bucket, _Figures(figure_set=figures_pb2.FigureSet(figures=[figures_pb2.Figure(panels=wide)])), pedigrees
+    )
+
+    assert not pedigrees.read_papers
+    assert 'pedigrees' not in _load_manifest(gcs_bucket).refs
+    (entry,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == produce.PEDIGREES_STEP]
+    assert entry.outcome == work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE
+
+
+def test_a_reading_that_ends_without_an_answer_settles_as_a_permanent_failure(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    failing = _Pedigrees(error=pedigree_extract.ExtractionError('Figure 1 on page 2 stopped with refusal'))
+
+    _request_pedigrees(gcs_bucket, _Figures(), failing)
+
+    assert ('pedigrees', work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE) in _log(gcs_bucket)
+
+
+def test_an_annotation_that_ends_without_an_answer_settles_and_reads_no_pedigrees(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(error=figure_annotate.AnnotationError('stopped with refusal')), pedigrees)
+
+    assert ('figures', work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE) in _log(gcs_bucket)
+    assert not pedigrees.read_papers
+
+
+def test_a_pdf_that_cannot_be_read_settles_the_annotation_as_a_permanent_failure(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket, b'%PDF-1.7 not a pdf')
+    figures = _Figures()
+
+    _request_pedigrees(gcs_bucket, figures)
+
+    assert ('figures', work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE) in _log(gcs_bucket)
+    assert not figures.annotated
+
+
+def test_a_pdf_past_the_page_limit_settles_before_anything_is_spent(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_figure_paper(gcs_bucket)
+    monkeypatch.setattr(figure_annotate, 'MAX_PAGES', 1)
+    figures = _Figures()
+
+    _request_pedigrees(gcs_bucket, figures)
+
+    assert ('figures', work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE) in _log(gcs_bucket)
+    assert not figures.annotated
+
+
+def test_a_pdfium_crash_while_rendering_the_pages_settles_the_annotation(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+
+    _request_pedigrees(gcs_bucket, _Figures(error=pdf.PdfiumCrashedError('pdfium crashed on page 3')))
+
+    assert ('figures', work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE) in _log(gcs_bucket)
+
+
+def test_a_new_pdf_revision_is_annotated_again_before_its_pedigrees_are_read(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    # The newer revision has one page.
+    on_page_one = figures_pb2.Figure(label='Figure 1', panels=[_panel(figures_pb2.FIGURE_KIND_PEDIGREE, 1)])
+    figures, pedigrees = _Figures(figure_set=figures_pb2.FigureSet(figures=[on_page_one])), _Pedigrees()
+    _request_pedigrees(gcs_bucket, figures, pedigrees)
+    newer = (_FIXTURES / 'nonoa' / 'source.pdf').read_bytes()
+    writer.add_source(
+        gcs_bucket,
+        _DOC_ID,
+        dataclasses.replace(_pdf_source(), data=newer, captured_at=_CAPTURED_AT + datetime.timedelta(days=1)),
+    )
+
+    # A later run: the same figure set's bytes, made again from the newer revision, replace the held record.
+    _request_pedigrees(gcs_bucket, figures, pedigrees, at=_CAPTURED_AT + datetime.timedelta(days=2))
+
+    newer_hash = hashlib.sha256(newer).hexdigest()
+    assert len(figures.annotated) == 2
+    assert [paper.pdf_hash for paper in pedigrees.read_papers][-1] == newer_hash
+    manifest = _load_manifest(gcs_bucket)
+    assert newer_hash in manifest.records[manifest.refs['pedigrees']].deps
+
+
+def test_pedigrees_are_not_read_from_a_figure_set_a_newer_annotation_running_elsewhere_replaces(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pdf_hash = _write_figure_paper(gcs_bucket)
+    figures = _Figures()
+    asyncio.run(
+        _produce(gcs_bucket, _DOC_ID, targets=(produce.FIGURES_STEP,), fetch=_returning(None), figures=figures.seam())
+    )
+    newer = hashlib.sha256(b'figure annotation harness newer').hexdigest()
+    monkeypatch.setattr(figure_annotate, 'HARNESS_VERSION', 'newer')
+    monkeypatch.setattr(produce, '_FIGURE_HARNESS_INPUT', newer)
+    begun = _OTHER.entry(
+        at=_CAPTURED_AT, step=produce.FIGURES_STEP, inputs=(pdf_hash, newer), event=work_pb2.JOB_EVENT_BEGUN
+    )
+    joblog.append(gcs_bucket, _DOC_ID, [begun])
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, figures, pedigrees)
+
+    assert len(figures.annotated) == 1
+    assert not pedigrees.read_papers
+
+
+def test_a_request_for_pedigrees_reaches_a_variant_extraction_made_by_an_older_harness(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_figure_paper(gcs_bucket, markdown=_VARIANT_MARKDOWN)
+    asyncio.run(
+        _produce(
+            gcs_bucket, _DOC_ID, targets=(produce.VERDICTS_STEP,), fetch=_returning(None), variants=_Variants().seam()
+        )
+    )
+    monkeypatch.setattr(variant_extract, 'HARNESS_VERSION', 'a newer harness')
+
+    reached = produce.reach((produce.PEDIGREES_STEP,), _load_manifest(gcs_bucket))
+
+    # The pedigree step waits on the variant extraction, so a request for it must schedule that extraction too.
+    assert produce.VARIANTS_STEP in reached

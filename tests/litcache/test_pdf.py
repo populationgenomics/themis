@@ -87,6 +87,20 @@ def test_text_pdf_has_text_layer() -> None:
     assert pdf.probe_has_text_layer(_TEXT_PDF.read_bytes()).result() is True
 
 
+def test_page_layouts_give_each_page_its_size_and_its_own_text() -> None:
+    layouts = pdf.page_layouts(_TEXT_PDF.read_bytes()).result()
+    assert [layout.number for layout in layouts] == list(range(1, len(layouts) + 1))
+    assert all(layout.width > 0 and layout.height > 0 for layout in layouts)
+    assert layouts[0].text.startswith('Synthetic Non-OA Fixture')
+    assert '\n'.join(layout.text for layout in layouts) == pdf.text_layer(_TEXT_PDF.read_bytes()).result()
+
+
+def test_a_scanned_page_has_a_size_and_no_text() -> None:
+    (layout, *_) = pdf.page_layouts(_IMAGE_ONLY_PDF.read_bytes()).result()
+    assert layout.width > 0
+    assert not layout.text.strip()
+
+
 def test_image_only_pdf_has_no_text_layer() -> None:
     assert pdf.probe_has_text_layer(_IMAGE_ONLY_PDF.read_bytes()).result() is False
 

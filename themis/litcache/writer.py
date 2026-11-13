@@ -83,6 +83,7 @@ _BLOB_DIRS: dict[litcache_pb2.AssociatedFileRole, str] = {
     litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_FIGURE: 'figures',
     litcache_pb2.AssociatedFileRole.ASSOCIATED_FILE_ROLE_SUPPLEMENTARY: 'supplementary',
 }
+_WRITER_DIRS = frozenset({_SOURCES_DIR, _RENDERINGS_DIR, *_BLOB_DIRS.values()})
 
 
 # The default policy retries only a generation-matched upload; rewriting the paper's own record is idempotent.
@@ -709,7 +710,10 @@ def add_record(
         ManifestRefusedError: If the manifest would break its own constraints, or `put_record` refuses the record
             (permanent — do not retry).
         ConcurrentWriteError: If the RMW lost its generation race the whole retry budget (contention — retryable).
+        ValueError: If `directory` is one the writer keeps sources, renderings or associated files in.
     """
+    if directory in _WRITER_DIRS:
+        raise ValueError(f"{directory!r} holds the paper's sources, renderings or associated files, not records")
     name = storage.put_content_addressed(bucket, data, posixpath.join(paper_dir(doc_id), directory), extension)
     key = posixpath.splitext(posixpath.basename(name))[0]
     commit(bucket, doc_id, lambda manifest: _put_record(manifest, key, record, ref))

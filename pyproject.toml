@@ -26,7 +26,7 @@ exclude-newer = "7 days"
 # stops a re-lock from silently adopting a new — possibly account-compromised —
 # release; a bump is then an explicit, reviewed pyproject edit. Keep this list and
 # those pins in lock-step: anything exempted here must be exact-pinned.
-exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days", clinvar-proto = "0 days", postern = "0 days", anchorite = "0 days", hgvs-weaver = "0 days", hgvs-weaver-data = "0 days" }
+exclude-newer-package = { litfetch = "0 days", litdown = "0 days", pubmed-proto = "0 days", clinvar-proto = "0 days", postern = "0 days", anchorite = "0 days", hgvs-weaver = "0 days", hgvs-weaver-data = "0 days", grus = "0 days" }
 
 [dependency-groups]
 screen = ["pyyaml"]
@@ -46,10 +46,11 @@ screenshot = ["google-cloud-storage"]
 # (produce.py's pdf-without-xml branch); pillow — pdf.py encodes its page rasters
 # through it; google-cloud-tasks — enqueue.py creates the convert worker's
 # task; hgvs-weaver — parses, projects and validates the variant extractor's HGVS candidates, over
-# the reference stores hgvs-weaver-data reads; jsonschema — checks the agent's tool inputs. litfetch/litdown/pubmed_proto/hgvs-weaver(-data) are exact-pinned
-# because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
+# the reference stores hgvs-weaver-data reads; jsonschema — checks the agent's tool inputs; grus — the pedigree
+# record a paper's pedigree figures are read into, and the checks it must pass.
+# litfetch/litdown/pubmed_proto/hgvs-weaver(-data)/grus are exact-pinned because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate>=2.1", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", "hgvs-weaver==2.1.0", "hgvs-weaver-data[gcs]==0.1.4", "jsonschema>=4.26,<5", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate>=2.1", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", "hgvs-weaver==2.1.0", "hgvs-weaver-data[gcs]==0.1.4", "jsonschema>=4.26,<5", "grus==0.4.0", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -140,7 +141,7 @@ evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate>=2.1"
 # and the cloudsql connector belong to paths this worker never takes, and carry pandas and numpy behind
 # them. hgvs-weaver and hgvs-weaver-data are the variant steps': the agent's tools and the validation read the
 # reference stores through them, from the resources bucket (the gcs extra), and jsonschema checks the agent's tool
-# inputs.
+# inputs. grus is the pedigree step's: the record it reads figures into, and that record's checks.
 convert_worker = [
     "aiohttp",
     "google-auth",
@@ -158,6 +159,7 @@ convert_worker = [
     "hgvs-weaver==2.1.0",
     "hgvs-weaver-data[gcs]==0.1.4",
     "jsonschema>=4.26,<5",
+    "grus==0.4.0",
     { include-group = "telemetry" },
 ]
 # cost exporter (themis/services/cost_exporter): the workspace-spend monitor's Cloud Run Job. anthropic lists the
