@@ -16,6 +16,11 @@ Operating directives for Claude (and any agent) in this repo; they counteract de
   to limp along. A placeholder is an explicit caller input, never a code default.
 - **Never instruct around a defect — fix the defect.** Don't write prose telling readers to work around broken code —
   "pass it as a string, the converter loses precision". Prose is untested, and callers who didn't read it stay broken.
+- **Keep the analysis agent adaptive; never prescribe its method.** What the deployed agent reads (system text, skills,
+  kickoff, tool descriptions, helper docstrings) states facts it cannot find out and the contract of what it delivers
+  ([`docs/PRODUCT.md`](docs/PRODUCT.md) §6). It follows a prescribed method to the letter, also where the method does
+  not fit. When a run goes wrong, or the agent asks for a rule, a procedure or a helper, treat that as a symptom: find
+  the fact it lacked or the defect in the data, the tool or the text, and fix that.
 - **Push back; don't just comply.** When a design, name, or approach seems worse — including a shortcut you're asked to
   take — say so with reasoning, unprompted. The author owns the final call.
 - **Offer better alternatives with trade-offs.** When a materially better approach than the proposed one exists, present
