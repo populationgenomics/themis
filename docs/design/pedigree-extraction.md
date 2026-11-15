@@ -25,13 +25,14 @@ at 11 cents a page. Without that tool it loses about 40 points.
 
 So this doc brings grus's record and grus's reading into Themis in the shape the variant steps already have. The paper's
 figure record ([`figure-annotation.md`](figure-annotation.md)) says which of its figures are pedigrees, on which pages,
-and where their legends are. A spending step reads each pedigree figure, a page at a time, with grus's prompt and its
-zoom tool, and records a grus pedigree set for the paper. Every pedigree in it cites the page region it was read from,
-and every fact the figure does not draw cites the sentence that states it. Before the step accepts the record, it checks
-it against the paper: every quoted sentence has to be in the text, and every cited region has to lie on its page. A
-record that fails goes back to the model to fix in the same conversation. The reader also records the genotypes the
-paper states, naming each allele as the paper prints it and by the checked name the variant steps found for it, so that
-a case record can tell which validated variant each person carries.
+and where their legends are. A spending step reads each pedigree figure, in one conversation showing every page it draws
+a pedigree on and its legend's page, with grus's prompt and its zoom tool, and records a grus pedigree set for each
+figure. Every pedigree in it cites the regions it was read from, one on each page it is drawn on, and every fact the
+figure does not draw cites the sentence that states it. Before the step accepts a figure's answer, it checks it against
+the paper: every quoted sentence has to be in the text, and every cited region has to lie on a page shown. An answer
+that fails goes back to the model to fix in the same conversation. The reader also records the genotypes the paper
+states, naming each allele as the paper prints it and by the checked name the variant steps found for it, so that a case
+record can tell which validated variant each person carries.
 
 Themis depends on grus for the record's definition rather than keeping a copy. grus owns the pedigree schema and keeps
 the same compatibility discipline as Themis's own contracts, so a change to the record is made once, in grus, and Themis
@@ -61,9 +62,9 @@ childlessness each be stated directly. A person's clinical status is a list, one
 can show several. The conditions themselves are declared once for the whole set and referred to by id.
 
 A pedigree set holds every pedigree read from one source, and carries citations. A citation is either a region of one
-page of the source or a verbatim quote from it. Each pedigree points at the region it was drawn in. A fact the figure
-does not draw, such as a condition's name that only the caption gives, is attached to the people it applies to with the
-quote that states it.
+page of the source or a verbatim quote from it. Each pedigree points at the regions it was drawn in, one for each page
+it is drawn on. A fact the figure does not draw, such as a condition's name that only the caption gives, is attached to
+the people it applies to with the quote that states it.
 
 A shortened example:
 
@@ -145,8 +146,8 @@ flowchart LR
 ```
 
 The pedigree step lists the figures that have a pedigree panel. A paper with none settles there, without reaching the
-reading model. The step then reads each page a listed figure draws pedigrees on in a conversation of its own, a few at a
-time, checks what each returns against the paper, and records one pedigree set for the paper under the `pedigrees` ref.
+reading model. The step then reads each listed figure in a conversation of its own, a few at a time, checks what each
+returns against the paper, and records the paper's pedigree sets, one per figure, under the `pedigrees` ref.
 
 ### The figure record decides what is read
 
@@ -158,14 +159,17 @@ cents.
 
 So the pedigree step reads what the paper's figure record calls a pedigree. That record comes from a small model looking
 at each page in turn, which on the same papers found all 31 pedigree pages and one other, for under a cent a paper
-([`figure-annotation.md`](figure-annotation.md)). The unit the step reads is a page of a figure, shown with the figure's
-legend: a page with two families in one figure is one read, a figure drawn across two pages is two, and a figure whose
-legend is on the next page is read with that page beside each of its own.
+([`figure-annotation.md`](figure-annotation.md)). The unit the step reads is a figure, shown with every page it draws a
+pedigree on and its legend's page: a page with two families in one figure is one read, and so is a figure drawn across
+two pages, with its legend on a third.
 
-A paper is read in at most eight conversations. Figures are taken whole, in the figure record's order, and a figure that
-would take the paper past eight is left out; the record lists only the figures it read. Of the 27 papers among the 60
-with a pedigree, 24 had one pedigree figure and none had more than three, so the cap only bounds what an unusual paper
-can spend.
+Two bounds keep an unusual paper from spending without limit. A paper is read in at most eight conversations, one per
+figure, in the figure record's order. Of the 27 papers among the 60 with a pedigree, 24 had one pedigree figure and none
+had more than three. And a figure that would show more than six pages, its legend's included, is left out: a
+conversation holds twenty images, and six pages leave fourteen for zooms. Of the 197 pedigree figures in the canary's
+figure records, every one draws its pedigrees on a single page, and 15 show a second page for their legend, so the
+six-page bound only stops a figure no measured paper has. The record lists only the figures it read. A paper whose every
+pedigree figure is over the bound reads none: the step ends without a record, and the job log says why.
 
 ### The model reads the whole page, and zooms
 
@@ -175,16 +179,17 @@ it is where the symbol key, the condition names and the panel labels are. And a 
 API shrinks every image to the same maximum size before the model sees it: a 130-person pedigree rendered at 7,900
 pixels reaches the model at about a third of that.
 
-So the read step shows the model each page the figure's pedigree panels are on, whole, at the largest size the API
-accepts, and the page of the figure's legend if that is another page. It names the figure, and gives the box of each
-pedigree panel as a pointer to where to look, since the figure record's boxes are approximate. It also gives the model a
-`zoom` tool. The model asks for a region of one of those pages, and the step re-renders that region from the PDF at full
-resolution and returns it as a new image. The model is told to confirm every thin mark in a zoom before it records it.
-On grus's synthetic ladder of pedigree pages with known answers, this reads 87% of pages exactly with Sonnet 5.5, at
-$0.11 a page. Opus 5.5 reads 94%, at $0.21 a page, so it costs twice as much for seven more pages in a hundred. The read
-step uses Sonnet 5.5. The model is part of the harness version, a digest of everything the model is given that a record
-carries; a record from another harness version is stale for a request that names its step. So moving to Opus later
-re-reads only the papers a request names.
+So the read step shows the model every page the figure's pedigree panels are on, whole, at the largest size the API
+accepts, and the page of the figure's legend if that is another page, all in one conversation. A family drawn across a
+page break is then one pedigree, read by a model that sees both halves, rather than two halves a later step would have
+to stitch together. It names the figure, and gives the box of each pedigree panel as a pointer to where to look, since
+the figure record's boxes are approximate. It also gives the model a `zoom` tool. The model asks for a region of one of
+those pages, and the step re-renders that region from the PDF at full resolution and returns it as a new image. The
+model is told to confirm every thin mark in a zoom before it records it. On grus's synthetic ladder of pedigree pages
+with known answers, this reads 87% of pages exactly with Sonnet 5.5, at $0.11 a page. Opus 5.5 reads 94%, at $0.21 a
+page, so it costs twice as much for seven more pages in a hundred. The read step uses Sonnet 5.5. The model is part of
+the harness version, a digest of everything the model is given that a record carries; a record from another harness
+version is stale for a request that names its step. So moving to Opus later re-reads only the papers a request names.
 
 The prompt is grus's extraction prompt and its page and citation addenda, folded into Themis, with genotypes added (next
 section). It carries the drawing standard: how to map each symbol, what each line means, which marks to confirm in a
@@ -211,8 +216,8 @@ obligate carrier is never filled in.
 To name what a symbol stands for, the reader needs what the paper says about it. The obvious source is the paper's whole
 text. The variant steps have already read that text, though: they list each variant the paper names, checked against its
 reference sequence, with the lines that print it, and a legend that keys "M1" to a variant is one of those lines. So the
-reader is given that list instead, before the page. It is the same for every figure page of the paper, so it is marked
-for the API's prompt cache, and the paper's other pages read it from the cache rather than paying for it again. The list
+reader is given that list instead, before the pages. It is the same for every figure of the paper, so it is marked for
+the API's prompt cache, and the paper's other figures read it from the cache rather than paying for it again. The list
 holds each variant that passed its check, with the lines that print it, and leaves out a variant with no verdict that
 chose an expression, and one the paper places in a mouse or another species that is not human
 ([`variant-extraction.md`](variant-extraction.md), "The allele is chosen at validation"). Variants the paper observed
@@ -243,54 +248,51 @@ text or an extraction that fails, is read with none. The pedigree record depends
 verdicts make it stale, and a request that names pedigrees also runs the variant steps, which a case record needs
 anyway.
 
-### The record is grus's pedigree set, unchanged
+### The record holds one grus pedigree set per figure
 
-The obvious Themis record would wrap grus's pedigree set in a message of Themis's own, adding which page or figure each
-pedigree came from. It is not needed, because grus's citations already say that. A citation's region names a page, and
-its document id is left for the caller to stamp. The step stamps it with the hash of the PDF revision the page belongs
-to. A paper's pedigrees then form one pedigree set, with every pedigree traceable to the exact page it was read from.
+The obvious record is one grus pedigree set for the whole paper: every family the paper draws, with each condition and
+each locus declared once. A case record would then read one grus record per paper, and grus's checks would cover the
+whole of it.
 
-One set per paper, rather than one per page, also keeps the conditions consistent. A paper that draws the same disease
-in three families declares it once, and all three pedigrees refer to it. Take a paper with three pedigree figures.
-Figure 1's legend says "Usher syndrome, autosomal recessive"; Figure 2's says "Usher syndrome" and states no mode;
-Figure 3 shades its affected people and names nothing. The merged set declares two conditions:
+That set has to be made by merging the figures, and a merge across figures needs judgements that no figure states. A
+figure's legend defines its symbols and its conditions for the families it draws, and nothing more. Take a paper whose
+Figure 1 legend says "SLC26A4: M1, c.1234A>G" and whose Figure 3 legend says "SLC26A4: M1, c.2000del". grus's loader
+refuses a set that declares two loci with the same gene and printed name, so in one set the two figures' SLC26A4 loci
+have to be one. Within a locus grus keys an allele by its printed symbol, so the two M1s cannot both be in it: one
+figure's genotypes would have to be dropped, or given a symbol neither figure prints. Conditions have the same problem,
+since grus also refuses two conditions with the same name, the empty name included. A paper that shades a deaf family in
+one figure and a cardiomyopathy family in another, naming neither, would have the two unnamed conditions taken as one.
+Within one figure none of this arises: the legend makes the shared declarations a fact the figure states, which grus's
+loader checks. grus already treats a figure as the source of one set
+([`ir.md`](https://github.com/populationgenomics/grus/blob/main/docs/design/ir.md), "Figure scope").
 
-```
-conditions { id: "k1" name: "Usher syndrome" inheritance: INHERITANCE_AUTOSOMAL_RECESSIVE }
-conditions { id: "k2" name: "" }
-```
+So the record holds one grus pedigree set per figure that was read, keyed by the figure's index in the figure record
+([`pedigrees.proto`](../../schema/proto/themis/litcache/models/pedigrees.proto)). A figure whose answer was accepted has
+a set, an empty one when the figure held no pedigree; a figure that failed, or was never read, has none. In the example,
+Figure 1's set declares an SLC26A4 locus whose M1 carries the checked name `NM_000441.2:c.1234A>G`, and Figure 3's set
+declares its own, whose M1 carries `NM_000441.2:c.2000del`. Nothing is dropped and nothing is renamed. A case record
+that wants to know whether two families carry the same variant compares the alleles' checked names, which the reader
+gives each allele from the paper's checked variants (previous section), so the comparison is an exact match of
+identifiers rather than a reading of symbols. An unnamed condition stays the condition of its own figure.
 
-The step matches conditions across figures by name, so Figures 1 and 2 share k1. A mode one figure states holds for one
-that names the same condition without a mode, because the second figure's silence does not contradict the first. Had
-Figure 2 said "X-linked", the two would contradict each other, and k1 would state no mode. Figure 3's condition, named
-by nothing, is k2. Every figure's unnamed condition in one paper is taken to be that same k2. That can be wrong: a paper
-could shade a deaf family in one figure and a cardiomyopathy family in another, both unnamed. It is accepted because an
-unnamed fill almost always means "affected by the condition this paper is about", and keeping one condition per figure
-would split that one condition across a paper's families for nearly every paper to guard against a rare one.
+A figure drawn across two pages is one conversation and one answer, so its set needs no joining: its symbols and
+conditions come from one reading of one legend.
 
-Loci are declared once too. grus tells loci apart by their gene and their printed name, and refuses a set that declares
-two loci with the same gene and name; so the step joins a locus two figures both declare into one, and joins their
-alleles. Take a paper whose Figure 1 legend says "SLC26A4: M1, c.1234A>G" and draws "+" for the wild type, and whose
-Figure 2 legend says "SLC26A4: M2, c.2000del" and draws "WT". The merged set declares one SLC26A4 locus with three
-alleles: the reference ("+" in Figure 1, which Figure 2's "WT" is mapped to), M1 and M2. A figure that names an allele
-the other leaves unstated fills it in, since silence does not contradict.
+The cost is that a paper is not one grus record. A consumer iterates over the figures, and grus's checks, and its
+comparison of two sets, stop at a figure's edge. Two families of one paper are compared through their alleles' checked
+names and their conditions' names, which is what a case record does anyway.
 
-Had Figure 2 keyed "M1" to c.2000del, the two figures would say different things about one symbol at one locus. The
-conditions rule keeps both figures and drops the contested mode; the locus rule cannot do the same, because a genotype
-"M1/+" is only worth recording with what M1 is, and a merged M1 with its name dropped would link Figure 2's family to
-Figure 1's variant. A second SLC26A4 locus for Figure 2 is refused by grus. So the first figure read keeps the locus,
-and Figure 2's genotypes at it are dropped. Its people keep their labels, so "M1/+" is still printed beside each one,
-pointing at no locus. The drop is logged by the worker but not recorded in the set: a reader of the record sees Figure
-2's people with labels and no genotypes, the same as a figure that stated none.
+A citation's document id is left for the caller to stamp, and its region names a page. The step stamps the hash of the
+PDF revision the pages belong to, so every pedigree is traceable to the exact pages it was read from.
 
-What Themis adds is only what is Themis's: a record construction that says how the set was made, and a ref that names
-the current set. The construction holds the harness version, a digest of everything the model is given, as the variant
-extraction does: the model and its settings, the prompt, the tool definitions and the grus version whose schema the
-answer was checked against. A change to any of them makes existing records stale for a request that names the target.
-The record is made from the figure record and the variant verdicts as well as the paper's text, so a new figure record
-or new verdicts make it stale. The construction lists the figures that were read, by their place in that figure record,
-so a later reader can tell a figure that turned out to hold no pedigree from one that was never read. A figure whose
-answer was never accepted is listed with the reason, as the next section describes.
+What Themis adds is only what is Themis's: the map from each figure to its set, a record construction that says how the
+sets were made, and a ref that names the current record. The construction holds the harness version, which here covers
+the grus version whose schema the answers were checked against as well as the prompt, the tools and the model. The
+record is made from the figure record and the variant verdicts as well as the paper's text, so a new figure record or
+new verdicts make it stale. The construction lists the figures that were read, by their index in that figure record. The
+map's keys say the same for accepted figures, but the construction is in the manifest, so a reader can tell what was
+read, and why a figure failed, without fetching the record. A figure whose answer was not accepted is listed with the
+reason, as the next section describes, and has no set.
 
 ### The read step accepts only what the paper bears out
 
@@ -321,27 +323,35 @@ Whether a pedigree draws is left out on purpose. grus's renderer raises an error
 rather than drawing something wrong, and that set shrinks as grus improves. The answer would be stale as soon as grus
 changes, and whatever shows a pedigree finds out when it draws it.
 
-The cost is a turn of the conversation for each failed check. A page whose answer is still rejected after two repairs,
-or that the model refuses, is listed in the record under its figure with the reason, and the other pages' pedigrees are
-kept: one bad page does not throw away the pages already paid for. Only a paper where no page is accepted ends without a
-record, and the job log records the failure, as it does for a variant extraction that does not finish.
+The cost is a turn of the conversation for each failed check. A figure whose answer is still rejected after two repairs,
+or that the model refuses, is listed in the record with the reason, and the other figures' pedigrees are kept: one bad
+figure does not throw away the figures already paid for. Only a paper where no figure is accepted ends without a record,
+and the job log records the failure, as it does for a variant extraction that does not finish.
 
 ### grus is a dependency, at a pinned version
 
-The obvious way to use another repository's schema is to copy its proto file into Themis's schema tree, where Themis's
-breaking-change check guards it. That gives Themis control, and it makes two copies of a contract that one team owns.
-Every IR change would be made twice, and the second copy would drift from the first between the two edits.
+The obvious way to use another repository's schema is to keep a copy of its proto file in Themis's schema tree and edit
+it there. That gives Themis control, and it makes two copies of a contract that one team owns. Every IR change would be
+made twice, and the second copy would drift from the first between the two edits.
 
 So Themis depends on grus as a package, at a pinned version, the way it already takes ClinVar's and PubMed's record
-schemas. grus keeps the same rule Themis keeps for its contracts: a change to the schema adds to it and never breaks a
-record that exists. A grus release that changes the IR reaches Themis when the pin moves, and that move also changes the
-harness version, so the records made with the older IR are re-read only when a request asks for them.
+schemas. Code generation copies grus's `pedigree.proto` out of the pinned wheel into the schema tree, verbatim, so the
+record's own proto can import it and the breaking-change check sees it; nobody edits that copy ([`proto.md`](proto.md),
+"Generated upstream schemas"). grus keeps the same rule Themis keeps for its contracts: a change to the schema adds to
+it and never breaks a record that exists. A grus release that changes the IR reaches Themis when the pin moves, and that
+move also changes the harness version, so the records made with the older IR are re-read only when a request asks for
+them.
 
 ### Where the records live
 
-Each paper's pedigree set sits in its prefix in the literature cache bucket, under the `pedigrees` ref, as the variant
-records do. Nothing is stored in Postgres. The drawn pedigree is not stored either. The renderer is deterministic, so
-whatever shows a pedigree draws it from the record when it needs it.
+Each paper's pedigree record sits in its prefix in the literature cache bucket, under the `pedigrees` ref, as the
+variant records do. Nothing is stored in Postgres. The drawn pedigree is not stored either. The renderer is
+deterministic, so whatever shows a pedigree draws it from the record when it needs it.
+
+The first version of this step wrote one merged set per paper, and 171 such records exist on dev; none exist in
+production. Their bytes are a bare grus set under the same ref, which would parse wrongly as the per-figure record. They
+carry an older harness version, so the step treats them as stale and replaces each on the next request for its paper,
+and nothing reads a pedigree record yet.
 
 ## Alternatives considered
 
@@ -349,6 +359,8 @@ whatever shows a pedigree draws it from the record when it needs it.
   steps would keep its dependencies out of the worker image. It lost because a paper's steps share everything else: the
   paper's sources, the job log that records what each step spent, the rule that a request decides what is spent, and the
   records and refs. A separate runner would rebuild each of those.
+- **One pedigree set for the whole paper.** One grus record per paper. It lost for the reasons in "The record holds one
+  grus pedigree set per figure".
 - **Read a cropped figure instead of the page.** A crop costs fewer image tokens than a page. It lost on grus's
   measurement: the crop drops the legend, and the API shrinks a large crop to the same size as a page, so it buys no
   resolution.
@@ -360,9 +372,16 @@ whatever shows a pedigree draws it from the record when it needs it.
 - **Read each pedigree page without its legend's page.** It is simpler: one page image per conversation before the
   zooms. It lost because a pedigree's legend is on another page about one time in six, and the legend is where the
   conditions and the symbol key are.
+- **Read each page of a figure in a conversation of its own, then join the answers.** Each conversation shows fewer
+  images and leaves more of its budget to zooms. It lost because joining needs rules for pages that disagree, and a
+  family drawn across a page break comes back as two partial pedigrees that no rule can rejoin. Figures that span pages
+  are rare, so the images they add cost little.
 
 ## Open questions
 
+- **The 171 old records on dev before the first reader.** Nothing reads a pedigree record yet. Before something does,
+  the per-paper records have to be gone, by re-reading their papers or by removing their refs, so that no reader meets a
+  bare set where it expects the per-figure record.
 - **Whether Sonnet holds up on real pages.** The ladder is synthetic: clean vector drawings with printed labels. A
   review of hand-checked pedigrees from real papers is in progress. If Opus reads real pages much better than Sonnet
   does, the ladder understates the gap and the choice is worth making again.
