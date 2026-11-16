@@ -351,6 +351,7 @@ convert_worker = convert.ConvertWorker(
     anthropic_organization_id=anthropic_organization_id,
     anthropic_service_account_id=anthropic_worker_service_account_id,
     anthropic_workspace_id=anthropic_workspace_id,
+    trace_sample_ratio=trace_sample_ratio,
     opts=pulumi.ResourceOptions(depends_on=[base, fulltext, resources]),
 )
 convert_invoker = convert.ConversionInvoker(

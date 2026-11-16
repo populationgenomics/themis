@@ -8,7 +8,8 @@ every non-2xx, so 400 does not stop redelivery — it distinguishes an enqueuer 
 failure in the log. The design is `docs/design/evidence-fulltext.md`.
 
 The request is one attempt in the paper's job log: an id minted here, and the delivery it serves,
-read off Cloud Tasks' request headers.
+read off Cloud Tasks' request headers. A request the worker runs is one span too, continuing the trace
+Cloud Run started for it, with a span beneath it for each step the producer runs (`litcache/spans.py`).
 
 Cloud Run's IAM verifies the task's OIDC token before the request arrives, so there is no in-app auth
 check. An instance serves several requests at once, and `produce` blocks on the store's synchronous
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextvars
 import dataclasses
 import json
 import logging
@@ -31,8 +33,9 @@ from typing import Protocol
 import protovalidate
 from google.cloud import storage as gcs
 from google.protobuf import message
+from opentelemetry import propagate, trace
 
-from themis.litcache import joblog, work
+from themis.litcache import joblog, spans, work
 from themis.litcache import outcome as outcome_mod
 from themis.litcache import produce as produce_mod
 from themis.litcache.models import work_pb2
@@ -50,6 +53,11 @@ _TASK_HEADER = 'X-CloudTasks-TaskName'
 _RETRY_COUNT_HEADER = 'X-CloudTasks-TaskRetryCount'
 # A retry count as Cloud Tasks writes it, and small enough for the job log's uint32.
 _RETRY_COUNT = re.compile(r'[0-9]{1,9}')
+
+# The span around one request the worker runs, a child of the span Cloud Run opened for it.
+_REQUEST_SPAN = 'POST /convert'
+_TARGETS = 'litcache.targets'
+_STATUS_CODE = 'http.response.status_code'
 
 _logger = logging.getLogger(__name__)
 
@@ -158,10 +166,33 @@ async def process_conversion(
     attempt = _attempt(headers)
     if request is None or attempt is None:
         return _BAD_REQUEST
-    try:
-        readiness = await asyncio.get_running_loop().run_in_executor(
-            executor, asyncio.run, produce(bucket, request.doc_id, targets=request.targets, attempt=attempt)
+    attributes = {spans.DOC_ID: request.doc_id, _TARGETS: request.targets, spans.ATTEMPT_ID: attempt.id}
+    with spans.span(_REQUEST_SPAN, attributes, kind=trace.SpanKind.SERVER, parent=propagate.extract(headers)) as span:
+        status = await _run(bucket, request, attempt, produce=produce, executor=executor)
+        span.set_attribute(_STATUS_CODE, status)
+        return status
+
+
+async def _run(
+    bucket: gcs.Bucket,
+    request: _Request,
+    attempt: joblog.Attempt,
+    *,
+    produce: Producer,
+    executor: concurrent.futures.Executor,
+) -> int:
+    # In a copy of this context, so the spans the producer's thread starts are children of the request's.
+    context = contextvars.copy_context()
+
+    def run() -> outcome_mod.Readiness:
+        # The coroutine is made on the thread that runs it: one made here would never be awaited if the executor
+        # dropped the call.
+        return context.run(
+            lambda: asyncio.run(produce(bucket, request.doc_id, targets=request.targets, attempt=attempt))
         )
+
+    try:
+        readiness = await asyncio.get_running_loop().run_in_executor(executor, run)
     except produce_mod.PaperNotInCorpusError:
         # The corpus holds no such paper, and object reads are strongly consistent, so retrying spends
         # the whole budget on a task that cannot succeed. Settled, like the enqueuer's other bugs.

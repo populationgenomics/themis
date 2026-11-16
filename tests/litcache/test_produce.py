@@ -24,6 +24,8 @@ from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 from grus.models import pedigree_pb2
 from litfetch import ids
+from opentelemetry import trace
+from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.litcache import (
     figure_annotate,
@@ -388,6 +390,55 @@ def test_produce_ocrs_the_pdf_when_the_oa_conversion_is_empty(
     assert readiness is outcome.Readiness.READY
     rendering = _served(_load_manifest(gcs_bucket))
     assert rendering.rendering.converter == litcache_pb2.Converter.CONVERTER_LLM_OCR
+
+
+def test_each_step_a_run_takes_is_a_span_naming_the_paper(
+    gcs_bucket: gcs.Bucket, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+) -> None:
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='29089047'))
+
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(_oa_source(), {}), now=lambda: _CAPTURED_AT))
+
+    steps = [span for span in recorded_spans.get_finished_spans() if span.name.startswith('litcache.')]
+    assert f'litcache.{produce.XML_STEP}' in {span.name for span in steps}
+    assert all((span.attributes or {}).get('litcache.doc_id') == _DOC_ID for span in steps)
+    assert all((span.attributes or {}).get('litcache.attempt_id') == _ATTEMPT.id for span in steps)
+
+
+def test_a_step_that_settles_is_a_span_naming_its_outcome_and_not_marked_failed(
+    gcs_bucket: gcs.Bucket, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+) -> None:
+    # No full text is a fact about the paper; a span marked failed would read as a fault of the worker.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(), sources=[])
+
+    asyncio.run(_produce(gcs_bucket, _DOC_ID, now=lambda: _CAPTURED_AT))
+
+    settled_in_the_log = {
+        f'litcache.{entry.step}': work_pb2.SettledOutcome.Name(entry.outcome)
+        for entry in joblog.read(gcs_bucket, _DOC_ID).entries
+        if entry.event == work_pb2.JOB_EVENT_SETTLED
+    }
+    assert settled_in_the_log
+    spans = {span.name: span for span in recorded_spans.get_finished_spans()}
+    for name, settled_outcome in settled_in_the_log.items():
+        assert (spans[name].attributes or {})['litcache.settled_outcome'] == settled_outcome
+        assert spans[name].status.status_code is trace.StatusCode.UNSET
+
+
+def test_a_step_put_off_to_a_later_delivery_is_a_span_marked_deferred_and_not_failed(
+    gcs_bucket: gcs.Bucket, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+) -> None:
+    # A deferral is routine in a funded run: nothing was begun or spent, and the next delivery runs the step.
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+
+    with pytest.raises(produce.DeferredError):
+        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), now=_late(datetime.timedelta(minutes=28))))
+
+    [deferred] = [
+        span for span in recorded_spans.get_finished_spans() if span.name == f'litcache.{produce.TRANSCRIPTION_STEP}'
+    ]
+    assert (deferred.attributes or {})['litcache.deferred'] is True
+    assert deferred.status.status_code is trace.StatusCode.UNSET
 
 
 def test_produce_records_no_full_text_when_no_xml_and_no_pdf(gcs_bucket: gcs.Bucket) -> None:

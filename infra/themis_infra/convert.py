@@ -233,6 +233,7 @@ class ConvertWorker(pulumi.ComponentResource):
         anthropic_organization_id: str,
         anthropic_service_account_id: str,
         anthropic_workspace_id: str,
+        trace_sample_ratio: float,
         opts: pulumi.ResourceOptions | None = None,
     ) -> None:
         super().__init__('themis:infra:ConvertWorker', 'themis', None, opts)
@@ -272,12 +273,13 @@ class ConvertWorker(pulumi.ComponentResource):
             target='resources',
             opts=child,
         )
-        # The request-token counter each transcription feeds (`themis/telemetry`).
-        grants.TelemetryWriter('themis-convert-worker', member=service_account.member, project=project, opts=child)
+        # The request-token counter each transcription feeds, and the worker's spans (`themis/telemetry`).
+        grants.ServiceTelemetry('themis-convert-worker', member=service_account.member, project=project, opts=child)
 
         envs = [
             _env('THEMIS_FULLTEXT_BUCKET', fulltext_bucket),
             _env('THEMIS_RESOURCES_BUCKET', resources_bucket),
+            _env('THEMIS_TRACE_SAMPLE_RATIO', str(trace_sample_ratio)),
             # PDF-OCR client credentials: keyless WIF (Path B), its own svac + rule
             # (../../docs/runbooks/claude-api-wif.md).
             _env('ANTHROPIC_FEDERATION_RULE_ID', anthropic_federation_rule_id),

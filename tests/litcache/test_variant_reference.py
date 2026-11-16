@@ -10,6 +10,7 @@ from collections.abc import Callable
 import pytest
 from google.auth import credentials
 from google.cloud import storage
+from opentelemetry.sdk.trace.export import in_memory_span_exporter
 from weaver_data_provider import genome as genome_mod
 from weaver_data_provider import store as store_mod
 from weaver_data_provider import testing
@@ -142,3 +143,22 @@ def test_each_open_logs_how_long_it_took(tmp_path: pathlib.Path, caplog: pytest.
         'refseq-grch37 store',
     ):
         assert any(re.fullmatch(rf'opened the {opened} at .+ in \d+\.\d{{3}} s', message) for message in messages)
+
+
+def test_each_open_is_a_span_naming_what_it_opened_and_where(
+    tmp_path: pathlib.Path, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+) -> None:
+    testing.build(tmp_path)
+
+    variant_reference.References(str(tmp_path), _BUILDS)
+
+    opens = [span.attributes or {} for span in recorded_spans.get_finished_spans() if span.name == 'reference.open']
+    for name, directory in (
+        ('GRCh38 genome', 'genome'),
+        ('GRCh37 genome', 'genome'),
+        ('refseq-grch38 store', 'store'),
+        ('ensembl-grch38 store', 'store'),
+        ('refseq-grch37 store', 'store'),
+    ):
+        where = str(tmp_path / directory)
+        assert any(o.get('reference.name') == name and o.get('reference.path') == where for o in opens)

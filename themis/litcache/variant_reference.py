@@ -8,12 +8,14 @@ extraction agent sees it through a tool, and the validation step records it.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import importlib.metadata
 import logging
 import posixpath
 import re
 import time
+from collections.abc import Iterator
 
 import weaver
 from google.cloud import storage
@@ -22,6 +24,7 @@ from weaver_data_provider import provider as provider_mod
 from weaver_data_provider import store as store_mod
 from weaver_data_provider.v1 import bundle_pb2
 
+from themis.litcache import spans
 from themis.litcache.models import variants_pb2
 
 _LOG = logging.getLogger(__name__)
@@ -87,6 +90,15 @@ class _Store:
     mapper: weaver.VariantMapper
 
 
+@contextlib.contextmanager
+def _opening(what: str, path: str) -> Iterator[None]:
+    """One open, as a `reference.open` span and as an INFO line saying how long it took."""
+    started = time.monotonic()
+    with spans.span('reference.open', {'reference.name': what, 'reference.path': path}):
+        yield
+    _LOG.info('opened the %s at %s in %.3f s', what, path, time.monotonic() - started)
+
+
 def _release(store: store_mod.BundleStore) -> str:
     return '+'.join(shard.release for shard in store.manifest.shards)
 
@@ -140,19 +152,15 @@ class References:
 
     @staticmethod
     def _open_genome(assembly: str, path: str, storage_client: storage.Client | None) -> genome_mod.Genome:
-        started = time.monotonic()
-        genome = genome_mod.Genome(path, storage_client=storage_client)
-        _LOG.info('opened the %s genome at %s in %.3f s', assembly, path, time.monotonic() - started)
-        return genome
+        with _opening(f'{assembly} genome', path):
+            return genome_mod.Genome(path, storage_client=storage_client)
 
     @staticmethod
     def _open_store(name: str, path: str, genome: genome_mod.Genome, storage_client: storage.Client | None) -> _Store:
-        started = time.monotonic()
-        store = store_mod.BundleStore(path, storage_client=storage_client)
-        provider = provider_mod.BundleProvider(store, genome)
-        opened = _Store(name, provider, store, genome, weaver.VariantMapper(provider, refget=provider))
-        _LOG.info('opened the %s store at %s in %.3f s', name, path, time.monotonic() - started)
-        return opened
+        with _opening(f'{name} store', path):
+            store = store_mod.BundleStore(path, storage_client=storage_client)
+            provider = provider_mod.BundleProvider(store, genome)
+            return _Store(name, provider, store, genome, weaver.VariantMapper(provider, refget=provider))
 
     def versions(self) -> list[variants_pb2.StoreVersion]:
         """Each store and the releases it holds, as a validation record states them."""

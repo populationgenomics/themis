@@ -23,6 +23,7 @@ from __future__ import annotations
 import datetime
 import math
 import os
+import threading
 from collections.abc import Iterable
 
 import google.auth.credentials
@@ -152,7 +153,11 @@ def flush(timeout: datetime.timedelta) -> None:
     """
     provider = trace.get_tracer_provider()
     if isinstance(provider, sdk_trace.TracerProvider):
-        provider.force_flush(timeout_millis=int(timeout.total_seconds() * 1000))
+        # On a thread this waits on for `timeout` only: the batch processor's own flush takes a timeout and does
+        # not hold to it, so it returns when the exporter does.
+        flushing = threading.Thread(target=provider.force_flush, name='trace-flush', daemon=True)
+        flushing.start()
+        flushing.join(timeout.total_seconds())
 
 
 def server_interceptor() -> grpc.aio.ServerInterceptor:

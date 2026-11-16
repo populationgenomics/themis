@@ -32,8 +32,11 @@ from anthropic.lib import credentials as anthropic_credentials
 from google.api_core import exceptions as api_exceptions
 from google.auth import credentials
 from google.cloud import storage
+from opentelemetry import trace
 from opentelemetry.sdk import metrics as sdk_metrics
+from opentelemetry.sdk import trace as sdk_trace
 from opentelemetry.sdk.metrics import export as metrics_export
+from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.clients import anthropic_wif
 from themis.litcache import anthropic_ocr, joblog, metadata_fields, ocr, variant_reference, work, writer
@@ -42,7 +45,7 @@ from themis.litcache import produce as produce_mod
 from themis.litcache.models import litcache_pb2, work_pb2
 from themis.services.convert_worker import __main__ as main_mod
 from themis.services.convert_worker import handler as handler_mod
-from themis.telemetry import names, request_tokens, startup
+from themis.telemetry import names, request_tokens, startup, tracing
 from themis.testing import in_memory_metrics, litcache_pedigrees, litcache_variants
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
@@ -78,11 +81,14 @@ _FEDERATION_ENV = {
 
 
 _RESOURCES_BUCKET = 'themis-test-resources'
-# The variables that name a resource startup then reaches for over the network.
+_SERVICE = 'themis-convert-worker'
+# The variables startup reads on its way to the network: each names a resource it then reaches for, or the share
+# of traces it exports. At a ratio of 0 the trace pipeline installs nothing, so no test needs credentials for it.
 _RESOURCE_ENV = {
     'THEMIS_FULLTEXT_BUCKET': 'themis-test-fulltext',
     'THEMIS_RESOURCES_BUCKET': _RESOURCES_BUCKET,
-    'K_SERVICE': 'themis-convert-worker',
+    'K_SERVICE': _SERVICE,
+    tracing.SAMPLE_RATIO_VAR: '0',
 }
 
 
@@ -305,6 +311,79 @@ def test_producer_failure_propagates_for_cloud_tasks_to_retry() -> None:
     # Cloud Tasks retries rather than the worker swallowing a transient failure as "done".
     with pytest.raises(RuntimeError, match='transient'):
         _run(json.dumps({'doc_id': _DOC_ID}).encode(), _raising())
+
+
+# --- the span around a request ---
+
+_JSON_REQUEST = json.dumps({'doc_id': _DOC_ID}).encode()
+
+
+def _request_span(recorded: in_memory_span_exporter.InMemorySpanExporter) -> sdk_trace.ReadableSpan:
+    [span] = [span for span in recorded.get_finished_spans() if span.name == 'POST /convert']
+    return span
+
+
+def test_a_request_is_a_span_naming_its_paper_its_job_log_attempt_and_its_status(
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
+) -> None:
+    seen: list[_Call] = []
+
+    status = _run(_JSON_REQUEST, _producer(outcome_mod.Readiness.READY, seen))
+
+    attributes = _request_span(recorded_spans).attributes or {}
+    assert attributes['litcache.doc_id'] == _DOC_ID
+    assert attributes['litcache.attempt_id'] == seen[0].attempt.id
+    assert attributes['litcache.targets'] == seen[0].targets
+    assert attributes['http.response.status_code'] == status
+
+
+def test_a_span_the_producer_starts_on_its_own_thread_is_a_child_of_the_requests(
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
+) -> None:
+    async def produce(_bucket: storage.Bucket, _doc_id: str, /, **_request: object) -> outcome_mod.Readiness:
+        with trace.get_tracer(__name__).start_as_current_span('a step'):
+            return outcome_mod.Readiness.READY
+
+    _run(_JSON_REQUEST, produce)
+
+    request = _request_span(recorded_spans)
+    [step] = [span for span in recorded_spans.get_finished_spans() if span.name == 'a step']
+    assert request.context is not None
+    assert step.parent is not None
+    assert step.parent.span_id == request.context.span_id
+
+
+def test_a_request_continues_the_trace_its_traceparent_header_names(
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
+) -> None:
+    # Cloud Run sets the header on every request it forwards, and writes the same trace id on its request log.
+    trace_id, parent_id = '0af7651916cd43dd8448eb211c80319c', 'b7ad6b7169203331'
+
+    _run(
+        _JSON_REQUEST,
+        _producer(outcome_mod.Readiness.READY),
+        headers={**_DELIVERY, 'traceparent': f'00-{trace_id}-{parent_id}-01'},
+    )
+
+    span = _request_span(recorded_spans)
+    assert span.context is not None
+    assert span.parent is not None
+    assert format(span.context.trace_id, '032x') == trace_id
+    assert format(span.parent.span_id, '016x') == parent_id
+
+
+def test_a_request_whose_producer_raises_is_a_failed_span_that_carries_no_message(
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
+) -> None:
+    # A producer's error can quote the paper it was reading; the span names the error's type alone.
+    with pytest.raises(RuntimeError):
+        _run(_JSON_REQUEST, _raising())
+
+    span = _request_span(recorded_spans)
+    assert span.status.status_code is trace.StatusCode.ERROR
+    assert span.status.description is None
+    assert (span.attributes or {})['error.type'] == 'builtins.RuntimeError'
+    assert not span.events
 
 
 def test_a_paper_not_in_the_corpus_is_settled_at_2xx() -> None:
@@ -622,6 +701,80 @@ def test_startup_opens_the_pinned_reference_builds_through_the_fulltext_buckets_
     assert references.root == f'gs://{_RESOURCES_BUCKET}'
     assert references.builds is variant_reference.BUILDS
     assert references.storage_client is bucket.client
+
+
+def test_startup_installs_the_trace_pipeline_under_the_services_name_before_it_starts_a_span(
+    monkeypatch: pytest.MonkeyPatch, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+) -> None:
+    # The interactive and bulk services run one image, so the name is what tells their traces apart. A span
+    # started before the pipeline is in is never recorded, and each step under it would be a trace of its own.
+    del recorded_spans  # with no recording provider, no span is ever current and the check below could not fail
+    _set_startup_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
+    _stub_meter_provider(monkeypatch)
+    installed: list[tuple[str, bool]] = []
+
+    def install(service: str) -> None:
+        installed.append((service, trace.get_current_span().get_span_context().is_valid))
+
+    monkeypatch.setattr(tracing, 'install_from_env', install)
+
+    asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+
+    assert installed == [(_SERVICE, False)]
+
+
+def test_a_cold_start_is_one_trace_whose_steps_are_spans_under_its_root(
+    monkeypatch: pytest.MonkeyPatch, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+) -> None:
+    _set_startup_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
+    _stub_meter_provider(monkeypatch)
+
+    asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+
+    finished = recorded_spans.get_finished_spans()
+    [root] = [span for span in finished if span.parent is None]
+    assert root.name == startup.ROOT_SPAN
+    assert root.context is not None
+    steps = [span for span in finished if span is not root]
+    assert steps
+    assert all(span.parent is not None and span.parent.span_id == root.context.span_id for span in steps)
+
+
+def test_a_start_that_exits_leaves_its_trace_marked_failed(
+    monkeypatch: pytest.MonkeyPatch, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+) -> None:
+    # A start fails loud with SystemExit, which OpenTelemetry alone would let through as a span that succeeded.
+    _set_startup_env(monkeypatch)
+
+    def unreadable(name: str) -> storage.Bucket:
+        raise SystemExit(f'THEMIS_FULLTEXT_BUCKET {name!r} does not exist or is not readable')
+
+    monkeypatch.setattr(main_mod, '_readable_bucket', unreadable)
+
+    with pytest.raises(SystemExit):
+        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+
+    finished = recorded_spans.get_finished_spans()
+    assert finished
+    assert all(span.status.status_code is trace.StatusCode.ERROR for span in finished)
+
+
+def test_cleanup_exports_the_last_token_counts_before_it_flushes_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Cloud Run leaves a stopping instance ten seconds. If they run out, the export still to come is the one
+    # lost, and that must not be the token counts of the last interval.
+    _set_startup_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
+    provider = _stub_meter_provider(monkeypatch)
+    app = main_mod.build_app(startup.StartupClock())
+    asyncio.run(main_mod._on_startup(app))
+    shutdowns_before_each_flush: list[int] = []
+    monkeypatch.setattr(tracing, 'flush', lambda _timeout: shutdowns_before_each_flush.append(provider.shutdowns))
+
+    asyncio.run(main_mod._on_cleanup(app))
+
+    assert shutdowns_before_each_flush == [1]
 
 
 def test_the_first_startup_line_logged_after_the_reference_stores_open_is_the_one_timing_them(

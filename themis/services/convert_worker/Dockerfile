@@ -39,7 +39,7 @@ ENV PATH="/app/.venv/bin:$PATH" \
 # themis/common is litcache's only cross-package themis import (writer/oa/crossref: storage + constants);
 # anthropic_wif is the federation credential the PDF branch authenticates to the Claude API with — the
 # rest of themis/clients is gRPC-side and has no consumer here. themis/telemetry carries the
-# transcription's token counts to Cloud Monitoring.
+# transcription's token counts to Cloud Monitoring and the worker's spans to Cloud Trace.
 COPY buf ./buf
 COPY themis/clients/anthropic_wif.py ./themis/clients/anthropic_wif.py
 COPY themis/common ./themis/common

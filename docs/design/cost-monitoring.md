@@ -373,7 +373,7 @@ Each producer authenticates with the narrowest identity that its platform and ta
   `workspace:developer` on its own dedicated Anthropic service account (`themis-cost-exporter-<env>`), separate from the
   application runtime's identity so its audit trail and revocation remain isolated.
 - **Convert worker (`themis-convert-worker` and `themis-convert-bulk-worker`)**: Both services run as the worker's
-  existing Cloud Run service account, which already holds `grants.TelemetryWriter`
+  existing Cloud Run service account, which already holds `grants.ServiceTelemetry`
   ([`infra/themis_infra/grants.py`](../../infra/themis_infra/grants.py)).
 - **Claude Code in GitHub Actions**: Authenticates to GCP through the repository's GitHub Workload Identity Pool as a
   dedicated CI telemetry service account

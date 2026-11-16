@@ -47,10 +47,12 @@ screenshot = ["google-cloud-storage"]
 # through it; google-cloud-tasks — enqueue.py creates the convert worker's
 # task; hgvs-weaver — parses, projects and validates the variant extractor's HGVS candidates, over
 # the reference stores hgvs-weaver-data reads; jsonschema — checks the agent's tool inputs; grus — the pedigree
-# record a paper's pedigree figures are read into, and the checks it must pass.
+# record a paper's pedigree figures are read into, and the checks it must pass; opentelemetry-api — the span
+# around each step a paper is run through and each open of a reference store (spans.py), a no-op where no tracer
+# provider is installed.
 # litfetch/litdown/pubmed_proto/hgvs-weaver(-data)/grus are exact-pinned because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate>=2.1", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", "hgvs-weaver==2.1.0", "hgvs-weaver-data[gcs]==0.1.4", "jsonschema>=4.26,<5", "grus==0.4.0", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate>=2.1", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", "hgvs-weaver==2.1.0", "hgvs-weaver-data[gcs]==0.1.4", "jsonschema>=4.26,<5", "grus==0.4.0", "opentelemetry-api", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -135,8 +137,9 @@ evidence = ["grpcio", "grpcio-health-checking", "protobuf", "protovalidate>=2.1"
 # protovalidate checks each manifest against its own constraints before the commit.
 # pypdfium2 rasterizes the pages the model transcribes from, and pillow encodes them (pypdfium2
 # renders into a Pillow image). google-auth mints the Google identity token the Anthropic SDK
-# exchanges for a federation token, and requests is its transport. The telemetry group carries each
-# transcription's token counts to Cloud Monitoring. google-cloud-tasks is the sweep's (litcache.sweep), whose
+# exchanges for a federation token, and requests is its transport. The tracing group carries each
+# transcription's token counts to Cloud Monitoring and the worker's spans to Cloud Trace; the worker serves
+# no gRPC, and the group's server interceptor comes with the module that installs the pipeline. google-cloud-tasks is the sweep's (litcache.sweep), whose
 # job runs this image and puts its requests on the bulk queue. Deliberately not the `litcache` group: docling-core
 # and the cloudsql connector belong to paths this worker never takes, and carry pandas and numpy behind
 # them. hgvs-weaver and hgvs-weaver-data are the variant steps': the agent's tools and the validation read the
@@ -160,7 +163,7 @@ convert_worker = [
     "hgvs-weaver-data[gcs]==0.1.4",
     "jsonschema>=4.26,<5",
     "grus==0.4.0",
-    { include-group = "telemetry" },
+    { include-group = "tracing" },
 ]
 # cost exporter (themis/services/cost_exporter): the workspace-spend monitor's Cloud Run Job. anthropic lists the
 # workspace's Managed Agents sessions, whose cumulative usage is the signal; google-auth mints the Google identity

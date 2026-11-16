@@ -15,7 +15,10 @@ the Cloud Run convention; `/healthz` reports liveness.
 
 The port opens only once startup has finished, so the startup probe waits on every step of it. A
 `startup.StartupClock` logs how long each step took, and `variant_reference` how long each store and genome
-took to open.
+took to open. Each cold start is also a trace of its own, at the ratio `THEMIS_TRACE_SAMPLE_RATIO` names
+(`themis/telemetry/tracing.py`): a `startup` span from the point the trace pipeline is installed, with the
+bucket check, the open of the reference stores and the metrics pipeline as spans beneath it, and each store
+and genome opened a span beneath that.
 
 `THEMIS_CONVERT_CONCURRENCY` is how many requests the service lets one instance serve at once, and
 sizes the thread pool each request's producer runs on (`handler.process_conversion`). It is required:
@@ -49,7 +52,7 @@ from themis.litcache import produce as produce_mod
 from themis.litcache.models import variants_pb2
 from themis.services.convert_worker import handler as handler_mod
 from themis.telemetry import metrics as telemetry_metrics
-from themis.telemetry import names, request_tokens, startup
+from themis.telemetry import names, request_tokens, startup, tracing
 
 _CLOCK: web.AppKey[startup.StartupClock] = web.AppKey('clock', startup.StartupClock)
 _BUCKET: web.AppKey[storage.Bucket] = web.AppKey('bucket', storage.Bucket)
@@ -62,11 +65,12 @@ _EXECUTOR: web.AppKey[concurrent.futures.ThreadPoolExecutor] = web.AppKey(
     'executor', concurrent.futures.ThreadPoolExecutor
 )
 
-# The series' `job` label: the Cloud Run service's name, which Cloud Run sets in the environment, so the
-# interactive and bulk services' spend is told apart.
+# The series' `job` label and the name Cloud Trace lists the spans under: the Cloud Run service's name, which
+# Cloud Run sets in the environment, so the interactive and bulk services are told apart.
 _SERVICE_NAME_ENV = 'K_SERVICE'
-# Cloud Run allows an instance ten seconds after SIGTERM; the final export has to fit inside them.
-_SHUTDOWN_TIMEOUT = datetime.timedelta(seconds=8)
+# Cloud Run allows an instance ten seconds after SIGTERM; the two final exports have to fit inside them.
+_METRICS_SHUTDOWN_TIMEOUT = datetime.timedelta(seconds=6)
+_TRACE_FLUSH_TIMEOUT = datetime.timedelta(seconds=2)
 
 
 def _require(name: str) -> str:
@@ -179,36 +183,41 @@ def _meter_provider(service: str) -> sdk_metrics.MeterProvider:
 async def _on_startup(app: web.Application) -> None:
     clock = app[_CLOCK]
     # Env reads before anything that reaches a network, so a missing variable is reported as itself
-    # rather than behind a connection failure.
+    # rather than behind a connection failure. The trace pipeline reads its own, before it reaches for anything.
     credentials = _credentials_from_env()
     concurrency = _concurrency_from_env()
     fulltext_bucket = _require('THEMIS_FULLTEXT_BUCKET')
     resources_bucket = _require('THEMIS_RESOURCES_BUCKET')
     service = _require(_SERVICE_NAME_ENV)
     clock.step('configuration read')
-    bucket = _readable_bucket(fulltext_bucket)
-    app[_BUCKET] = bucket
-    clock.step('fulltext bucket checked')
-    references = _references(resources_bucket, bucket.client)
-    clock.step('reference stores opened')
-    app[_EXECUTOR] = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix='convert')
-    provider = _meter_provider(service)
-    app[_METER_PROVIDER] = provider
-    clock.step('metrics installed')
-    tokens = request_tokens.RequestTokens(provider.get_meter(names.METER_NAME))
-    app[_CONVERT_PDF] = functools.partial(anthropic_ocr.convert_pdf, credentials=credentials, tokens=tokens)
-    app[_VARIANTS] = _variants(references, credentials=credentials, tokens=tokens)
-    app[_FIGURES] = produce_mod.Figures(
-        annotate=functools.partial(figure_annotate.annotate_paper, tokens=tokens, credentials=credentials)
-    )
-    app[_PEDIGREES] = produce_mod.Pedigrees(
-        read=functools.partial(pedigree_extract.read_paper, tokens=tokens, credentials=credentials)
-    )
-    clock.step('collaborators bound')
+    tracing.install_from_env(service)
+    clock.step('tracing installed')
+    with startup.trace_root():
+        with clock.span('fulltext bucket checked'):
+            bucket = _readable_bucket(fulltext_bucket)
+        app[_BUCKET] = bucket
+        with clock.span('reference stores opened'):
+            references = _references(resources_bucket, bucket.client)
+        app[_EXECUTOR] = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix='convert')
+        with clock.span('metrics installed'):
+            provider = _meter_provider(service)
+        app[_METER_PROVIDER] = provider
+        tokens = request_tokens.RequestTokens(provider.get_meter(names.METER_NAME))
+        app[_CONVERT_PDF] = functools.partial(anthropic_ocr.convert_pdf, credentials=credentials, tokens=tokens)
+        app[_VARIANTS] = _variants(references, credentials=credentials, tokens=tokens)
+        app[_FIGURES] = produce_mod.Figures(
+            annotate=functools.partial(figure_annotate.annotate_paper, tokens=tokens, credentials=credentials)
+        )
+        app[_PEDIGREES] = produce_mod.Pedigrees(
+            read=functools.partial(pedigree_extract.read_paper, tokens=tokens, credentials=credentials)
+        )
+        clock.step('collaborators bound')
 
 
 async def _on_cleanup(app: web.Application) -> None:
-    app[_METER_PROVIDER].shutdown(timeout_millis=_SHUTDOWN_TIMEOUT.total_seconds() * 1000)
+    # The token counts first: of the two exports, they are the one a stopping instance must not lose.
+    app[_METER_PROVIDER].shutdown(timeout_millis=_METRICS_SHUTDOWN_TIMEOUT.total_seconds() * 1000)
+    tracing.flush(_TRACE_FLUSH_TIMEOUT)
     app[_BUCKET].client.close()
     app[_EXECUTOR].shutdown(wait=False, cancel_futures=True)
 

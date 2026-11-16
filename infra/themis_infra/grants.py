@@ -787,13 +787,17 @@ class ServiceTelemetry(_Capability):
             project: The GCP project the points and spans are written to.
             opts: Resource options (dependency wiring).
         """
-        # A holder that held `TraceWriter` keeps its two bindings: the alias carries them over as they are.
+        # A holder that held `TraceWriter` or `TelemetryWriter` keeps its two bindings: the alias for the one it
+        # held carries them over as they are.
         super().__init__(
             f'{holder}-writes-telemetry-and-traces',
             pulumi.ResourceOptions.merge(
                 opts,
                 pulumi.ResourceOptions(
-                    aliases=[pulumi.Alias(type_='themis:grants:TraceWriter', name=f'{holder}-writes-traces')]
+                    aliases=[
+                        pulumi.Alias(type_='themis:grants:TraceWriter', name=f'{holder}-writes-traces'),
+                        pulumi.Alias(type_='themis:grants:TelemetryWriter', name=f'{holder}-writes-telemetry'),
+                    ]
                 ),
             ),
         )

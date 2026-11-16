@@ -7,6 +7,9 @@ exporter at all.
 from __future__ import annotations
 
 import datetime
+import threading
+import time
+from collections.abc import Sequence
 from typing import override
 
 import grpc
@@ -14,6 +17,8 @@ import pytest
 from google.auth import credentials as google_credentials
 from opentelemetry import context, trace
 from opentelemetry.sdk import resources
+from opentelemetry.sdk import trace as sdk_trace
+from opentelemetry.sdk.trace import export as trace_export
 from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.telemetry import telemetry_api, tracing
@@ -126,3 +131,33 @@ def test_the_exporter_is_built_for_the_telemetry_api_over_tls(monkeypatch: pytes
     assert built['endpoint'] == 'https://telemetry.googleapis.com:443'
     assert isinstance(built['credentials'], grpc.ChannelCredentials)
     assert built['timeout'] == _TIMEOUT.total_seconds()
+
+
+def test_a_flush_returns_at_its_timeout_while_the_export_is_still_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A stopping instance has ten seconds in all; a flush that waited the exporter out would spend them.
+    exporting, released = threading.Event(), threading.Event()
+
+    class _Stuck(trace_export.SpanExporter):
+        @override
+        def export(self, spans: Sequence[sdk_trace.ReadableSpan]) -> trace_export.SpanExportResult:
+            exporting.set()
+            released.wait(timeout=30)
+            return trace_export.SpanExportResult.SUCCESS
+
+        @override
+        def shutdown(self) -> None:
+            pass
+
+    provider = sdk_trace.TracerProvider()
+    provider.add_span_processor(trace_export.BatchSpanProcessor(_Stuck()))
+    monkeypatch.setattr(trace, 'get_tracer_provider', lambda: provider)
+    provider.get_tracer(__name__).start_span('still held').end()
+    started = time.monotonic()
+    try:
+        tracing.flush(datetime.timedelta(seconds=0.2))
+        waited = time.monotonic() - started
+        assert exporting.is_set()
+        assert waited < 5
+    finally:
+        released.set()
+        provider.shutdown()

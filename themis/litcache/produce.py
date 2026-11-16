@@ -58,6 +58,7 @@ from themis.litcache import (
     pdf,
     pedigree_extract,
     records,
+    spans,
     variant_extract,
     variant_scan,
     variant_validate,
@@ -65,6 +66,11 @@ from themis.litcache import (
     writer,
 )
 from themis.litcache.models import figures_pb2, litcache_pb2, variants_pb2, work_pb2
+
+# On a step's span: the outcome it settled with, by its `SettledOutcome` name, once the job log holds it; and that
+# the step was put off to a later delivery. Neither marks the span failed.
+_SETTLED_OUTCOME = 'litcache.settled_outcome'
+_DEFERRED = 'litcache.deferred'
 
 # The fetched XML lands as its own lineage; the litdown rendering is produced from it.
 _XML_HANDLE = 'xml'
@@ -1376,9 +1382,15 @@ async def run(
         inputs = step.inputs(manifest)
         if inputs is None:
             raise RuntimeError(f'{step.name} was chosen for {doc_id} with nothing to work on')
-        try:
-            await step.run(work_run, manifest, inputs)
-        except _SettledError as settled:
-            work_run.settle(step.name, inputs, settled)
+        attributes = {spans.DOC_ID: doc_id, spans.ATTEMPT_ID: attempt.id}
+        with spans.span(f'litcache.{step.name}', attributes, routine=(DeferredError,)) as span:
+            try:
+                await step.run(work_run, manifest, inputs)
+            except _SettledError as settled:
+                work_run.settle(step.name, inputs, settled)
+                span.set_attribute(_SETTLED_OUTCOME, work_pb2.SettledOutcome.Name(settled.outcome))
+            except DeferredError:
+                span.set_attribute(_DEFERRED, True)
+                raise
         manifest = _read_manifest(bucket, doc_id)
     return _settle_readiness(work_run)

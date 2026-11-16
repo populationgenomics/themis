@@ -16,6 +16,19 @@ the final push, and each tool call the agent made is a child span named for the 
 call shows on the session's timeline. The trace stops at the worker: the calls it makes onward start traces of their
 own.
 
+The convert worker records two kinds of trace, both listed under `themis-convert-worker` or
+`themis-convert-bulk-worker`. A request the worker runs is one: the span `POST /convert` continues the trace Cloud Run
+started for the request, and each step the worker runs for the paper is a span beneath it, named for the step,
+`litcache.transcription` say. The spans carry the paper's document id and the attempt id of the paper's job log, and a
+failed one names the type of its error and never the message, which can quote the paper.
+
+A cold start is the other, since no request reaches an instance until its startup has finished: a slow start delays the
+first conversion and, past the startup probe's budget, fails a deploy. The root span, `startup`, begins once the trace
+pipeline is installed. The bucket check, the open of the reference stores and the metrics pipeline are spans beneath it,
+and each store and genome opened is a `reference.open` span beneath the open, so the timeline shows which one the time
+went to. A start that Cloud Run kills leaves at most part of its trace, because a span is exported only after it ends;
+the instance's log has a line for each step it finished.
+
 The pipeline itself lives in [`themis/telemetry/tracing.py`](../../themis/telemetry/tracing.py) for the Python services
 and [`apps/web/src/server/tracing/`](../../apps/web/src/server/tracing/) for the web server.
 
