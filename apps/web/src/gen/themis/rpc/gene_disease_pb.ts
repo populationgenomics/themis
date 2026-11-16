@@ -7,6 +7,8 @@
 //     weekly refresh job writes): `CuratedEntity`, `GenccSubmission`, `MechanismStatement` and
 //     `GeneScopedSignals` carry each source's own values — its classification string, its mode term,
 //     its notes, its haploinsufficiency score.
+//   HGNC complete set (the pinned copy in the reference mirror): `DescribeGeneResponse.gene_symbol`
+//     and `previous_symbols`.
 //   EBI OLS4 MONDO subclass closure: `TermRelation`.
 //   SVCv4 SM18 (the gene-disease-validity gate) and SM21 (the MDE): `GateLevel` is the ladder the gate
 //     is keyed by — docs/design/evidence-interfaces.md § "is the gene-disease relationship valid, and
@@ -42,7 +44,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file themis/rpc/gene_disease.proto.
  */
 export const file_themis_rpc_gene_disease: GenFile = /*@__PURE__*/
-  fileDesc("Ch10aGVtaXMvcnBjL2dlbmVfZGlzZWFzZS5wcm90bxIXdGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UiSwoTRGVzY3JpYmVHZW5lUmVxdWVzdBIPCgdoZ25jX2lkGAEgASgJEhAKCG1vbmRvX2lkGAIgASgJSgQIAxAEUgtpbmhlcml0YW5jZSLnAgoURGVzY3JpYmVHZW5lUmVzcG9uc2USOAoIZW50aXRpZXMYASADKAsyJi50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5DdXJhdGVkRW50aXR5Ej0KCnJlc29sdXRpb24YAiABKAsyKS50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5FbnRpdHlSZXNvbHV0aW9uEj8KC2dlbmVfc2NvcGVkGAMgASgLMioudGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UuR2VuZVNjb3BlZFNpZ25hbHMSNwoIY292ZXJhZ2UYBCABKA4yJS50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5HZW5lQ292ZXJhZ2USJAoDcmF3GA8gASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBI2Cgpwcm92ZW5hbmNlGBAgAygLMiIudGhlbWlzLmV2aWRlbmNlLm1vZGVscy5Qcm92ZW5hbmNlItgCCg1DdXJhdGVkRW50aXR5Eg4KBnNvdXJjZRgBIAEoCRIVCg1kaXNlYXNlX2xhYmVsGAIgASgJEhAKCG1vbmRvX2lkGAMgASgJEhgKEGluaGVyaXRhbmNlX3Rlcm0YBSABKAkSHwoXdmFsaWRpdHlfY2xhc3NpZmljYXRpb24YBiABKAkSNgoKZ2F0ZV9sZXZlbBgHIAEoDjIiLnRoZW1pcy5ycGMuZ2VuZV9kaXNlYXNlLkdhdGVMZXZlbBI9CgtzdWJtaXNzaW9ucxgIIAMoCzIoLnRoZW1pcy5ycGMuZ2VuZV9kaXNlYXNlLkdlbmNjU3VibWlzc2lvbhJJChRtZWNoYW5pc21fc3RhdGVtZW50cxgJIAMoCzIrLnRoZW1pcy5ycGMuZ2VuZV9kaXNlYXNlLk1lY2hhbmlzbVN0YXRlbWVudEoECAQQBVILaW5oZXJpdGFuY2UiXQoPR2VuY2NTdWJtaXNzaW9uEhEKCXN1Ym1pdHRlchgBIAEoCRIfChd2YWxpZGl0eV9jbGFzc2lmaWNhdGlvbhgCIAEoCRIWCg5tZWNoYW5pc21fbm90ZRgDIAEoCSLjAQoQRW50aXR5UmVzb2x1dGlvbhIaChJyZXF1ZXN0ZWRfbW9uZG9faWQYASABKAkSEAoIbW9uZG9faWQYAyABKAkSNwoIcmVsYXRpb24YBSABKA4yJS50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5UZXJtUmVsYXRpb24SOAoIZW50aXRpZXMYBiADKAsyJi50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5DdXJhdGVkRW50aXR5SgQIAhADSgQIBBAFUhVyZXF1ZXN0ZWRfaW5oZXJpdGFuY2VSC2luaGVyaXRhbmNlIoACChFHZW5lU2NvcGVkU2lnbmFscxIlChhoYXBsb2luc3VmZmljaWVuY3lfc2NvcmUYASABKAVIAIgBARIdChVtb2RlX29mX3BhdGhvZ2VuaWNpdHkYAiABKAkSGwoTbW9kZV9vZl9pbmhlcml0YW5jZRgDIAEoCRJJChRtZWNoYW5pc21fc3RhdGVtZW50cxgEIAMoCzIrLnRoZW1pcy5ycGMuZ2VuZV9kaXNlYXNlLk1lY2hhbmlzbVN0YXRlbWVudBIgChhzb3VyY2VzX2hvbGRpbmdfdGhlX2dlbmUYBSADKAlCGwoZX2hhcGxvaW5zdWZmaWNpZW5jeV9zY29yZSJDChJNZWNoYW5pc21TdGF0ZW1lbnQSDgoGc291cmNlGAEgASgJEg8KB2NvbnRleHQYAiABKAkSDAoEdGV4dBgDIAEoCSrQAQoJR2F0ZUxldmVsEhoKFkdBVEVfTEVWRUxfVU5TUEVDSUZJRUQQABIZChVHQVRFX0xFVkVMX0RFRklOSVRJVkUQARIVChFHQVRFX0xFVkVMX1NUUk9ORxACEhcKE0dBVEVfTEVWRUxfTU9ERVJBVEUQAxIWChJHQVRFX0xFVkVMX0xJTUlURUQQBBIgChxHQVRFX0xFVkVMX0xFU1NfVEhBTl9MSU1JVEVEEAUSIgoeR0FURV9MRVZFTF9ESVNQVVRFRF9PUl9SRUZVVEVEEAYqYwoMVGVybVJlbGF0aW9uEh0KGVRFUk1fUkVMQVRJT05fVU5TUEVDSUZJRUQQABIWChJURVJNX1JFTEFUSU9OX1NBTUUQARIcChhURVJNX1JFTEFUSU9OX0RFU0NFTkRBTlQQAiqLAQoMR2VuZUNvdmVyYWdlEh0KGUdFTkVfQ09WRVJBR0VfVU5TUEVDSUZJRUQQABIZChVHRU5FX0NPVkVSQUdFX0NVUkFURUQQARInCiNHRU5FX0NPVkVSQUdFX05PX1ZBTElESVRZX0FTU0VSVElPThACEhgKFEdFTkVfQ09WRVJBR0VfQUJTRU5UEAMygQEKC0dlbmVEaXNlYXNlEnIKDERlc2NyaWJlR2VuZRIsLnRoZW1pcy5ycGMuZ2VuZV9kaXNlYXNlLkRlc2NyaWJlR2VuZVJlcXVlc3QaLS50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5EZXNjcmliZUdlbmVSZXNwb25zZSIForUYAQNiBnByb3RvMw", [file_google_protobuf_struct, file_themis_evidence_models_evidence, file_themis_rpc_sandbox_options]);
+  fileDesc("Ch10aGVtaXMvcnBjL2dlbmVfZGlzZWFzZS5wcm90bxIXdGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UiSwoTRGVzY3JpYmVHZW5lUmVxdWVzdBIPCgdoZ25jX2lkGAEgASgJEhAKCG1vbmRvX2lkGAIgASgJSgQIAxAEUgtpbmhlcml0YW5jZSKWAwoURGVzY3JpYmVHZW5lUmVzcG9uc2USOAoIZW50aXRpZXMYASADKAsyJi50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5DdXJhdGVkRW50aXR5Ej0KCnJlc29sdXRpb24YAiABKAsyKS50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5FbnRpdHlSZXNvbHV0aW9uEj8KC2dlbmVfc2NvcGVkGAMgASgLMioudGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UuR2VuZVNjb3BlZFNpZ25hbHMSNwoIY292ZXJhZ2UYBCABKA4yJS50aGVtaXMucnBjLmdlbmVfZGlzZWFzZS5HZW5lQ292ZXJhZ2USEwoLZ2VuZV9zeW1ib2wYBSABKAkSGAoQcHJldmlvdXNfc3ltYm9scxgGIAMoCRIkCgNyYXcYDyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjYKCnByb3ZlbmFuY2UYECADKAsyIi50aGVtaXMuZXZpZGVuY2UubW9kZWxzLlByb3ZlbmFuY2Ui2AIKDUN1cmF0ZWRFbnRpdHkSDgoGc291cmNlGAEgASgJEhUKDWRpc2Vhc2VfbGFiZWwYAiABKAkSEAoIbW9uZG9faWQYAyABKAkSGAoQaW5oZXJpdGFuY2VfdGVybRgFIAEoCRIfChd2YWxpZGl0eV9jbGFzc2lmaWNhdGlvbhgGIAEoCRI2CgpnYXRlX2xldmVsGAcgASgOMiIudGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UuR2F0ZUxldmVsEj0KC3N1Ym1pc3Npb25zGAggAygLMigudGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UuR2VuY2NTdWJtaXNzaW9uEkkKFG1lY2hhbmlzbV9zdGF0ZW1lbnRzGAkgAygLMisudGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UuTWVjaGFuaXNtU3RhdGVtZW50SgQIBBAFUgtpbmhlcml0YW5jZSJdCg9HZW5jY1N1Ym1pc3Npb24SEQoJc3VibWl0dGVyGAEgASgJEh8KF3ZhbGlkaXR5X2NsYXNzaWZpY2F0aW9uGAIgASgJEhYKDm1lY2hhbmlzbV9ub3RlGAMgASgJIuMBChBFbnRpdHlSZXNvbHV0aW9uEhoKEnJlcXVlc3RlZF9tb25kb19pZBgBIAEoCRIQCghtb25kb19pZBgDIAEoCRI3CghyZWxhdGlvbhgFIAEoDjIlLnRoZW1pcy5ycGMuZ2VuZV9kaXNlYXNlLlRlcm1SZWxhdGlvbhI4CghlbnRpdGllcxgGIAMoCzImLnRoZW1pcy5ycGMuZ2VuZV9kaXNlYXNlLkN1cmF0ZWRFbnRpdHlKBAgCEANKBAgEEAVSFXJlcXVlc3RlZF9pbmhlcml0YW5jZVILaW5oZXJpdGFuY2UigAIKEUdlbmVTY29wZWRTaWduYWxzEiUKGGhhcGxvaW5zdWZmaWNpZW5jeV9zY29yZRgBIAEoBUgAiAEBEh0KFW1vZGVfb2ZfcGF0aG9nZW5pY2l0eRgCIAEoCRIbChNtb2RlX29mX2luaGVyaXRhbmNlGAMgASgJEkkKFG1lY2hhbmlzbV9zdGF0ZW1lbnRzGAQgAygLMisudGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UuTWVjaGFuaXNtU3RhdGVtZW50EiAKGHNvdXJjZXNfaG9sZGluZ190aGVfZ2VuZRgFIAMoCUIbChlfaGFwbG9pbnN1ZmZpY2llbmN5X3Njb3JlIkMKEk1lY2hhbmlzbVN0YXRlbWVudBIOCgZzb3VyY2UYASABKAkSDwoHY29udGV4dBgCIAEoCRIMCgR0ZXh0GAMgASgJKtABCglHYXRlTGV2ZWwSGgoWR0FURV9MRVZFTF9VTlNQRUNJRklFRBAAEhkKFUdBVEVfTEVWRUxfREVGSU5JVElWRRABEhUKEUdBVEVfTEVWRUxfU1RST05HEAISFwoTR0FURV9MRVZFTF9NT0RFUkFURRADEhYKEkdBVEVfTEVWRUxfTElNSVRFRBAEEiAKHEdBVEVfTEVWRUxfTEVTU19USEFOX0xJTUlURUQQBRIiCh5HQVRFX0xFVkVMX0RJU1BVVEVEX09SX1JFRlVURUQQBipjCgxUZXJtUmVsYXRpb24SHQoZVEVSTV9SRUxBVElPTl9VTlNQRUNJRklFRBAAEhYKElRFUk1fUkVMQVRJT05fU0FNRRABEhwKGFRFUk1fUkVMQVRJT05fREVTQ0VOREFOVBACKosBCgxHZW5lQ292ZXJhZ2USHQoZR0VORV9DT1ZFUkFHRV9VTlNQRUNJRklFRBAAEhkKFUdFTkVfQ09WRVJBR0VfQ1VSQVRFRBABEicKI0dFTkVfQ09WRVJBR0VfTk9fVkFMSURJVFlfQVNTRVJUSU9OEAISGAoUR0VORV9DT1ZFUkFHRV9BQlNFTlQQAzKBAQoLR2VuZURpc2Vhc2UScgoMRGVzY3JpYmVHZW5lEiwudGhlbWlzLnJwYy5nZW5lX2Rpc2Vhc2UuRGVzY3JpYmVHZW5lUmVxdWVzdBotLnRoZW1pcy5ycGMuZ2VuZV9kaXNlYXNlLkRlc2NyaWJlR2VuZVJlc3BvbnNlIgWitRgBA2IGcHJvdG8z", [file_google_protobuf_struct, file_themis_evidence_models_evidence, file_themis_rpc_sandbox_options]);
 
 /**
  * The gene to describe, and optionally the disease term to resolve against its curations.
@@ -51,7 +53,11 @@ export const file_themis_rpc_gene_disease: GenFile = /*@__PURE__*/
  */
 export type DescribeGeneRequest = Message<"themis.rpc.gene_disease.DescribeGeneRequest"> & {
   /**
-   * "HGNC:nnnn" (required) — the key every reference table is joined on; empty is INVALID_ARGUMENT.
+   * "HGNC:nnnn" (required): the key every reference table is joined on, with the number as HGNC
+   * writes it, without a leading zero. Empty, or any other form, is INVALID_ARGUMENT.
+   * An id that names no gene is NOT_FOUND: the pinned HGNC complete set approves no symbol under
+   * it, and no reference table carries it. An id HGNC approved after the pinned release answers
+   * that way too until a table carries the gene, so the status text states the release.
    *
    * @generated from field: string hgnc_id = 1;
    */
@@ -111,6 +117,41 @@ export type DescribeGeneResponse = Message<"themis.rpc.gene_disease.DescribeGene
    * @generated from field: themis.rpc.gene_disease.GeneCoverage coverage = 4;
    */
   coverage: GeneCoverage;
+
+  /**
+   * The symbol of the gene `hgnc_id` names. Its reader is the caller, checking that the id it sent
+   * names the gene it meant. HGNC renames genes, and the caller's symbol can come from an
+   * annotation source that still writes the earlier one, so the check reads `previous_symbols`
+   * too. If the caller's symbol equals `gene_symbol` or is among `previous_symbols`, the request
+   * named the gene the caller meant; any other symbol does not confirm that, because it names
+   * another gene today, has named more than one gene, or was never approved for this one.
+   * `gene_symbol` is the symbol HGNC approves where the pinned HGNC complete set holds the id, and
+   * `provenance` then carries an "HGNC" entry stating the set's version. Otherwise it is the
+   * symbol the reference tables record beside the id: they are refreshed weekly and the set is
+   * pinned, so a table can carry a gene the set does not hold yet. Where those tables spell it
+   * differently, it is the first's, in the order ClinGen validity, GenCC, ClinGen dosage,
+   * PanelApp. Each table's own spelling is in `raw`, and can be a previous symbol. Never empty: an
+   * id that names no gene is the rpc's NOT_FOUND.
+   *
+   * @generated from field: string gene_symbol = 5;
+   */
+  geneSymbol: string;
+
+  /**
+   * The symbols HGNC approved for the gene before `gene_symbol` that name no other gene in the
+   * pinned HGNC complete set, neither as that gene's approved symbol nor as one of its previous
+   * symbols. Its reader is a caller whose symbol for the gene is an earlier one. HGNC has moved
+   * some symbols between genes, and a symbol that names another gene, or that named one earlier,
+   * cannot confirm this one. So a previous symbol that the set approves for a gene today is left
+   * out, and a previous symbol that the set lists for two or more genes is left out for each of
+   * them. HGNC's alias symbols are not listed either: HGNC never approved them for the gene, and
+   * many belong to several genes. Empty for a gene HGNC never renamed, and for a gene whose every
+   * previous symbol is left out. Empty also where the set does not hold the id and `gene_symbol`
+   * is the reference tables': the check then has that one symbol to compare with.
+   *
+   * @generated from field: repeated string previous_symbols = 6;
+   */
+  previousSymbols: string[];
 
   /**
    * the per-source rows (ClinGen, GenCC, each PanelApp panel, the MONDO closure)
@@ -462,7 +503,8 @@ export const TermRelationSchema: GenEnum<TermRelation> = /*@__PURE__*/
 /**
  * Whether the gene carries a curated entity, and which of the two absences it is in when it does
  * not: a gene no reference table holds and a gene they hold with no validity assertion are
- * different facts about the gene, neither readable as the other.
+ * different facts about the gene, neither readable as the other. Every value is an answer about a
+ * gene: an id that names none is the rpc's NOT_FOUND.
  *
  * @generated from enum themis.rpc.gene_disease.GeneCoverage
  */
@@ -487,7 +529,8 @@ export enum GeneCoverage {
   NO_VALIDITY_ASSERTION = 2,
 
   /**
-   * no reference table carries the gene at all
+   * No reference table carries the gene. The pinned HGNC complete set names it, so this is a gene
+   * none of them curates and never an id that names no gene, which is NOT_FOUND.
    *
    * @generated from enum value: GENE_COVERAGE_ABSENT = 3;
    */
@@ -521,7 +564,14 @@ export const GeneDisease: GenService<{
    * one or none does — never the nearest. A gene the tables do not carry and a gene they carry with no
    * validity assertion are distinct answers (`coverage`). Classification, gate level, mode term and
    * mechanism narratives are per record; the haploinsufficiency score, the gain-of-function veto and
-   * PanelApp's mode of inheritance are per gene. See DescribeGeneResponse.
+   * PanelApp's mode of inheritance are per gene. `gene_symbol` names the gene the answer is for and
+   * `previous_symbols` lists the symbols HGNC approved for it earlier that name no other gene.
+   * Check the symbol of the gene meant against both, since an id that names another gene answers
+   * with that gene's records. If the caller's symbol equals `gene_symbol` or is among
+   * `previous_symbols`, the request named the gene the caller meant; any other symbol does not
+   * confirm that, because it names another gene today, has named more than one gene, or was never
+   * approved for this one. Only an id that names no gene at all fails, with NOT_FOUND. See
+   * DescribeGeneResponse.
    *
    * @generated from rpc themis.rpc.gene_disease.GeneDisease.DescribeGene
    */

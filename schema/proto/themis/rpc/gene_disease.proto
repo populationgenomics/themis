@@ -7,6 +7,8 @@
 //     weekly refresh job writes): `CuratedEntity`, `GenccSubmission`, `MechanismStatement` and
 //     `GeneScopedSignals` carry each source's own values — its classification string, its mode term,
 //     its notes, its haploinsufficiency score.
+//   HGNC complete set (the pinned copy in the reference mirror): `DescribeGeneResponse.gene_symbol`
+//     and `previous_symbols`.
 //   EBI OLS4 MONDO subclass closure: `TermRelation`.
 //   SVCv4 SM18 (the gene-disease-validity gate) and SM21 (the MDE): `GateLevel` is the ladder the gate
 //     is keyed by — docs/design/evidence-interfaces.md § "is the gene-disease relationship valid, and
@@ -75,19 +77,26 @@ enum TermRelation {
 
 // Whether the gene carries a curated entity, and which of the two absences it is in when it does
 // not: a gene no reference table holds and a gene they hold with no validity assertion are
-// different facts about the gene, neither readable as the other.
+// different facts about the gene, neither readable as the other. Every value is an answer about a
+// gene: an id that names none is the rpc's NOT_FOUND.
 enum GeneCoverage {
   GENE_COVERAGE_UNSPECIFIED = 0;
   GENE_COVERAGE_CURATED = 1;                 // entities is non-empty
   GENE_COVERAGE_NO_VALIDITY_ASSERTION = 2;   // a reference table carries the gene; none asserts gene-disease validity
-  GENE_COVERAGE_ABSENT = 3;                  // no reference table carries the gene at all
+  // No reference table carries the gene. The pinned HGNC complete set names it, so this is a gene
+  // none of them curates and never an id that names no gene, which is NOT_FOUND.
+  GENE_COVERAGE_ABSENT = 3;
 }
 
 // The gene to describe, and optionally the disease term to resolve against its curations.
 message DescribeGeneRequest {
   reserved 3;
   reserved "inheritance";
-  // "HGNC:nnnn" (required) — the key every reference table is joined on; empty is INVALID_ARGUMENT.
+  // "HGNC:nnnn" (required): the key every reference table is joined on, with the number as HGNC
+  // writes it, without a leading zero. Empty, or any other form, is INVALID_ARGUMENT.
+  // An id that names no gene is NOT_FOUND: the pinned HGNC complete set approves no symbol under
+  // it, and no reference table carries it. An id HGNC approved after the pinned release answers
+  // that way too until a table carries the gene, so the status text states the release.
   string hgnc_id = 1;
   // The entity's disease term, as a MONDO curie ("MONDO:" and seven digits). Optional: unset returns
   // the gene's curated records and resolves nothing. Set, the rpc resolves it against them under
@@ -110,6 +119,31 @@ message DescribeGeneResponse {
   EntityResolution resolution = 2;
   GeneScopedSignals gene_scoped = 3;
   GeneCoverage coverage = 4;
+  // The symbol of the gene `hgnc_id` names. Its reader is the caller, checking that the id it sent
+  // names the gene it meant. HGNC renames genes, and the caller's symbol can come from an
+  // annotation source that still writes the earlier one, so the check reads `previous_symbols`
+  // too. If the caller's symbol equals `gene_symbol` or is among `previous_symbols`, the request
+  // named the gene the caller meant; any other symbol does not confirm that, because it names
+  // another gene today, has named more than one gene, or was never approved for this one.
+  // `gene_symbol` is the symbol HGNC approves where the pinned HGNC complete set holds the id, and
+  // `provenance` then carries an "HGNC" entry stating the set's version. Otherwise it is the
+  // symbol the reference tables record beside the id: they are refreshed weekly and the set is
+  // pinned, so a table can carry a gene the set does not hold yet. Where those tables spell it
+  // differently, it is the first's, in the order ClinGen validity, GenCC, ClinGen dosage,
+  // PanelApp. Each table's own spelling is in `raw`, and can be a previous symbol. Never empty: an
+  // id that names no gene is the rpc's NOT_FOUND.
+  string gene_symbol = 5;
+  // The symbols HGNC approved for the gene before `gene_symbol` that name no other gene in the
+  // pinned HGNC complete set, neither as that gene's approved symbol nor as one of its previous
+  // symbols. Its reader is a caller whose symbol for the gene is an earlier one. HGNC has moved
+  // some symbols between genes, and a symbol that names another gene, or that named one earlier,
+  // cannot confirm this one. So a previous symbol that the set approves for a gene today is left
+  // out, and a previous symbol that the set lists for two or more genes is left out for each of
+  // them. HGNC's alias symbols are not listed either: HGNC never approved them for the gene, and
+  // many belong to several genes. Empty for a gene HGNC never renamed, and for a gene whose every
+  // previous symbol is left out. Empty also where the set does not hold the id and `gene_symbol`
+  // is the reference tables': the check then has that one symbol to compare with.
+  repeated string previous_symbols = 6;
   google.protobuf.Struct raw = 15;      // the per-source rows (ClinGen, GenCC, each PanelApp panel, the MONDO closure)
   repeated themis.evidence.models.Provenance provenance = 16;  // one per contributing source
 }
@@ -198,7 +232,14 @@ service GeneDisease {
   // one or none does — never the nearest. A gene the tables do not carry and a gene they carry with no
   // validity assertion are distinct answers (`coverage`). Classification, gate level, mode term and
   // mechanism narratives are per record; the haploinsufficiency score, the gain-of-function veto and
-  // PanelApp's mode of inheritance are per gene. See DescribeGeneResponse.
+  // PanelApp's mode of inheritance are per gene. `gene_symbol` names the gene the answer is for and
+  // `previous_symbols` lists the symbols HGNC approved for it earlier that name no other gene.
+  // Check the symbol of the gene meant against both, since an id that names another gene answers
+  // with that gene's records. If the caller's symbol equals `gene_symbol` or is among
+  // `previous_symbols`, the request named the gene the caller meant; any other symbol does not
+  // confirm that, because it names another gene today, has named more than one gene, or was never
+  // approved for this one. Only an id that names no gene at all fails, with NOT_FOUND. See
+  // DescribeGeneResponse.
   rpc DescribeGene(DescribeGeneRequest) returns (DescribeGeneResponse) {
     option (themis.rpc.admits_caller) = CALLER_AGENT;
   }

@@ -10,6 +10,8 @@ Modelled from:
     weekly refresh job writes): `CuratedEntity`, `GenccSubmission`, `MechanismStatement` and
     `GeneScopedSignals` carry each source's own values — its classification string, its mode term,
     its notes, its haploinsufficiency score.
+  HGNC complete set (the pinned copy in the reference mirror): `DescribeGeneResponse.gene_symbol`
+    and `previous_symbols`.
   EBI OLS4 MONDO subclass closure: `TermRelation`.
   SVCv4 SM18 (the gene-disease-validity gate) and SM21 (the MDE): `GateLevel` is the ladder the gate
     is keyed by — docs/design/evidence-interfaces.md § "is the gene-disease relationship valid, and
@@ -75,7 +77,14 @@ class GeneDiseaseStub:
     one or none does — never the nearest. A gene the tables do not carry and a gene they carry with no
     validity assertion are distinct answers (`coverage`). Classification, gate level, mode term and
     mechanism narratives are per record; the haploinsufficiency score, the gain-of-function veto and
-    PanelApp's mode of inheritance are per gene. See DescribeGeneResponse.
+    PanelApp's mode of inheritance are per gene. `gene_symbol` names the gene the answer is for and
+    `previous_symbols` lists the symbols HGNC approved for it earlier that name no other gene.
+    Check the symbol of the gene meant against both, since an id that names another gene answers
+    with that gene's records. If the caller's symbol equals `gene_symbol` or is among
+    `previous_symbols`, the request named the gene the caller meant; any other symbol does not
+    confirm that, because it names another gene today, has named more than one gene, or was never
+    approved for this one. Only an id that names no gene at all fails, with NOT_FOUND. See
+    DescribeGeneResponse.
     """
 
 @_typing.type_check_only
@@ -98,7 +107,14 @@ class GeneDiseaseAsyncStub(GeneDiseaseStub):
     one or none does — never the nearest. A gene the tables do not carry and a gene they carry with no
     validity assertion are distinct answers (`coverage`). Classification, gate level, mode term and
     mechanism narratives are per record; the haploinsufficiency score, the gain-of-function veto and
-    PanelApp's mode of inheritance are per gene. See DescribeGeneResponse.
+    PanelApp's mode of inheritance are per gene. `gene_symbol` names the gene the answer is for and
+    `previous_symbols` lists the symbols HGNC approved for it earlier that name no other gene.
+    Check the symbol of the gene meant against both, since an id that names another gene answers
+    with that gene's records. If the caller's symbol equals `gene_symbol` or is among
+    `previous_symbols`, the request named the gene the caller meant; any other symbol does not
+    confirm that, because it names another gene today, has named more than one gene, or was never
+    approved for this one. Only an id that names no gene at all fails, with NOT_FOUND. See
+    DescribeGeneResponse.
     """
 
 class GeneDiseaseServicer(metaclass=_abc_1.ABCMeta):
@@ -124,7 +140,14 @@ class GeneDiseaseServicer(metaclass=_abc_1.ABCMeta):
         one or none does — never the nearest. A gene the tables do not carry and a gene they carry with no
         validity assertion are distinct answers (`coverage`). Classification, gate level, mode term and
         mechanism narratives are per record; the haploinsufficiency score, the gain-of-function veto and
-        PanelApp's mode of inheritance are per gene. See DescribeGeneResponse.
+        PanelApp's mode of inheritance are per gene. `gene_symbol` names the gene the answer is for and
+        `previous_symbols` lists the symbols HGNC approved for it earlier that name no other gene.
+        Check the symbol of the gene meant against both, since an id that names another gene answers
+        with that gene's records. If the caller's symbol equals `gene_symbol` or is among
+        `previous_symbols`, the request named the gene the caller meant; any other symbol does not
+        confirm that, because it names another gene today, has named more than one gene, or was never
+        approved for this one. Only an id that names no gene at all fails, with NOT_FOUND. See
+        DescribeGeneResponse.
         """
 
 def add_GeneDiseaseServicer_to_server(servicer: GeneDiseaseServicer, server: _typing.Union[_grpc.Server, _aio.Server]) -> None: ...

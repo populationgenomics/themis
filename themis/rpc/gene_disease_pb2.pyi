@@ -56,20 +56,24 @@ class DescribeGeneRequest(_message.Message):
     def __init__(self, hgnc_id: _Optional[str] = ..., mondo_id: _Optional[str] = ...) -> None: ...
 
 class DescribeGeneResponse(_message.Message):
-    __slots__ = ("entities", "resolution", "gene_scoped", "coverage", "raw", "provenance")
+    __slots__ = ("entities", "resolution", "gene_scoped", "coverage", "gene_symbol", "previous_symbols", "raw", "provenance")
     ENTITIES_FIELD_NUMBER: _ClassVar[int]
     RESOLUTION_FIELD_NUMBER: _ClassVar[int]
     GENE_SCOPED_FIELD_NUMBER: _ClassVar[int]
     COVERAGE_FIELD_NUMBER: _ClassVar[int]
+    GENE_SYMBOL_FIELD_NUMBER: _ClassVar[int]
+    PREVIOUS_SYMBOLS_FIELD_NUMBER: _ClassVar[int]
     RAW_FIELD_NUMBER: _ClassVar[int]
     PROVENANCE_FIELD_NUMBER: _ClassVar[int]
     entities: _containers.RepeatedCompositeFieldContainer[CuratedEntity]
     resolution: EntityResolution
     gene_scoped: GeneScopedSignals
     coverage: GeneCoverage
+    gene_symbol: str
+    previous_symbols: _containers.RepeatedScalarFieldContainer[str]
     raw: _struct_pb2.Struct
     provenance: _containers.RepeatedCompositeFieldContainer[_evidence_pb2.Provenance]
-    def __init__(self, entities: _Optional[_Iterable[_Union[CuratedEntity, _Mapping]]] = ..., resolution: _Optional[_Union[EntityResolution, _Mapping]] = ..., gene_scoped: _Optional[_Union[GeneScopedSignals, _Mapping]] = ..., coverage: _Optional[_Union[GeneCoverage, str]] = ..., raw: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., provenance: _Optional[_Iterable[_Union[_evidence_pb2.Provenance, _Mapping]]] = ...) -> None: ...
+    def __init__(self, entities: _Optional[_Iterable[_Union[CuratedEntity, _Mapping]]] = ..., resolution: _Optional[_Union[EntityResolution, _Mapping]] = ..., gene_scoped: _Optional[_Union[GeneScopedSignals, _Mapping]] = ..., coverage: _Optional[_Union[GeneCoverage, str]] = ..., gene_symbol: _Optional[str] = ..., previous_symbols: _Optional[_Iterable[str]] = ..., raw: _Optional[_Union[_struct_pb2.Struct, _Mapping]] = ..., provenance: _Optional[_Iterable[_Union[_evidence_pb2.Provenance, _Mapping]]] = ...) -> None: ...
 
 class CuratedEntity(_message.Message):
     __slots__ = ("source", "disease_label", "mondo_id", "inheritance_term", "validity_classification", "gate_level", "submissions", "mechanism_statements")

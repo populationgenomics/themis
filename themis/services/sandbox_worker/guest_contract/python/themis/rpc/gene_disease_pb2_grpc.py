@@ -61,7 +61,14 @@ class GeneDiseaseServicer:
         one or none does — never the nearest. A gene the tables do not carry and a gene they carry with no
         validity assertion are distinct answers (`coverage`). Classification, gate level, mode term and
         mechanism narratives are per record; the haploinsufficiency score, the gain-of-function veto and
-        PanelApp's mode of inheritance are per gene. See DescribeGeneResponse.
+        PanelApp's mode of inheritance are per gene. `gene_symbol` names the gene the answer is for and
+        `previous_symbols` lists the symbols HGNC approved for it earlier that name no other gene.
+        Check the symbol of the gene meant against both, since an id that names another gene answers
+        with that gene's records. If the caller's symbol equals `gene_symbol` or is among
+        `previous_symbols`, the request named the gene the caller meant; any other symbol does not
+        confirm that, because it names another gene today, has named more than one gene, or was never
+        approved for this one. Only an id that names no gene at all fails, with NOT_FOUND. See
+        DescribeGeneResponse.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
