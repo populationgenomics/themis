@@ -56,6 +56,7 @@ def test_haploinsufficiency_score_mapping(hgnc_id: str, expected: int) -> None:
 def test_provenance_and_query() -> None:
     result = _table().lookup('HGNC:1100')  # BRCA1
     assert result is not None
+    assert result.gene_symbol == 'BRCA1'
     assert result.source == 'ClinGen Dosage Sensitivity'
     assert result.dataset_versions == ('2026-07-24',)
     assert result.query == 'HGNC:1100'
@@ -77,6 +78,22 @@ def test_case_insensitive() -> None:
 def test_missing_header_raises_value_error() -> None:
     with pytest.raises(ValueError, match='FILE CREATED'):
         clingen_dosage.ClinGenDosage.from_bytes(b'"junk"\n"row"\n')
+
+
+@pytest.mark.parametrize('symbol', ['', ' '])
+def test_a_row_recording_no_gene_symbol_fails_the_load(symbol: str) -> None:
+    # Where the HGNC set lacks the gene's id, DescribeGene names the gene from this column.
+    body = _csv(
+        [symbol, 'HGNC:1', 'No Evidence for Haploinsufficiency', 'No Evidence for Triplosensitivity', 'url', 'date']
+    )
+    with pytest.raises(ValueError, match='no gene symbol'):
+        clingen_dosage.ClinGenDosage.from_bytes(body)
+
+
+@pytest.mark.parametrize('row', [['', 'HGNC:1'], ['TEST', 'HGNC:1']], ids=['empty_first_cell', 'set_first_cell'])
+def test_a_row_shorter_than_the_header_fails_the_load_naming_its_line(row: list[str]) -> None:
+    with pytest.raises(ValueError, match='gene-dosage download line 7 has 2 fields where the header has 6'):
+        clingen_dosage.ClinGenDosage.from_bytes(_csv(row))
 
 
 def test_unknown_label_raises_value_error() -> None:

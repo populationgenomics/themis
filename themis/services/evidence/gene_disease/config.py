@@ -1,9 +1,9 @@
 """The gene_disease interface's environment contract: `THEMIS_GENE_DISEASE_*` to a backend.
 
 `THEMIS_GENE_DISEASE_BACKEND` selects the adapter (required — no silent default): `fixture`
-(in-memory, seeded from `THEMIS_GENE_DISEASE_FIXTURE`) or `live` (the four reference dumps loaded
-once from the shared resources bucket named by `THEMIS_RESOURCES_BUCKET`, with MONDO reached over
-the image's shared HTTP client).
+(in-memory, seeded from `THEMIS_GENE_DISEASE_FIXTURE`) or `live` (the four reference dumps and the
+HGNC complete set loaded once from the shared resources bucket named by `THEMIS_RESOURCES_BUCKET`,
+with MONDO reached over the image's shared HTTP client).
 
 Building the live adapter reads the bucket, so it is the one build in the image that is `async`.
 """

@@ -17,6 +17,7 @@ from themis.services.evidence.upstreams import _clingen_download
 
 _SOURCE = 'ClinGen Dosage Sensitivity'
 
+_SYMBOL_COL = 'GENE SYMBOL'
 _HGNC_COL = 'HGNC ID'
 _HI_COL = 'HAPLOINSUFFICIENCY'
 
@@ -38,6 +39,7 @@ class ClinGenDosageResult:
     """One gene's ClinGen haploinsufficiency curation.
 
     Attributes:
+        gene_symbol: The gene symbol the row records beside its HGNC id.
         haploinsufficiency_score: The ClinGen HI score (0-3, 30, 40).
         raw: The curation row verbatim, for the proto ``Struct``.
         source: Provenance source label.
@@ -45,6 +47,7 @@ class ClinGenDosageResult:
         query: The looked-up HGNC id.
     """
 
+    gene_symbol: str
     haploinsufficiency_score: int
     raw: dict[str, object]
     source: str
@@ -77,7 +80,7 @@ class ClinGenDosage:
         Raises:
             ValueError: If the download's preamble/header shape is unexpected.
         """
-        rows, file_created = _clingen_download.parse(data.decode('utf-8'))
+        rows, file_created = _clingen_download.parse(data.decode('utf-8'), download='gene-dosage')
         by_hgnc = {row[_HGNC_COL].upper(): row for row in rows}
         return cls(by_hgnc, (file_created,))
 
@@ -95,6 +98,7 @@ class ClinGenDosage:
         if row is None:
             return None
         return ClinGenDosageResult(
+            gene_symbol=row[_SYMBOL_COL],
             haploinsufficiency_score=_score(row[_HI_COL]),
             raw={'row': row},
             source=_SOURCE,

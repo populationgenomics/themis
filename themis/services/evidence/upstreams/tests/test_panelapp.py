@@ -74,6 +74,14 @@ def test_dump_missing_top_level_key_raises_value_error(missing: str) -> None:
         panelapp.PanelAppTable.from_bytes(json.dumps(dump).encode())
 
 
+@pytest.mark.parametrize('entry', [{'gene_symbol': ' '}, {'gene_symbol': 7}, {}], ids=['blank', 'not_text', 'missing'])
+def test_a_gene_entry_recording_no_symbol_fails_the_load(entry: dict[str, object]) -> None:
+    # Where the HGNC set lacks the gene's id, DescribeGene names the gene from this field.
+    dump = {'dataset_versions': ['2026-07-24'], 'panels': {'137': 'Mendeliome'}, 'genes': {'HGNC:1': entry}}
+    with pytest.raises(ValueError, match=r"'HGNC:1' has .*gene_symbol"):
+        panelapp.PanelAppTable.from_bytes(json.dumps(dump).encode())
+
+
 def test_malformed_gene_entry_raises_value_error() -> None:
     dump = {
         'dataset_versions': ['2026-07-24'],

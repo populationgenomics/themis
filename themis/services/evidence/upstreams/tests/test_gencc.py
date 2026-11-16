@@ -23,6 +23,7 @@ _FIXTURE = pathlib.Path(__file__).resolve().parent / 'fixtures' / 'gencc.tsv'
 # The columns the parser requires; the real export carries 31.
 _REQUIRED = [
     'gene_curie',
+    'gene_symbol',
     'disease_title',
     'disease_curie',
     'moi_curie',
@@ -46,7 +47,8 @@ def _tsv(header: Sequence[str], *rows: Sequence[str]) -> bytes:
 
 
 def _row(disease: str, moi: str, classification: str, submitter: str, notes: str = '') -> list[str]:
-    return ['HGNC:9999', f'label {disease}', disease, moi, 'a mode', classification, submitter, notes, '2020-01-01']
+    entity = [f'label {disease}', disease, moi, 'a mode']
+    return ['HGNC:9999', 'GENE', *entity, classification, submitter, notes, '2020-01-01']
 
 
 def _table() -> gencc.GenCC:
@@ -60,6 +62,7 @@ def _entity(result: gencc.GenCCResult, disease_curie: str) -> gencc.Entity:
 def test_lookup_carries_the_source_stamp() -> None:
     result = _table().lookup('HGNC:1100')
     assert result is not None
+    assert result.gene_symbol == 'BRCA1'
     assert result.source == 'GenCC'
     assert result.dataset_versions  # newest submitted_run_date
     assert result.query == 'HGNC:1100'
@@ -149,7 +152,7 @@ def test_case_insensitive() -> None:
     assert _table().lookup('hgnc:1100') is not None
 
 
-@pytest.mark.parametrize('dropped', ['classification_title', 'moi_curie', 'moi_title'])
+@pytest.mark.parametrize('dropped', ['gene_symbol', 'classification_title', 'moi_curie', 'moi_title'])
 def test_missing_required_column_raises_value_error(dropped: str) -> None:
     header = [col for col in _REQUIRED if col != dropped]
     row = [
@@ -162,6 +165,15 @@ def test_missing_required_column_raises_value_error(dropped: str) -> None:
 def test_empty_export_raises_value_error() -> None:
     with pytest.raises(ValueError, match='no submission rows'):
         gencc.GenCC.from_bytes(_tsv(_REQUIRED))
+
+
+@pytest.mark.parametrize('symbol', ['', ' '])
+def test_a_submission_recording_no_gene_symbol_fails_the_load(symbol: str) -> None:
+    # Where the HGNC set lacks the gene's id, DescribeGene names the gene from this column.
+    row = dict(zip(_REQUIRED, _row('MONDO:1', _AD, 'Definitive', 'Ambry'), strict=True))
+    row['gene_symbol'] = symbol
+    with pytest.raises(ValueError, match='no gene symbol for HGNC:9999'):
+        gencc.GenCC.from_bytes(_tsv(_REQUIRED, list(row.values())))
 
 
 def test_unknown_classification_raises_value_error() -> None:

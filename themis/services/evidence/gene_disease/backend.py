@@ -1,9 +1,9 @@
 """The gene_disease interface's port and its adapters.
 
 The live adapter is the only one in the image whose build is not a constructor call: it loads the
-four reference dumps from the shared resources bucket once, at startup, so every request is an
-in-memory join. A missing dump fails the build, which fails the startup probe — the alternative is a revision
-that serves "this gene is not curated" for every gene.
+four gene-disease reference dumps and the HGNC complete set from the shared resources bucket once,
+at startup, so every request is an in-memory join. A missing object fails the build, which fails the
+startup probe; the alternative is a revision that serves "this gene is not curated" for every gene.
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ import httpx2
 
 from themis.evidence.models import evidence_pb2
 from themis.rpc import gene_disease_pb2
-from themis.services.evidence import fixtures, provenance
+from themis.services.evidence import errors, fixtures, provenance
 from themis.services.evidence.gene_disease import entities as gene_disease
-from themis.services.evidence.upstreams import clingen_dosage, clingen_validity, gencc, mondo, panelapp
+from themis.services.evidence.upstreams import clingen_dosage, clingen_validity, gencc, hgnc, mondo, panelapp
 
 _SECTION = 'describe_gene'
 SECTIONS = frozenset({_SECTION})
@@ -35,7 +35,14 @@ _GENCC_OBJECT = f'{_DATASET_PREFIX}/gencc/submissions.tsv'
 _VALIDITY_OBJECT = f'{_DATASET_PREFIX}/clingen/validity.csv'
 _DOSAGE_OBJECT = f'{_DATASET_PREFIX}/clingen/dosage.csv'
 _PANELAPP_OBJECT = f'{_DATASET_PREFIX}/panelapp/dump.json'
-_REFERENCE_OBJECTS = (_GENCC_OBJECT, _VALIDITY_OBJECT, _DOSAGE_OBJECT, _PANELAPP_OBJECT)
+_REFRESHED_OBJECTS = (_GENCC_OBJECT, _VALIDITY_OBJECT, _DOSAGE_OBJECT, _PANELAPP_OBJECT)
+
+# Every deployed environment's bucket must already hold a release before this names it: see
+# docs/design/infrastructure.md.
+_HGNC_VERSION = '2026-07-07'
+_HGNC_OBJECT = f'reference/hgnc/{_HGNC_VERSION}/complete-set.tsv'
+
+_REFERENCE_OBJECTS = (*_REFRESHED_OBJECTS, _HGNC_OBJECT)
 
 
 class GeneDiseaseBackend(abc.ABC):
@@ -73,19 +80,36 @@ class FixtureBackend(GeneDiseaseBackend):
 
 
 def fixture_backend_from_json(raw: str | None, *, var_name: str) -> FixtureBackend:
-    """Build the offline backend from its fixture var, or `SystemExit`."""
+    """Build the offline backend from its fixture var, or `SystemExit`.
+
+    Raises:
+        SystemExit: The var is unset or malformed, or a seeded response names no gene: the contract
+            never answers with an empty `gene_symbol`.
+    """
     seeds = fixtures.sections_from_json(raw, var_name=var_name, sections=SECTIONS)
-    return FixtureBackend(fixtures.table(seeds, _SECTION, gene_disease_pb2.DescribeGeneResponse, var_name=var_name))
+    seeded = fixtures.table(seeds, _SECTION, gene_disease_pb2.DescribeGeneResponse, var_name=var_name)
+    for key, response in seeded.items():
+        if not response.gene_symbol.strip():
+            raise SystemExit(
+                f'{var_name} section {_SECTION!r} entry {key!r} has no gene_symbol; DescribeGene names the '
+                'gene of every answer'
+            )
+    return FixtureBackend(seeded)
 
 
 @dataclasses.dataclass(frozen=True)
 class ReferenceTables:
-    """The four dumps the live adapter joins on, parsed once at startup and keyed by HGNC id."""
+    """What the live adapter reads at startup, parsed once and keyed by HGNC id.
+
+    The four gene-disease dumps it joins on, and the HGNC complete set that says which gene an id
+    names.
+    """
 
     validity: clingen_validity.ClinGenValidity
     dosage: clingen_dosage.ClinGenDosage
     gencc: gencc.GenCC
     panelapp: panelapp.PanelAppTable
+    hgnc: hgnc.HgncCompleteSet
 
 
 class LiveBackend(GeneDiseaseBackend):
@@ -101,11 +125,13 @@ class LiveBackend(GeneDiseaseBackend):
 
         Args:
             http_client: The image's shared client, which the MONDO closure call is issued on.
-            resources_bucket: The shared resources bucket holding the gene-disease dataset.
+            resources_bucket: The shared resources bucket holding the gene-disease dataset and the
+                reference mirror.
 
         Raises:
             RuntimeError: If a reference object is missing from the bucket.
-            ValueError: If a reference dump has an unexpected shape.
+            ValueError: If a reference object has an unexpected shape, or carries a gene under a
+                blank symbol.
         """
         blobs = await asyncio.to_thread(_download_reference_blobs, resources_bucket)
         return cls(
@@ -115,6 +141,7 @@ class LiveBackend(GeneDiseaseBackend):
                 dosage=clingen_dosage.ClinGenDosage.from_bytes(blobs[_DOSAGE_OBJECT]),
                 gencc=gencc.GenCC.from_bytes(blobs[_GENCC_OBJECT]),
                 panelapp=panelapp.PanelAppTable.from_bytes(blobs[_PANELAPP_OBJECT]),
+                hgnc=hgnc.HgncCompleteSet.from_bytes(blobs[_HGNC_OBJECT], version=_HGNC_VERSION),
             ),
         )
 
@@ -123,14 +150,18 @@ class LiveBackend(GeneDiseaseBackend):
         self, request: gene_disease_pb2.DescribeGeneRequest
     ) -> gene_disease_pb2.DescribeGeneResponse:
         at = provenance.utcnow()
+        approved = self._tables.hgnc.lookup(request.hgnc_id)
         sources = _GeneDiseaseSources(
             validity=self._tables.validity.lookup(request.hgnc_id),
             harmonised=self._tables.gencc.lookup(request.hgnc_id),
             dosage=self._tables.dosage.lookup(request.hgnc_id),
             panel=self._tables.panelapp.lookup(request.hgnc_id),
         )
+        gene_symbol = self._gene_symbol(request.hgnc_id, approved, sources)
         curated = gene_disease.entities(sources.validity, sources.harmonised)
         raw, stamped = sources.raw_and_provenance(at)
+        if approved is not None:
+            stamped.insert(0, provenance.provenance(approved, at))
 
         # A gene with no curated record has nothing to resolve against and nothing to be wrong about:
         # `coverage` is the answer, and the gene-scoped signals still stand.
@@ -148,9 +179,32 @@ class LiveBackend(GeneDiseaseBackend):
             resolution=resolution,
             gene_scoped=sources.gene_scoped_signals(),
             coverage=sources.coverage(curated),
+            gene_symbol=gene_symbol,
+            previous_symbols=approved.previous_symbols if approved is not None else (),
             raw=provenance.struct(raw),
             provenance=stamped,
         )
+
+    def _gene_symbol(self, hgnc_id: str, approved: hgnc.HgncResult | None, sources: _GeneDiseaseSources) -> str:
+        """The symbol of the gene the id names: the one HGNC approves, else the one the tables record.
+
+        The four tables are refreshed weekly and the HGNC set is pinned, so a table can carry a gene
+        the set does not hold yet.
+
+        Raises:
+            errors.UnknownVariantError: If the id names no gene: the set approves no symbol under it
+                and no table carries it.
+        """
+        if approved is not None:
+            return approved.gene_symbol
+        recorded = sources.gene_symbol()
+        if recorded is None:
+            raise errors.UnknownVariantError(
+                f'no gene under {hgnc_id}: release {self._tables.hgnc.version} of the HGNC complete set approves '
+                'no symbol for it and no gene-disease reference table carries it. An id HGNC approved after that '
+                'release answers this way until a table carries the gene'
+            )
+        return recorded
 
     async def _mondo_closure(
         self, curated: Sequence[gene_disease_pb2.CuratedEntity], request: gene_disease_pb2.DescribeGeneRequest
@@ -166,6 +220,14 @@ class LiveBackend(GeneDiseaseBackend):
         return await mondo.fetch_subclass_closure(terms, http_client=self._http_client)
 
 
+type _Lookup = (
+    clingen_validity.ClinGenValidityResult
+    | gencc.GenCCResult
+    | clingen_dosage.ClinGenDosageResult
+    | panelapp.PanelAppResult
+)
+
+
 @dataclasses.dataclass(frozen=True)
 class _GeneDiseaseSources:
     """One gene's four reference-table lookups, each None where its table does not carry the gene.
@@ -179,10 +241,21 @@ class _GeneDiseaseSources:
     dosage: clingen_dosage.ClinGenDosageResult | None
     panel: panelapp.PanelAppResult | None
 
+    def _held(self) -> list[_Lookup]:
+        """The lookups that found the gene, in the order the response names its sources."""
+        lookups = (self.validity, self.harmonised, self.dosage, self.panel)
+        return [result for result in lookups if result is not None]
+
     def _holding_the_gene(self) -> list[str]:
         """The sources carrying the gene at all, whether or not they assert its validity."""
-        held = (self.validity, self.harmonised, self.dosage, self.panel)
-        return [result.source for result in held if result is not None]
+        return [result.source for result in self._held()]
+
+    def gene_symbol(self) -> str | None:
+        """The symbol the first table carrying the gene records for it; None where none carries it."""
+        held = self._held()
+        if not held:
+            return None
+        return held[0].gene_symbol
 
     def raw_and_provenance(self, at: datetime.datetime) -> tuple[dict[str, object], list[evidence_pb2.Provenance]]:
         """The per-source rows for ``raw``, and one ``Provenance`` per source that answered.
@@ -231,7 +304,7 @@ class _GeneDiseaseSources:
 
 
 def _download_reference_blobs(resources_bucket: str) -> dict[str, bytes]:
-    """Fetch the four reference dumps from the bucket, failing loud on a missing object.
+    """Fetch the reference objects from the bucket, failing loud on a missing one.
 
     Blocking (google-cloud-storage); the caller offloads it to a thread. The client library is
     imported here so the fixture path never pulls it.

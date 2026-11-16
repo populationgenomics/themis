@@ -15,6 +15,7 @@ from themis.svcv4 import gene_disease_validity
 
 _SOURCE = 'ClinGen Gene Validity'
 
+_SYMBOL_COL = 'GENE SYMBOL'
 _HGNC_COL = 'GENE ID (HGNC)'
 _DISEASE_LABEL_COL = 'DISEASE LABEL'
 _DISEASE_ID_COL = 'DISEASE ID (MONDO)'
@@ -44,6 +45,7 @@ class ClinGenValidityResult:
     """Every ClinGen validity curation for one gene.
 
     Attributes:
+        gene_symbol: The gene symbol the gene's first row records beside its HGNC id.
         curations: One per curated row: a (disease term, mode of inheritance) and its classification.
         raw: The curation rows verbatim, for the proto ``Struct``.
         source: Provenance source label.
@@ -51,6 +53,7 @@ class ClinGenValidityResult:
         query: The lookup key (HGNC id).
     """
 
+    gene_symbol: str
     curations: list[Curation]
     raw: dict[str, object]
     source: str
@@ -76,7 +79,7 @@ class ClinGenValidity:
         Raises:
             ValueError: If the download's preamble/header shape is unexpected.
         """
-        rows, file_created = _clingen_download.parse(data.decode('utf-8'))
+        rows, file_created = _clingen_download.parse(data.decode('utf-8'), download='gene-validity')
         by_hgnc: dict[str, list[dict[str, str]]] = {}
         for row in rows:
             by_hgnc.setdefault(row[_HGNC_COL].upper(), []).append(row)
@@ -107,6 +110,7 @@ class ClinGenValidity:
                 )
             )
         return ClinGenValidityResult(
+            gene_symbol=rows[0][_SYMBOL_COL],
             curations=curations,
             raw={'rows': rows},
             source=_SOURCE,

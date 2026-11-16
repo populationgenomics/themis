@@ -64,7 +64,13 @@ def test_fixture_selector_answers_what_it_was_seeded_and_nothing_else(monkeypatc
     monkeypatch.setenv('THEMIS_GENE_DISEASE_BACKEND', 'fixture')
     monkeypatch.setenv(
         'THEMIS_GENE_DISEASE_FIXTURE',
-        json.dumps({'describe_gene': {'HGNC:1100': {'entities': [{'disease_label': 'breast-ovarian cancer'}]}}}),
+        json.dumps(
+            {
+                'describe_gene': {
+                    'HGNC:1100': {'gene_symbol': 'BRCA1', 'entities': [{'disease_label': 'breast-ovarian cancer'}]}
+                }
+            }
+        ),
     )
     backend = _from_env()
     assert _describe_gene(backend, 'HGNC:1100').entities[0].disease_label == 'breast-ovarian cancer'
@@ -93,6 +99,7 @@ def test_live_selector_builds_the_live_adapter_over_the_named_bucket(monkeypatch
             gene_disease_backend._VALIDITY_OBJECT: (_FIXTURES / 'clingen_validity.csv').read_bytes(),
             gene_disease_backend._DOSAGE_OBJECT: (_FIXTURES / 'clingen_dosage.csv').read_bytes(),
             gene_disease_backend._PANELAPP_OBJECT: (_FIXTURES / 'panelapp.json').read_bytes(),
+            gene_disease_backend._HGNC_OBJECT: (_FIXTURES / 'hgnc_complete_set.tsv').read_bytes(),
         }
 
     monkeypatch.setattr(gene_disease_backend, '_download_reference_blobs', fake_download)

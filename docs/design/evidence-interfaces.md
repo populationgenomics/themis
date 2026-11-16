@@ -213,9 +213,9 @@ Sharing a deployment has two operational consequences on this surface ([`service
   the methods listed on the hatch's allowlist, derived per RPC from `option (themis.rpc.admits_caller) = CALLER_AGENT`
   on its proto declaration ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.md)).
 - **`gene_disease` is a startup dependency of the entire process.** Request failures isolate per RPC, but startup is
-  shared. `GeneDisease.DescribeGene` loads four reference tables from GCS before serving; if that bucket cannot be read,
-  the container refuses to start — which is the intended behaviour, not a defect in the startup probe. Starting with an
-  unreadable reference store would answer "absent" for every gene-disease query, and an absence there is scored
+  shared. `GeneDisease.DescribeGene` loads five reference objects from GCS before serving; if that bucket cannot be
+  read, the container refuses to start — which is the intended behaviour, not a defect in the startup probe. Starting
+  with an unreadable reference store would answer "absent" for every gene-disease query, and an absence there is scored
   evidence.
 
 A source moves to its own deployment only when it brings dedicated model weights, large reference data, or heavy compute
@@ -574,6 +574,50 @@ answers every lookup as an in-memory join. **Every table is keyed by HGNC ID**, 
 retirements and reassignments; the request takes the HGNC ID alone and carries no symbol field that could drift from it.
 (ClinVar remains symbol-keyed because its upstream API searches by symbol.)
 
+An HGNC ID is opaque, so a caller that sends the wrong one would read another gene's records as its own. The response
+therefore names the gene, and the interface loads a fifth object at startup to do it: the HGNC complete set, read from
+the reference mirror at a pinned release. The symbol returned is the one HGNC approves for the ID, and the caller
+compares it with the symbol of the gene it meant.
+
+Comparing against the approved symbol alone would mislead for a gene that HGNC has renamed. HGNC approves `IFT54` for
+`HGNC:17861`, while ClinGen and PanelApp still record that gene as `TRAF3IP1`, and a caller's own symbol can come from
+an annotation source that lags the rename in the same way. A caller that took the mismatch for a wrong ID would discard
+records that belong to its gene. The response therefore also lists the gene's previous symbols, read from the same
+release of the set. If the caller's symbol equals `gene_symbol` or is among `previous_symbols`, the request named the
+gene the caller meant; any other symbol does not confirm that, because it names another gene today, has named more than
+one gene, or was never approved for this one.
+
+The list holds only the previous symbols that name no other gene in the set, because HGNC has moved symbols between
+genes. `HGNC:363` is `AK4` today and was `AK3` before, and `AK3` is now the approved symbol of `HGNC:17376`. A caller
+that means today's `AK3` and sends `HGNC:363` by mistake would otherwise find its symbol among the previous ones and
+read the records of `AK4` as its own. The set also lists `AK3L1` as a previous symbol of both genes, so that symbol
+would confirm either ID. So when the interface loads the set, it drops every previous symbol that the set approves for a
+gene today, and it drops a previous symbol that the set lists for two or more genes from each of them. A caller whose
+source still writes `AK3` or `AK3L1` for `HGNC:363` then gets no confirmation, and cannot settle from the symbol alone
+which gene its source meant. HGNC's alias symbols are not offered either, because HGNC never approved an alias for the
+gene and many aliases belong to several genes (`ASP` is an alias of seven).
+
+The four tables are refreshed weekly and the set is pinned to one release, so each side can hold an ID that the other
+lacks. The answer depends on which of them hold the requested ID:
+
+| Pinned HGNC release | Curation tables       | Answer                                                                   |
+| ------------------- | --------------------- | ------------------------------------------------------------------------ |
+| Holds the ID        | At least one holds it | The gene's records, under its approved symbol, with its previous symbols |
+| Holds the ID        | None holds it         | A gene that no table curates, under its approved symbol                  |
+| Lacks the ID        | At least one holds it | The gene's records, under the symbol the tables record, no previous ones |
+| Lacks the ID        | None holds it         | `NOT_FOUND`                                                              |
+
+An unknown ID is therefore one that the pinned release and the curation tables both lack. A real gene can still fall on
+the two rows where the release lacks the ID. A gene that HGNC approved after the pinned release is answered from the
+tables once one of them curates it, and until then it is answered as unknown, although HGNC knows it. A withdrawn ID is
+the other case: the complete set lists approved genes only, so a withdrawn ID is absent from it, and the answer comes
+from the tables for as long as they still carry the ID. Because `NOT_FOUND` can mean "not in this release" as well as
+"no such gene", its status text states the pinned release, and a caller that holds a newer ID can tell the two apart.
+
+The backend pins the release in its code, and the pin moves in a later merge than the mirror's manifest does, for the
+reason the convert worker's reference builds do ([`infrastructure.md`](infrastructure.md#data-prod-starts-with)): a
+service that reads a release before the reference build has mirrored it fails to start.
+
 **Loading from a GCS bucket rather than downloading from upstreams at startup keeps a scale-to-zero service viable.**
 GenCC's download endpoint caps near twenty requests a day, which cold-start churn would quickly exhaust. A weekly
 refresh Cloud Run Job is therefore the only process that touches those upstream hosts, and the `evidence` service reads
@@ -651,7 +695,7 @@ one of those to the strongest classification on file, whereas a lookup by diseas
 every mode so the analyst can select the record matching the MDE.
 
 **Moving off the upstreams.** The live MONDO closure call to EBI OLS4 could be replaced by a precomputed closure shipped
-with the GCS reference tables, at the cost of a fifth required startup object
+with the GCS reference tables, at the cost of one more required startup object
 ([Alternatives considered](#clinvar-and-gene-disease-scoping)).
 
 ### Goal: how relevant is the exon the variant lands in?
@@ -878,6 +922,15 @@ sources disagree:
 
 Both cross-source disagreements therefore return `FAILED_PRECONDITION`, naming both upstreams and what each returned so
 the inconsistency is visible and never mis-scored.
+
+`GeneDisease.DescribeGene` can look like a third case, because its HGNC ID usually reaches the caller from
+`Variant.Normalize`, and an ID that the pinned HGNC release lacks may be one that the normalizer's source already knows.
+It stays `NOT_FOUND` for two reasons. The ID is a field of the caller's request, and the service cannot tell an ID
+relayed from another RPC from a mistyped one, so the status is a statement about an identifier the caller chose.
+`NOT_FOUND` is also not the absence that this RPC's callers score: a gene without curations is a successful answer with
+`GENE_COVERAGE_ABSENT`, given only for an ID that the release names. The status text states the release, so a caller
+whose ID is newer than it reads "not in this release" and does not conclude that the gene has no curation
+([above](#goal-is-the-gene-disease-relationship-valid-and-by-what-mechanism)).
 
 #### Every handler is bounded, and the bound is a status
 
@@ -1229,7 +1282,7 @@ and guest stubs are generated ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.
   the lookup for the entire gene, and nothing downstream requires the service to filter records by mode
   ([above](#goal-is-the-gene-disease-relationship-valid-and-by-what-mechanism)).
 - **Shipping a precomputed MONDO subclass closure in the GCS reference bucket.** Deferred: precomputing the closure in
-  the weekly refresh job would remove `GeneDisease.DescribeGene`'s one live call to EBI OLS4, at the cost of a fifth
+  the weekly refresh job would remove `GeneDisease.DescribeGene`'s one live call to EBI OLS4, at the cost of one more
   mandatory startup object in GCS.
 - **Querying PanelApp Australia live on the request path.** Rejected because live calls tie `GeneDisease.DescribeGene`'s
   availability to PanelApp's API and re-fetch large panel payloads on cold starts; pre-aggregating the Mendeliome and
@@ -1237,7 +1290,7 @@ and guest stubs are generated ([`sandbox-rpc-exposure.md`](sandbox-rpc-exposure.
   The price of that choice is scope: the dump covers those two panels rather than all Australian panels.
 - **Mounting the GCS reference bucket via Cloud Run FUSE** instead of using the `google-cloud-storage` client library.
   We chose the client library because it matches repository convention, adds no deploy-time volume mount lifecycle, and
-  reads the four small reference files once into memory at startup.
+  reads the five small reference files once into memory at startup.
 
 ### Exon relevance
 

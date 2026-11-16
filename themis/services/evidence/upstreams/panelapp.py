@@ -118,7 +118,8 @@ class PanelAppTable:
         """Parse and index the PanelApp dump (``panelapp/dump.json`` bytes).
 
         Raises:
-            ValueError: If the dump lacks its ``dataset_versions``, ``panels``, or ``genes``.
+            ValueError: If the dump lacks its ``dataset_versions``, ``panels``, or ``genes``, or if
+                a gene's entry records no symbol or a blank one.
             json.JSONDecodeError: If the bytes are not valid JSON.
         """
         payload = json.loads(data)
@@ -136,6 +137,9 @@ class PanelAppTable:
         if not isinstance(genes, dict):
             raise ValueError('PanelApp dump has no genes map')
         by_hgnc = {hgnc_id.upper(): entry for hgnc_id, entry in genes.items() if isinstance(entry, dict)}
+        for hgnc_id, entry in by_hgnc.items():
+            if not _str(_require(entry, 'gene_symbol', hgnc_id), 'gene_symbol', hgnc_id).strip():
+                raise ValueError(f'PanelApp dump entry for {hgnc_id!r} has a blank gene_symbol')
         panel_scope = ', '.join(str(name) for name in panels.values())
         return cls(by_hgnc, panel_scope, tuple(versions))
 

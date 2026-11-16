@@ -41,6 +41,7 @@ _CLOSURE: Mapping[str, Sequence[str]] = {
 def _clingen(*curations: tuple[str, str, str, str]) -> clingen_validity.ClinGenValidityResult:
     """A ClinGen lookup over `(label, mondo id, MOI, classification)` curations."""
     return clingen_validity.ClinGenValidityResult(
+        gene_symbol='GENE',
         curations=[
             clingen_validity.Curation(disease_label=label, mondo_id=mondo_id, moi=moi, classification=classification)
             for label, mondo_id, moi, classification in curations
@@ -55,6 +56,7 @@ def _clingen(*curations: tuple[str, str, str, str]) -> clingen_validity.ClinGenV
 def _gencc(*entities: tuple[str, str, str, Sequence[tuple[str, str, str]]]) -> gencc.GenCCResult:
     """A GenCC lookup over `(title, curie, moi curie, [(submitter, classification, note)])` entities."""
     return gencc.GenCCResult(
+        gene_symbol='GENE',
         entities=[
             gencc.Entity(
                 disease_title=title,

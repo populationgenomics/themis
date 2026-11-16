@@ -8,18 +8,29 @@ unresolved request is meant to stay a pure table lookup.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import datetime
 import pathlib
-from collections.abc import Awaitable, Callable
+import re
+from collections.abc import Awaitable, Callable, Mapping
 
 import httpx2
 import pytest
+from google.api_core import exceptions as api_exceptions
+from google.cloud import storage
 
 from themis.rpc import gene_disease_pb2
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
-from themis.services.evidence.upstreams import clingen_dosage, clingen_validity, gencc, mondo, panelapp
+from themis.services.evidence.upstreams import clingen_dosage, clingen_validity, gencc, hgnc, mondo, panelapp
+from tools.resources import manifest
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[2] / 'upstreams' / 'tests' / 'fixtures'
+_HGNC_VERSION = '2026-01-01'
+# The ids the tests query. The default HGNC set approves each, as the deployed set does for a curated gene.
+_APPROVED = {'HGNC:1100': 'BRCA1', 'HGNC:2': 'GENE2', 'HGNC:3': 'GENE3', 'HGNC:9': 'GENE9'}
+# A set holding none of those ids: the state of a gene the tables carry before the pinned set does.
+_ANOTHER_GENE = {'HGNC:5': 'A1BG'}
 # A curated term and a MONDO parent of it, for the entity resolution the rpc runs on request.
 _CURATED_TERM = 'MONDO:0000101'
 _PARENT_TERM = 'MONDO:0000100'
@@ -40,13 +51,26 @@ def _tables(
     dosage: clingen_dosage.ClinGenDosage | None = None,
     gencc_table: gencc.GenCC | None = None,
     panelapp_table: panelapp.PanelAppTable | None = None,
+    hgnc_set: hgnc.HgncCompleteSet | None = None,
 ) -> gene_disease_backend.ReferenceTables:
-    """The four reference tables, empty unless a seeded one is supplied."""
+    """The reference tables, each empty unless a seeded one is supplied, under an HGNC set.
+
+    The default set holds every id the tests query, so a test that passes none takes the path a
+    deployed request takes: the symbol is HGNC's and the response carries its provenance.
+    """
     return gene_disease_backend.ReferenceTables(
         validity=validity or clingen_validity.ClinGenValidity({}, ()),
         dosage=dosage or clingen_dosage.ClinGenDosage({}, ()),
         gencc=gencc_table or gencc.GenCC({}, ()),
         panelapp=panelapp_table or panelapp.PanelAppTable({}, '', ()),
+        hgnc=hgnc_set if hgnc_set is not None else _hgnc_set(_APPROVED),
+    )
+
+
+def _hgnc_set(approved: Mapping[str, str]) -> hgnc.HgncCompleteSet:
+    """An HGNC set approving `approved`'s symbol under each of its ids, none of them renamed."""
+    return hgnc.HgncCompleteSet(
+        {hgnc_id: hgnc.ApprovedGene(symbol, ()) for hgnc_id, symbol in approved.items()}, _HGNC_VERSION
     )
 
 
@@ -62,10 +86,10 @@ def _run[T](
 
 
 def _validity_table(
-    hgnc_id: str, classification: str, moi: str, *, mondo_id: str = _CURATED_TERM
+    hgnc_id: str, classification: str, moi: str, *, mondo_id: str = _CURATED_TERM, gene_symbol: str = 'GENE'
 ) -> clingen_validity.ClinGenValidity:
     row = {
-        'GENE SYMBOL': 'GENE',
+        'GENE SYMBOL': gene_symbol,
         'GENE ID (HGNC)': hgnc_id,
         'DISEASE LABEL': 'condition',
         'DISEASE ID (MONDO)': mondo_id,
@@ -83,10 +107,11 @@ def _gencc_table(
     mondo_id: str = _CURATED_TERM,
     moi_curie: str = 'HP:0000006',
     moi_title: str = 'Autosomal dominant',
+    gene_symbol: str = 'GENE',
 ) -> gencc.GenCC:
     row = {
         'gene_curie': hgnc_id,
-        'gene_symbol': 'GENE',
+        'gene_symbol': gene_symbol,
         'disease_title': 'condition',
         'disease_curie': mondo_id,
         'classification_title': classification,
@@ -99,8 +124,8 @@ def _gencc_table(
     return gencc.GenCC({hgnc_id.upper(): [row]}, ('2026-01-01',))
 
 
-def _dosage_table(hgnc_id: str, label: str) -> clingen_dosage.ClinGenDosage:
-    row = {'GENE SYMBOL': 'GENE', 'HGNC ID': hgnc_id, 'HAPLOINSUFFICIENCY': label}
+def _dosage_table(hgnc_id: str, label: str, *, gene_symbol: str = 'GENE') -> clingen_dosage.ClinGenDosage:
+    row = {'GENE SYMBOL': gene_symbol, 'HGNC ID': hgnc_id, 'HAPLOINSUFFICIENCY': label}
     return clingen_dosage.ClinGenDosage({hgnc_id.upper(): row}, ('2026-01-01',))
 
 
@@ -112,9 +137,10 @@ def _panelapp_table(
     mode_of_pathogenicity: str = '',
     evaluations: tuple[str, ...] = (),
     entries: list[dict[str, object]] | None = None,
+    gene_symbol: str = 'GENE',
 ) -> panelapp.PanelAppTable:
     entry = {
-        'gene_symbol': 'GENE',
+        'gene_symbol': gene_symbol,
         'max_confidence': max_confidence,
         'mode_of_inheritance': moi,
         'mode_of_pathogenicity': mode_of_pathogenicity,
@@ -125,13 +151,48 @@ def _panelapp_table(
 
 
 def _reference_blobs() -> dict[str, bytes]:
-    """The four reference dumps read from the upstream fixtures, keyed by their bucket object name."""
+    """The reference objects read from the upstream fixtures, keyed by their bucket object name."""
     return {
         gene_disease_backend._GENCC_OBJECT: (_FIXTURES / 'gencc.tsv').read_bytes(),
         gene_disease_backend._VALIDITY_OBJECT: (_FIXTURES / 'clingen_validity.csv').read_bytes(),
         gene_disease_backend._DOSAGE_OBJECT: (_FIXTURES / 'clingen_dosage.csv').read_bytes(),
         gene_disease_backend._PANELAPP_OBJECT: (_FIXTURES / 'panelapp.json').read_bytes(),
+        gene_disease_backend._HGNC_OBJECT: (_FIXTURES / 'hgnc_complete_set.tsv').read_bytes(),
     }
+
+
+class _Blob:
+    """A blob handle whose download raises for an object the bucket does not hold, as in GCS."""
+
+    def __init__(self, name: str, held: Mapping[str, bytes]) -> None:
+        self._name = name
+        self._held = held
+
+    def download_as_bytes(self) -> bytes:
+        if self._name not in self._held:
+            raise api_exceptions.NotFound(f'no such object: {self._name}')
+        return self._held[self._name]
+
+
+class _Bucket:
+    def __init__(self, held: Mapping[str, bytes]) -> None:
+        self._held = held
+
+    def blob(self, name: str) -> _Blob:
+        return _Blob(name, self._held)
+
+
+class _Client:
+    """A ``storage.Client`` stand-in over one bucket's objects."""
+
+    def __init__(self, held: Mapping[str, bytes]) -> None:
+        self._held = held
+
+    def bucket(self, _name: str) -> _Bucket:
+        return _Bucket(self._held)
+
+    def close(self) -> None:
+        pass
 
 
 def test_gene_disease_returns_every_curated_entity_unreduced() -> None:
@@ -154,7 +215,14 @@ def test_gene_disease_returns_every_curated_entity_unreduced() -> None:
     assert resp.gene_scoped.haploinsufficiency_score == 3
     assert resp.gene_scoped.mode_of_inheritance == 'BIALLELIC'  # PanelApp's, and marked as the gene's
     assert resp.raw['panelapp_max_confidence'] == 3
-    assert len(resp.provenance) == 4
+    assert resp.gene_symbol == 'BRCA1'  # HGNC's, not the tables' spelling
+    assert [p.source for p in resp.provenance] == [
+        'HGNC',
+        'ClinGen Gene Validity',
+        'GenCC',
+        'ClinGen Dosage Sensitivity',
+        'PanelApp Australia',
+    ]
 
 
 def test_gene_disease_gencc_only_tier_keeps_its_own_vocabulary_and_gate_level() -> None:
@@ -170,7 +238,7 @@ def test_gene_disease_gencc_only_tier_keeps_its_own_vocabulary_and_gate_level() 
 
 def test_gene_disease_tells_an_absent_gene_from_one_with_no_validity_assertion() -> None:
     absent = _run(
-        _tables(),
+        _tables(hgnc_set=_hgnc_set({'HGNC:404040': 'GENE'})),
         lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:404040')),
     )
     assert absent.coverage == gene_disease_pb2.GENE_COVERAGE_ABSENT
@@ -178,7 +246,7 @@ def test_gene_disease_tells_an_absent_gene_from_one_with_no_validity_assertion()
     assert not absent.gene_scoped.sources_holding_the_gene
     assert not absent.gene_scoped.HasField('haploinsufficiency_score')
     assert absent.raw.fields['clingen_dosage'].WhichOneof('kind') == 'null_value'
-    assert not absent.provenance
+    assert [p.source for p in absent.provenance] == ['HGNC']  # no table answered for the gene
 
     held = _run(
         _tables(panelapp_table=_panelapp_table('HGNC:9', max_confidence=3, moi='MONOALLELIC')),
@@ -187,6 +255,115 @@ def test_gene_disease_tells_an_absent_gene_from_one_with_no_validity_assertion()
     assert held.coverage == gene_disease_pb2.GENE_COVERAGE_NO_VALIDITY_ASSERTION
     assert not held.entities
     assert held.gene_scoped.sources_holding_the_gene == ['PanelApp Australia']
+
+
+@pytest.mark.parametrize(
+    'tables',
+    [
+        _tables(
+            validity=_validity_table('HGNC:1100', 'Definitive', 'AD', gene_symbol='TABLE1'),
+            hgnc_set=_hgnc_set(_ANOTHER_GENE),
+        ),
+        _tables(
+            gencc_table=_gencc_table('HGNC:1100', 'Definitive', gene_symbol='TABLE1'),
+            hgnc_set=_hgnc_set(_ANOTHER_GENE),
+        ),
+        _tables(
+            dosage=_dosage_table('HGNC:1100', 'No Evidence for Haploinsufficiency', gene_symbol='TABLE1'),
+            hgnc_set=_hgnc_set(_ANOTHER_GENE),
+        ),
+        _tables(
+            panelapp_table=_panelapp_table('HGNC:1100', max_confidence=3, gene_symbol='TABLE1'),
+            hgnc_set=_hgnc_set(_ANOTHER_GENE),
+        ),
+    ],
+    ids=['clingen_validity', 'gencc', 'clingen_dosage', 'panelapp'],
+)
+def test_gene_disease_names_a_gene_the_hgnc_set_lacks_from_whichever_table_carries_it(
+    tables: gene_disease_backend.ReferenceTables,
+) -> None:
+    # The tables are refreshed more often than the set is pinned, so a table can carry a gene the set
+    # does not hold yet. One table alone is enough to name it.
+    resp = _run(tables, lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100')))
+    assert resp.gene_symbol == 'TABLE1'
+    assert not resp.previous_symbols  # only the set states them
+    assert 'HGNC' not in [p.source for p in resp.provenance]
+
+
+def test_gene_disease_names_an_uncurated_gene_from_the_hgnc_set() -> None:
+    # A gene no table curates is still a gene: the answer is its coverage, under its approved symbol.
+    resp = _run(
+        _tables(
+            validity=_validity_table('HGNC:1100', 'Definitive', 'AD'),
+            hgnc_set=_hgnc_set({'HGNC:404040': 'UNCURATED1'}),
+        ),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:404040')),
+    )
+    assert resp.coverage == gene_disease_pb2.GENE_COVERAGE_ABSENT
+    assert resp.gene_symbol == 'UNCURATED1'
+    assert [(p.source, list(p.dataset_versions)) for p in resp.provenance] == [('HGNC', [_HGNC_VERSION])]
+
+
+def test_gene_disease_answers_a_renamed_gene_under_its_approved_symbol_with_its_previous_ones() -> None:
+    # A curation table can lag an HGNC rename, and so can the source of a caller's symbol: the
+    # previous symbols are what tells either that the records are this gene's.
+    renamed = hgnc.HgncCompleteSet({'HGNC:1100': hgnc.ApprovedGene('CURRENT1', ('FORMER1', 'FORMER0'))}, _HGNC_VERSION)
+    resp = _run(
+        _tables(validity=_validity_table('HGNC:1100', 'Definitive', 'AD', gene_symbol='FORMER1'), hgnc_set=renamed),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100')),
+    )
+    assert resp.gene_symbol == 'CURRENT1'
+    assert resp.previous_symbols == ['FORMER1', 'FORMER0']
+    assert resp.coverage == gene_disease_pb2.GENE_COVERAGE_CURATED
+    assert {p.source for p in resp.provenance} == {'HGNC', 'ClinGen Gene Validity'}
+    # The table's own spelling stays readable.
+    rows = resp.raw.fields['clingen_validity'].struct_value.fields['rows'].list_value.values
+    assert rows[0].struct_value.fields['GENE SYMBOL'].string_value == 'FORMER1'
+
+
+def test_gene_disease_fails_an_id_neither_the_hgnc_set_nor_a_table_holds() -> None:
+    # Answered as an uncurated gene, a mistyped id would read as a finding about a gene.
+    with pytest.raises(errors.UnknownVariantError, match='no gene under HGNC:404040'):
+        _run(
+            _tables(
+                validity=_validity_table('HGNC:1100', 'Definitive', 'AD'),
+                hgnc_set=_hgnc_set({'HGNC:1100': 'BRCA1'}),
+            ),
+            lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:404040')),
+        )
+
+
+def test_gene_disease_reads_an_id_hgnc_holds_unapproved_as_one_the_set_lacks() -> None:
+    unapproved = hgnc.HgncCompleteSet.from_bytes(
+        b'hgnc_id\tsymbol\tstatus\tprev_symbol\nHGNC:1100\tBRCA1\tApproved\t\nHGNC:2\tGONE\tEntry Withdrawn\t\n',
+        version=_HGNC_VERSION,
+    )
+    with pytest.raises(errors.UnknownVariantError, match='no gene under HGNC:2'):
+        _run(
+            _tables(hgnc_set=unapproved),
+            lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:2')),
+        )
+    # A table that still carries the id answers with its records, under the symbol it records.
+    held = _run(
+        _tables(dosage=_dosage_table('HGNC:2', 'No Evidence for Haploinsufficiency'), hgnc_set=unapproved),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:2')),
+    )
+    assert held.gene_symbol == 'GENE'
+    assert [p.source for p in held.provenance] == ['ClinGen Dosage Sensitivity']
+
+
+def test_gene_disease_takes_the_first_table_symbol_where_two_spell_it_differently() -> None:
+    resp = _run(
+        _tables(
+            validity=_validity_table('HGNC:1100', 'Definitive', 'AD', gene_symbol='CURRENT1'),
+            panelapp_table=_panelapp_table('HGNC:1100', max_confidence=3, gene_symbol='FORMER1'),
+            hgnc_set=_hgnc_set(_ANOTHER_GENE),
+        ),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100')),
+    )
+    assert resp.gene_symbol == 'CURRENT1'
+    # The other table's spelling stays readable.
+    assert resp.raw.fields['panelapp'].struct_value.fields['gene_symbol'].string_value == 'FORMER1'
 
 
 def test_gene_disease_dosage_zero_is_present_not_absent() -> None:
@@ -211,7 +388,7 @@ def test_gene_disease_panelapp_green_is_not_a_curated_entity() -> None:
     assert resp.raw['panelapp_max_confidence'] == 3
     assert resp.gene_scoped.mode_of_inheritance == 'MONOALLELIC'
     assert resp.gene_scoped.mode_of_pathogenicity == 'gain-of-function'
-    assert len(resp.provenance) == 1
+    assert [p.source for p in resp.provenance] == ['HGNC', 'PanelApp Australia']
 
 
 def test_gene_disease_scopes_mechanism_statements_to_what_they_are_about() -> None:
@@ -260,7 +437,7 @@ def test_gene_disease_resolving_the_curated_term_reads_no_ontology() -> None:
     resp = asyncio.run(run())
     assert resp.resolution.relation == gene_disease_pb2.TERM_RELATION_SAME
     assert [e.gate_level for e in resp.resolution.entities] == [gene_disease_pb2.GATE_LEVEL_LIMITED]
-    assert [p.source for p in resp.provenance] == ['ClinGen Gene Validity']  # no MONDO round-trip
+    assert [p.source for p in resp.provenance] == ['HGNC', 'ClinGen Gene Validity']  # no MONDO round-trip
     assert 'mondo_ancestors' not in resp.raw
 
 
@@ -357,6 +534,10 @@ def test_gene_disease_from_reference_dumps_makes_no_network_call(monkeypatch: py
             return await backend.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100'))
 
     resp = asyncio.run(run())
+    assert resp.gene_symbol == 'BRCA1'
+    # The symbol is the HGNC set's, stamped with the version the backend pins.
+    hgnc_stamps = [p for p in resp.provenance if p.source == 'HGNC']
+    assert [list(p.dataset_versions) for p in hgnc_stamps] == [[gene_disease_backend._HGNC_VERSION]]
     # Both sources' curations survive the join, each entity gate-levelled: the dumps' own vocabulary
     # is what the assembly is held to, so a table whose classifications move fails here.
     assert {e.source for e in resp.entities} == {'ClinGen Gene Validity', 'GenCC'}
@@ -384,3 +565,35 @@ def test_create_fetches_the_resources_bucket_once(monkeypatch: pytest.MonkeyPatc
     backend = asyncio.run(build())
     assert isinstance(backend, gene_disease_backend.LiveBackend)
     assert calls == {'downloads': 1}
+
+
+@pytest.mark.parametrize('missing', gene_disease_backend._REFERENCE_OBJECTS)
+def test_create_fails_when_a_reference_object_is_missing(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    # Started without one, the backend would answer for every gene from a table it never read.
+    held = {name: data for name, data in _reference_blobs().items() if name != missing}
+    monkeypatch.setattr(storage, 'Client', lambda: _Client(held))
+
+    async def build() -> gene_disease_backend.LiveBackend:
+        async with httpx2.AsyncClient() as client:
+            return await gene_disease_backend.LiveBackend.create(
+                http_client=client, resources_bucket='resources-bucket'
+            )
+
+    with pytest.raises(RuntimeError, match=re.escape(missing)):
+        asyncio.run(build())
+
+
+def test_the_hgnc_object_is_where_the_mirror_writes_the_complete_set() -> None:
+    # The mirror composes the name from the manifest's entry and the backend spells it out, so a
+    # change to the entry's source, role or suffix has to reach the backend too.
+    pinned = manifest.load()
+    read = dataclasses.replace(pinned.table('hgnc-complete-set'), version=gene_disease_backend._HGNC_VERSION)
+    assert f'{pinned.dataset}/{read.object}' == gene_disease_backend._HGNC_OBJECT
+
+
+def test_the_hgnc_release_is_not_ahead_of_the_one_the_manifest_pins() -> None:
+    # No bucket holds a release the manifest has not pinned, so a backend that reads one fails its
+    # start in every environment. It may be behind: the backend moves in a later merge than the
+    # manifest, once the mirror has written the manifest's release.
+    pinned = datetime.date.fromisoformat(manifest.load().table('hgnc-complete-set').version)
+    assert datetime.date.fromisoformat(gene_disease_backend._HGNC_VERSION) <= pinned

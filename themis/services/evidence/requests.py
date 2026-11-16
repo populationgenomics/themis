@@ -30,7 +30,8 @@ _VCV_ACCESSION = re.compile(r'VCV\d{9}')
 
 # An HGNC id, `HGNC:nnnn`. Case-insensitive, unlike the positional id below: the reference tables key
 # on the id upper-cased, so `hgnc:1100` resolves and refusing it would reject a request they answer.
-_HGNC_ID = re.compile(r'HGNC:\d{1,7}', re.IGNORECASE)
+# No leading zero: the tables key on the number as HGNC writes it, so `HGNC:01100` would key nothing.
+_HGNC_ID = re.compile(r'HGNC:[1-9][0-9]{0,6}', re.IGNORECASE)
 
 # A gnomAD/VCF positional id, `chrom-pos-ref-alt`, in the one casing both upstreams take — which is
 # also what `Resolve` emits. Deliberately NOT case-insensitive: gnomAD tolerates `CHR1-…-g-a` where
@@ -77,10 +78,10 @@ def require_genome_build(rpc: str, genome_build: str) -> None:
 def require_hgnc_id(rpc: str, hgnc_id: str) -> None:
     """Hold the gene to the HGNC id the reference tables are keyed on.
 
-    A symbol, or an id carrying padding, keys none of the tables — unchecked it comes back as "no
-    source carries this gene", a statement about the tables rather than about the request that
-    produced it. Padding is refused rather than stripped: the id is a table key, not text sent to an
-    upstream, so there is nothing to clean it up for.
+    A symbol, or an id carrying padding or a leading zero, keys none of the tables — unchecked it
+    comes back as "no source carries this gene", a statement about the tables rather than about the
+    request that produced it. Padding is refused rather than stripped: the id is a table key, not
+    text sent to an upstream, so there is nothing to clean it up for.
 
     An unset field is the separate message, because it is a different mistake with a different
     remedy: the caller has an id to supply and did not.
@@ -94,7 +95,9 @@ def require_hgnc_id(rpc: str, hgnc_id: str) -> None:
             'supplies on the NormalizeResponse'
         )
     if _HGNC_ID.fullmatch(hgnc_id) is None:
-        raise errors.InvalidRequestError(f'{rpc} takes the gene as an HGNC id ("HGNC:" and digits); got {hgnc_id!r}')
+        raise errors.InvalidRequestError(
+            f'{rpc} takes the gene as an HGNC id ("HGNC:" and digits, without a leading zero); got {hgnc_id!r}'
+        )
 
 
 def require_mondo_id(rpc: str, mondo_id: str) -> None:

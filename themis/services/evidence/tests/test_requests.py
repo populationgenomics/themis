@@ -140,7 +140,22 @@ def test_an_unset_hgnc_id_is_refused_as_unset_and_not_as_the_wrong_shape() -> No
     assert 'and digits' not in str(caught.value)
 
 
-@pytest.mark.parametrize('hgnc_id', ['  ', 'BRCA1', 'HGNC:', 'HGNC:1100.1', '1100', ' HGNC:1100 '])
+@pytest.mark.parametrize(
+    'hgnc_id',
+    [
+        '  ',
+        'BRCA1',
+        'HGNC:',
+        'HGNC:1100.1',
+        '1100',
+        ' HGNC:1100 ',
+        'HGNC:01100',
+        'HGNC:0',
+        'HGNC:12345678',
+        'HGNC:11\N{ARABIC-INDIC DIGIT ZERO}\N{ARABIC-INDIC DIGIT ZERO}',
+        'HGNC:1\N{FULLWIDTH DIGIT ONE}',
+    ],
+)
 def test_a_gene_that_is_not_an_hgnc_id_is_refused(hgnc_id: str) -> None:
     """None of these keys the reference tables, so unchecked each answers "no source carries this gene"."""
     with pytest.raises(errors.InvalidRequestError, match='"HGNC:" and digits'):

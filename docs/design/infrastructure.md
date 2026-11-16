@@ -428,7 +428,11 @@ That makes the order of two changes matter. The job starts only after a successf
 merge that changed the mirror's manifest and also pinned the builds made from it would deploy a worker whose builds do
 not exist yet. That worker fails to start, so the deploy fails, so the job never starts. A new build therefore takes two
 merges: the manifest change first, and the pin once prod's job has built it. Until then the worker keeps opening the
-builds it already pins, which stay in the bucket because the job only adds builds beside them.
+builds it already pins, which stay in the bucket because the job only adds builds beside them. The evidence service pins
+one mirrored file in the same way, the HGNC complete set that `GeneDisease.DescribeGene` names genes from, so a new
+release of that file takes the same two merges. In dev the job runs only when it is dispatched, and a dispatched run
+mirrors the manifest of the image that dev runs. A merge to `main` does not deploy to dev, so dev needs a deploy that
+carries the new manifest before the dispatch, and the second merge waits for that run as well.
 
 ### Budget and standing cost
 

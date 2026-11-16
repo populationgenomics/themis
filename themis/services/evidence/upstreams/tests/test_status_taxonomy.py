@@ -47,6 +47,7 @@ from themis.services.evidence.upstreams import (
     gencc,
     gnomad,
     gtex,
+    hgnc,
     litvar,
     mavedb,
     panelapp,
@@ -58,9 +59,9 @@ from themis.services.evidence.upstreams import (
     vep,
 )
 
-# The reference-table modules (clingen_dosage, clingen_validity, gencc, panelapp) parse bucket bytes
-# and take no client, so they contribute nothing to `_client_fetchers`. Listed anyway: a live fetch
-# reintroduced into one lands in the derived set and has to be classified.
+# The reference-table modules (clingen_dosage, clingen_validity, gencc, hgnc, panelapp) parse bucket
+# bytes and take no client, so they contribute nothing to `_client_fetchers`. Listed anyway: a live
+# fetch reintroduced into one lands in the derived set and has to be classified.
 _ADAPTERS = (
     allele_registry,
     clingen_dosage,
@@ -71,6 +72,7 @@ _ADAPTERS = (
     gencc,
     gnomad,
     gtex,
+    hgnc,
     litvar,
     mavedb,
     panelapp,

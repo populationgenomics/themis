@@ -23,6 +23,7 @@ from themis.svcv4 import gene_disease_validity
 _SOURCE = 'GenCC'
 
 _GENE_CURIE_COL = 'gene_curie'
+_GENE_SYMBOL_COL = 'gene_symbol'
 _DISEASE_COL = 'disease_title'
 _DISEASE_CURIE_COL = 'disease_curie'
 _MOI_CURIE_COL = 'moi_curie'
@@ -34,6 +35,7 @@ _RUN_DATE_COL = 'submitted_run_date'
 
 _REQUIRED_COLS = (
     _GENE_CURIE_COL,
+    _GENE_SYMBOL_COL,
     _DISEASE_COL,
     _DISEASE_CURIE_COL,
     _MOI_CURIE_COL,
@@ -87,6 +89,7 @@ class GenCCResult:
     """Every GenCC entity one gene carries.
 
     Attributes:
+        gene_symbol: The gene symbol the gene's first submission records beside its HGNC id.
         entities: One per (disease term, mode of inheritance), in first-seen export order.
         raw: The submission rows verbatim, for the proto ``Struct``.
         source: Provenance source label.
@@ -95,6 +98,7 @@ class GenCCResult:
         query: The lookup key (HGNC id).
     """
 
+    gene_symbol: str
     entities: list[Entity]
     raw: dict[str, object]
     source: str
@@ -143,7 +147,8 @@ class GenCC:
         read with the ``csv`` reader (which honours quoted multi-line fields), not by line-splitting.
 
         Raises:
-            ValueError: If the export is empty or a required column is absent.
+            ValueError: If the export is empty or a required column is absent, or if a submission
+                records a blank gene symbol.
         """
         csv.field_size_limit(sys.maxsize)  # notes are long quoted fields with embedded newlines
         reader = csv.DictReader(io.StringIO(data.decode('utf-8')), delimiter='\t')
@@ -153,6 +158,8 @@ class GenCC:
         by_hgnc: dict[str, list[dict[str, str]]] = {}
         newest_run = ''
         for row in reader:
+            if not row[_GENE_SYMBOL_COL].strip():
+                raise ValueError(f'GenCC export records no gene symbol for {row[_GENE_CURIE_COL]}')
             by_hgnc.setdefault(row[_GENE_CURIE_COL].upper(), []).append(row)
             newest_run = max(newest_run, row[_RUN_DATE_COL])
         if not by_hgnc:
@@ -176,6 +183,7 @@ class GenCC:
         for row in rows:
             grouped.setdefault((row[_DISEASE_CURIE_COL], row[_MOI_CURIE_COL]), []).append(row)
         return GenCCResult(
+            gene_symbol=rows[0][_GENE_SYMBOL_COL],
             entities=[_entity(group) for group in grouped.values()],
             raw={'rows': rows},
             source=_SOURCE,

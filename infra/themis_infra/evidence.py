@@ -113,8 +113,9 @@ class EvidenceService(pulumi.ComponentResource):
         self.service_account_email = service_account.email
         member = pulumi.Output.concat('serviceAccount:', service_account.email)
 
-        # Read-only where the image only reads: gene_disease loads the four reference dumps from the
-        # resources bucket at startup (the weekly refresh job holds the write credential).
+        # Read-only where the image only reads: gene_disease loads the gene-disease dumps and the HGNC
+        # complete set from the resources bucket at startup (the jobs that write them hold the write
+        # credentials).
         grants.BucketObjectReader(
             'themis-evidence',
             member=member,
@@ -196,8 +197,8 @@ class EvidenceService(pulumi.ComponentResource):
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
                         image=image,
-                        # gene_disease holds the four parsed reference tables resident for the process's
-                        # life: ~300 MiB of Python objects, plus the raw dumps alive alongside them
+                        # gene_disease holds its parsed reference tables resident for the process's
+                        # life: ~300 MiB of Python objects, plus the raw objects alive alongside them
                         # while they parse.
                         resources=gcp.cloudrunv2.ServiceTemplateContainerResourcesArgs(
                             limits={'cpu': '1', 'memory': '2Gi'},

@@ -153,9 +153,9 @@ def test_run_writes_all_four_dumps_parseable_by_the_server_loaders() -> None:
     store = _FakeStore()
     report = _run(_handler(), lambda client: job.run(store, client=client))
 
-    # Every reference object the server loads at startup is present, under the names the loader itself
+    # Every dump the server loads from the job at startup is present, under the names the loader itself
     # holds — the job and the loader agree on the dataset prefix or the service starts to a missing dump.
-    for name in gene_disease_backend._REFERENCE_OBJECTS:
+    for name in gene_disease_backend._REFRESHED_OBJECTS:
         assert name in store.objects
 
     # Raw dumps are stored verbatim: the bytes parse through the exact loaders the server uses.
