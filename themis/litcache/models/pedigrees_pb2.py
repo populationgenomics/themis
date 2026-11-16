@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from buf.validate import validate_pb2 as buf_dot_validate_dot_validate__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&themis/litcache/models/pedigrees.proto\x12 themis.litcache.models.pedigrees\x1a\x1b\x62uf/validate/validate.proto\"\xfe\x01\n\x1ePedigreeExtractionConstruction\x12\x16\n\x05model\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12 \n\x0fharness_version\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\xa1\x01\n\x0c\x66igures_read\x18\x03 \x03(\x0b\x32\x30.themis.litcache.models.pedigrees.PedigreeFigureBY\xbaHV\x92\x01\x02\x08\x01\xba\x01N\n\x13\x66igures_read.unique\x12\x17\x61 figure is listed once\x1a\x1ethis.map(f, f.figure).unique()\"\xbf\x01\n\x0ePedigreeFigure\x12\x17\n\x06\x66igure\x18\x01 \x01(\x05\x42\x07\xbaH\x04\x1a\x02(\x00\x12\x93\x01\n\x08\x66\x61ilures\x18\x02 \x03(\x0b\x32-.themis.litcache.models.pedigrees.PageFailureBR\xbaHO\xba\x01L\n\x15\x66\x61ilures.unique_pages\x12\x11\x61 page fails once\x1a this.map(f, f.pdf_page).unique()\"A\n\x0bPageFailure\x12\x19\n\x08pdf_page\x18\x01 \x01(\x05\x42\x07\xbaH\x04\x1a\x02 \x00\x12\x17\n\x06reason\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n&themis/litcache/models/pedigrees.proto\x12 themis.litcache.models.pedigrees\x1a\x1b\x62uf/validate/validate.proto\"\x80\x03\n\x1ePedigreeExtractionConstruction\x12\x16\n\x05model\x18\x01 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12 \n\x0fharness_version\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x12\xa3\x02\n\x0c\x66igures_read\x18\x03 \x03(\x0b\x32\x30.themis.litcache.models.pedigrees.PedigreeFigureB\xda\x01\xbaH\xd6\x01\x92\x01\x02\x08\x01\xba\x01N\n\x13\x66igures_read.unique\x12\x17\x61 figure is listed once\x1a\x1ethis.map(f, f.figure).unique()\xba\x01}\n\x19\x66igures_read.one_accepted\x12?a record is written only when some figure\'s answer was accepted\x1a\x1fthis.exists(f, !has(f.failure))\"\xa6\x03\n\x0ePedigreeFigure\x12\x17\n\x06\x66igure\x18\x01 \x01(\x05\x42\x07\xbaH\x04\x1a\x02(\x00\x12\x93\x01\n\x08\x66\x61ilures\x18\x02 \x03(\x0b\x32-.themis.litcache.models.pedigrees.PageFailureBR\xbaHO\xba\x01L\n\x15\x66\x61ilures.unique_pages\x12\x11\x61 page fails once\x1a this.map(f, f.pdf_page).unique()\x12\x1d\n\x07\x66\x61ilure\x18\x03 \x01(\tB\x07\xbaH\x04r\x02\x10\x01H\x00\x88\x01\x01:\xb9\x01\xbaH\xb5\x01\x1a\xb2\x01\n\x19\x66igure.one_way_of_failing\x12\x64\x61 figure read a page at a time lists its failed pages; one read in one conversation gives one reason\x1a/this.failures.size() == 0 || !has(this.failure)B\n\n\x08_failure\"A\n\x0bPageFailure\x12\x19\n\x08pdf_page\x18\x01 \x01(\x05\x42\x07\xbaH\x04\x1a\x02 \x00\x12\x17\n\x06reason\x18\x02 \x01(\tB\x07\xbaH\x04r\x02\x10\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -37,19 +37,23 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_PEDIGREEEXTRACTIONCONSTRUCTION'].fields_by_name['harness_version']._loaded_options = None
   _globals['_PEDIGREEEXTRACTIONCONSTRUCTION'].fields_by_name['harness_version']._serialized_options = b'\272H\004r\002\020\001'
   _globals['_PEDIGREEEXTRACTIONCONSTRUCTION'].fields_by_name['figures_read']._loaded_options = None
-  _globals['_PEDIGREEEXTRACTIONCONSTRUCTION'].fields_by_name['figures_read']._serialized_options = b'\272HV\222\001\002\010\001\272\001N\n\023figures_read.unique\022\027a figure is listed once\032\036this.map(f, f.figure).unique()'
+  _globals['_PEDIGREEEXTRACTIONCONSTRUCTION'].fields_by_name['figures_read']._serialized_options = b'\272H\326\001\222\001\002\010\001\272\001N\n\023figures_read.unique\022\027a figure is listed once\032\036this.map(f, f.figure).unique()\272\001}\n\031figures_read.one_accepted\022?a record is written only when some figure\'s answer was accepted\032\037this.exists(f, !has(f.failure))'
   _globals['_PEDIGREEFIGURE'].fields_by_name['figure']._loaded_options = None
   _globals['_PEDIGREEFIGURE'].fields_by_name['figure']._serialized_options = b'\272H\004\032\002(\000'
   _globals['_PEDIGREEFIGURE'].fields_by_name['failures']._loaded_options = None
   _globals['_PEDIGREEFIGURE'].fields_by_name['failures']._serialized_options = b'\272HO\272\001L\n\025failures.unique_pages\022\021a page fails once\032 this.map(f, f.pdf_page).unique()'
+  _globals['_PEDIGREEFIGURE'].fields_by_name['failure']._loaded_options = None
+  _globals['_PEDIGREEFIGURE'].fields_by_name['failure']._serialized_options = b'\272H\004r\002\020\001'
+  _globals['_PEDIGREEFIGURE']._loaded_options = None
+  _globals['_PEDIGREEFIGURE']._serialized_options = b'\272H\265\001\032\262\001\n\031figure.one_way_of_failing\022da figure read a page at a time lists its failed pages; one read in one conversation gives one reason\032/this.failures.size() == 0 || !has(this.failure)'
   _globals['_PAGEFAILURE'].fields_by_name['pdf_page']._loaded_options = None
   _globals['_PAGEFAILURE'].fields_by_name['pdf_page']._serialized_options = b'\272H\004\032\002 \000'
   _globals['_PAGEFAILURE'].fields_by_name['reason']._loaded_options = None
   _globals['_PAGEFAILURE'].fields_by_name['reason']._serialized_options = b'\272H\004r\002\020\001'
   _globals['_PEDIGREEEXTRACTIONCONSTRUCTION']._serialized_start=106
-  _globals['_PEDIGREEEXTRACTIONCONSTRUCTION']._serialized_end=360
-  _globals['_PEDIGREEFIGURE']._serialized_start=363
-  _globals['_PEDIGREEFIGURE']._serialized_end=554
-  _globals['_PAGEFAILURE']._serialized_start=556
-  _globals['_PAGEFAILURE']._serialized_end=621
+  _globals['_PEDIGREEEXTRACTIONCONSTRUCTION']._serialized_end=490
+  _globals['_PEDIGREEFIGURE']._serialized_start=493
+  _globals['_PEDIGREEFIGURE']._serialized_end=915
+  _globals['_PAGEFAILURE']._serialized_start=917
+  _globals['_PAGEFAILURE']._serialized_end=982
 # @@protoc_insertion_point(module_scope)

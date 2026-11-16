@@ -57,6 +57,7 @@ schema/proto/                     # hand-authored .proto — the source of truth
   themis/sheaf/models/            # at-rest: the sheaf ref document
   clinvar_proto/                  # copy of ClinVar's published schema
   pubmed_proto/                   # copy of PubMed's published schema
+  grus/models/                    # copy of grus's pedigree schema
 buf.yaml                          # module, lint rules, buf breaking config, deps
 buf.lock                          # pinned buf deps (protovalidate)
 apps/web/buf.gen.yaml             # protobuf-es (local protoc-gen-es plugin)
@@ -321,6 +322,15 @@ directly rather than registering a duplicate descriptor. The Python codegen pass
 while the TypeScript `protobuf-es` pass compiles them like any other `.proto` so the web tier gets TypeScript types. The
 CI freshness check catches both hand edits to the copies and wheel version bumps made without running code generation.
 
+[grus](https://github.com/populationgenomics/grus)'s pedigree schema comes in the same way. It is not generated from an
+XSD: grus authors it by hand and owns it. The pedigree record
+([`paper_pedigrees.proto`](../../schema/proto/themis/litcache/models/paper_pedigrees.proto)) embeds its `PedigreeSet`
+([`pedigree-extraction.md`](pedigree-extraction.md)), so [`regen.py`](../../tools/schema/regen.py) copies
+[`pedigree.proto`](../../schema/proto/grus/models/pedigree.proto) out of the pinned `grus` wheel. The record has a file
+of its own because of that import: the manifest imports the record's construction, and a service that reads only
+manifests should not need the grus wheel. grus numbers its fields by hand and keeps a compatibility check of its own, so
+the renumbering hazard below does not apply to it.
+
 Because `xsd-former` assigns field numbers positionally in XSD document order without keeping a ledger of previously
 released field numbers, any upstream schema revision that inserts an element in the middle of a sequence shifts every
 subsequent field number. No `reserved` statement in the committed copy can prevent that, because every regeneration
@@ -349,13 +359,13 @@ runtime than our dependency tree allows (capped at 6.x by `apache-beam` and `grp
 Instead, [`tools/schema/regen.py`](../../tools/schema/regen.py) runs all code generation locally using the tools
 installed in the workspace (`uv run --group codegen python -m tools.schema.regen`):
 
-| Stage           | Tool                                             | Output                                                                               |
-| --------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| Upstream copy   | Pinned `clinvar-proto` and `pubmed-proto` wheels | `schema/proto/clinvar_proto/clinvar.proto`, `schema/proto/pubmed_proto/pubmed.proto` |
-| Python messages | `grpcio-tools` `protoc` (`--python` / `--pyi`)   | `themis/**/*_pb2.py` + `.pyi`, `buf/validate/validate_pb2.py`                        |
-| gRPC stubs      | `grpcio-tools` `protoc` (`--grpc_python`)        | `*_pb2_grpc.py` (service protos only)                                                |
-| gRPC stub types | `mypy-protobuf`'s `protoc-gen-mypy_grpc`         | `*_pb2_grpc.pyi` (service protos only)                                               |
-| TypeScript      | Local `protoc-gen-es` via `buf generate`         | `apps/web/src/gen/**/*_pb.ts`                                                        |
+| Stage           | Tool                                                     | Output                                                                                                                          |
+| --------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Upstream copy   | Pinned `clinvar-proto`, `pubmed-proto` and `grus` wheels | `schema/proto/clinvar_proto/clinvar.proto`, `schema/proto/pubmed_proto/pubmed.proto`, `schema/proto/grus/models/pedigree.proto` |
+| Python messages | `grpcio-tools` `protoc` (`--python` / `--pyi`)           | `themis/**/*_pb2.py` + `.pyi`, `buf/validate/validate_pb2.py`                                                                   |
+| gRPC stubs      | `grpcio-tools` `protoc` (`--grpc_python`)                | `*_pb2_grpc.py` (service protos only)                                                                                           |
+| gRPC stub types | `mypy-protobuf`'s `protoc-gen-mypy_grpc`                 | `*_pb2_grpc.pyi` (service protos only)                                                                                          |
+| TypeScript      | Local `protoc-gen-es` via `buf generate`                 | `apps/web/src/gen/**/*_pb.ts`                                                                                                   |
 
 `regen.py` first runs `buf export` to materialize our `.proto` files alongside the `buf.lock`-pinned `buf/validate`
 dependency into a temporary directory (using a cached module fetch rather than a remote plugin call). It then runs the
@@ -365,6 +375,15 @@ emits `buf/validate/validate_pb2.py` into the repository, while standard `google
 from `grpcio-tools`'s bundled includes at runtime. On the TypeScript side, `buf generate` runs the local
 `@bufbuild/protoc-gen-es` plugin configured in [`apps/web/buf.gen.yaml`](../../apps/web/buf.gen.yaml); Connect-ES v2
 uses the `GenService` descriptors that `protoc-gen-es` emits directly, requiring no separate Connect codegen plugin.
+
+Two upstream wheels install the same `buf/validate` stubs into `site-packages`: grus, whose schema imports
+`buf/validate`, and hgvs-weaver-data. Python loads one module under that name, and which copy it is depends on the
+environment. hgvs-weaver-data ships `buf/__init__.py`, which makes `buf` a regular package, and Python imports a regular
+package ahead of the repository's `buf/`, which has no `__init__.py`. Where only grus is installed, both are namespace
+portions, and the order of the import path decides. Whichever copy loads, it must be the one `regen.py` commits. A test
+([`test_upstream_buf_validate.py`](../../tests/tools/test_upstream_buf_validate.py)) compares the hash each installed
+wheel records for the stubs with the committed files, so a wheel built against another protovalidate is caught rather
+than imported.
 
 All generated files are committed to git and never edited by hand. When proto inputs change, CI
 ([`.github/workflows/schema-freshness.yml`](../../.github/workflows/schema-freshness.yml)) verifies freshness by running

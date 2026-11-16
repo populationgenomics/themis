@@ -1,8 +1,10 @@
 // How a paper's pedigrees were read (docs/design/pedigree-extraction.md).
 //
-// The record's bytes are a grus.models.pedigree.PedigreeSet, the grus library's own contract: every pedigree read from
-// the paper, the conditions they share, and the citations that say where each was read. Themis owns only how the set
-// was made. Each citation's document_id in the set is the hash of the pdf revision its page belongs to.
+// The record's bytes hold grus.models.pedigree.PedigreeSet, the grus library's own contract for pedigrees, the
+// conditions they share, and the citations that say where each was read: one set for a paper read a page at a time, or
+// a PaperPedigrees (paper_pedigrees.proto), a set per figure, for one whose figures are each read in one conversation.
+// The harness_version says which. Themis owns only how the sets were made. Each citation's document_id is the hash of
+// the pdf revision its page belongs to.
 //
 //   Manifest
 //     refs["pedigrees"] ──► records[P]   construction: PedigreeExtractionConstruction
@@ -23,7 +25,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file themis/litcache/models/pedigrees.proto.
  */
 export const file_themis_litcache_models_pedigrees: GenFile = /*@__PURE__*/
-  fileDesc("CiZ0aGVtaXMvbGl0Y2FjaGUvbW9kZWxzL3BlZGlncmVlcy5wcm90bxIgdGhlbWlzLmxpdGNhY2hlLm1vZGVscy5wZWRpZ3JlZXMi/gEKHlBlZGlncmVlRXh0cmFjdGlvbkNvbnN0cnVjdGlvbhIWCgVtb2RlbBgBIAEoCUIHukgEcgIQARIgCg9oYXJuZXNzX3ZlcnNpb24YAiABKAlCB7pIBHICEAESoQEKDGZpZ3VyZXNfcmVhZBgDIAMoCzIwLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMucGVkaWdyZWVzLlBlZGlncmVlRmlndXJlQlm6SFa6AU4KE2ZpZ3VyZXNfcmVhZC51bmlxdWUSF2EgZmlndXJlIGlzIGxpc3RlZCBvbmNlGh50aGlzLm1hcChmLCBmLmZpZ3VyZSkudW5pcXVlKCmSAQIIASK/AQoOUGVkaWdyZWVGaWd1cmUSFwoGZmlndXJlGAEgASgFQge6SAQaAigAEpMBCghmYWlsdXJlcxgCIAMoCzItLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMucGVkaWdyZWVzLlBhZ2VGYWlsdXJlQlK6SE+6AUwKFWZhaWx1cmVzLnVuaXF1ZV9wYWdlcxIRYSBwYWdlIGZhaWxzIG9uY2UaIHRoaXMubWFwKGYsIGYucGRmX3BhZ2UpLnVuaXF1ZSgpIkEKC1BhZ2VGYWlsdXJlEhkKCHBkZl9wYWdlGAEgASgFQge6SAQaAiAAEhcKBnJlYXNvbhgCIAEoCUIHukgEcgIQAWIGcHJvdG8z", [file_buf_validate_validate]);
+  fileDesc("CiZ0aGVtaXMvbGl0Y2FjaGUvbW9kZWxzL3BlZGlncmVlcy5wcm90bxIgdGhlbWlzLmxpdGNhY2hlLm1vZGVscy5wZWRpZ3JlZXMigAMKHlBlZGlncmVlRXh0cmFjdGlvbkNvbnN0cnVjdGlvbhIWCgVtb2RlbBgBIAEoCUIHukgEcgIQARIgCg9oYXJuZXNzX3ZlcnNpb24YAiABKAlCB7pIBHICEAESowIKDGZpZ3VyZXNfcmVhZBgDIAMoCzIwLnRoZW1pcy5saXRjYWNoZS5tb2RlbHMucGVkaWdyZWVzLlBlZGlncmVlRmlndXJlQtoBukjWAboBTgoTZmlndXJlc19yZWFkLnVuaXF1ZRIXYSBmaWd1cmUgaXMgbGlzdGVkIG9uY2UaHnRoaXMubWFwKGYsIGYuZmlndXJlKS51bmlxdWUoKboBfQoZZmlndXJlc19yZWFkLm9uZV9hY2NlcHRlZBI/YSByZWNvcmQgaXMgd3JpdHRlbiBvbmx5IHdoZW4gc29tZSBmaWd1cmUncyBhbnN3ZXIgd2FzIGFjY2VwdGVkGh90aGlzLmV4aXN0cyhmLCAhaGFzKGYuZmFpbHVyZSkpkgECCAEipgMKDlBlZGlncmVlRmlndXJlEhcKBmZpZ3VyZRgBIAEoBUIHukgEGgIoABKTAQoIZmFpbHVyZXMYAiADKAsyLS50aGVtaXMubGl0Y2FjaGUubW9kZWxzLnBlZGlncmVlcy5QYWdlRmFpbHVyZUJSukhPugFMChVmYWlsdXJlcy51bmlxdWVfcGFnZXMSEWEgcGFnZSBmYWlscyBvbmNlGiB0aGlzLm1hcChmLCBmLnBkZl9wYWdlKS51bmlxdWUoKRIdCgdmYWlsdXJlGAMgASgJQge6SARyAhABSACIAQE6uQG6SLUBGrIBChlmaWd1cmUub25lX3dheV9vZl9mYWlsaW5nEmRhIGZpZ3VyZSByZWFkIGEgcGFnZSBhdCBhIHRpbWUgbGlzdHMgaXRzIGZhaWxlZCBwYWdlczsgb25lIHJlYWQgaW4gb25lIGNvbnZlcnNhdGlvbiBnaXZlcyBvbmUgcmVhc29uGi90aGlzLmZhaWx1cmVzLnNpemUoKSA9PSAwIHx8ICFoYXModGhpcy5mYWlsdXJlKUIKCghfZmFpbHVyZSJBCgtQYWdlRmFpbHVyZRIZCghwZGZfcGFnZRgBIAEoBUIHukgEGgIgABIXCgZyZWFzb24YAiABKAlCB7pIBHICEAFiBnByb3RvMw", [file_buf_validate_validate]);
 
 /**
  * How the pedigree step made a paper's pedigree set: a Record.construction arm.
@@ -63,7 +65,7 @@ export const PedigreeExtractionConstructionSchema: GenMessage<PedigreeExtraction
   messageDesc(file_themis_litcache_models_pedigrees, 0);
 
 /**
- * One figure the model read, a page at a time.
+ * One figure the model read, a page at a time or in one conversation.
  *
  * @generated from message themis.litcache.models.pedigrees.PedigreeFigure
  */
@@ -76,12 +78,20 @@ export type PedigreeFigure = Message<"themis.litcache.models.pedigrees.PedigreeF
   figure: number;
 
   /**
-   * Each of the figure's pages whose answer was not accepted, once. Empty when every page's was. The set holds the
-   * pedigrees of the pages that were accepted and none from those that were not.
+   * For a figure read a page at a time: each of its pages whose answer was not accepted, once. Empty when every
+   * page's was. The set holds the pedigrees of the pages that were accepted and none from those that were not.
    *
    * @generated from field: repeated themis.litcache.models.pedigrees.PageFailure failures = 2;
    */
   failures: PageFailure[];
+
+  /**
+   * For a figure read in one conversation: why no answer for it was accepted, a refusal or an answer still rejected
+   * after its repairs. The figure then has no set. Absent when its answer was accepted.
+   *
+   * @generated from field: optional string failure = 3;
+   */
+  failure?: string | undefined;
 };
 
 /**

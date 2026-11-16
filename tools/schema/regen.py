@@ -47,6 +47,7 @@ import tempfile
 
 from clinvar_proto import clinvar_pb2
 from grpc_tools import protoc
+from grus.models import pedigree_pb2
 from pubmed_proto import pubmed_pb2
 
 from tools.schema import agent_exposed, guest_contract
@@ -60,6 +61,7 @@ _WELL_KNOWN = importlib.resources.files('grpc_tools') / '_proto'
 _WHEEL_PROTOS = {
     'clinvar_proto/clinvar.proto': clinvar_pb2,
     'pubmed_proto/pubmed.proto': pubmed_pb2,
+    'grus/models/pedigree.proto': pedigree_pb2,
 }
 
 
@@ -72,7 +74,8 @@ def _copy_wheel_protos() -> None:
             contract against a second registration of the same descriptor instead of the wheel's.
     """
     for wheel_proto, stub in _WHEEL_PROTOS.items():
-        package, filename = wheel_proto.split('/')
+        directory, _, filename = wheel_proto.rpartition('/')
+        package = directory.replace('/', '.')
         if stub.DESCRIPTOR.name != wheel_proto:
             raise SystemExit(
                 f'{package} registers its descriptor as {stub.DESCRIPTOR.name!r}, not {wheel_proto!r}; '
@@ -82,7 +85,7 @@ def _copy_wheel_protos() -> None:
         if not source.is_file():
             raise SystemExit(
                 f'the installed {package} ships no {filename}; pin a release that publishes it '
-                '(pyproject, `codegen` and `evidence` groups)'
+                '(pyproject, `codegen` group)'
             )
         target = _REPO_ROOT / 'schema' / 'proto' / wheel_proto
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +134,7 @@ def main() -> int:
     # Compile the module once: the descriptor set both selects the service-bearing protos for the gRPC pass
     # (a proto that declares no service — a data or options proto — gets no `_pb2_grpc.py`) and drives the
     # agent-exposure surface below.
-    print('schema/regen: upstream record schemas (clinvar_proto, pubmed_proto wheels)')
+    print('schema/regen: upstream record schemas (clinvar_proto, pubmed_proto, grus wheels)')
     _copy_wheel_protos()
 
     image = agent_exposed.build_image()

@@ -139,7 +139,8 @@ message Record {
     RenderingConstruction rendering = 10;
     themis.litcache.models.variants.VariantExtractionConstruction variant_extraction = 11;  // a MentionSet
     themis.litcache.models.variants.VariantValidationConstruction variant_validation = 12;  // a Verdicts
-    themis.litcache.models.pedigrees.PedigreeExtractionConstruction pedigree_extraction = 13;  // a grus PedigreeSet
+    // a PaperPedigrees, or a grus PedigreeSet for a paper read a page at a time
+    themis.litcache.models.pedigrees.PedigreeExtractionConstruction pedigree_extraction = 13;
     themis.litcache.models.figures.FigureAnnotationConstruction figure_annotation = 14;  // a FigureSet
   }
 }

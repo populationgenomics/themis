@@ -1,0 +1,334 @@
+// The pedigree IR: a meaning-only, NORMALIZED model of a pedigree figure — designed for reasoning over
+// the text form, not just render round-trip. Covers the full Bennett/NSGC concept space (2008 + 2022),
+// even where the extraction prompt does not yet emit a field and the renderer does not yet draw it.
+//
+// Meaning-only: WHO is in the pedigree, their gender/clinical status, and how they relate — never
+// geometry. The only semantic horizontal ordering is sibling birth order (Mating.offspring order).
+//
+// Referential integrity (loader-enforced, cross-message; protovalidate covers only field-local rules):
+// every referenced Position exists among some Pedigree's individuals; (generation,index) is unique
+// within a Pedigree; a mating's two partners are distinct; offspring exist; acyclic for tier-1 render.
+// Citations (optional provenance) are checked there too: unique ids, every reference resolves, a Support's
+// field on the closed path list, its scope in the pedigree.
+// Conditions are declared once per set and referenced by id: every id resolves, declarations are unique and
+// each is referenced, and no person has two entries for one condition.
+// Loci are declared the same way: ids are unique, a named locus's (gene, name) is declared once, each locus is
+// referenced; every genotype's locus resolves and each allele is one of its symbols, at most one genotype per person
+// per locus, genotypes sharing a phase set have equal ploidy, and an annotation's loci are ones its person has a
+// genotype at.
+
+syntax = "proto3";
+package grus.models.pedigree;
+import "buf/validate/validate.proto";
+
+// ── Identity / reference key ────────────────────────────────────────────────────────────────────
+// The as-drawn coordinate AND the cross-message reference key: generation (I=1, II=2, …) + the arabic
+// index within that generation. Every drawn node gets one (assign an index even when the figure omits
+// the printed number). `generation` is the as-drawn LABEL, not layout geometry — the renderer still
+// derives the topological row; if a label disagrees with topology, the number is the label.
+message Position {
+  int32 generation = 1 [(buf.validate.field).int32.gte = 1];
+  int32 index = 2 [(buf.validate.field).int32.gte = 1];
+}
+
+// ── Gender + sex assigned at birth (Bennett 2022 model) ─────────────────────────────────────────
+// The symbol denotes GENDER IDENTITY (2022 Fig 1): □ man, ○ woman, ◇ nonbinary or (bare) unknown.
+// Meaning, not shape — store "man", never "square". Pre-2022 figures draw phenotypic sex; they map
+// here by the standard's assume-aligned rule (2022 Box 1.1.f), with sex_assigned_at_birth left unset.
+enum Gender {
+  GENDER_UNSPECIFIED = 0;  // sentinel — never a domain value
+  GENDER_MAN = 1;          // □
+  GENDER_WOMAN = 2;        // ○
+  GENDER_NONBINARY = 3;    // ◇ + a sex_assigned_at_birth annotation
+  GENDER_UNKNOWN = 4;      // ◇, gender not stated
+}
+// AMAB / AFAB / UAAB. Orthogonal to the gender symbol; OPTIONAL — absent = not annotated (the
+// cis-assumed / not-stated case), so the sentinel is never emitted.
+enum SexAssignedAtBirth {
+  SEX_ASSIGNED_AT_BIRTH_UNSPECIFIED = 0;
+  SEX_ASSIGNED_AT_BIRTH_MALE = 1;        // AMAB
+  SEX_ASSIGNED_AT_BIRTH_FEMALE = 2;      // AFAB
+  SEX_ASSIGNED_AT_BIRTH_UNASSIGNED = 3;  // UAAB
+}
+
+// ── Conditions (affection + carrier, per condition) ─────────────────────────────────────────────
+// 2022 draws carrier by FILL (dot deprecated) and multiple conditions by PARTITIONING the symbol, so a
+// person's clinical status is a repeated per-condition list, not one enum. One Condition = one fill
+// region keyed to the legend.
+enum ConditionStatus {
+  CONDITION_STATUS_UNSPECIFIED = 0;
+  CONDITION_STATUS_UNAFFECTED = 1;
+  CONDITION_STATUS_AFFECTED = 2;
+  CONDITION_STATUS_CARRIER = 3;         // heterozygous / asymptomatic carrier (by phenotype, per Bennett) — the
+                                        // drawn carrier glyph is a render choice, not fixed by this status
+  CONDITION_STATUS_PRESYMPTOMATIC = 4;  // unaffected now, may manifest (dominant) — vertical-line symbol
+  CONDITION_STATUS_UNKNOWN = 5;         // "?" — not reported
+}
+// Mode of inheritance of a condition, recorded only when the figure or legend states/draws it (not inferred
+// from the pedigree pattern — see the no-inference non-goal). Absent = UNSPECIFIED. A renderer MAY use it to
+// choose a carrier convention, but the glyph is a render option, not implied by this field.
+enum Inheritance {
+  INHERITANCE_UNSPECIFIED = 0;
+  INHERITANCE_AUTOSOMAL_DOMINANT = 1;
+  INHERITANCE_AUTOSOMAL_RECESSIVE = 2;
+  INHERITANCE_X_LINKED_DOMINANT = 3;
+  INHERITANCE_X_LINKED_RECESSIVE = 4;
+  INHERITANCE_Y_LINKED = 5;
+  INHERITANCE_MITOCHONDRIAL = 6;
+}
+// A condition, declared once per set (PedigreeSet.conditions) and referenced by id from each person's entry
+// (docs/design/ir.md, "Conditions are declared once, by id").
+message ConditionDef {
+  string id = 1 [(buf.validate.field).string.min_len = 1];  // local ("k1"), unique in the set
+  string name = 2;                        // as printed, e.g. "cystic fibrosis"; "" = the figure's sole, unnamed one
+  optional Inheritance inheritance = 3;   // absent = UNSPECIFIED; recorded when the figure states it, never inferred
+}
+// A person's entry for one declared condition: which condition, and what is true of this person.
+message Condition {
+  option (buf.validate.message).cel = {
+    id: "condition.status_specified", message: "status must be a real value", expression: "this.status != 0"
+  };
+  reserved 1, 3;                          // were name and inheritance (pre-1.0): now on the ConditionDef
+  reserved "name", "inheritance";
+  string condition_id = 5 [(buf.validate.field).string.min_len = 1];  // a ConditionDef id in the set
+  ConditionStatus status = 2;
+  optional string onset_age = 4;          // as-drawn age at onset/diagnosis for THIS person, verbatim
+                                          // ("42", "40s", "b.1975", "prenatal") — bound to the entry
+}
+
+// ── Reproductive outcome / role (the node is a pregnancy/loss, or a donor/surrogate) ────────────
+enum ReproductiveOutcome {          // default LIVE (field optional; absent = LIVE)
+  REPRODUCTIVE_OUTCOME_UNSPECIFIED = 0;
+  REPRODUCTIVE_OUTCOME_LIVE = 1;
+  REPRODUCTIVE_OUTCOME_PREGNANCY = 2;             // P
+  REPRODUCTIVE_OUTCOME_STILLBIRTH = 3;            // SB
+  REPRODUCTIVE_OUTCOME_MISCARRIAGE = 4;           // SAB — triangle
+  REPRODUCTIVE_OUTCOME_TERMINATION = 5;           // TOP — triangle, labelled (glyph TBD; the slash is deceased)
+  REPRODUCTIVE_OUTCOME_ECTOPIC = 6;               // ECT
+}
+enum ReproductiveRole {             // ART donor/surrogate node (2022 Fig 5); default SELF
+  REPRODUCTIVE_ROLE_UNSPECIFIED = 0;
+  REPRODUCTIVE_ROLE_SELF = 1;
+  REPRODUCTIVE_ROLE_GAMETE_DONOR = 2;             // D   (KIN:004 sperm donor / KIN:038 ovum donor)
+  REPRODUCTIVE_ROLE_GESTATIONAL_CARRIER = 3;      // S   (KIN:005 isGestationalCarrierOf)
+}
+
+message Individual {
+  option (buf.validate.message).cel = {
+    id: "individual.gender_specified", message: "gender must be a real value", expression: "this.gender != 0"
+  };
+  option (buf.validate.message).cel = {
+    id: "individual.count_exclusive", message: "count and count_unspecified are mutually exclusive",
+    expression: "!(has(this.count) && this.count_unspecified)"
+  };
+  int32 generation = 1 [(buf.validate.field).int32.gte = 1];  // identity + reference key
+  int32 index = 2 [(buf.validate.field).int32.gte = 1];
+  Gender gender = 3;
+  optional SexAssignedAtBirth sex_assigned_at_birth = 4;       // AMAB/AFAB/UAAB when annotated
+  repeated Condition conditions = 5;                           // empty = status not indicated
+  bool deceased = 6;                                           // slash
+  bool proband = 7;                                            // arrow + P
+  bool consultand = 8;                                         // arrow, no P
+  optional ReproductiveOutcome reproductive_outcome = 9;       // absent = LIVE
+  optional ReproductiveRole reproductive_role = 10;            // absent = SELF
+  optional int32 count = 11 [(buf.validate.field).int32.gte = 1];  // collapsed sibship "5"; absent = 1 = one person
+  bool count_unspecified = 12;                                 // drawn as "n" (unknown multiple)
+  repeated Annotation annotations = 13;                        // remaining as-drawn text (below)
+  optional string external_id = 14;                            // opaque external/study id printed for this person;
+                                                               // identity + reference stay Position — passthrough only
+  bool documented_evaluation = 15;                             // NSGC asterisk (*): documented / records reviewed
+  repeated Genotype genotypes = 16;                            // what the source states this person carries, per
+                                                               // declared locus; empty = not stated (never inferred)
+}
+
+// ── As-drawn text near a node, typed ────────────────────────────────────────────────────────────
+enum AnnotationType {
+  ANNOTATION_TYPE_UNSPECIFIED = 0;
+  ANNOTATION_TYPE_GENOTYPE = 1;         // "N/M", "+/-"
+  ANNOTATION_TYPE_VARIANT = 2;          // "c.797G>A", "W370*"
+  ANNOTATION_TYPE_PHENOTYPE = 3;        // clinical descriptor
+  ANNOTATION_TYPE_AGE = 4;              // age at exam/onset/death ("d.72", "42y")
+  ANNOTATION_TYPE_GESTATIONAL_AGE = 5;  // "16 wk" on a pregnancy/loss node
+  ANNOTATION_TYPE_KARYOTYPE = 6;        // "47,XY,+21"
+  ANNOTATION_TYPE_MEASUREMENT = 7;      // "175"
+  ANNOTATION_TYPE_PRONOUN = 8;          // 2022: recorded when given
+  ANNOTATION_TYPE_CHOSEN_NAME = 9;      // 2022
+  ANNOTATION_TYPE_OTHER = 10;
+  ANNOTATION_TYPE_AGE_AT_DEATH = 11;    // "d.72", "died 3 mo" — distinct from AGE (age at exam/onset); Phenopackets
+                                        // VitalStatus.time_of_death vs time_at_last_encounter
+}
+message Annotation {
+  option (buf.validate.message).cel = {
+    id: "annotation.type_specified", message: "type must be a real value", expression: "this.type != 0"
+  };
+  string text = 1 [(buf.validate.field).string.min_len = 1];
+  AnnotationType type = 2;
+  // Locus ids whose genotypes this GENOTYPE / VARIANT text shows (one text may show several: "M1/M2" over two
+  // variant loci). The person has a genotype at each; the genotype may say more than the text does.
+  repeated string loci = 3 [(buf.validate.field).repeated.items.string.min_len = 1];
+}
+
+// ── Loci, alleles and genotypes (docs/design/ir.md, "Genotypes") ───────────────────────────────
+// A genotype table: rows are people, columns are loci, cells are genotypes. Loci are declared once per set, like
+// conditions, and referenced by id; a person carries a genotype at some of them. Recorded as the source states
+// them: an untested person has no genotype, an obligate carrier is not filled in.
+enum IdentifierScheme {
+  IDENTIFIER_SCHEME_UNSPECIFIED = 0;
+  IDENTIFIER_SCHEME_HGVS = 1;             // "NM_000492.4:c.1521_1523del", "c.[76A>C;83G>C]" (an allele in cis)
+  IDENTIFIER_SCHEME_RSID = 2;             // "rs113993960"
+  IDENTIFIER_SCHEME_CLINVAR = 3;          // a ClinVar variation id
+  IDENTIFIER_SCHEME_CLINGEN_ALLELE = 4;   // "CA000123"
+  IDENTIFIER_SCHEME_SPDI = 5;
+  IDENTIFIER_SCHEME_VRS = 6;              // "ga4gh:VA.…"
+  IDENTIFIER_SCHEME_OTHER = 7;
+}
+// A resolvable name for an allele, as printed; normalising it is a consumer's job.
+message Identifier {
+  option (buf.validate.message).cel = {
+    id: "identifier.scheme_specified", message: "scheme must be a real value", expression: "this.scheme != 0"
+  };
+  IdentifierScheme scheme = 1;
+  string value = 2 [(buf.validate.field).string.min_len = 1];
+}
+// One allele at a locus: the symbol genotypes use, and what the source says it stands for. One allele may be several
+// variants in cis (a haplotype), named so: "c.[76A>C;83G>C]".
+message Allele {
+  string symbol = 1 [(buf.validate.field).string.min_len = 1];  // as used in genotypes: "+", "M1", "G", "★", "1"
+  string name = 2;                        // as printed: "c.1234A>G", "wild type"; "" when the source does not say
+  bool reference = 3;                     // the reference / wild-type allele, when the source says which
+  repeated Identifier identifiers = 4;    // when the source prints them
+}
+// A place some people are genotyped at: one variant, a gene with several, or a marker. Declared once per set
+// (PedigreeSet.loci) and referenced by id.
+message Locus {
+  string id = 1 [(buf.validate.field).string.min_len = 1];  // local ("l1"), unique in the set
+  string name = 2;                        // as printed: "c.797G>A", "D12S1640"; "" when only the alleles are
+                                          // named, and then not unique: several unnamed loci may share a gene
+  optional string gene = 3 [(buf.validate.field).string.min_len = 1];  // as printed: "SLC26A4"; absent if not
+  repeated Allele alleles = 4 [(buf.validate.field).repeated.min_items = 1];
+}
+// One person's genotype at one locus. `alleles` are copies, so zygosity is how often a symbol repeats: [M, M]
+// homozygous, [M, +] heterozygous, [M] hemizygous.
+message Genotype {
+  string locus_id = 1 [(buf.validate.field).string.min_len = 1];
+  repeated string alleles = 2 [(buf.validate.field).repeated = {
+    min_items: 1, max_items: 2, items: {string: {min_len: 1}}
+  }];                                     // symbols of the locus's alleles
+  // Stated phase, as VCF's PS: one person's genotypes sharing a phase set align slot by slot, slot i across them
+  // being one haplotype — so l1 [M, +] and l2 [+, M] in one set are in trans. Absent = phase not stated.
+  optional string phase_set = 3 [(buf.validate.field).string.min_len = 1];
+}
+
+// ── Matings ─────────────────────────────────────────────────────────────────────────────────────
+enum RelationshipStatus { RELATIONSHIP_STATUS_UNSPECIFIED = 0; RELATIONSHIP_STATUS_CURRENT = 1; RELATIONSHIP_STATUS_SEPARATED = 2; RELATIONSHIP_STATUS_DIVORCED = 3; }
+enum Childlessness { CHILDLESSNESS_UNSPECIFIED = 0; CHILDLESSNESS_NONE = 1; CHILDLESSNESS_BY_CHOICE = 2; CHILDLESSNESS_INFERTILITY = 3; }
+// KIN codes (GA4GH Family History Relations Ontology) on the mating vocabulary, for a mechanical export:
+// a two-partner Mating = KIN:026 isPartnerOf; consanguineous = KIN:030; SEPARATED = KIN:050 (KIN has no divorced).
+message Mating {
+  optional Position partner_a = 1;                    // absent (with partner_b absent too) = founder sibship: the
+                                                       // offspring are siblings via an undrawn parent couple
+  optional Position partner_b = 2;                    // absent = single-parent sibship (no phantom stand-in)
+  bool consanguineous = 3;                            // double line
+  optional RelationshipStatus status = 4;             // absent = CURRENT
+  optional Childlessness childlessness = 5;           // absent = NONE; reason rides in annotations
+  repeated Offspring offspring = 6;                   // birth order, left→right
+  repeated Annotation annotations = 7;                // e.g. childlessness reason ("vasectomy"), consang degree
+}
+
+// ── Descent edge ────────────────────────────────────────────────────────────────────────────────
+// KIN: MONOZYGOTIC = KIN:010, DIZYGOTIC/TRIZYGOTIC = KIN:011 (polyzygotic), UNKNOWN = KIN:009 (multiple birth, zygosity unknown).
+enum ZygosityType { ZYGOSITY_TYPE_UNSPECIFIED = 0; ZYGOSITY_TYPE_MONOZYGOTIC = 1; ZYGOSITY_TYPE_DIZYGOTIC = 2; ZYGOSITY_TYPE_UNKNOWN = 3; ZYGOSITY_TYPE_TRIZYGOTIC = 4; }
+// Solid vs dashed descent. KIN: BIOLOGICAL = KIN:003, ADOPTIVE = KIN:022, DONOR = KIN:004/038.
+enum Parentage { PARENTAGE_UNSPECIFIED = 0; PARENTAGE_BIOLOGICAL = 1; PARENTAGE_ADOPTIVE = 2; PARENTAGE_DONOR = 3; }
+enum Adoption { ADOPTION_UNSPECIFIED = 0; ADOPTION_NONE = 1; ADOPTION_IN = 2; ADOPTION_OUT = 3; ADOPTION_BY_RELATIVE = 4; }  // BY_RELATIVE: Bennett's third category
+message Offspring {
+  option (buf.validate.message).cel = {
+    id: "offspring.twin_type_iff_group", message: "twin_type set iff in a twin group",
+    expression: "has(this.twin_group) == (this.twin_type != 0)"
+  };
+  Position child = 1;
+  optional int32 twin_group = 2;             // same value across one multiple-birth set
+  ZygosityType twin_type = 3;
+  optional Parentage parentage = 4;          // absent = BIOLOGICAL (solid); ADOPTIVE/DONOR = dashed
+  optional Adoption adoption = 5;            // absent = NONE
+}
+
+// ── Pedigree-level labels + container ───────────────────────────────────────────────────────────
+enum LabelKind { LABEL_KIND_UNSPECIFIED = 0; LABEL_KIND_FAMILY = 1; LABEL_KIND_PANEL = 2; LABEL_KIND_GENE = 3; LABEL_KIND_PHENOTYPE = 4; LABEL_KIND_OTHER = 5; }
+message Label {
+  option (buf.validate.message).cel = {
+    id: "label.kind_specified", message: "kind must be a real value", expression: "this.kind != 0"
+  };
+  string text = 1 [(buf.validate.field).string.min_len = 1];
+  LabelKind kind = 2;
+}
+message Pedigree {
+  optional string id = 1;
+  repeated Label labels = 2;                              // was `title`; renderer derives display by priority
+  repeated Individual individuals = 3 [(buf.validate.field).repeated.min_items = 1];
+  repeated Mating matings = 4;
+  optional Provenance provenance = 5;
+  repeated string evidence = 6;                           // Citation ids: the panel this pedigree is drawn in
+  repeated Support supports = 7;                          // which facts came from where, when that matters
+}
+message PedigreeSet {
+  repeated Pedigree pedigrees = 1;
+  optional Provenance provenance = 2;
+  repeated Citation citations = 3;                        // the normalised list evidence and supports refer to
+  repeated string evidence = 4;                           // Citation ids: the figure as a whole, its caption
+  repeated ConditionDef conditions = 5;                   // every condition the set's entries reference, once
+  repeated Locus loci = 6;                                // every locus the set's genotypes reference, once
+}
+
+// ── Citations: where the record came from (docs/design/ir.md) ───────────────────────────────────
+// Optional provenance, not meaning: the renderer and the structural diff ignore every message below. Ids are
+// local to the set and referenced by id (the case-record pattern); the loader checks that each resolves, that
+// a Support's field is on its closed path list, and that its scope exists.
+message Citation {
+  string id = 1 [(buf.validate.field).string.min_len = 1];  // local ("c1"), unique in the set
+  string document_id = 2;     // the caller's id for the source document (e.g. a corpus paper id). Never
+                              // model-written: empty in an emitted IR; the extraction harness stamps it
+  oneof anchor {
+    option (buf.validate.oneof).required = true;
+    string quote = 3 [(buf.validate.field).string.min_len = 1];  // verbatim text that appears in the document
+    Region region = 4;                                           // an area of one page
+  }
+}
+// An area of one page of the SOURCE (never of a rendering): page units, origin top left — PDF points on a PDF
+// page, pixels on a bare image.
+message Region {
+  option (buf.validate.message).cel = {
+    id: "region.positive_extent", message: "a region needs x1 > x0 and y1 > y0",
+    expression: "this.x1 > this.x0 && this.y1 > this.y0"
+  };
+  int32 page = 1 [(buf.validate.field).int32.gte = 0];  // 0-based
+  float x0 = 2;
+  float y0 = 3;
+  float x1 = 4;
+  float y1 = 5;
+}
+// One kind of fact about some people, couples or the whole pedigree, and the citations that back it.
+message Support {
+  repeated string citations = 1 [(buf.validate.field).repeated.min_items = 1];  // Citation ids
+  string field = 2 [(buf.validate.field).string.min_len = 1];  // a path into the IR, from the loader's closed list
+  reserved 3;                         // was condition, by name (pre-1.0)
+  reserved "condition";
+  optional string condition_id = 6 [(buf.validate.field).string.min_len = 1];  // a ConditionDef id, iff `field`
+                                      // starts "condition."
+  repeated Position individuals = 4;  // scope; neither individuals nor matings = the whole pedigree
+  repeated MatingRef matings = 5;     // a couple (or lone parent), by its partners' positions
+  // Locus ids, non-empty iff `field` starts "genotype." or "locus."; several when one source states a fact across
+  // loci ("M1 and M2 in trans" backs genotype.phase_set at both).
+  repeated string loci = 7 [(buf.validate.field).repeated.items.string.min_len = 1];
+}
+message MatingRef {
+  optional Position partner_a = 1;
+  optional Position partner_b = 2;
+}
+message Provenance {   // harness metadata, never model-emitted (panel moved to Label)
+  optional string figure_uri = 1;
+  optional string doi = 2;
+  optional string extractor_model = 3;
+  optional string source_format = 4;   // set by an importer ("ped", "kinship2", "phenopackets", "openpedigree"):
+                                       // every Position in the set was synthesised, not read off a figure
+}

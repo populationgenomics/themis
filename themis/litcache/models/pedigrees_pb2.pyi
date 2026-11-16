@@ -18,12 +18,14 @@ class PedigreeExtractionConstruction(_message.Message):
     def __init__(self, model: _Optional[str] = ..., harness_version: _Optional[str] = ..., figures_read: _Optional[_Iterable[_Union[PedigreeFigure, _Mapping]]] = ...) -> None: ...
 
 class PedigreeFigure(_message.Message):
-    __slots__ = ("figure", "failures")
+    __slots__ = ("figure", "failures", "failure")
     FIGURE_FIELD_NUMBER: _ClassVar[int]
     FAILURES_FIELD_NUMBER: _ClassVar[int]
+    FAILURE_FIELD_NUMBER: _ClassVar[int]
     figure: int
     failures: _containers.RepeatedCompositeFieldContainer[PageFailure]
-    def __init__(self, figure: _Optional[int] = ..., failures: _Optional[_Iterable[_Union[PageFailure, _Mapping]]] = ...) -> None: ...
+    failure: str
+    def __init__(self, figure: _Optional[int] = ..., failures: _Optional[_Iterable[_Union[PageFailure, _Mapping]]] = ..., failure: _Optional[str] = ...) -> None: ...
 
 class PageFailure(_message.Message):
     __slots__ = ("pdf_page", "reason")

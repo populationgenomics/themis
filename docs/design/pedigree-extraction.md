@@ -267,13 +267,13 @@ loader checks. grus already treats a figure as the source of one set
 ([`ir.md`](https://github.com/populationgenomics/grus/blob/main/docs/design/ir.md), "Figure scope").
 
 So the record holds one grus pedigree set per figure that was read, keyed by the figure's index in the figure record
-([`pedigrees.proto`](../../schema/proto/themis/litcache/models/pedigrees.proto)). A figure whose answer was accepted has
-a set, an empty one when the figure held no pedigree; a figure that failed, or was never read, has none. In the example,
-Figure 1's set declares an SLC26A4 locus whose M1 carries the checked name `NM_000441.2:c.1234A>G`, and Figure 3's set
-declares its own, whose M1 carries `NM_000441.2:c.2000del`. Nothing is dropped and nothing is renamed. A case record
-that wants to know whether two families carry the same variant compares the alleles' checked names, which the reader
-gives each allele from the paper's checked variants (previous section), so the comparison is an exact match of
-identifiers rather than a reading of symbols. An unnamed condition stays the condition of its own figure.
+([`paper_pedigrees.proto`](../../schema/proto/themis/litcache/models/paper_pedigrees.proto)). A figure whose answer was
+accepted has a set, an empty one when the figure held no pedigree; a figure that failed, or was never read, has none. In
+the example, Figure 1's set declares an SLC26A4 locus whose M1 carries the checked name `NM_000441.2:c.1234A>G`, and
+Figure 3's set declares its own, whose M1 carries `NM_000441.2:c.2000del`. Nothing is dropped and nothing is renamed. A
+case record that wants to know whether two families carry the same variant compares the alleles' checked names, which
+the reader gives each allele from the paper's checked variants (previous section), so the comparison is an exact match
+of identifiers rather than a reading of symbols. An unnamed condition stays the condition of its own figure.
 
 A figure drawn across two pages is one conversation and one answer, so its set needs no joining: its symbols and
 conditions come from one reading of one legend.
@@ -381,7 +381,8 @@ and nothing reads a pedigree record yet.
 
 - **The 171 old records on dev before the first reader.** Nothing reads a pedigree record yet. Before something does,
   the per-paper records have to be gone, by re-reading their papers or by removing their refs, so that no reader meets a
-  bare set where it expects the per-figure record.
+  bare set where it expects the per-figure record. Their constructions are also the only ones that set the per-page
+  `failures` field, which can be retired once they are gone.
 - **Whether Sonnet holds up on real pages.** The ladder is synthetic: clean vector drawings with printed labels. A
   review of hand-checked pedigrees from real papers is in progress. If Opus reads real pages much better than Sonnet
   does, the ladder understates the gap and the choice is worth making again.

@@ -363,7 +363,7 @@ export type Record = Message<"themis.litcache.models.litcache.Record"> & {
     case: "variantValidation";
   } | {
     /**
-     * a grus PedigreeSet
+     * a PaperPedigrees, or a grus PedigreeSet for a paper read a page at a time
      *
      * @generated from field: themis.litcache.models.pedigrees.PedigreeExtractionConstruction pedigree_extraction = 13;
      */

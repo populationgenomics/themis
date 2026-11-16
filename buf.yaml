@@ -14,7 +14,7 @@ lint:
   # deployed clients bind — consolidating to one package, or splitting to one directory each,
   # would break those wire paths or churn every import. themis/workbench/models/ likewise
   # carries a package the compat gate now pins in place. The copied upstream schemas (clinvar_proto/,
-  # pubmed_proto/) are neither ours to rename nor free to move: each package is the upstream's, and
+  # pubmed_proto/, grus/) are neither ours to rename nor free to move: each package is the upstream's, and
   # its directory is the path the publishing wheel registers its descriptor under.
   use:
     - BASIC
