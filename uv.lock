@@ -2923,11 +2923,12 @@ wheels = [
 
 [[package]]
 name = "postern"
-version = "0.5.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b8/1a/357e29fd88e6a114dda989a4a3bc4f89fd189937569e663d216b55a0a189/postern-0.5.0.tar.gz", hash = "sha256:56061d1f307da7fa4e7125b6e66ad400e2b443528d1a6b01b0284e63939f03ab", size = 153192, upload-time = "2026-10-14T08:27:35.246Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/6d/74ded331d6ee72ede04c7fd621f075eaffae8c80ba91694f3175342fcad7/postern-0.6.0.tar.gz", hash = "sha256:1c040c937b8469514a8de627171c0566e00618a8d186bc1fbc95fe29ff95b6d0", size = 166666, upload-time = "2026-11-16T02:39:30.659Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d8/ed/4ceda5b47c952621551a853406980b4ee9b4e1747ee21ae2669986164e45/postern-0.5.0-py3-none-any.whl", hash = "sha256:4091e394d4ac8c10c23150550d469e00d5b4badab10ab467c1b37e2e6764e635", size = 85685, upload-time = "2026-10-14T08:27:33.945Z" },
+    { url = "https://files.pythonhosted.org/packages/41/d7/acd7dcdc61356e8b6356fa2ec98804299c299e34866620e0550cf2f8a15e/postern-0.6.0-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.musllinux_1_1_aarch64.whl", hash = "sha256:5e1c632fa137ed78f70de64a9bd6bef48de68397115585f5f9bdffef81623c83", size = 607945, upload-time = "2026-11-16T02:39:27.288Z" },
+    { url = "https://files.pythonhosted.org/packages/1c/10/c346e75f9c7b6adab5f003acb792d4facd629ce3ed04f15cb6db4cf85e22/postern-0.6.0-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.musllinux_1_1_x86_64.whl", hash = "sha256:d1a4579794c9b637dac185c50cfac35bc8f0302bcd2917953899ca8d00fc723d", size = 762110, upload-time = "2026-11-16T02:39:28.969Z" },
 ]
 
 [package.optional-dependencies]
@@ -4706,7 +4707,7 @@ lint = [
     { name = "opentelemetry-sdk" },
     { name = "pg8000" },
     { name = "pillow" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.5.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.6.0" },
     { name = "pre-commit" },
     { name = "protobuf" },
     { name = "protovalidate", specifier = ">=2.1" },
@@ -4786,7 +4787,7 @@ sandbox-worker = [
     { name = "opentelemetry-instrumentation-grpc" },
     { name = "opentelemetry-resourcedetector-gcp" },
     { name = "opentelemetry-sdk" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.5.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.6.0" },
     { name = "protobuf" },
     { name = "protovalidate", specifier = ">=2.1" },
     { name = "pubmed-proto", specifier = "==0.5.0" },
@@ -4875,7 +4876,7 @@ test = [
     { name = "opentelemetry-sdk" },
     { name = "pg8000" },
     { name = "pillow" },
-    { name = "postern", extras = ["grpc"], specifier = "==0.5.0" },
+    { name = "postern", extras = ["grpc"], specifier = "==0.6.0" },
     { name = "protobuf" },
     { name = "protovalidate", specifier = ">=2.1" },
     { name = "pubmed-proto", specifier = "==0.5.0" },
