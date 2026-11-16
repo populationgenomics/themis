@@ -13,6 +13,10 @@ Each transcription's token usage goes to the request-token counter, exported per
 request path (`themis/telemetry`), so a failed export is logged and never fails a conversion. `PORT` is
 the Cloud Run convention; `/healthz` reports liveness.
 
+The port opens only once startup has finished, so the startup probe waits on every step of it. A
+`startup.StartupClock` logs how long each step took, and `variant_reference` how long each store and genome
+took to open.
+
 `THEMIS_CONVERT_CONCURRENCY` is how many requests the service lets one instance serve at once, and
 sizes the thread pool each request's producer runs on (`handler.process_conversion`). It is required:
 a pool smaller than the service's limit would cap the instance below it without saying so.
@@ -45,8 +49,9 @@ from themis.litcache import produce as produce_mod
 from themis.litcache.models import variants_pb2
 from themis.services.convert_worker import handler as handler_mod
 from themis.telemetry import metrics as telemetry_metrics
-from themis.telemetry import names, request_tokens
+from themis.telemetry import names, request_tokens, startup
 
+_CLOCK: web.AppKey[startup.StartupClock] = web.AppKey('clock', startup.StartupClock)
 _BUCKET: web.AppKey[storage.Bucket] = web.AppKey('bucket', storage.Bucket)
 _CONVERT_PDF: web.AppKey[ocr.PdfConverter] = web.AppKey('convert_pdf')
 _VARIANTS: web.AppKey[produce_mod.Variants] = web.AppKey('variants', produce_mod.Variants)
@@ -101,24 +106,24 @@ def _concurrency_from_env() -> int:
     return int(value)
 
 
-def _bucket_from_env() -> storage.Bucket:
-    bucket_name = _require('THEMIS_FULLTEXT_BUCKET')
-    bucket = storage.Client().bucket(bucket_name)
+def _readable_bucket(name: str) -> storage.Bucket:
+    """The fulltext bucket `name`, on the process's one storage client, once a listing shows it is readable."""
+    bucket = storage.Client().bucket(name)
     # Fail the startup probe on a missing/unreadable bucket rather than 500-ing every conversion: a
     # lazy handle would 404 on the first read inside a task. `objects.list` is what the worker SA's
     # objectUser grants (not `buckets.get`); an empty result is a valid not-yet-populated corpus.
     try:
         next(iter(bucket.list_blobs(prefix='papers/', max_results=1)), None)
     except api_exceptions.NotFound as e:
-        raise SystemExit(f'THEMIS_FULLTEXT_BUCKET {bucket_name!r} does not exist or is not readable') from e
+        raise SystemExit(f'THEMIS_FULLTEXT_BUCKET {name!r} does not exist or is not readable') from e
     return bucket
 
 
-def _references_from_env() -> variant_reference.References:
-    """Open the pinned builds of the reference stores in the bucket `THEMIS_RESOURCES_BUCKET` names."""
-    root = f'gs://{_require("THEMIS_RESOURCES_BUCKET")}'
+def _references(resources_bucket: str, client: storage.Client) -> variant_reference.References:
+    """Open the pinned builds of the reference stores in `resources_bucket`, their checksums read through `client`."""
+    root = f'gs://{resources_bucket}'
     try:
-        return variant_reference.References(root, variant_reference.BUILDS)
+        return variant_reference.References(root, variant_reference.BUILDS, storage_client=client)
     except (FileNotFoundError, ValueError) as e:
         raise SystemExit(f'{root} lacks a pinned reference build: {e}') from e
 
@@ -166,21 +171,30 @@ def _credentials_from_env() -> anthropic_ocr.CredentialsFactory:
     )
 
 
-def _meter_provider() -> sdk_metrics.MeterProvider:
-    """The worker's metrics pipeline; a revision the detector cannot place fails its startup probe here."""
-    return telemetry_metrics.service_meter_provider(_require(_SERVICE_NAME_ENV))
+def _meter_provider(service: str) -> sdk_metrics.MeterProvider:
+    """The metrics pipeline of the Cloud Run service `service`; a revision the detector cannot place fails here."""
+    return telemetry_metrics.service_meter_provider(service)
 
 
 async def _on_startup(app: web.Application) -> None:
-    # Env reads before anything that reaches a network, so a missing identifier is reported as itself
+    clock = app[_CLOCK]
+    # Env reads before anything that reaches a network, so a missing variable is reported as itself
     # rather than behind a connection failure.
     credentials = _credentials_from_env()
     concurrency = _concurrency_from_env()
-    references = _references_from_env()
-    app[_BUCKET] = _bucket_from_env()
+    fulltext_bucket = _require('THEMIS_FULLTEXT_BUCKET')
+    resources_bucket = _require('THEMIS_RESOURCES_BUCKET')
+    service = _require(_SERVICE_NAME_ENV)
+    clock.step('configuration read')
+    bucket = _readable_bucket(fulltext_bucket)
+    app[_BUCKET] = bucket
+    clock.step('fulltext bucket checked')
+    references = _references(resources_bucket, bucket.client)
+    clock.step('reference stores opened')
     app[_EXECUTOR] = concurrent.futures.ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix='convert')
-    provider = _meter_provider()
+    provider = _meter_provider(service)
     app[_METER_PROVIDER] = provider
+    clock.step('metrics installed')
     tokens = request_tokens.RequestTokens(provider.get_meter(names.METER_NAME))
     app[_CONVERT_PDF] = functools.partial(anthropic_ocr.convert_pdf, credentials=credentials, tokens=tokens)
     app[_VARIANTS] = _variants(references, credentials=credentials, tokens=tokens)
@@ -190,6 +204,7 @@ async def _on_startup(app: web.Application) -> None:
     app[_PEDIGREES] = produce_mod.Pedigrees(
         read=functools.partial(pedigree_extract.read_paper, tokens=tokens, credentials=credentials)
     )
+    clock.step('collaborators bound')
 
 
 async def _on_cleanup(app: web.Application) -> None:
@@ -198,8 +213,10 @@ async def _on_cleanup(app: web.Application) -> None:
     app[_EXECUTOR].shutdown(wait=False, cancel_futures=True)
 
 
-def build_app() -> web.Application:
+def build_app(clock: startup.StartupClock) -> web.Application:
+    """The worker's app, whose startup logs each of its steps on `clock`."""
     app = web.Application()
+    app[_CLOCK] = clock
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
     app.router.add_get('/healthz', _healthz)
@@ -209,7 +226,7 @@ def build_app() -> web.Application:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    web.run_app(build_app(), port=int(os.environ.get('PORT', '8080')))
+    web.run_app(build_app(startup.StartupClock()), port=int(os.environ.get('PORT', '8080')))
 
 
 if __name__ == '__main__':

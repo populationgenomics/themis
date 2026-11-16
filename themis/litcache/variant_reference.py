@@ -10,16 +10,21 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.metadata
+import logging
 import posixpath
 import re
+import time
 
 import weaver
+from google.cloud import storage
 from weaver_data_provider import genome as genome_mod
 from weaver_data_provider import provider as provider_mod
 from weaver_data_provider import store as store_mod
 from weaver_data_provider.v1 import bundle_pb2
 
 from themis.litcache.models import variants_pb2
+
+_LOG = logging.getLogger(__name__)
 
 # RefSeq's MANE Select tag on a transcript record (hgvs-weaver-data's TAG_MANE_SELECT).
 _TAG_MANE_SELECT = 1
@@ -108,29 +113,46 @@ class References:
     Thread-safe for reads: the stores lock their own caches.
     """
 
-    def __init__(self, root: str, builds: Builds) -> None:
-        """Open each of `builds` under `root`.
+    def __init__(self, root: str, builds: Builds, *, storage_client: storage.Client | None = None) -> None:
+        """Open each of `builds` under `root`, logging how long each open took.
 
         Args:
             root: A resources bucket as `gs://<bucket>`, or a local directory laid out as one.
             builds: Which build of each store and genome to open; `BUILDS` is the one the variant steps pin.
+            storage_client: The client every open reads its files' recorded checksums through. A `gs://` root
+                needs one; a local root reads none.
 
         Raises:
             FileNotFoundError: If a store or genome is missing from a local root.
-            ValueError: If one is missing from a `gs://` root.
+            ValueError: If one is missing from a `gs://` root, or a `gs://` root comes without a client.
         """
-        g38 = genome_mod.Genome(posixpath.join(root, builds.genome38))
-        g37 = genome_mod.Genome(posixpath.join(root, builds.genome37))
-        self._refseq38 = self._open('refseq-grch38', posixpath.join(root, builds.refseq38), g38)
-        self._ensembl38 = self._open('ensembl-grch38', posixpath.join(root, builds.ensembl38), g38)
-        self._refseq37 = self._open('refseq-grch37', posixpath.join(root, builds.refseq37), g37)
+        # Handed none, hgvs-weaver-data builds clients of its own, each with a credential lookup and a TLS handshake.
+        if root.startswith('gs://') and storage_client is None:
+            raise ValueError(f'{root}: a gs:// root needs a storage client')
+        g38 = self._open_genome('GRCh38', posixpath.join(root, builds.genome38), storage_client)
+        g37 = self._open_genome('GRCh37', posixpath.join(root, builds.genome37), storage_client)
+        self._refseq38 = self._open_store('refseq-grch38', posixpath.join(root, builds.refseq38), g38, storage_client)
+        self._ensembl38 = self._open_store(
+            'ensembl-grch38', posixpath.join(root, builds.ensembl38), g38, storage_client
+        )
+        self._refseq37 = self._open_store('refseq-grch37', posixpath.join(root, builds.refseq37), g37, storage_client)
         self._builds = {'GRCh38': self._refseq38, 'GRCh37': self._refseq37}
 
     @staticmethod
-    def _open(name: str, path: str, genome: genome_mod.Genome) -> _Store:
-        store = store_mod.BundleStore(path)
+    def _open_genome(assembly: str, path: str, storage_client: storage.Client | None) -> genome_mod.Genome:
+        started = time.monotonic()
+        genome = genome_mod.Genome(path, storage_client=storage_client)
+        _LOG.info('opened the %s genome at %s in %.3f s', assembly, path, time.monotonic() - started)
+        return genome
+
+    @staticmethod
+    def _open_store(name: str, path: str, genome: genome_mod.Genome, storage_client: storage.Client | None) -> _Store:
+        started = time.monotonic()
+        store = store_mod.BundleStore(path, storage_client=storage_client)
         provider = provider_mod.BundleProvider(store, genome)
-        return _Store(name, provider, store, genome, weaver.VariantMapper(provider, refget=provider))
+        opened = _Store(name, provider, store, genome, weaver.VariantMapper(provider, refget=provider))
+        _LOG.info('opened the %s store at %s in %.3f s', name, path, time.monotonic() - started)
+        return opened
 
     def versions(self) -> list[variants_pb2.StoreVersion]:
         """Each store and the releases it holds, as a validation record states them."""

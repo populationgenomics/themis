@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 import pathlib
+import re
+from collections.abc import Callable
 
 import pytest
+from google.auth import credentials
+from google.cloud import storage
 from weaver_data_provider import genome as genome_mod
+from weaver_data_provider import store as store_mod
 from weaver_data_provider import testing
 
 from themis.litcache import variant_reference, variant_validate
@@ -90,3 +96,49 @@ def test_a_missing_build_fails_to_open(tmp_path: pathlib.Path) -> None:
     testing.build(tmp_path)
     with pytest.raises(FileNotFoundError):
         variant_reference.References(str(tmp_path), variant_reference.BUILDS)
+
+
+def test_a_bucket_root_without_a_storage_client_is_refused() -> None:
+    # Handed no client, hgvs-weaver-data builds one for each checksum it reads.
+    with pytest.raises(ValueError, match='storage client'):
+        variant_reference.References('gs://themis-absent', variant_reference.BUILDS)
+
+
+def test_every_open_is_handed_the_one_storage_client(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # No bucket can be opened here, and a local open reads no checksum through a client, so this watches what
+    # each of hgvs-weaver-data's opens is handed: one handed no client makes clients of its own.
+    testing.build(tmp_path)
+    client = storage.Client(project='themis-test', credentials=credentials.AnonymousCredentials())
+    handed: list[object] = []
+
+    def watched[T](opener: Callable[..., T]) -> Callable[..., T]:
+        def opened(path: str, **options: object) -> T:
+            handed.append(options.get('storage_client'))
+            return opener(path, **options)
+
+        return opened
+
+    monkeypatch.setattr(genome_mod, 'Genome', watched(genome_mod.Genome))
+    monkeypatch.setattr(store_mod, 'BundleStore', watched(store_mod.BundleStore))
+
+    variant_reference.References(str(tmp_path), _BUILDS, storage_client=client)
+
+    assert handed
+    assert all(seen is client for seen in handed)
+
+
+def test_each_open_logs_how_long_it_took(tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
+    testing.build(tmp_path)
+    caplog.set_level(logging.INFO, logger=variant_reference.__name__)
+
+    variant_reference.References(str(tmp_path), _BUILDS)
+
+    messages = [record.getMessage() for record in caplog.records if record.name == variant_reference.__name__]
+    for opened in (
+        'GRCh38 genome',
+        'GRCh37 genome',
+        'refseq-grch38 store',
+        'ensembl-grch38 store',
+        'refseq-grch37 store',
+    ):
+        assert any(re.fullmatch(rf'opened the {opened} at .+ in \d+\.\d{{3}} s', message) for message in messages)

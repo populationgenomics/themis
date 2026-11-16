@@ -18,11 +18,12 @@ import dataclasses
 import datetime
 import functools
 import json
+import logging
 import pathlib
 import threading
 import uuid
 from collections.abc import Collection
-from typing import override
+from typing import NoReturn, override
 
 import aiohttp.test_utils
 import aiohttp.web
@@ -35,13 +36,13 @@ from opentelemetry.sdk import metrics as sdk_metrics
 from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.clients import anthropic_wif
-from themis.litcache import anthropic_ocr, joblog, metadata_fields, ocr, work, writer
+from themis.litcache import anthropic_ocr, joblog, metadata_fields, ocr, variant_reference, work, writer
 from themis.litcache import outcome as outcome_mod
 from themis.litcache import produce as produce_mod
 from themis.litcache.models import litcache_pb2, work_pb2
 from themis.services.convert_worker import __main__ as main_mod
 from themis.services.convert_worker import handler as handler_mod
-from themis.telemetry import names, request_tokens
+from themis.telemetry import names, request_tokens, startup
 from themis.testing import in_memory_metrics, litcache_pedigrees, litcache_variants
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
@@ -76,8 +77,22 @@ _FEDERATION_ENV = {
 }
 
 
+_RESOURCES_BUCKET = 'themis-test-resources'
+# The variables that name a resource startup then reaches for over the network.
+_RESOURCE_ENV = {
+    'THEMIS_FULLTEXT_BUCKET': 'themis-test-fulltext',
+    'THEMIS_RESOURCES_BUCKET': _RESOURCES_BUCKET,
+    'K_SERVICE': 'themis-convert-worker',
+}
+
+
 class _References:
-    """What startup reads of the reference stores, without opening any."""
+    """Stands in for `variant_reference.References`: what startup reads of it, and what it was opened with."""
+
+    def __init__(self, root: str, builds: variant_reference.Builds, *, storage_client: storage.Client | None) -> None:
+        self.root = root
+        self.builds = builds
+        self.storage_client = storage_client
 
     @staticmethod
     def weaver_version() -> str:
@@ -89,11 +104,11 @@ class _References:
 
 
 def _set_startup_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Set every variable startup reads before the bucket, and stand in for the reference stores it opens."""
-    for name, value in _FEDERATION_ENV.items():
+    """Set every variable startup reads, and stand in for the reference stores it opens."""
+    for name, value in (_FEDERATION_ENV | _RESOURCE_ENV).items():
         monkeypatch.setenv(name, value)
     monkeypatch.setenv('THEMIS_CONVERT_CONCURRENCY', '4')
-    monkeypatch.setattr(main_mod, '_references_from_env', _References)
+    monkeypatch.setattr(variant_reference, 'References', _References)
 
 
 class _Provider(sdk_metrics.MeterProvider):
@@ -113,14 +128,14 @@ class _Provider(sdk_metrics.MeterProvider):
 def _stub_meter_provider(monkeypatch: pytest.MonkeyPatch) -> _Provider:
     """Stand the in-memory pipeline in for the Telemetry API one, which needs the metadata server and ADC."""
     provider = _Provider()
-    monkeypatch.setattr(main_mod, '_meter_provider', lambda: provider)
+    monkeypatch.setattr(main_mod, '_meter_provider', lambda _service: provider)
     return provider
 
 
-def _lazy_bucket() -> storage.Bucket:
+def _lazy_bucket(name: str = 'unused') -> storage.Bucket:
     """A bucket handle the fake producer never touches — no network, so the status tests need no GCS."""
     client = storage.Client(project='themis-test', credentials=credentials.AnonymousCredentials())
-    return client.bucket('unused')
+    return client.bucket(name)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -404,9 +419,9 @@ def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(
     # _on_startup is covered: a revision that never binds the bucket passes its startup probe and
     # then 500s every task, because /healthz answers without touching it.
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_bucket_from_env', lambda: gcs_bucket)
+    monkeypatch.setattr(main_mod, '_readable_bucket', lambda _name: gcs_bucket)
     _stub_meter_provider(monkeypatch)
-    app = main_mod.build_app()
+    app = main_mod.build_app(startup.StartupClock())
 
     async def drive() -> tuple[int, int, int, int]:
         async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
@@ -531,11 +546,22 @@ def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.B
 # --- entrypoint env wiring (fail loud) ---
 
 
-def test_startup_requires_the_fulltext_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
-    _set_startup_env(monkeypatch)  # valid, so startup reaches the bucket read
-    monkeypatch.delenv('THEMIS_FULLTEXT_BUCKET', raising=False)
-    with pytest.raises(SystemExit, match='THEMIS_FULLTEXT_BUCKET'):
-        asyncio.run(main_mod._on_startup(main_mod.build_app()))
+@pytest.mark.parametrize('missing', sorted(_RESOURCE_ENV))
+def test_startup_requires_each_variable_naming_a_resource_before_it_reaches_for_any(
+    missing: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A start that reached the network first would report an unreadable bucket, or hang, in place of the variable.
+    _set_startup_env(monkeypatch)
+    monkeypatch.delenv(missing)
+
+    def reached(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError(f'reached for a resource with {missing} unset')
+
+    monkeypatch.setattr(main_mod, '_readable_bucket', reached)
+    monkeypatch.setattr(variant_reference, 'References', reached)
+    monkeypatch.setattr(main_mod, '_meter_provider', reached)
+    with pytest.raises(SystemExit, match=missing):
+        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
 
 
 def test_startup_refuses_a_bucket_that_does_not_exist(
@@ -547,7 +573,7 @@ def test_startup_refuses_a_bucket_that_does_not_exist(
     monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', f'themis-absent-{uuid.uuid4().hex}')
     monkeypatch.setattr(main_mod.storage, 'Client', lambda: gcs_client)
     with pytest.raises(SystemExit, match='does not exist or is not readable'):
-        asyncio.run(main_mod._on_startup(main_mod.build_app()))
+        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
 
 
 @pytest.mark.parametrize('value', [None, '', '0', '-1', 'four'])
@@ -559,7 +585,7 @@ def test_startup_requires_a_positive_request_concurrency(value: str | None, monk
     else:
         monkeypatch.setenv('THEMIS_CONVERT_CONCURRENCY', value)
     with pytest.raises(SystemExit, match='THEMIS_CONVERT_CONCURRENCY'):
-        asyncio.run(main_mod._on_startup(main_mod.build_app()))
+        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
 
 
 @pytest.mark.parametrize('missing', sorted(_FEDERATION_ENV))
@@ -570,7 +596,57 @@ def test_startup_requires_each_anthropic_federation_id(missing: str, monkeypatch
     _set_startup_env(monkeypatch)
     monkeypatch.delenv(missing, raising=False)
     with pytest.raises(SystemExit, match=missing):
-        asyncio.run(main_mod._on_startup(main_mod.build_app()))
+        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+
+
+def test_startup_opens_the_pinned_reference_builds_through_the_fulltext_buckets_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # hgvs-weaver-data makes storage clients of its own for an open handed none, and each one authenticates and
+    # connects inside the startup probe's budget.
+    _set_startup_env(monkeypatch)
+    bucket = _lazy_bucket()
+    monkeypatch.setattr(main_mod, '_readable_bucket', lambda _name: bucket)
+    _stub_meter_provider(monkeypatch)
+    opened: list[_References] = []
+
+    def opening(root: str, builds: variant_reference.Builds, *, storage_client: storage.Client | None) -> _References:
+        opened.append(_References(root, builds, storage_client=storage_client))
+        return opened[-1]
+
+    monkeypatch.setattr(variant_reference, 'References', opening)
+
+    asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+
+    [references] = opened
+    assert references.root == f'gs://{_RESOURCES_BUCKET}'
+    assert references.builds is variant_reference.BUILDS
+    assert references.storage_client is bucket.client
+
+
+def test_the_first_startup_line_logged_after_the_reference_stores_open_is_the_one_timing_them(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _set_startup_env(monkeypatch)
+    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
+    _stub_meter_provider(monkeypatch)
+    caplog.set_level(logging.INFO, logger=startup.__name__)
+
+    def lines() -> list[str]:
+        return [record.getMessage() for record in caplog.records if record.name == startup.__name__]
+
+    logged_before_the_open: list[int] = []
+
+    def opening(root: str, builds: variant_reference.Builds, *, storage_client: storage.Client | None) -> _References:
+        logged_before_the_open.append(len(lines()))
+        return _References(root, builds, storage_client=storage_client)
+
+    monkeypatch.setattr(variant_reference, 'References', opening)
+
+    asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+
+    [before] = logged_before_the_open
+    assert 'reference stores opened' in lines()[before]
 
 
 # --- the Claude converter the entrypoint binds ---
@@ -579,9 +655,9 @@ def test_startup_requires_each_anthropic_federation_id(missing: str, monkeypatch
 def _bound_converter(monkeypatch: pytest.MonkeyPatch) -> functools.partial[object]:
     """The converter `_on_startup` binds, with the bucket read stubbed out."""
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
     _stub_meter_provider(monkeypatch)
-    app = main_mod.build_app()
+    app = main_mod.build_app(startup.StartupClock())
     asyncio.run(main_mod._on_startup(app))
     converter = app[main_mod._CONVERT_PDF]
     assert isinstance(converter, functools.partial)
@@ -602,9 +678,9 @@ def test_startup_binds_the_claude_converter_on_a_federation_credential(monkeypat
 def test_startup_binds_the_converter_to_the_apps_request_token_counter(monkeypatch: pytest.MonkeyPatch) -> None:
     # The counter has to be on the app's own provider, or what a transcription records is never exported.
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
     provider = _stub_meter_provider(monkeypatch)
-    app = main_mod.build_app()
+    app = main_mod.build_app(startup.StartupClock())
     asyncio.run(main_mod._on_startup(app))
     converter = app[main_mod._CONVERT_PDF]
     assert isinstance(converter, functools.partial)
@@ -618,9 +694,9 @@ def test_startup_binds_the_converter_to_the_apps_request_token_counter(monkeypat
 def test_cleanup_shuts_the_meter_provider_down(monkeypatch: pytest.MonkeyPatch) -> None:
     # The last export rides shutdown; a provider left running loses whatever it recorded since its tick.
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
     provider = _stub_meter_provider(monkeypatch)
-    app = main_mod.build_app()
+    app = main_mod.build_app(startup.StartupClock())
     asyncio.run(main_mod._on_startup(app))
 
     asyncio.run(main_mod._on_cleanup(app))
@@ -646,9 +722,9 @@ def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: p
     # The binding is only worth anything if it reaches the producer: /convert has to pass the app's
     # converter as produce.run's `convert_pdf`, not fall back to a default.
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_bucket_from_env', _lazy_bucket)
+    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
     _stub_meter_provider(monkeypatch)
-    app = main_mod.build_app()
+    app = main_mod.build_app(startup.StartupClock())
     seen: list[ocr.PdfConverter] = []
 
     async def produce(_bucket: storage.Bucket, _doc_id: str, *, convert_pdf: ocr.PdfConverter, **_kw: object) -> None:

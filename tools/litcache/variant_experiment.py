@@ -44,8 +44,11 @@ _REFERENCES_HELP = f"the pinned reference builds' root: gs://{_PROJECT}-resource
 
 
 def _references(root: str) -> variant_reference.References:
-    resolved = root if root.startswith('gs://') else str(pathlib.Path(root).expanduser())
-    return variant_reference.References(resolved, variant_reference.BUILDS)
+    if root.startswith('gs://'):
+        return variant_reference.References(
+            root, variant_reference.BUILDS, storage_client=storage.Client(project=_PROJECT)
+        )
+    return variant_reference.References(str(pathlib.Path(root).expanduser()), variant_reference.BUILDS)
 
 
 @dataclasses.dataclass(frozen=True)
