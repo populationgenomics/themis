@@ -146,27 +146,30 @@ or genotypes that are not stated.
 """
 
 PAGE_ADDENDUM = """\
-READING A PAGE.
-You are shown a whole page of a paper: body text, one or more figures, and their legends.
+READING THE PAGES.
+You are shown whole pages of a paper: every page the figure draws pedigrees on, and the page carrying its legend
+when that is another. Each page holds body text, one or more figures, and their legends.
 - Read the figure legend: it can define symbols, fills and panel identities that the figure itself does not.
-- The caption, the page's body text and the lines of the paper given with its variants (before the page) may
-  add facts the figure does not draw (a stillbirth, a condition's
-  name, a stated mode of inheritance, who the proband is), but only when the text clearly refers to this
-  family and person, and only what it states: "de novo" does not make inheritance dominant, and a gene's usual
-  mode is not a statement about this family. Every such fact needs a support quoting the text (CITING
-  SOURCES). Text about other families, cohorts or earlier reports never enters the record.
+- A figure can continue from one page to the next. A family drawn across a page break is one pedigree.
+- The caption, the pages' body text and the lines of the paper given with its variants (before the pages) may
+  add facts the figure does not draw (a stillbirth, a condition's name, a stated mode of inheritance, who the
+  proband is), but only when the text clearly refers to this family and person, and only what it states:
+  "de novo" does not make inheritance dominant, and a gene's usual mode is not a statement about this family.
+  Every such fact needs a support quoting the text (CITING SOURCES). Text about other families, cohorts or
+  earlier reports never enters the record.
 """
 
 PAGE_ZOOM_ADDENDUM = """\
 ZOOMING.
 The pedigrees are small at page size, so thin marks may be unreadable or invisible. Use the `zoom` tool,
-which re-renders a region of the page from the source document at higher resolution.
+which re-renders a region of a page from the source document at higher resolution.
 - Verify every thin or small mark in a zoom before reporting it: consanguinity double lines, deceased
   slashes, twin bars and converging twin lines, relationship slashes, symbol shapes and fills, carrier dots,
   arrows, and the printed labels.
 - `zoom` coordinates, and citation regions (below), are the only exceptions to "never emit geometry". Give
-  each region as [x0, y0, x1, y1], the top-left and bottom-right corners in pixel coordinates of the PAGE
-  image (the first image), always in that image's pixels, including after you have zoomed.
+  each region as the page number the instruction names and [x0, y0, x1, y1], the top-left and bottom-right
+  corners in pixel coordinates of that page's image, always in that image's pixels, including after you have
+  zoomed.
 When you have read everything you need, reply with the JSON only.
 """
 
@@ -175,12 +178,12 @@ PAGE_CITATION_ADDENDUM = """\
 CITING SOURCES.
 Say where each pedigree was read, and where any fact the figure does not draw came from.
 - `citations` is one list for the whole answer. Each citation has an `id` ("c1", "c2", ... unique in the answer)
-  and exactly one of `region` (x0, y0, x1, y1: a box in pixel coordinates of the PAGE image) or `quote` (the
-  shortest verbatim span of the caption, legend or a line given with the variants that states the fact, copied
-  exactly). Never write
-  document ids or page numbers.
-- Every pedigree's `evidence` lists the id of a region citation boxing the panel it is drawn in: the whole
-  pedigree and its labels, nothing else.
+  and exactly one of `region` (page: the page number the instruction names; x0, y0, x1, y1: a box in pixel
+  coordinates of that page's image) or `quote` (the shortest verbatim span of the paper's text that states the fact:
+  the caption or legend, a page's body text, or a line given with the variants, copied exactly). Never write document
+  ids.
+- Every pedigree's `evidence` lists the ids of region citations boxing the panel it is drawn in: the whole
+  pedigree and its labels, nothing else. A pedigree drawn across two pages has one region on each.
 - A fact you record that the figure does not draw (a stillbirth, a condition's name, a mode of inheritance, a
   proband named only in the caption) gets a `supports` entry on its pedigree: `field` (one of: {fields}),
   `condition_id` naming the condition's declaration when the field starts "condition.", `loci` naming the loci
@@ -204,7 +207,7 @@ GENOTYPES — a table of loci, and each person's genotype at them.
 - A genotype's `alleles` are copies: ["M", "+"] heterozygous, ["M", "M"] homozygous, ["M"] hemizygous. Set
   `phase_set` only when phase is stated ("in trans", maternal or paternal): genotypes sharing one align slot by
   slot, so l1 ["M1", "+"] and l2 ["+", "M2"] in one phase set are in trans.
-- The paper's checked variants are listed before the page, each with the lines that print it. Use them to
+- The paper's checked variants are listed before the pages, each with the lines that print it. Use them to
   learn what a symbol stands for ("M1 and M2 denote c.123A>G and c.456del", a table of each family member's
   genotype), but only where a line clearly refers to this family. When an allele is one of them, give it the name
   the figure or paper prints, and the checked name as an `IDENTIFIER_SCHEME_HGVS` identifier. Otherwise leave the

@@ -3,7 +3,8 @@
 Built from the proto rather than written out, so it follows whatever grus version is pinned. It narrows the record
 to what a model writes:
 - `Provenance` is dropped: it is harness metadata, never read off a figure.
-- A citation's `document_id` and a region's `page` are dropped: the harness stamps both.
+- A citation's `document_id` is dropped: the harness stamps it. A region's `page` stays, as the page number
+  the instruction names, which the harness turns into grus's.
 - Each enum omits its zero, so the model cannot write the sentinel grus's loader rejects.
 - A deprecated field is dropped, so a retired field is never offered.
 
@@ -21,7 +22,7 @@ from grus.models import pedigree_pb2
 # The fields the model must always write. Everything else is optional: booleans default false, and an absent enum is
 # filled per the prompt. Keyed by full name, so a renumbering cannot break it.
 _REQUIRED: dict[str, tuple[str, ...]] = {
-    pedigree_pb2.PedigreeSet.DESCRIPTOR.full_name: ('pedigrees',),  # [] is the answer for a page with none
+    pedigree_pb2.PedigreeSet.DESCRIPTOR.full_name: ('pedigrees',),  # [] is the answer for a figure with none
     pedigree_pb2.Pedigree.DESCRIPTOR.full_name: ('individuals',),
     pedigree_pb2.Position.DESCRIPTOR.full_name: ('generation', 'index'),
     pedigree_pb2.Individual.DESCRIPTOR.full_name: ('generation', 'index', 'gender'),
@@ -32,7 +33,7 @@ _REQUIRED: dict[str, tuple[str, ...]] = {
     pedigree_pb2.Offspring.DESCRIPTOR.full_name: ('child',),
     pedigree_pb2.Label.DESCRIPTOR.full_name: ('text', 'kind'),
     pedigree_pb2.Citation.DESCRIPTOR.full_name: ('id',),
-    pedigree_pb2.Region.DESCRIPTOR.full_name: ('x0', 'y0', 'x1', 'y1'),
+    pedigree_pb2.Region.DESCRIPTOR.full_name: ('page', 'x0', 'y0', 'x1', 'y1'),
     pedigree_pb2.Support.DESCRIPTOR.full_name: ('citations', 'field'),
     pedigree_pb2.Locus.DESCRIPTOR.full_name: ('id', 'alleles'),
     pedigree_pb2.Allele.DESCRIPTOR.full_name: ('symbol',),
@@ -40,12 +41,7 @@ _REQUIRED: dict[str, tuple[str, ...]] = {
     pedigree_pb2.Genotype.DESCRIPTOR.full_name: ('locus_id', 'alleles'),
 }
 _OMIT_MESSAGES = frozenset({pedigree_pb2.Provenance.DESCRIPTOR.full_name})
-_HARNESS_FIELDS = frozenset(
-    {
-        pedigree_pb2.Citation.DESCRIPTOR.fields_by_name['document_id'].full_name,
-        pedigree_pb2.Region.DESCRIPTOR.fields_by_name['page'].full_name,
-    }
-)
+_HARNESS_FIELDS = frozenset({pedigree_pb2.Citation.DESCRIPTOR.fields_by_name['document_id'].full_name})
 _SCALAR_JSON_TYPE: dict[int, str] = {
     descriptor.FieldDescriptor.TYPE_STRING: 'string',
     descriptor.FieldDescriptor.TYPE_BOOL: 'boolean',
@@ -86,5 +82,5 @@ def _message_schema(message: descriptor.Descriptor) -> dict[str, object]:
 
 
 def pedigree_set_schema() -> dict[str, object]:
-    """The schema of one answer: every pedigree on a page or in a figure, with its citations."""
+    """The schema of one answer: every pedigree in a figure, with its citations."""
     return _message_schema(cast(descriptor.Descriptor, pedigree_pb2.PedigreeSet.DESCRIPTOR))

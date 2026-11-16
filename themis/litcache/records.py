@@ -20,7 +20,7 @@ VARIANTS_REF = 'variants'
 VERDICTS_REF = 'verdicts'
 # The ref naming the paper's figure set: where each figure of its pdf is, and what kind each panel is.
 FIGURES_REF = 'figures'
-# The ref naming the paper's pedigree set: every pedigree read from its figures.
+# The ref naming the paper's pedigrees: the pedigree set read from each of its figures.
 PEDIGREES_REF = 'pedigrees'
 
 # Rendering fidelity, best first: an xml-faithful litdown rendering over a pdf-derived one, and llm-ocr over the legacy

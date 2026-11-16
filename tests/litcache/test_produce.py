@@ -41,7 +41,7 @@ from themis.litcache import (
     work,
     writer,
 )
-from themis.litcache.models import figures_pb2, litcache_pb2, pedigrees_pb2, variants_pb2, work_pb2
+from themis.litcache.models import figures_pb2, litcache_pb2, paper_pedigrees_pb2, pedigrees_pb2, variants_pb2, work_pb2
 from themis.testing import litcache_pedigrees, litcache_variants
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
@@ -1649,14 +1649,18 @@ class _Pedigrees:
         self.read_papers.append(paper)
         if self.error is not None:
             raise self.error
-        pedigree_set = pedigree_pb2.PedigreeSet()
-        pedigree_set.pedigrees.add().individuals.add(generation=1, index=1, gender=pedigree_pb2.GENDER_MAN)
+        figures = sorted({u.figure for u in paper.figures})
+        pedigrees = paper_pedigrees_pb2.PaperPedigrees()
+        for figure in figures:
+            pedigrees.figures[figure].pedigrees.add().individuals.add(
+                generation=1, index=1, gender=pedigree_pb2.GENDER_MAN
+            )
         construction = pedigrees_pb2.PedigreeExtractionConstruction(
             model='claude-sonnet-5-5',
             harness_version=pedigree_extract.HARNESS_VERSION,
-            figures_read=[pedigrees_pb2.PedigreeFigure(figure=f) for f in sorted({u.figure for u in paper.figures})],
+            figures_read=[pedigrees_pb2.PedigreeFigure(figure=f) for f in figures],
         )
-        return pedigree_extract.Reading(pedigree_set=pedigree_set, construction=construction, usage=[])
+        return pedigree_extract.Reading(pedigrees=pedigrees, construction=construction, usage=[])
 
     def seam(self) -> produce.Pedigrees:
         return produce.Pedigrees(read=self.read)
@@ -1734,7 +1738,7 @@ def test_a_request_for_pedigrees_annotates_the_figures_then_reads_the_pedigree_f
 
     (paper,) = pedigrees.read_papers
     (unit,) = paper.figures
-    assert (unit.figure, unit.label, unit.page.number) == (0, 'Figure 1', 2)
+    assert (unit.figure, unit.label, [d.page.number for d in unit.pages]) == (0, 'Figure 1', [2])
     assert unit.legend is not None
     assert unit.legend.number == 3
     assert paper.pdf_hash == pdf_hash
@@ -1745,6 +1749,8 @@ def test_a_request_for_pedigrees_annotates_the_figures_then_reads_the_pedigree_f
     assert [r.figure for r in record.pedigree_extraction.figures_read] == [0]
     stored = figures_pb2.FigureSet.FromString(_named(gcs_bucket, 'figures', 'figure-sets'))
     assert stored == _A_PEDIGREE_FIGURE
+    pedigrees = paper_pedigrees_pb2.PaperPedigrees.FromString(_named(gcs_bucket, 'pedigrees', 'pedigrees'))
+    assert list(pedigrees.figures) == [0]
 
 
 def test_a_paper_whose_figures_hold_no_pedigree_settles_without_a_reading(gcs_bucket: gcs.Bucket) -> None:
@@ -1767,7 +1773,7 @@ def test_a_request_without_the_targets_spends_nothing_on_figures_or_pedigrees(gc
     assert not {'figures', 'pedigrees'} & {step for step, _, _ in _log(gcs_bucket)}
 
 
-def test_a_figure_drawn_across_two_pages_is_read_on_each_and_counted_once(gcs_bucket: gcs.Bucket) -> None:
+def test_a_figure_drawn_across_two_pages_is_read_in_one_conversation(gcs_bucket: gcs.Bucket) -> None:
     _write_figure_paper(gcs_bucket)
     spread = figures_pb2.Figure(
         label='Figure 1',
@@ -1779,7 +1785,7 @@ def test_a_figure_drawn_across_two_pages_is_read_on_each_and_counted_once(gcs_bu
     _request_pedigrees(gcs_bucket, _Figures(figure_set=figures_pb2.FigureSet(figures=[spread])), pedigrees)
 
     (paper,) = pedigrees.read_papers
-    assert [(u.figure, u.page.number) for u in paper.figures] == [(0, 2), (0, 3)]
+    assert [(u.figure, [d.page.number for d in u.pages]) for u in paper.figures] == [(0, [2, 3])]
 
 
 def test_a_paper_is_read_on_at_most_the_capped_number_of_pedigree_figures(gcs_bucket: gcs.Bucket) -> None:
@@ -1798,9 +1804,9 @@ def test_a_paper_is_read_on_at_most_the_capped_number_of_pedigree_figures(gcs_bu
     assert [u.figure for u in paper.figures] == list(range(produce.MAX_PEDIGREE_READS))
 
 
-def test_a_figure_that_does_not_fit_under_the_cap_is_left_out_whole(gcs_bucket: gcs.Bucket) -> None:
+def test_a_figure_on_more_pages_than_one_conversation_shows_is_left_out(gcs_bucket: gcs.Bucket) -> None:
     _write_figure_paper(gcs_bucket)
-    wide = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, page) for page in range(2, 2 + produce.MAX_PEDIGREE_READS)]
+    wide = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, page) for page in range(2, 3 + pedigree_extract.MAX_PAGES_SHOWN)]
     one_page = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, 2)]
     figure_set = figures_pb2.FigureSet(
         figures=[
@@ -1819,7 +1825,7 @@ def test_a_figure_that_does_not_fit_under_the_cap_is_left_out_whole(gcs_bucket: 
 
 def test_a_paper_whose_only_pedigree_figure_is_over_the_cap_settles_without_a_reading(gcs_bucket: gcs.Bucket) -> None:
     _write_figure_paper(gcs_bucket)
-    wide = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, page) for page in range(1, 2 + produce.MAX_PEDIGREE_READS)]
+    wide = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, page) for page in range(1, 2 + pedigree_extract.MAX_PAGES_SHOWN)]
     pedigrees = _Pedigrees()
 
     _request_pedigrees(
@@ -1830,6 +1836,51 @@ def test_a_paper_whose_only_pedigree_figure_is_over_the_cap_settles_without_a_re
     assert 'pedigrees' not in _load_manifest(gcs_bucket).refs
     (entry,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == produce.PEDIGREES_STEP]
     assert entry.outcome == work_pb2.SETTLED_OUTCOME_PERMANENT_FAILURE
+    assert f'more than {pedigree_extract.MAX_PAGES_SHOWN} pages' in entry.detail
+
+
+def test_a_figure_showing_as_many_pages_as_one_conversation_holds_is_read(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    drawn = pedigree_extract.MAX_PAGES_SHOWN - 1
+    panels = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, page) for page in range(1, 1 + drawn)]
+    figure = figures_pb2.Figure(label='Figure 1', legend=_legend(1 + drawn), panels=panels)
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(figure_set=figures_pb2.FigureSet(figures=[figure])), pedigrees)
+
+    (paper,) = pedigrees.read_papers
+    (unit,) = paper.figures
+    assert len(unit.pages) + (unit.legend is not None) == pedigree_extract.MAX_PAGES_SHOWN
+
+
+def test_a_figure_left_out_for_its_pages_takes_no_read_from_the_cap(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    wide = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, page) for page in range(1, 2 + pedigree_extract.MAX_PAGES_SHOWN)]
+    small = [
+        figures_pb2.Figure(label=f'Figure {n + 2}', panels=[_panel(figures_pb2.FIGURE_KIND_PEDIGREE, 2)])
+        for n in range(produce.MAX_PEDIGREE_READS)
+    ]
+    figure_set = figures_pb2.FigureSet(figures=[figures_pb2.Figure(label='Figure 1', panels=wide), *small])
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(figure_set=figure_set), pedigrees)
+
+    (paper,) = pedigrees.read_papers
+    assert [u.figure for u in paper.figures] == list(range(1, 1 + produce.MAX_PEDIGREE_READS))
+
+
+def test_a_legend_on_a_page_the_figure_draws_on_is_not_shown_twice(gcs_bucket: gcs.Bucket) -> None:
+    _write_figure_paper(gcs_bucket)
+    panels = [_panel(figures_pb2.FIGURE_KIND_PEDIGREE, 2), _panel(figures_pb2.FIGURE_KIND_PEDIGREE, 3)]
+    figure = figures_pb2.Figure(label='Figure 1', legend=_legend(3), panels=panels)
+    pedigrees = _Pedigrees()
+
+    _request_pedigrees(gcs_bucket, _Figures(figure_set=figures_pb2.FigureSet(figures=[figure])), pedigrees)
+
+    (paper,) = pedigrees.read_papers
+    (unit,) = paper.figures
+    assert [d.page.number for d in unit.pages] == [2, 3]
+    assert unit.legend is None
 
 
 def test_a_reading_that_ends_without_an_answer_settles_as_a_permanent_failure(gcs_bucket: gcs.Bucket) -> None:

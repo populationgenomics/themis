@@ -147,7 +147,7 @@ class Pedigrees:
     """What the pedigree step calls out to; injected so the loop runs offline in tests.
 
     Attributes:
-        read: Reads a paper's pedigree figures into one pedigree set (`pedigree_extract.read_paper`, bound).
+        read: Reads a paper's pedigree figures into a pedigree set per figure (`pedigree_extract.read_paper`, bound).
     """
 
     read: Callable[[pedigree_extract.PaperInput], Awaitable[pedigree_extract.Reading]]
@@ -784,8 +784,8 @@ async def _run_figures(run: _Run, manifest: litcache_pb2.Manifest, inputs: tuple
 # --- pedigrees
 
 
-# Conversations a paper is read in, one per figure and page it draws pedigrees on: a bound on what an unusual paper
-# spends. A figure left out is absent from the record's `figures_read`.
+# Conversations a paper is read in, one per pedigree figure: a bound on what an unusual paper spends. A figure left out
+# is absent from the record's `figures_read`.
 MAX_PEDIGREE_READS = 8
 _PEDIGREE_HARNESS_INPUT = hashlib.sha256(
     f'pedigree extraction harness {pedigree_extract.HARNESS_VERSION}'.encode()
@@ -831,7 +831,7 @@ def _pedigrees_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | None
 
 
 def _pedigrees_produced(manifest: litcache_pb2.Manifest, _validation: Validation | None) -> bool:
-    """Whether the current rendering, figure set, pdf revision and verdicts have a pedigree set from this harness.
+    """Whether the current rendering, figure set, pdf revision and verdicts have a pedigree record from this harness.
 
     The figure set and verdicts are those the refs name, current or not: a new figure or variant harness re-reads a
     paper's pedigrees only once a request for that step has replaced its record, as the verdicts step treats its
@@ -848,8 +848,11 @@ def _pedigrees_produced(manifest: litcache_pb2.Manifest, _validation: Validation
 
 def _pedigree_figures(
     figure_set: figures_pb2.FigureSet, layouts: Sequence[pdf.PageLayout]
-) -> list[pedigree_extract.FigurePage]:
-    """Each page of each figure with a pedigree panel, in figure order: whole figures, while `MAX_PEDIGREE_READS` holds.
+) -> list[pedigree_extract.FigurePages]:
+    """Each figure with a pedigree panel, in figure order, with every page it draws one on.
+
+    At most `MAX_PEDIGREE_READS` figures are read. A figure showing more than `pedigree_extract.MAX_PAGES_SHOWN` pages,
+    its legend's included, is not read.
 
     Raises:
         _SettledError: A place names a page the pdf does not have: the figure set was made from another pdf.
@@ -860,7 +863,7 @@ def _pedigree_figures(
             raise _permanent(f'the figure set names page {number} of a {len(layouts)}-page pdf')
         return layouts[number - 1]
 
-    units: list[pedigree_extract.FigurePage] = []
+    units: list[pedigree_extract.FigurePages] = []
     for index, figure in enumerate(figure_set.figures):
         panels = [p for p in figure.panels if figures_pb2.FIGURE_KIND_PEDIGREE in p.kinds]
         if not panels:
@@ -870,22 +873,20 @@ def _pedigree_figures(
             box = panel.place.box
             by_page.setdefault(panel.place.pdf_page, []).append((box.left, box.top, box.right, box.bottom))
         legend = layout(figure.legend.pdf_page) if figure.HasField('legend') else None
-        pages = [
-            pedigree_extract.FigurePage(
-                figure=index,
-                label=figure.label,
-                page=layout(number),
-                boxes=boxes,
-                legend=legend if legend is not None and legend.number != number else None,
-            )
-            for number, boxes in sorted(by_page.items())
-        ]
-        if len(units) + len(pages) > MAX_PEDIGREE_READS:
-            _LOG.warning(
-                'figure %d needs %d more reads, past the cap of %d: not read', index, len(pages), MAX_PEDIGREE_READS
-            )
+        unit = pedigree_extract.FigurePages(
+            figure=index,
+            label=figure.label,
+            pages=[pedigree_extract.DrawnPage(layout(number), boxes) for number, boxes in sorted(by_page.items())],
+            legend=legend if legend is not None and legend.number not in by_page else None,
+        )
+        shown = len(unit.shown)
+        if shown > pedigree_extract.MAX_PAGES_SHOWN:
+            _LOG.warning('figure %d spans %d pages, past %d: not read', index, shown, pedigree_extract.MAX_PAGES_SHOWN)
             continue
-        units.extend(pages)
+        if len(units) == MAX_PEDIGREE_READS:
+            _LOG.warning('figure %d is past the cap of %d figures: not read', index, MAX_PEDIGREE_READS)
+            continue
+        units.append(unit)
     return units
 
 
@@ -944,7 +945,7 @@ async def _run_pedigrees(run: _Run, manifest: litcache_pb2.Manifest, inputs: tup
     pdf_bytes = _pdf_bytes(run, manifest, pdf_hash)
     units = _pedigree_figures(figure_set, await _layouts(pdf_bytes))
     if not units:
-        raise _permanent(f'every pedigree figure needs more than {MAX_PEDIGREE_READS} reads')
+        raise _permanent(f'every pedigree figure shows more than {pedigree_extract.MAX_PAGES_SHOWN} pages')
     variants = [] if verdicts_key == _NO_VARIANTS else _known_variants(run, manifest, verdicts_key, markdown)
     paper = pedigree_extract.PaperInput(
         markdown=markdown, pdf_bytes=pdf_bytes, pdf_hash=pdf_hash, figures=units, variants=variants
@@ -966,7 +967,7 @@ async def _run_pedigrees(run: _Run, manifest: litcache_pb2.Manifest, inputs: tup
         raise
     deps = [markdown_key, figures_key, pdf_hash] + ([] if verdicts_key == _NO_VARIANTS else [verdicts_key])
     record = litcache_pb2.Record(deps=deps, created_at=_created(run), pedigree_extraction=reading.construction)
-    data = reading.pedigree_set.SerializeToString(deterministic=True)
+    data = reading.pedigrees.SerializeToString(deterministic=True)
     try:
         _commit(
             lambda: writer.add_record(

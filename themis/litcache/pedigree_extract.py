@@ -1,12 +1,12 @@
 """Reading a paper's pedigrees: each pedigree figure shown to a model with a zoom tool, and the answers checked.
 
-The paper's figure set says which figures hold a pedigree, on which page, and where their legends are
-(docs/design/pedigree-extraction.md). One conversation per figure and page it draws pedigrees on, after grus's page
-extraction: the model sees that whole page sized to its image tier, and the legend's page after it when that is
-another, asks for any region of the drawn page at full resolution with `zoom`, and answers with a grus pedigree set as
-JSON. The answer is accepted only when grus's loader accepts it, every cited region lies on the page, and every quote
-is in the paper; otherwise the reason goes back to the model to fix. The sets are merged into one for the paper; a
-figure whose answer is never accepted is recorded with the reason, and the other figures are kept.
+The paper's figure set says which figures hold a pedigree, on which pages, and where their legends are
+(docs/design/pedigree-extraction.md). One conversation per figure, after grus's page extraction: the model sees every
+page the figure draws pedigrees on, whole and sized to its image tier, and the legend's page after them when that is
+another; asks for any region of a page shown at full resolution with `zoom`; and answers with a grus pedigree set as
+JSON. The answer is accepted only when grus's loader accepts it, every cited region lies on a page shown, and every
+quote is in the paper; otherwise the reason goes back to the model to fix. The paper's record maps each figure to its
+set; a figure whose answer is never accepted is recorded with the reason, and the other figures are kept.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import anthropic
+import protovalidate
 import pypdfium2
 from google.protobuf import json_format
 from grus import ir
@@ -38,19 +39,19 @@ from themis.litcache import (
     pedigree_schema,
     variant_scan,
 )
-from themis.litcache.models import pedigrees_pb2
+from themis.litcache.models import paper_pedigrees_pb2, pedigrees_pb2
 
 _LOG = logging.getLogger(__name__)
 
 # A change to what the model does that `_harness_version` does not digest, such as how a tool words its result, bumps
 # this.
-_REVISION = '1'
+_REVISION = '2'
 MODEL = 'claude-sonnet-5-5'
 # No effort is set: the API's default is what grus's reading ladder measured.
 _EFFORT: str | None = None
 _TIER = claude_images.HIGH_RESOLUTION
 _MAX_TOKENS = 64_000
-# The page, the legend's page when it is another, and the zooms: the twenty images grus's ladder read with.
+# The pages shown, the legend's included, and the zooms: the twenty images grus's ladder read with.
 _MAX_IMAGES = 20
 # Turns past the zoom budget before a conversation is given up: room for bad regions and the repairs.
 _SLACK_TURNS = 6
@@ -73,25 +74,31 @@ _REPEATED_STATUSES = frozenset({400, 413, 422})
 ZOOM_TOOL: dict[str, Any] = {
     'name': 'zoom',
     'description': (
-        'Re-render a region of the page at higher resolution, from the source document. `region` is '
-        '[x0, y0, x1, y1]: the top-left and bottom-right corners in pixel coordinates of the page image (the '
-        "first image), always in the page image's pixels, never a zoomed image's. Returns the region as an "
+        'Re-render a region of one of the pages shown at higher resolution, from the source document. `page` is '
+        'the page number as the instruction names it; `region` is [x0, y0, x1, y1]: the top-left and bottom-right '
+        "corners in pixel coordinates of that page's image, never a zoomed image's. Returns the region as an "
         'image, scaled to the largest size you accept.'
     ),
     'input_schema': {
         'type': 'object',
         'properties': {
+            'page': {'type': 'integer', 'description': 'The page number, as the instruction names it.'},
             'region': {
                 'type': 'array',
                 'items': {'type': 'number'},
                 'minItems': 4,
                 'maxItems': 4,
-                'description': '[x0, y0, x1, y1] in pixel coordinates of the page image.',
-            }
+                'description': "[x0, y0, x1, y1] in pixel coordinates of that page's image.",
+            },
         },
-        'required': ['region'],
+        'required': ['page', 'region'],
     },
 }
+# The pages one conversation shows before its zooms: a figure's pedigree pages and its legend's page. A figure over
+# this is not read, leaving most of the image budget to zooms.
+MAX_PAGES_SHOWN = 6
+# Every page shown can be its largest and the opening request still fits.
+assert MAX_PAGES_SHOWN * claude_images.MAX_IMAGE_BASE64_BYTES < _REQUEST_IMAGE_BYTES  # noqa: S101
 
 
 def _system() -> str:
@@ -127,25 +134,35 @@ def _variants_text(variants: Sequence[KnownVariant]) -> str:
     return _VARIANTS_HEAD + '\n'.join(rows) + '\n'
 
 
-def _instruction(figure: str, page: page_render.Image, boxes: str, legend: page_render.Image | None, zooms: int) -> str:
-    legend_note = (
-        f' The second image is the page that carries its legend, {legend.width} x {legend.height} px, for reading '
-        'only: zoom and cite regions on the first image.'
-        if legend is not None
-        else ''
-    )
+def _instruction(
+    figure: str,
+    drawn: Sequence[tuple[int, page_render.Image, str]],
+    legend: tuple[int, page_render.Image] | None,
+    zooms: int,
+) -> str:
+    """The opening turn's instruction: each image's page number and size, and what of the figure is on it.
+
+    `drawn` holds the figure's pages in the order shown: each page's number, its image, and the figure's pedigree
+    panels on it as boxes in the image's pixels. `legend` is the legend's page, shown last, when that is another.
+    """
+    pages = [
+        f'page {number} ({image.width} x {image.height} px): its pedigree panels at about {boxes}'
+        for number, image, boxes in drawn
+    ]
+    if legend is not None:
+        number, image = legend
+        pages.append(f"page {number} ({image.width} x {image.height} px): the figure's legend")
     return (
-        f'The first image is the page, {page.width} x {page.height} px. Transcribe the pedigrees of {figure} into '
-        f'the required JSON: its pedigree panels are at about {boxes} in pixel coordinates of the page image, and '
-        f'any other figure on the page is read separately.{legend_note} Report meaning only, never geometry. You may '
-        f'call `zoom` up to {zooms} times; give each region as [x0, y0, x1, y1] in pixel coordinates of the page '
-        'image.'
+        f'The images are pages of the paper, in this order: {"; ".join(pages)}. Boxes are in pixel coordinates of '
+        f"their page's image. Transcribe the pedigrees of {figure} into the required JSON; any other figure on these "
+        'pages is read separately. A family drawn across two pages is one pedigree. Report meaning only, never '
+        f'geometry. You may call `zoom` up to {zooms} times, naming the page and a region in its image.'
     )
 
 
 def _repair(error: Exception) -> str:
     return (
-        f'Your JSON was rejected:\n{error}\n\nRe-read the page (zoom again if you need to) and reply with the '
+        f'Your JSON was rejected:\n{error}\n\nRe-read the pages (zoom again if you need to) and reply with the '
         'corrected JSON only.'
     )
 
@@ -170,10 +187,8 @@ def _harness_version() -> str:
         'repairs': _REPAIRS,
         'system': _system(),
         'variants': [_VARIANTS_HEAD, _NO_VARIANTS, _MAX_VARIANTS, _LINES_PER_VARIANT, _MAX_LINE],
-        'instruction': [
-            _instruction('Figure 0', probe, '[]', probe, 0),
-            _instruction('Figure 0', probe, '[]', None, 0),
-        ],
+        'instruction': _instruction('Figure 0', [(1, probe, '[]')], (2, probe), 0),
+        'max_pages_shown': MAX_PAGES_SHOWN,
         'tool': ZOOM_TOOL,
         'support_fields': sorted(ir.SUPPORT_FIELDS),
         'grus': importlib.metadata.version('grus'),
@@ -186,7 +201,7 @@ HARNESS_VERSION = _harness_version()
 
 
 class ExtractionError(Exception):
-    """A reading ended without a pedigree set it can record: every figure failed, or their sets cannot be merged.
+    """A reading ended with nothing to record: no figure's answer was accepted.
 
     Attributes:
         refusal: For a single refused conversation, what the API said of it.
@@ -210,22 +225,67 @@ class _RejectedError(ValueError):
 
 
 @dataclasses.dataclass(frozen=True)
-class FigurePage:
-    """One page a pedigree figure is drawn on, as one conversation reads it.
+class DrawnPage:
+    """A page a pedigree figure is drawn on.
+
+    Attributes:
+        page: The page.
+        boxes: The figure's pedigree panels on it, as fractions of the page from its top-left corner.
+    """
+
+    page: pdf.PageLayout
+    boxes: Sequence[tuple[float, float, float, float]]
+
+    def __post_init__(self) -> None:
+        """Check the page has a panel on it.
+
+        Raises:
+            ValueError: `boxes` is empty.
+        """
+        if not self.boxes:
+            raise ValueError(f'a figure is drawn on page {self.page.number} in at least one panel; got none')
+
+
+@dataclasses.dataclass(frozen=True)
+class FigurePages:
+    """A pedigree figure, as one conversation reads it.
 
     Attributes:
         figure: The figure's index in the paper's figure set.
         label: The figure's label as printed, or empty.
-        page: The page its pedigree panels on this page are drawn on.
-        boxes: Those panels' boxes, as fractions of the page from its top-left corner.
-        legend: The page carrying the figure's legend, when that is another page.
+        pages: Every page it draws pedigrees on, in page order.
+        legend: The page carrying its legend, when that is none of `pages`.
     """
 
     figure: int
     label: str
-    page: pdf.PageLayout
-    boxes: Sequence[tuple[float, float, float, float]]
+    pages: Sequence[DrawnPage]
     legend: pdf.PageLayout | None = None
+
+    def __post_init__(self) -> None:
+        """Check the figure is an index, its pages are distinct and in order, and the legend's page is none of them.
+
+        Raises:
+            ValueError: The figure's index is negative, a page is listed twice or out of order, or the legend's page is
+                a drawn page.
+        """
+        if self.figure < 0:
+            raise ValueError(f'a figure is an index in the figure set; got {self.figure}')
+        numbers = [drawn.page.number for drawn in self.pages]
+        if not numbers or numbers != sorted(set(numbers)):
+            raise ValueError(f'a figure is drawn on distinct pages in page order, at least one; got {numbers}')
+        if self.legend is not None and self.legend.number in numbers:
+            raise ValueError(f'the legend is on drawn page {self.legend.number}: leave `legend` unset')
+
+    @property
+    def shown(self) -> list[pdf.PageLayout]:
+        """The pages its conversation shows, in order: the drawn pages, then the legend's when that is another."""
+        return [drawn.page for drawn in self.pages] + ([] if self.legend is None else [self.legend])
+
+    @property
+    def name(self) -> str:
+        """The figure as a log line names it: its label, or its index."""
+        return self.label or f'figure {self.figure}'
 
 
 @dataclasses.dataclass(frozen=True)
@@ -253,15 +313,28 @@ class PaperInput:
         markdown: The paper's rendering; every quote must be in it or in the text layer of a page shown.
         pdf_bytes: The pdf.
         pdf_hash: The pdf revision's hash, stamped on every citation.
-        figures: The pages of its pedigree figures to read, in figure order.
+        figures: Its pedigree figures to read, in figure order.
         variants: Its validated variants, which the reader names alleles by; empty for a paper with none.
     """
 
     markdown: str
     pdf_bytes: bytes
     pdf_hash: str
-    figures: Sequence[FigurePage]
+    figures: Sequence[FigurePages]
     variants: Sequence[KnownVariant]
+
+    def __post_init__(self) -> None:
+        """Check each figure is listed once and shows no more than `MAX_PAGES_SHOWN` pages.
+
+        Raises:
+            ValueError: A figure is listed twice, or would show too many pages.
+        """
+        indices = [unit.figure for unit in self.figures]
+        if len(set(indices)) != len(indices):
+            raise ValueError(f'a figure is read once; got figures {indices}')
+        for unit in self.figures:
+            if len(unit.shown) > MAX_PAGES_SHOWN:
+                raise ValueError(f'{unit.name} shows {len(unit.shown)} pages, past {MAX_PAGES_SHOWN}')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -269,14 +342,13 @@ class Reading:
     """A paper's pedigrees, read.
 
     Attributes:
-        pedigree_set: Every pedigree read from the figures whose answers were accepted, with the conditions they
-            share and the citations that place them.
-        construction: How it was made, for the record: every figure read, a failed one with its reason.
-        usage: Each turn's token usage: each conversation's turns in order, the conversations in the order of the
-            paper's figure pages.
+        pedigrees: For each figure whose answer was accepted, the grus set read from it: its pedigrees, the
+            conditions and loci its legend declares, and the citations that place them.
+        construction: How it was made, for the record: every figure read, a failed one with the reason.
+        usage: Each turn's token usage: each conversation's turns in order, the conversations in figure order.
     """
 
-    pedigree_set: pedigree_pb2.PedigreeSet
+    pedigrees: paper_pedigrees_pb2.PaperPedigrees
     construction: pedigrees_pb2.PedigreeExtractionConstruction
     usage: list[anthropic.types.Usage]
 
@@ -331,52 +403,65 @@ def _json_object(text: str) -> str:
 
 
 class _Conversation:
-    """One figure page's conversation: what it shows, the zooms it made, and the image bytes every turn re-sends."""
+    """One figure's conversation: the pages it shows, the zooms it made, and the image bytes every turn re-sends."""
 
     def __init__(
         self,
         pdf_bytes: bytes,
         pdf_hash: str,
-        unit: FigurePage,
-        overview: page_render.Image,
-        legend: page_render.Image | None,
+        unit: FigurePages,
+        images: Sequence[page_render.Image],
         variants_text: str,
     ) -> None:
         self._pdf = pdf_bytes
         self._variants_text = variants_text
         self.pdf_hash = pdf_hash
         self.unit = unit
-        self.overview = overview
-        self.legend = legend
-        self.zoom_budget = _MAX_IMAGES - (1 if legend is None else 2)
+        self._layouts = {layout.number: layout for layout in unit.shown}
+        self._images = dict(zip(self._layouts, images, strict=True))
+        self.zoom_budget = _MAX_IMAGES - len(images)
         self.zooms = 0
-        self.wire_bytes = overview.wire_bytes + (0 if legend is None else legend.wire_bytes)
+        self.wire_bytes = sum(image.wire_bytes for image in images)
 
     @property
     def name(self) -> str:
-        figure = self.unit.label or f'figure {self.unit.figure}'
-        return f'{figure} on page {self.unit.page.number}'
+        numbers = ', '.join(str(drawn.page.number) for drawn in self.unit.pages)
+        return f'{self.unit.name} on page{"s" if len(self.unit.pages) > 1 else ""} {numbers}'
 
     def first(self) -> list[anthropic.types.TextBlockParam | anthropic.types.ImageBlockParam]:
-        """The opening turn: the paper's variants, the page, the legend's page when it is another, and the instruction.
+        """The opening turn: the paper's variants, the figure's pages and its legend's page, and the instruction.
 
         The variants come first, with a cache point of their own, so each figure of a paper reads them from the cache.
         """
-        w, h = self.overview.width, self.overview.height
-        boxes = ', '.join(
-            f'[{round(left * w)}, {round(top * h)}, {round(right * w)}, {round(bottom * h)}]'
-            for left, top, right, bottom in self.unit.boxes
-        )
+        drawn: list[tuple[int, page_render.Image, str]] = []
+        for page in self.unit.pages:
+            image = self._images[page.page.number]
+            w, h = image.width, image.height
+            placed = ', '.join(
+                f'[{round(left * w)}, {round(top * h)}, {round(right * w)}, {round(bottom * h)}]'
+                for left, top, right, bottom in page.boxes
+            )
+            drawn.append((page.page.number, image, placed))
+        legend = None if self.unit.legend is None else (self.unit.legend.number, self._images[self.unit.legend.number])
         figure = f'"{self.unit.label}"' if self.unit.label else 'the unlabelled figure'
         content: list[anthropic.types.TextBlockParam | anthropic.types.ImageBlockParam] = [
             {'type': 'text', 'text': self._variants_text, 'cache_control': {'type': 'ephemeral'}},
-            self.overview.block(),
+            *(image.block() for image in self._images.values()),
         ]
-        if self.legend is not None:
-            content.append(self.legend.block())
-        text = _instruction(figure, self.overview, boxes, self.legend, self.zoom_budget)
+        text = _instruction(figure, drawn, legend, self.zoom_budget)
         content.append({'type': 'text', 'text': text, 'cache_control': {'type': 'ephemeral'}})
         return content
+
+    def _page(self, page: object) -> int:
+        """The number of a page this conversation shows.
+
+        Raises:
+            _RejectedError: `page` is not one of them.
+        """
+        if isinstance(page, int) and not isinstance(page, bool) and page in self._images:
+            return page
+        shown = ', '.join(map(str, self._images))
+        raise _RejectedError(f'page {page!r} is not a page shown; the pages are {shown}')
 
     async def zoom(self, block: anthropic.types.ToolUseBlock) -> anthropic.types.ToolResultBlockParam:
         """Answer one zoom call: the region as an image, or the reason it was refused."""
@@ -388,10 +473,12 @@ class _Conversation:
             return error(f'unknown tool {block.name!r}; the only tool is `zoom`')
         if self.zooms >= self.zoom_budget:
             return error('the zoom budget is spent; reply with the JSON now')
-        region = block.input.get('region') if isinstance(block.input, dict) else None  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        arguments = block.input if isinstance(block.input, dict) else {}  # pyright: ignore[reportUnknownVariableType]
+        region = arguments.get('region')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         try:
-            box = _overview_box(region, self.overview)
-            image = await page_render.render(self._pdf, self.unit.page, box, tier=_TIER)
+            number = self._page(arguments.get('page'))  # pyright: ignore[reportUnknownMemberType]
+            box = _overview_box(region, self._images[number])
+            image = await page_render.render(self._pdf, self._layouts[number], box, tier=_TIER)
         except _RejectedError as e:
             return error(str(e))
         except (ValueError, pypdfium2.PdfiumError) as e:
@@ -402,7 +489,7 @@ class _Conversation:
             return error('the conversation holds as many images as it can; reply with the JSON now')
         self.zooms += 1
         self.wire_bytes += image.wire_bytes
-        note = f'Region {region} of the page image.'
+        note = f'Region {region} of page {number}.'
         if image.native_limited:
             note += ' Native resolution reached: zooming further into this area adds no detail.'
         return {
@@ -412,27 +499,29 @@ class _Conversation:
         }
 
     def accept(self, text: str, paper_text: str) -> pedigree_pb2.PedigreeSet:
-        """The answer as a pedigree set, its regions placed on the page and its quotes found in the paper.
+        """The answer as a pedigree set, its regions placed on their pages and its quotes found in the paper.
 
         Raises:
-            _RejectedError: grus's loader refuses it, a region is off the page image, or a quote is not in the paper.
+            _RejectedError: grus's loader refuses it, a region is not on a page shown, or a quote is not in the paper.
         """
         try:
             answer = ir.load_set_json(_json_object(text))
         except (json_format.ParseError, ir.ValidationError, ir.IntegrityError) as e:
             raise _RejectedError(str(e)) from e
-        shown = [self.unit.page] + ([] if self.unit.legend is None else [self.unit.legend])
-        haystack = variant_scan.normalise(paper_text) + ''.join(variant_scan.normalise(p.text) for p in shown)
-        layout = self.unit.page
+        haystack = variant_scan.normalise(paper_text) + ''.join(
+            variant_scan.normalise(layout.text) for layout in self._layouts.values()
+        )
         for citation in answer.citations:
             citation.document_id = self.pdf_hash
             if citation.HasField('region'):
                 r = citation.region
                 try:
-                    left, top, right, bottom = _overview_box([r.x0, r.y0, r.x1, r.y1], self.overview)
+                    number = self._page(r.page)
+                    left, top, right, bottom = _overview_box([r.x0, r.y0, r.x1, r.y1], self._images[number])
                 except _RejectedError as e:
                     raise _RejectedError(f'citation {citation.id!r}: {e}') from e
-                r.page = layout.number - 1  # grus counts pages from 0
+                layout = self._layouts[number]
+                r.page = number - 1  # grus counts pages from 0
                 r.x0, r.x1 = left * layout.width, right * layout.width
                 r.y0, r.y1 = top * layout.height, bottom * layout.height
                 continue
@@ -445,14 +534,14 @@ class _Conversation:
         return answer
 
 
-async def _open(pdf_bytes: bytes, pdf_hash: str, unit: FigurePage, variants_text: str) -> _Conversation:
-    """Render what a conversation shows.
+async def _open(pdf_bytes: bytes, pdf_hash: str, unit: FigurePages, variants_text: str) -> _Conversation:
+    """Render what a conversation shows: the figure's pages, then its legend's page when that is another.
 
     Raises:
         _FailedError: A page cannot be rendered, or renders too large to send.
     """
     images: list[page_render.Image] = []
-    for layout in [unit.page] + ([] if unit.legend is None else [unit.legend]):
+    for layout in unit.shown:
         try:
             image = await page_render.render(pdf_bytes, layout, (0.0, 0.0, 1.0, 1.0), tier=_TIER)
         except (ValueError, pypdfium2.PdfiumError) as e:
@@ -460,7 +549,7 @@ async def _open(pdf_bytes: bytes, pdf_hash: str, unit: FigurePage, variants_text
         if image.wire_bytes > claude_images.MAX_IMAGE_BASE64_BYTES:
             raise _FailedError(f'page {layout.number} renders too large to send')
         images.append(image)
-    return _Conversation(pdf_bytes, pdf_hash, unit, images[0], images[1] if len(images) > 1 else None, variants_text)
+    return _Conversation(pdf_bytes, pdf_hash, unit, images, variants_text)
 
 
 async def _read(
@@ -521,248 +610,25 @@ async def _read(
     raise _FailedError(f'{name}: no answer after {conversation.zoom_budget + _SLACK_TURNS} turns')
 
 
-def _declarations(sets: Sequence[pedigree_pb2.PedigreeSet]) -> dict[str, pedigree_pb2.ConditionDef]:
-    """One declaration per condition name across the readings, a stated mode of inheritance over an unstated one.
-
-    Two readings stating different modes for one name contradict each other, so the merged declaration states none.
-    """
-    merged: dict[str, pedigree_pb2.ConditionDef] = {}
-    conflicted: set[str] = set()
-    for one in sets:
-        for condition in one.conditions:
-            held = merged.get(condition.name)
-            if held is None:
-                declaration = pedigree_pb2.ConditionDef(id=f'k{len(merged) + 1}', name=condition.name)
-                if condition.HasField('inheritance'):
-                    declaration.inheritance = condition.inheritance
-                merged[condition.name] = declaration
-            elif not condition.HasField('inheritance'):
-                continue
-            elif not held.HasField('inheritance'):
-                held.inheritance = condition.inheritance
-            elif held.inheritance != condition.inheritance:
-                conflicted.add(condition.name)
-    for name in sorted(conflicted):
-        _LOG.warning('figures state different modes of inheritance for %r; the merged set states none', name)
-        merged[name].ClearField('inheritance')
-    return merged
-
-
-@dataclasses.dataclass(frozen=True)
-class _LocusMap:
-    """Where one reading's locus went in the merged set: its id there, and its allele symbols as the merged ones."""
-
-    id: str
-    symbols: dict[str, str]
-
-
-def _compatible(held: pedigree_pb2.Allele, allele: pedigree_pb2.Allele) -> bool:
-    """Whether two readings' alleles can be one: neither states a name the other contradicts."""
-    return not (held.name and allele.name and held.name != allele.name)
-
-
-def _counterpart(held: pedigree_pb2.Locus, allele: pedigree_pb2.Allele) -> pedigree_pb2.Allele | None:
-    """The held allele another reading's allele is, if any.
-
-    The one with its symbol; else, for a reference allele, the held reference; else the one with its printed name.
-    """
-    for other in held.alleles:
-        if other.symbol == allele.symbol:
-            return other
-    if allele.reference:
-        return next((other for other in held.alleles if other.reference), None)
-    if allele.name:
-        return next((other for other in held.alleles if other.name == allele.name), None)
-    return None
-
-
-def _held_locus(
-    merged: Sequence[pedigree_pb2.Locus], locus: pedigree_pb2.Locus, claimed: set[str]
-) -> pedigree_pb2.Locus | None:
-    """The merged locus another reading's locus is, if any.
-
-    The one with its grus identity; else, for a named locus, the one held locus of that name whose gene the two do not
-    contradict. A held locus another locus of the same reading went to (`claimed`) is never it: one reading's two loci
-    stay two.
-    """
-    open_loci = [held for held in merged if held.id not in claimed]
-    identity = ir.locus_identity(locus)
-    same = next((held for held in open_loci if ir.locus_identity(held) == identity), None)
-    if same is not None or not locus.name:
-        return same
-    gene = locus.gene if locus.HasField('gene') else None
-    named = [
-        held
-        for held in open_loci
-        if held.name == locus.name and (gene is None or not held.HasField('gene') or held.gene == gene)
-    ]
-    return named[0] if len(named) == 1 else None
-
-
-def _join(held: pedigree_pb2.Locus, locus: pedigree_pb2.Locus) -> dict[str, str] | None:
-    """Join a reading's locus into the held one; its symbols as the held ones, or None when the two contradict.
-
-    An allele is the held allele with its symbol, or the held reference when both are references (one figure's "+"
-    is another's "WT"), or the held allele of its printed name. What one reading leaves unstated (a name, the
-    reference flag, an identifier) is taken from the other; a name the other contradicts is a contradiction, as are
-    two of the reading's alleles that would be one held allele, or two held alleles left sharing a name.
-    """
-    pairs = [(allele, _counterpart(held, allele)) for allele in locus.alleles]
-    if any(other is not None and not _compatible(other, allele) for allele, other in pairs):
-        return None
-    matched = [other.symbol for _, other in pairs if other is not None]
-    if len(matched) != len(set(matched)):
-        return None
-    symbols: dict[str, str] = {}
-    for allele, other in pairs:
-        if other is None:
-            if any(a.symbol == allele.symbol for a in held.alleles) or (
-                allele.reference and any(a.reference for a in held.alleles)
-            ):
-                return None
-            held.alleles.add().CopyFrom(allele)
-            symbols[allele.symbol] = allele.symbol
-            continue
-        other.name = other.name or allele.name
-        other.reference = other.reference or allele.reference
-        known = {(i.scheme, i.value) for i in other.identifiers}
-        other.identifiers.extend(i for i in allele.identifiers if (i.scheme, i.value) not in known)
-        symbols[allele.symbol] = other.symbol
-    if sum(a.reference for a in held.alleles) > 1:
-        return None
-    names = [a.name for a in held.alleles if a.name]
-    if len(names) != len(set(names)):
-        return None
-    if locus.HasField('gene') and not held.HasField('gene'):
-        held.gene = locus.gene
-    return symbols
-
-
-def _loci(sets: Sequence[pedigree_pb2.PedigreeSet]) -> tuple[list[pedigree_pb2.Locus], list[dict[str, _LocusMap]]]:
-    """One declaration per locus across the readings, and for each reading, where each of its loci went.
-
-    Loci are one when grus's `locus_identity` says so, or when they share a printed name and one leaves the gene
-    unstated. Their alleles are joined (`_join`). A reading whose locus contradicts the held one is left out of its
-    map, and its genotypes there are dropped; its labels stay.
-    """
-    merged: list[pedigree_pb2.Locus] = []
-    maps: list[dict[str, _LocusMap]] = []
-    for n, one in enumerate(sets, 1):
-        mapping: dict[str, _LocusMap] = {}
-        for locus in one.loci:
-            held = _held_locus(merged, locus, {m.id for m in mapping.values()})
-            if held is None:
-                if ir.locus_identity(locus) in {ir.locus_identity(other) for other in merged}:
-                    _LOG.warning(
-                        'reading %d states locus %r twice over; its genotypes there are dropped',
-                        n,
-                        locus.name or locus.id,
-                    )
-                    continue
-                held = pedigree_pb2.Locus()
-                held.CopyFrom(locus)
-                held.id = f'l{len(merged) + 1}'
-                merged.append(held)
-                mapping[locus.id] = _LocusMap(held.id, {a.symbol: a.symbol for a in locus.alleles})
-                continue
-            joined = pedigree_pb2.Locus()
-            joined.CopyFrom(held)
-            symbols = _join(joined, locus)
-            identities = [ir.locus_identity(other) for other in merged if other is not held]
-            if symbols is None or ir.locus_identity(joined) in identities:
-                _LOG.warning(
-                    'reading %d states locus %r against another reading; its genotypes there are dropped',
-                    n,
-                    locus.name or locus.id,
-                )
-                continue
-            held.CopyFrom(joined)
-            mapping[locus.id] = _LocusMap(held.id, symbols)
-        maps.append(mapping)
-    return merged, maps
-
-
-def _genotypes(individual: pedigree_pb2.Individual, loci: dict[str, _LocusMap]) -> None:
-    """Point a copied person's genotypes and annotations at the merged loci, dropping those left out of the map."""
-    kept = [g for g in individual.genotypes if g.locus_id in loci]
-    for genotype in kept:
-        where = loci[genotype.locus_id]
-        genotype.locus_id = where.id
-        genotype.alleles[:] = [where.symbols[a] for a in genotype.alleles]
-    del individual.genotypes[:]
-    individual.genotypes.extend(kept)
-    for annotation in individual.annotations:
-        annotation.loci[:] = [loci[i].id for i in annotation.loci if i in loci]
-
-
-def _merge(sets: Sequence[pedigree_pb2.PedigreeSet]) -> pedigree_pb2.PedigreeSet:
-    """One set for the paper: citation ids made unique per reading, and each condition and locus declared once.
-
-    Conditions are one by name, loci by grus's locus identity (`_loci`). An unnamed condition is the figure's sole
-    one; within one paper the readings' unnamed conditions are taken as one.
-
-    Raises:
-        ExtractionError: The merged set breaks grus's rules, which no attempt on the same answers would change.
-    """
-    declared = _declarations(sets)
-    loci, locus_maps = _loci(sets)
-    merged = pedigree_pb2.PedigreeSet(conditions=list(declared.values()), loci=loci)
-    for n, one in enumerate(sets, 1):
-        conditions = {c.id: declared[c.name] for c in one.conditions}
-        locus_ids = locus_maps[n - 1]
-        citations = {citation.id: f's{n}.{citation.id}' for citation in one.citations}
-        for citation in one.citations:
-            added = merged.citations.add()
-            added.CopyFrom(citation)
-            added.id = citations[citation.id]
-        merged.evidence.extend(citations[c] for c in one.evidence)
-        for pedigree in one.pedigrees:
-            added_pedigree = merged.pedigrees.add()
-            added_pedigree.CopyFrom(pedigree)
-            for individual in added_pedigree.individuals:
-                for entry in individual.conditions:
-                    entry.condition_id = conditions[entry.condition_id].id
-                _genotypes(individual, locus_ids)
-            added_pedigree.evidence[:] = [citations[c] for c in pedigree.evidence]
-            added_pedigree.ClearField('supports')
-            for support in pedigree.supports:
-                kept = added_pedigree.supports.add()
-                kept.CopyFrom(support)
-                if support.HasField('condition_id'):
-                    declaration = conditions[support.condition_id]
-                    if support.field == 'condition.inheritance' and not declaration.HasField('inheritance'):
-                        del added_pedigree.supports[-1]  # the mode it supported was dropped as contradicted
-                        continue
-                    kept.condition_id = declaration.id
-                if support.loci:
-                    kept.loci[:] = [locus_ids[i].id for i in support.loci if i in locus_ids]
-                    if not kept.loci:
-                        del added_pedigree.supports[-1]  # every locus it supported was dropped as contradicted
-                        continue
-                kept.citations[:] = [citations[c] for c in support.citations]
-    try:
-        ir.validate_set(merged)
-    except (ir.ValidationError, ir.IntegrityError) as e:
-        raise ExtractionError(f'the figures read cannot be merged into one set: {e}') from e
-    return merged
-
-
 def _first(failures: Sequence[BaseException]) -> BaseException:
     """The failure a reading reports for its conversations: a paid one before any other."""
     return next((e for e in failures if isinstance(e, ocr.SpentError)), failures[0])
 
 
 def _construction(
-    units: Sequence[FigurePage], outcomes: Sequence[tuple[pedigree_pb2.PedigreeSet, str] | _FailedError], model: str
+    units: Sequence[FigurePages],
+    outcomes: Sequence[tuple[pedigree_pb2.PedigreeSet, str] | _FailedError],
+    model: str,
 ) -> pedigrees_pb2.PedigreeExtractionConstruction:
-    """Every figure read, in order, each with the pages whose answer was not accepted and why."""
-    figures: dict[int, pedigrees_pb2.PedigreeFigure] = {}
-    for unit, outcome in zip(units, outcomes, strict=True):
-        figure = figures.setdefault(unit.figure, pedigrees_pb2.PedigreeFigure(figure=unit.figure))
-        if isinstance(outcome, _FailedError):
-            figure.failures.add(pdf_page=unit.page.number, reason=str(outcome))
+    """Every figure read, in order; one whose reading failed carries the reason."""
+    figures = [
+        pedigrees_pb2.PedigreeFigure(figure=unit.figure, failure=str(outcome))
+        if isinstance(outcome, _FailedError)
+        else pedigrees_pb2.PedigreeFigure(figure=unit.figure)
+        for unit, outcome in zip(units, outcomes, strict=True)
+    ]
     return pedigrees_pb2.PedigreeExtractionConstruction(
-        model=model, harness_version=HARNESS_VERSION, figures_read=list(figures.values())
+        model=model, harness_version=HARNESS_VERSION, figures_read=figures
     )
 
 
@@ -773,7 +639,9 @@ async def read(
     tokens: ocr.TokenCounter,
     model: str = MODEL,
 ) -> Reading:
-    """Read every pedigree figure of a paper, a few conversations at once, into one pedigree set.
+    """Read every pedigree figure of a paper, one conversation each and a few at once, into a pedigree set per figure.
+
+    A figure whose reading fails gets no set; the construction gives the reason.
 
     Args:
         paper: What to read, and the rendering quotes are checked against.
@@ -782,11 +650,10 @@ async def read(
         model: The model to run.
 
     Returns:
-        The paper's pedigree set from the figures whose answers were accepted, and how it was made.
+        A pedigree set for each figure whose answer was accepted, and how they were made.
 
     Raises:
-        ExtractionError: No conversation's answer was accepted, or the accepted sets cannot be merged; another attempt
-            is expected to end the same way.
+        ExtractionError: No figure's answer was accepted; another attempt is expected to end the same way.
         ocr.SpentError: A turn failed after the model began answering it; its usage so far is counted.
         ValueError: The paper has no figure to read.
     """
@@ -795,7 +662,7 @@ async def read(
     usage: list[list[anthropic.types.Usage]] = [[] for _ in paper.figures]
     gate = asyncio.Semaphore(_CONCURRENCY)
 
-    async def one(index: int, unit: FigurePage) -> tuple[pedigree_pb2.PedigreeSet, str] | _FailedError:
+    async def one(index: int, unit: FigurePages) -> tuple[pedigree_pb2.PedigreeSet, str] | _FailedError:
         async with gate:
             try:
                 conversation = await _open(paper.pdf_bytes, paper.pdf_hash, unit, _variants_text(paper.variants))
@@ -809,7 +676,7 @@ async def read(
                 if e.status_code not in _REPEATED_STATUSES or anthropic_ocr.spend_refused(e):
                     raise  # a spend limit clears when the budget does: the reading is refused, not failed
                 # The same conversation makes the same request: the rest of the paper's figures stand.
-                failed = _FailedError(f'{unit.label or f"figure {unit.figure}"} on page {unit.page.number}: {e}')
+                failed = _FailedError(f'{unit.name}: {e}')
                 _LOG.warning('%s', failed)
                 return failed
 
@@ -826,10 +693,19 @@ async def read(
         failures = [o for o in outcomes if isinstance(o, _FailedError)]
         refusal = failures[0].refusal if len(failures) == 1 else None
         raise ExtractionError('; '.join(str(f) for f in failures), refusal=refusal)
-    merged = _merge([pedigree_set for pedigree_set, _ in accepted])
-    _LOG.info('read %d pedigrees from %d of %d figure pages', len(merged.pedigrees), len(accepted), len(outcomes))
+    pedigrees = paper_pedigrees_pb2.PaperPedigrees()
+    for unit, outcome in zip(paper.figures, outcomes, strict=True):
+        if not isinstance(outcome, _FailedError):
+            pedigrees.figures[unit.figure].CopyFrom(outcome[0])
+    protovalidate.validate(pedigrees)
+    _LOG.info(
+        'read %d pedigrees from %d of %d figures',
+        sum(len(one.pedigrees) for one in pedigrees.figures.values()),
+        len(accepted),
+        len(outcomes),
+    )
     return Reading(
-        pedigree_set=merged,
+        pedigrees=pedigrees,
         construction=_construction(paper.figures, outcomes, accepted[-1][1]),
         usage=[turn for turns in usage for turn in turns],
     )
@@ -850,10 +726,10 @@ async def read_paper(
             the environment.
 
     Returns:
-        The paper's pedigree set, and how it was made.
+        The paper's pedigree sets, one per figure, and how they were made.
 
     Raises:
-        ExtractionError: No figure's answer was accepted, or the figures cannot be merged.
+        ExtractionError: No figure's answer was accepted.
         ocr.SpendRefusedError: The API refused the first turn at a spend limit, or for billing; nothing was spent.
         ocr.SpentError: The reading failed after a turn was paid for, or ran past `_TIMEOUT_SECONDS` after one. The
             original error is its cause.
