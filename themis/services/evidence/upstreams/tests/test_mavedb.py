@@ -118,7 +118,8 @@ def test_no_candidate_is_read_twice_and_none_is_skipped() -> None:
     _run(handler, _fetch)
     assert sum(1 for path in seen if path.endswith('/clingen-allele-id-lookups')) == 1
     reads = [_variant_urn(path) for path in seen if '/variants/urn' in path]
-    assert sorted(reads) == sorted(c.urn for c in mavedb._candidates(_FIXTURE['lookup'], [_ALLELE_ID]))
+    assert len(reads) == len(set(reads)) == len(_FIXTURE['variants'])
+    assert set(reads) == set(_FIXTURE['variants'])
 
 
 def test_every_registered_allele_id_is_asked_in_one_request() -> None:
@@ -232,11 +233,52 @@ def test_every_candidate_considered_rides_in_the_provenance_query() -> None:
     assert result.query.endswith(_SCORED_URN)
 
 
+def _calibrated_record(
+    urn: str,
+    *,
+    published: str | None = '2025-01-01',
+    score: float | None = 1.0,
+    calibrations: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    default_calibrations: list[dict[str, object]] = [
+        {'functionalClassifications': [{'range': [None, None], 'oddspathsRatio': 4.2}]}
+    ]
+    return {
+        'urn': urn,
+        'data': {'score_data': {} if score is None else {'score': score}},
+        'scoreSet': {
+            'urn': urn.partition('#')[0],
+            'publishedDate': published,
+            'scoreCalibrations': default_calibrations if calibrations is None else calibrations,
+        },
+    }
+
+
+def _lookup_handler(
+    entries: list[dict[str, object]],
+    records: dict[str, dict[str, object]],
+    *,
+    reads: list[str] | None = None,
+) -> Callable[[httpx2.Request], httpx2.Response]:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.method == 'POST':
+            return httpx2.Response(200, json=entries)
+        urn = _variant_urn(request.url.path)
+        if reads is not None:
+            reads.append(urn)
+        return httpx2.Response(200, json=records[urn])
+
+    return handler
+
+
 @pytest.mark.parametrize('kind', ['exactMatch', 'equivalentAa', 'equivalentNt'])
 def test_a_match_of_any_directness_is_a_candidate(kind: str) -> None:
     """MaveDB reports the allele itself and the ones it holds as equivalent; all name real deposits."""
     entry = _entry('PA1', kind, (str(_CALIBRATED['urn']), '2025-01-01'))
-    assert [c.urn for c in mavedb._candidates([entry], ['PA1'])] == [_CALIBRATED['urn']]
+    handler = _lookup_handler([entry], {str(_CALIBRATED['urn']): _CALIBRATED})
+    result = _run(handler, lambda c: _fetch(c, 'PA1'))
+    assert result.dataset_versions == ('urn:mavedb:test-b-1',)
+    assert result.oddspath_ratio == 4.2
 
 
 def test_a_more_direct_match_outranks_an_equivalent_one() -> None:
@@ -245,22 +287,47 @@ def test_a_more_direct_match_outranks_an_equivalent_one() -> None:
     It ranks below the exact one even though it is the more recent deposit.
     """
     entries = [
-        _entry('PA1', 'equivalentNt', ('urn:mavedb:x-a-9', '2026-01-01')),
-        _entry('PA2', 'exactMatch', ('urn:mavedb:x-a-1', '2020-01-01')),
+        _entry('PA1', 'equivalentNt', ('urn:mavedb:x-a-9#1', '2026-01-01')),
+        _entry('PA2', 'exactMatch', ('urn:mavedb:x-a-1#1', '2020-01-01')),
     ]
-    assert [c.urn for c in mavedb._candidates(entries, ['PA1', 'PA2'])] == ['urn:mavedb:x-a-1', 'urn:mavedb:x-a-9']
+    records = {
+        'urn:mavedb:x-a-9#1': _calibrated_record('urn:mavedb:x-a-9#1', published='2026-01-01'),
+        'urn:mavedb:x-a-1#1': _calibrated_record('urn:mavedb:x-a-1#1', published='2020-01-01'),
+    }
+    result = _run(_lookup_handler(entries, records), lambda c: _fetch(c, 'PA1', 'PA2'))
+    assert result.dataset_versions == ('urn:mavedb:x-a-1',)
 
 
 def test_the_more_recent_deposit_outranks_the_older_one() -> None:
     """Registration order is not evidential order: the accession that sorts first can be the 2021 one."""
     entries = [_entry('PA1', 'exactMatch', ('urn:mavedb:a-a-1#5', '2020-01-01'), ('urn:mavedb:z-a-1#5', '2026-01-01'))]
-    assert [c.urn for c in mavedb._candidates(entries, ['PA1'])] == ['urn:mavedb:z-a-1#5', 'urn:mavedb:a-a-1#5']
+    records = {
+        'urn:mavedb:a-a-1#5': _calibrated_record('urn:mavedb:a-a-1#5', published='2020-01-01'),
+        'urn:mavedb:z-a-1#5': _calibrated_record('urn:mavedb:z-a-1#5', published='2026-01-01'),
+    }
+    result = _run(_lookup_handler(entries, records), lambda c: _fetch(c, 'PA1'))
+    assert result.dataset_versions == ('urn:mavedb:z-a-1',)
 
 
 def test_an_unpublished_deposit_ranks_below_every_published_one() -> None:
     """MaveDB reports an unpublished score set with a null date, which orders before every real one."""
-    entries = [_entry('PA1', 'exactMatch', ('urn:mavedb:a-a-1', None), ('urn:mavedb:z-a-1', '2020-01-01'))]
-    assert [c.urn for c in mavedb._candidates(entries, ['PA1'])] == ['urn:mavedb:z-a-1', 'urn:mavedb:a-a-1']
+    entries = [_entry('PA1', 'exactMatch', ('urn:mavedb:a-a-1#1', None), ('urn:mavedb:z-a-1#1', '2020-01-01'))]
+    records = {
+        'urn:mavedb:a-a-1#1': _calibrated_record('urn:mavedb:a-a-1#1', published=None),
+        'urn:mavedb:z-a-1#1': _calibrated_record('urn:mavedb:z-a-1#1', published='2020-01-01'),
+    }
+    result = _run(_lookup_handler(entries, records), lambda c: _fetch(c, 'PA1'))
+    assert result.dataset_versions == ('urn:mavedb:z-a-1',)
+    assert result.query.index('urn:mavedb:z-a-1#1') < result.query.index('urn:mavedb:a-a-1#1')
+
+
+def test_an_unpublished_deposit_answers_when_no_published_one_scores_the_allele() -> None:
+    """Null publishedDate demotes rather than drops: an unpublished score set still answers alone."""
+    entries = [_entry('PA1', 'exactMatch', ('urn:mavedb:a-a-1#1', None))]
+    records = {'urn:mavedb:a-a-1#1': _calibrated_record('urn:mavedb:a-a-1#1', published=None)}
+    result = _run(_lookup_handler(entries, records), lambda c: _fetch(c, 'PA1'))
+    assert result.dataset_versions == ('urn:mavedb:a-a-1',)
+    assert result.oddspath_ratio == 4.2
 
 
 def test_the_callers_own_allele_outranks_a_derived_one_whatever_their_dates() -> None:
@@ -272,18 +339,29 @@ def test_the_callers_own_allele_outranks_a_derived_one_whatever_their_dates() ->
     their nucleotide change.
     """
     entries = [
-        _entry('CA1', 'exactMatch', ('urn:mavedb:nt-a-1', '2020-01-01')),
-        _entry('PA1', 'exactMatch', ('urn:mavedb:aa-a-1', '2026-01-01')),
+        _entry('CA1', 'exactMatch', ('urn:mavedb:nt-a-1#1', '2020-01-01')),
+        _entry('PA1', 'exactMatch', ('urn:mavedb:aa-a-1#1', '2026-01-01')),
     ]
-    assert [c.urn for c in mavedb._candidates(entries, ['CA1', 'PA1'])] == ['urn:mavedb:nt-a-1', 'urn:mavedb:aa-a-1']
+    records = {
+        'urn:mavedb:nt-a-1#1': _calibrated_record('urn:mavedb:nt-a-1#1', published='2020-01-01'),
+        'urn:mavedb:aa-a-1#1': _calibrated_record('urn:mavedb:aa-a-1#1', published='2026-01-01'),
+    }
+    result = _run(_lookup_handler(entries, records), lambda c: _fetch(c, 'CA1', 'PA1'))
+    assert result.dataset_versions == ('urn:mavedb:nt-a-1',)
 
 
 def test_a_deposit_reached_under_two_alleles_is_credited_to_the_more_direct_one() -> None:
     """MaveDB labels a match against whichever id reached it, so one deposit arrives twice."""
-    deposit = ('urn:mavedb:x-a-1', '2025-01-01')
-    entries = [_entry('CA1', 'equivalentAa', deposit), _entry('PA1', 'exactMatch', deposit)]
-    [candidate] = mavedb._candidates(entries, ['CA1', 'PA1'])
-    assert (candidate.allele_id, candidate.kind) == ('PA1', 'exactMatch')
+    shared = ('urn:mavedb:x-a-1#1', '2020-01-01')
+    rival = ('urn:mavedb:y-a-1#1', '2026-01-01')
+    entries = [_entry('CA1', 'equivalentAa', shared, rival), _entry('PA1', 'exactMatch', shared)]
+    records = {
+        'urn:mavedb:x-a-1#1': _calibrated_record('urn:mavedb:x-a-1#1', published='2020-01-01'),
+        'urn:mavedb:y-a-1#1': _calibrated_record('urn:mavedb:y-a-1#1', published='2026-01-01'),
+    }
+    # Credited to PA1's exactMatch rather than CA1's equivalentAa, x-a-1 outranks the newer equivalentAa rival.
+    result = _run(_lookup_handler(entries, records), lambda c: _fetch(c, 'CA1', 'PA1'))
+    assert result.dataset_versions == ('urn:mavedb:x-a-1',)
 
 
 def test_a_dangling_variant_urn_is_the_upstreams_fault_not_the_callers() -> None:
@@ -317,19 +395,44 @@ def test_the_candidate_order_does_not_follow_the_payloads_own_order() -> None:
     The committed deposits disagree on strength for one score, so upstream ordering deciding the
     winner would make a scored field non-deterministic.
     """
-    forward = mavedb._candidates(_FIXTURE['lookup'], [_ALLELE_ID])
     reversed_lookup = [
         {**entry, 'exactMatch': {**entry['exactMatch'], 'variantEffectMeasurements': list(reversed(vems))}}
         for entry in _FIXTURE['lookup']
         if (vems := entry['exactMatch']['variantEffectMeasurements'])
     ]
-    assert [c.urn for c in mavedb._candidates(reversed_lookup, [_ALLELE_ID])] == [c.urn for c in forward]
+    reversed_result = _run(_lookup_handler(reversed_lookup, _FIXTURE['variants']), _fetch)
+    assert reversed_result.dataset_versions == ('urn:mavedb:00001222-b-2',)
+    assert reversed_result.oddspath_ratio == 0.0381
+
+
+def test_same_date_deposits_break_ties_by_urn_rather_than_payload_order() -> None:
+    entries = [_entry('PA1', 'exactMatch', ('urn:mavedb:b-a-1#1', '2025-05-08'), ('urn:mavedb:a-a-1#1', '2025-05-08'))]
+    records = {
+        'urn:mavedb:a-a-1#1': _calibrated_record(
+            'urn:mavedb:a-a-1#1',
+            published='2025-05-08',
+            calibrations=[{'functionalClassifications': [{'range': [None, None], 'oddspathsRatio': 4.2}]}],
+        ),
+        'urn:mavedb:b-a-1#1': _calibrated_record(
+            'urn:mavedb:b-a-1#1',
+            published='2025-05-08',
+            calibrations=[{'functionalClassifications': [{'range': [None, None], 'oddspathsRatio': 9.9}]}],
+        ),
+    }
+    result = _run(_lookup_handler(entries, records), lambda c: _fetch(c, 'PA1'))
+    assert result.dataset_versions == ('urn:mavedb:a-a-1',)
+    assert result.oddspath_ratio == 4.2
 
 
 def test_a_deposit_reached_by_two_ids_is_read_once() -> None:
-    deposit = ('urn:mavedb:x-a-1', '2025-01-01')
+    deposit = ('urn:mavedb:test-a-1#1', '2025-01-01')
     entries = [_entry('PA1', 'exactMatch', deposit), _entry('PA2', 'exactMatch', deposit)]
-    assert [c.urn for c in mavedb._candidates(entries, ['PA1', 'PA2'])] == ['urn:mavedb:x-a-1']
+    reads: list[str] = []
+    _run(
+        _lookup_handler(entries, {'urn:mavedb:test-a-1#1': _UNCALIBRATED}, reads=reads),
+        lambda c: _fetch(c, 'PA1', 'PA2'),
+    )
+    assert reads == ['urn:mavedb:test-a-1#1']
 
 
 @pytest.mark.parametrize(
@@ -359,10 +462,29 @@ def test_an_unreadable_answer_is_never_mistaken_for_an_absence(
     report a finding about every variant it is asked.
     """
     with pytest.raises(ValueError, match=match):
-        mavedb._candidates(entries, asked)
+        _run(_lookup_handler(entries, {}), lambda c: _fetch(c, *asked))
 
 
-def test_select_classification_bins_by_score_and_prefers_oddspath() -> None:
+def _fetch_single_record(score: float | None, calibrations: list[dict[str, object]]) -> mavedb.MavedbResult:
+    urn = 'urn:mavedb:cal-a-1#1'
+    entry = _entry('PA1', 'exactMatch', (urn, '2025-01-01'))
+    record = _calibrated_record(urn, score=score, calibrations=calibrations)
+    return _run(_lookup_handler([entry], {urn: record}), lambda c: _fetch(c, 'PA1'))
+
+
+@pytest.mark.parametrize(
+    ('score', 'expected_criterion', 'expected_strength', 'expected_oddspath'),
+    [
+        (-0.8, 'PS3', 'MODERATE', None),
+        (-0.5, 'BS3', 'STRONG', 0.04),  # inclusive lower bound of the upper bin
+    ],
+)
+def test_select_classification_bins_by_score(
+    score: float,
+    expected_criterion: str,
+    expected_strength: str,
+    expected_oddspath: float | None,
+) -> None:
     calibrations: list[dict[str, object]] = [
         {
             'functionalClassifications': [
@@ -380,14 +502,31 @@ def test_select_classification_bins_by_score_and_prefers_oddspath() -> None:
             ]
         }
     ]
-    below = mavedb._select_classification(calibrations, -0.8)
-    assert below is not None
-    below_acmg = below['acmgClassification']
-    assert isinstance(below_acmg, dict)
-    assert below_acmg['criterion'] == 'PS3'
-    at_boundary = mavedb._select_classification(calibrations, -0.5)  # inclusive lower bound of the upper bin
-    assert at_boundary is not None
-    assert at_boundary['oddspathsRatio'] == 0.04
+    result = _fetch_single_record(score, calibrations)
+    assert result.acmg_criterion == expected_criterion
+    assert result.acmg_strength == expected_strength
+    assert result.oddspath_ratio == expected_oddspath
+
+
+def test_select_classification_prefers_an_overlapping_bin_carrying_oddspath() -> None:
+    calibrations: list[dict[str, object]] = [
+        {
+            'functionalClassifications': [
+                {
+                    'range': [None, None],
+                    'acmgClassification': {'criterion': 'PS3', 'evidenceStrength': 'MODERATE'},
+                },
+                {
+                    'range': [None, None],
+                    'oddspathsRatio': 4.2,
+                    'acmgClassification': {'criterion': 'PS3', 'evidenceStrength': 'STRONG'},
+                },
+            ]
+        }
+    ]
+    result = _fetch_single_record(1.0, calibrations)
+    assert result.oddspath_ratio == 4.2
+    assert result.acmg_strength == 'STRONG'
 
 
 def _calibration(title: str, odds: float, *, primary: bool | None, urn: str = 'urn:cal') -> dict[str, object]:
@@ -407,9 +546,8 @@ def test_the_depositors_primary_calibration_is_the_one_read() -> None:
         _calibration('ExCALIBR', 9.9, primary=False, urn='urn:cal-a'),
         _calibration('Investigator-provided', 0.04, primary=True, urn='urn:cal-b'),
     ]
-    selected = mavedb._select_classification(calibrations, 1.0)
-    assert selected is not None
-    assert selected['oddspathsRatio'] == 0.04
+    result = _fetch_single_record(1.0, calibrations)
+    assert result.oddspath_ratio == 0.04
 
 
 def test_a_deposit_marking_no_primary_reads_them_in_an_order_the_payload_cannot_move() -> None:
@@ -418,11 +556,10 @@ def test_a_deposit_marking_no_primary_reads_them_in_an_order_the_payload_cannot_
         _calibration('later', 9.9, primary=False, urn='urn:cal-b'),
         _calibration('earlier', 0.04, primary=False, urn='urn:cal-a'),
     ]
-    forward = mavedb._select_classification(calibrations, 1.0)
-    reversed_order = mavedb._select_classification(list(reversed(calibrations)), 1.0)
-    assert forward is not None
-    assert forward['oddspathsRatio'] == 0.04
-    assert reversed_order == forward
+    forward = _fetch_single_record(1.0, calibrations)
+    reversed_order = _fetch_single_record(1.0, list(reversed(calibrations)))
+    assert forward.oddspath_ratio == 0.04
+    assert reversed_order.oddspath_ratio == 0.04
 
 
 def test_a_deposit_marking_several_primary_fails_loudly() -> None:
@@ -432,8 +569,14 @@ def test_a_deposit_marking_several_primary_fails_loudly() -> None:
         _calibration('two', 0.04, primary=True, urn='urn:cal-b'),
     ]
     with pytest.raises(ValueError, match='marks 2 calibrations primary'):
-        mavedb._select_classification(calibrations, 1.0)
+        _fetch_single_record(1.0, calibrations)
 
 
 def test_select_classification_none_without_score() -> None:
-    assert mavedb._select_classification([{'functionalClassifications': []}], None) is None
+    result = _fetch_single_record(
+        None,
+        [{'functionalClassifications': [{'range': [None, None], 'oddspathsRatio': 4.2}]}],
+    )
+    assert result.score is None
+    assert result.oddspath_ratio is None
+    assert result.acmg_criterion == ''

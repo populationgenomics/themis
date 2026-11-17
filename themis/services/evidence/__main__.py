@@ -68,6 +68,14 @@ def install_metrics() -> sdk_metrics.MeterProvider | None:
     return None
 
 
+def _bind_port(server: grpc.aio.Server) -> int:
+    target = f'[::]:{os.environ.get("PORT", "8080")}'
+    port = server.add_insecure_port(target)  # TLS terminated by Cloud Run
+    if port == 0:
+        raise SystemExit(f'failed to bind gRPC server on {target}')
+    return port
+
+
 async def _serve() -> None:
     meter_provider = install_metrics()
     meter = telemetry_metrics.service_meter(meter_provider)
@@ -83,7 +91,7 @@ async def _serve() -> None:
             health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]
             await health_servicer.set('', health_pb2.HealthCheckResponse.SERVING)
             health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
-            server.add_insecure_port(f'[::]:{os.environ.get("PORT", "8080")}')  # TLS terminated by Cloud Run
+            _bind_port(server)
             await server.start()
             await serving.serve_until_stopped(server)
         finally:

@@ -1,7 +1,7 @@
 """The variant-discovery vocabulary: what a request may ask, what its identifiers normalise to.
 
-Pure logic, no I/O: the request grammar, the queries a request issues, the per-identifier verdicts,
-and the record budget's round-robin with the verdict on what it left unreached.
+Pure logic, no I/O: the request grammar, the per-identifier verdicts, and the gene inventory's
+narrowing and ranking.
 """
 
 from __future__ import annotations
@@ -39,33 +39,6 @@ def _requested_or_raise(**fields: str) -> variants.RequestedVariant:
 )
 def test_bare_change(change: str, expected: str) -> None:
     assert variants.bare_change(change) == expected
-
-
-def test_litvar_queries_issues_one_per_identifier_most_specific_first() -> None:
-    # Every query runs: an identifier that resolves says nothing about whether the others reach the
-    # same entity, and the point of the lookup is that they routinely do not.
-    queries = variants.litvar_queries(
-        _requested(gene='GENE1', hgvs_c='NM_1.1:c.1063G>A', protein_change='NP_1.1:p.A355T', rsid='rs00', caid='CA1')
-    )
-    assert queries == ['CA1', 'rs00', 'GENE1 A355T', 'GENE1 c.1063G>A']
-
-
-def test_litvar_queries_skips_absent_identifiers() -> None:
-    queries = variants.litvar_queries(_requested(gene='GENE1', hgvs_c='NM_1.1:c.1063G>A'))
-    assert queries == ['GENE1 c.1063G>A']
-
-
-def test_litvar_queries_skips_change_queries_without_a_gene() -> None:
-    # A bare change string matches across every gene the index knows, so it is never sent alone.
-    queries = variants.litvar_queries(_requested(hgvs_c='c.1063G>A', protein_change='p.A355T', rsid='rs00'))
-    assert queries == ['rs00']
-
-
-def test_litvar_queries_normalise_the_key_shaped_identifiers() -> None:
-    # A padded ClinGen id and a bare-digit rsID name the same things as their canonical spellings, so
-    # asking upstream under the raw form would resolve a different entity set than the one the
-    # agreement verdicts are computed against.
-    assert variants.litvar_queries(_requested(caid='CA001000', rsid='00')) == ['CA1000', 'rs00']
 
 
 @pytest.mark.parametrize(
@@ -221,22 +194,6 @@ def test_a_gene_level_entity_is_not_a_variant_lookups_answer() -> None:
     # Keyed on a change string alone — no rsID, no ClinGen id — and still an allele, which is the
     # distinction the predicate has to keep or the enumeration route reaches nothing.
     assert _labels(id='litvar@#77#p.A340T', change='p.A340T').names_an_allele()
-
-
-def test_round_robin_takes_from_every_entity_before_exhausting_one() -> None:
-    ranked = [['a', 'b', 'c', 'd'], ['e', 'f'], ['g']]
-    assert variants.round_robin(ranked, 3) == ['a', 'e', 'g']
-
-
-def test_round_robin_returns_distinct_pmids_within_the_limit() -> None:
-    ranked = [['a', 'b', 'c'], ['a', 'b'], ['a']]
-    selected = variants.round_robin(ranked, 10)
-    assert len(selected) == len(set(selected)) == 3
-    assert set(selected) == {'a', 'b', 'c'}
-
-
-def test_round_robin_never_exceeds_its_limit() -> None:
-    assert len(variants.round_robin([[str(n) for n in range(100)]], 7)) == 7
 
 
 def _listed(entity_id: str, total: int) -> litvar.ListedEntity:

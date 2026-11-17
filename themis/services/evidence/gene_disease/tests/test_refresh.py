@@ -20,7 +20,6 @@ import pytest
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
 from themis.services.evidence.gene_disease.refresh import job
 from themis.services.evidence.gene_disease.refresh import object_store as refresh_store
-from themis.services.evidence.gene_disease.refresh import panelapp as refresh_panelapp
 from themis.services.evidence.upstreams import clingen_dosage, clingen_validity, gencc
 from themis.services.evidence.upstreams import panelapp as panelapp_table
 
@@ -238,68 +237,94 @@ def test_malformed_download_raises_before_writing_the_bucket() -> None:
     assert gene_disease_backend._GENCC_OBJECT not in store.objects  # the unparseable bytes never reached the bucket
 
 
-def test_build_dump_takes_max_confidence_across_panels() -> None:
-    dump = _run(_handler(), lambda client: refresh_panelapp.build_dump(client, refresh_date='2026-07-25'))
-    genes = dump['genes']
-    assert isinstance(genes, dict)
+def test_run_takes_max_confidence_across_panels() -> None:
+    store = _FakeStore()
+    report = _run(_handler(), lambda client: job.run(store, client=client))
+    assert report.panelapp_gene_count == 2
+    table = panelapp_table.PanelAppTable.from_bytes(store.objects[gene_disease_backend._PANELAPP_OBJECT])
 
-    brca1 = genes['HGNC:1100']
-    assert isinstance(brca1, dict)
-    assert brca1['max_confidence'] == 3  # green on Incidentalome wins over amber on Mendeliome
-    assert brca1['mode_of_inheritance'] == 'BIALLELIC, autosomal or pseudoautosomal'  # the MOI of the max entry
-    assert brca1['mode_of_pathogenicity'] == ''
+    brca1 = table.lookup('HGNC:1100')
+    assert brca1 is not None
+    assert brca1.max_confidence == 3  # green on Incidentalome wins over amber on Mendeliome
+    assert brca1.mode_of_inheritance == 'BIALLELIC, autosomal or pseudoautosomal'  # the MOI of the max entry
+    assert brca1.mode_of_pathogenicity == ''
 
-    braf = genes['HGNC:1097']
-    assert isinstance(braf, dict)
-    assert braf['max_confidence'] == 2
-    assert braf['mode_of_pathogenicity'] == 'gain-of-function'  # the GoF veto is surfaced
-    assert braf['evaluations'] == []  # BRAF's evaluations 404 -> empty
-
-
-def test_build_dump_stamps_the_refresh_as_an_iso_dated_release() -> None:
-    dump = _run(_handler(), refresh_panelapp.build_dump)
-    versions = dump['dataset_versions']
-    assert isinstance(versions, list)
-    assert versions  # a dump naming no release would pass the date check vacuously
-    assert all(re.fullmatch(r'\d{4}-\d{2}-\d{2}', version) for version in versions)
+    braf = table.lookup('HGNC:1097')
+    assert braf is not None
+    assert braf.max_confidence == 2
+    assert braf.mode_of_pathogenicity == 'gain-of-function'  # the GoF veto is surfaced
+    assert braf.evaluations == []  # BRAF's evaluations 404 -> empty
 
 
-def test_build_dump_refuses_an_empty_gene_set() -> None:
-    def empty_panels(request: httpx2.Request) -> httpx2.Response:
-        assert request.url.host == 'panelapp-aus.org'
-        return httpx2.Response(200, json={'name': 'Empty', 'genes': []})
+def test_run_stamps_the_refresh_with_the_supplied_release_date() -> None:
+    store = _FakeStore()
+    _run(_handler(), lambda client: job.run(store, client=client, refresh_date='2026-07-25'))
+    table = panelapp_table.PanelAppTable.from_bytes(store.objects[gene_disease_backend._PANELAPP_OBJECT])
+    brca1 = table.lookup('HGNC:1100')
+    assert brca1 is not None
+    assert brca1.dataset_versions == ('2026-07-25',)
 
-    # A panel that comes back empty (an upstream glitch) must not blank out a good dump.
-    with pytest.raises(ValueError, match='no genes'):
-        _run(empty_panels, refresh_panelapp.build_dump)
+
+def test_run_defaults_the_refresh_stamp_to_an_iso_date() -> None:
+    store = _FakeStore()
+    _run(_handler(), lambda client: job.run(store, client=client))
+    table = panelapp_table.PanelAppTable.from_bytes(store.objects[gene_disease_backend._PANELAPP_OBJECT])
+    brca1 = table.lookup('HGNC:1100')
+    assert brca1 is not None
+    assert len(brca1.dataset_versions) == 1
+    assert re.fullmatch(r'\d{4}-\d{2}-\d{2}', brca1.dataset_versions[0])
 
 
-def _paging_evaluations(next_link: Callable[[httpx2.Request], str]) -> _Handler:
-    """`_handler`'s PanelApp routes, with every evaluations page linking on to `next_link`."""
+def _with_panelapp(panelapp_handler: _Handler) -> _Handler:
+    base = _handler()
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        assert request.url.host == 'panelapp-aus.org'
-        if _EVAL_PATH.match(request.url.path) is None:
-            return _panelapp_response(request)
-        return httpx2.Response(200, json={'count': 1, 'next': next_link(request), 'previous': None, 'results': []})
+        if request.url.host == 'panelapp-aus.org':
+            return panelapp_handler(request)
+        return base(request)
 
     return handler
 
 
+def test_run_refuses_an_empty_panelapp_gene_set_without_writing_dump() -> None:
+    store = _FakeStore()
+    handler = _with_panelapp(lambda _request: httpx2.Response(200, json={'name': 'Empty', 'genes': []}))
+
+    # A panel that comes back empty (an upstream glitch) must not blank out a good dump.
+    with pytest.raises(ValueError, match='no genes'):
+        _run(handler, lambda client: job.run(store, client=client))
+    assert gene_disease_backend._PANELAPP_OBJECT not in store.objects
+
+
+def _paging_evaluations(next_link: Callable[[httpx2.Request], str]) -> _Handler:
+    """`_handler`'s routes, with every PanelApp evaluations page linking on to `next_link`."""
+
+    def panelapp_handler(request: httpx2.Request) -> httpx2.Response:
+        if _EVAL_PATH.match(request.url.path) is None:
+            return _panelapp_response(request)
+        return httpx2.Response(200, json={'count': 1, 'next': next_link(request), 'previous': None, 'results': []})
+
+    return _with_panelapp(panelapp_handler)
+
+
 def test_an_evaluations_page_linking_off_panelapp_is_not_followed() -> None:
     """`next` is upstream text and the job's client follows redirects, so an off-site link is not a page."""
+    store = _FakeStore()
     handler = _paging_evaluations(lambda _request: 'https://panelapp-aus.org.attacker.example/api/v1/panels/137/')
 
     with pytest.raises(ValueError, match='not under'):
-        _run(handler, refresh_panelapp.build_dump)
+        _run(handler, lambda client: job.run(store, client=client))
+    assert gene_disease_backend._PANELAPP_OBJECT not in store.objects
 
 
 def test_evaluations_that_never_stop_paging_are_refused() -> None:
     """A page linking to itself would otherwise hold the weekly job against PanelApp until it timed out."""
+    store = _FakeStore()
     handler = _paging_evaluations(lambda request: str(request.url))
 
     with pytest.raises(ValueError, match='looping rather than ending'):
-        _run(handler, refresh_panelapp.build_dump)
+        _run(handler, lambda client: job.run(store, client=client))
+    assert gene_disease_backend._PANELAPP_OBJECT not in store.objects
 
 
 async def _instant_sleep(_seconds: float) -> None:

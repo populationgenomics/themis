@@ -13,6 +13,7 @@ import grpc.aio
 import httpx2
 import pytest
 
+from themis.common import authored_status
 from themis.rpc import gene_disease_pb2, gene_disease_pb2_grpc
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
 from themis.services.evidence.gene_disease import servicer as servicer_mod
@@ -130,8 +131,43 @@ def test_the_fixture_and_live_backends_answer_a_held_and_an_unknown_id_alike() -
     assert f'release {_HGNC_RELEASE} of the HGNC complete set' in unknown['live'].details
 
 
-@pytest.mark.parametrize(('hgnc_id', 'expected'), [('', 'no hgnc_id'), ('BRCA1', '"HGNC:" and digits')])
-def test_gene_disease_requires_the_hgnc_id_the_tables_key_on(hgnc_id: str, expected: str) -> None:
+def test_gene_disease_accepts_a_lowercase_hgnc_id_the_live_tables_resolve() -> None:
+    # The reference tables key on the id upper-cased, so refusing the lowercase form at the
+    # servicer boundary would reject a request the live backend answers.
+    assert _answer(_live_with_one_gene, 'hgnc:1100') == _Answer(grpc.StatusCode.OK, 'APPROVED1', '')
+
+
+def test_an_unset_hgnc_id_is_refused_as_unset_and_not_as_the_wrong_shape() -> None:
+    async def run() -> gene_disease_pb2.DescribeGeneResponse:
+        async with _serving(_backend(describe_gene={'HGNC:1100': gene_disease_pb2.DescribeGeneResponse()})) as stub:
+            return await stub.DescribeGene(gene_disease_pb2.DescribeGeneRequest(hgnc_id=''))
+
+    with pytest.raises(grpc.aio.AioRpcError) as caught:
+        asyncio.run(run())
+    assert caught.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(caught.value)
+    details = caught.value.details() or ''
+    assert 'no hgnc_id' in details
+    assert 'and digits' not in details
+
+
+@pytest.mark.parametrize(
+    'hgnc_id',
+    [
+        '  ',
+        'BRCA1',
+        'HGNC:',
+        'HGNC:1100.1',
+        '1100',
+        ' HGNC:1100 ',
+        'HGNC:01100',
+        'HGNC:0',
+        'HGNC:12345678',
+        'HGNC:11\N{ARABIC-INDIC DIGIT ZERO}\N{ARABIC-INDIC DIGIT ZERO}',
+        'HGNC:1\N{FULLWIDTH DIGIT ONE}',
+    ],
+)
+def test_gene_disease_requires_the_hgnc_id_the_tables_key_on(hgnc_id: str) -> None:
     # The precondition sits above the backends, so the seeded one refuses the request rather than
     # answering "nothing seeded under that key" — a statement about the tables, not about the request.
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
@@ -141,34 +177,36 @@ def test_gene_disease_requires_the_hgnc_id_the_tables_key_on(hgnc_id: str, expec
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
     assert caught.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-    assert expected in str(caught.value.details())
+    assert authored_status.authored(caught.value)
+    assert '"HGNC:" and digits' in (caught.value.details() or '')
 
 
 @pytest.mark.parametrize(
-    ('unaccepted', 'expected'),
+    'mondo_id',
     [
-        (
-            gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id='familial hypercholesterolemia'),
-            'MONDO curie',
-        ),
-        (gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id='MONDO:007947'), 'MONDO curie'),
+        '   ',
+        'familial hypercholesterolemia',
+        'MONDO:123',
+        'MONDO:007947',
+        'MONDO:12345678',
+        '0007254',
+        'Orphanet:145',
     ],
 )
-def test_gene_disease_refuses_a_term_it_cannot_key_on(
-    unaccepted: gene_disease_pb2.DescribeGeneRequest, expected: str
-) -> None:
+def test_gene_disease_refuses_a_term_it_cannot_key_on(mondo_id: str) -> None:
     # A free-text condition or a malformed curie would resolve against no curation and come back as
     # a statement about the gene's records.
     tables = _backend(describe_gene={'HGNC:1100': gene_disease_pb2.DescribeGeneResponse()})
 
     async def run() -> gene_disease_pb2.DescribeGeneResponse:
         async with _serving(tables) as stub:
-            return await stub.DescribeGene(unaccepted)
+            return await stub.DescribeGene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=mondo_id))
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
     assert caught.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-    assert expected in str(caught.value.details())
+    assert authored_status.authored(caught.value)
+    assert 'MONDO curie' in (caught.value.details() or '')
 
 
 def test_the_gene_disease_fixture_key_names_the_term_asked_about() -> None:

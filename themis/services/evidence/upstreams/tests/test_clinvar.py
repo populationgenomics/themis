@@ -13,6 +13,7 @@ ClinGen expert-panel curation with its evidence-repository link and stated inher
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import pathlib
 import re
@@ -20,6 +21,7 @@ import xml.etree.ElementTree as ET
 from collections.abc import Awaitable, Callable
 
 import clinvar_proto
+import defusedxml.ElementTree
 import httpx2
 import pytest
 
@@ -298,6 +300,20 @@ def test_a_homozygous_observation_is_carried_under_clinvars_own_token(fixture: s
     assert 'Homozygote' in observed
 
 
+def _archive_with_modified_assertions(mutate: Callable[[ET.Element, ET.Element], None]) -> clinvar.ClinvarArchive:
+    """Run `fetch_variant_archive` over `_VCV_XML` with its `ClinicalAssertionList` edited by `mutate`."""
+    root = defusedxml.ElementTree.fromstring(_VCV_XML)
+    assertion_list = root.find('VariationArchive/ClassifiedRecord/ClinicalAssertionList')
+    assert assertion_list is not None
+    template = copy.deepcopy(assertion_list[0])
+    mutate(assertion_list, template)
+    body = ET.tostring(root)
+    return _run(
+        lambda _r: httpx2.Response(200, content=body),
+        lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c),
+    )
+
+
 @pytest.mark.parametrize(
     ('attributes', 'expected'),
     [
@@ -310,21 +326,33 @@ def test_variant_alleles_comes_only_from_the_attribute_of_that_name(
     attributes: list[tuple[str, str]], expected: int | None
 ) -> None:
     """A zygosity's count is individuals at that zygosity; borrowing it as the total invents a number."""
-    observed_in = ET.Element('ObservedIn')
-    for attribute_type, value in attributes:
-        data = ET.SubElement(observed_in, 'ObservedData')
-        ET.SubElement(data, 'Attribute', {'Type': attribute_type, 'integerValue': value})
 
-    assert clinvar._observed_data(observed_in).variant_alleles == expected
+    def mutate(assertion_list: ET.Element, template: ET.Element) -> None:
+        assertion_list[:] = [template]
+        observed_in = template.find('ObservedInList/ObservedIn')
+        assert observed_in is not None
+        for existing in list(observed_in.findall('ObservedData')):
+            observed_in.remove(existing)
+        for attribute_type, value in attributes:
+            data = ET.SubElement(observed_in, 'ObservedData')
+            ET.SubElement(data, 'Attribute', {'Type': attribute_type, 'integerValue': value})
+
+    fetched = _archive_with_modified_assertions(mutate)
+    assert fetched.record.submissions[0].observations[0].variant_alleles == expected
 
 
 def test_a_malformed_count_raises_rather_than_reading_as_unstated() -> None:
-    observed_in = ET.Element('ObservedIn')
-    data = ET.SubElement(observed_in, 'ObservedData')
-    ET.SubElement(data, 'Attribute', {'Type': 'VariantAlleles', 'integerValue': 'many'})
+    def mutate(assertion_list: ET.Element, template: ET.Element) -> None:
+        assertion_list[:] = [template]
+        observed_in = template.find('ObservedInList/ObservedIn')
+        assert observed_in is not None
+        for existing in list(observed_in.findall('ObservedData')):
+            observed_in.remove(existing)
+        data = ET.SubElement(observed_in, 'ObservedData')
+        ET.SubElement(data, 'Attribute', {'Type': 'VariantAlleles', 'integerValue': 'many'})
 
     with pytest.raises(ValueError, match='non-integer integerValue'):
-        clinvar._observed_data(observed_in)
+        _archive_with_modified_assertions(mutate)
 
 
 def test_every_note_in_a_repeated_observation_block_is_kept() -> None:
@@ -355,34 +383,59 @@ def test_an_observation_carries_the_age_and_sex_a_submitter_stated() -> None:
 
 def test_a_somatic_or_oncogenicity_assertion_is_not_germline_evidence() -> None:
     """Those SCVs answer a different question; their tumour observations are not germline evidence."""
-    germline = ET.Element('ClinicalAssertion', {'ID': '1'})
-    ET.SubElement(germline, 'ClinVarAccession', {'Accession': 'SCV1'})
-    ET.SubElement(ET.SubElement(germline, 'Classification'), 'GermlineClassification').text = 'Pathogenic'
-    somatic = ET.Element('ClinicalAssertion', {'ID': '2'})
-    ET.SubElement(somatic, 'ClinVarAccession', {'Accession': 'SCV2'})
-    ET.SubElement(ET.SubElement(somatic, 'Classification'), 'SomaticClinicalImpact').text = 'Tier I'
 
-    assert clinvar._submission(germline) is not None
-    assert clinvar._submission(somatic) is None
+    def mutate(assertion_list: ET.Element, template: ET.Element) -> None:
+        germline = copy.deepcopy(template)
+        germline_acc = germline.find('ClinVarAccession')
+        assert germline_acc is not None
+        germline_acc.set('Accession', 'SCV000000001')
+
+        somatic = copy.deepcopy(template)
+        somatic_acc = somatic.find('ClinVarAccession')
+        assert somatic_acc is not None
+        somatic_acc.set('Accession', 'SCV000000002')
+        classification = somatic.find('Classification')
+        assert classification is not None
+        germline_cls = classification.find('GermlineClassification')
+        assert germline_cls is not None
+        idx = list(classification).index(germline_cls)
+        somatic_cls = ET.Element('SomaticClinicalImpact')
+        somatic_cls.text = 'Tier I - Strong'
+        classification[idx] = somatic_cls
+
+        assertion_list[:] = [germline, somatic]
+
+    fetched = _archive_with_modified_assertions(mutate)
+    assert [s.scv for s in fetched.record.submissions] == ['SCV000000001']
 
 
 def test_a_registry_submission_without_a_classification_is_not_confused_with_one() -> None:
     """A germline element saying `not provided` is an answer; a missing one is a different question."""
-    registry = ET.Element('ClinicalAssertion', {'ID': '3'})
-    ET.SubElement(registry, 'ClinVarAccession', {'Accession': 'SCV3'})
-    ET.SubElement(ET.SubElement(registry, 'Classification'), 'GermlineClassification').text = 'not provided'
 
-    submission = clinvar._submission(registry)
-    assert submission is not None
-    assert submission.classification == ''
+    def mutate(assertion_list: ET.Element, template: ET.Element) -> None:
+        acc = template.find('ClinVarAccession')
+        assert acc is not None
+        acc.set('Accession', 'SCV000000003')
+        germline = template.find('Classification/GermlineClassification')
+        assert germline is not None
+        germline.text = 'not provided'
+        assertion_list[:] = [template]
+
+    fetched = _archive_with_modified_assertions(mutate)
+    assert len(fetched.record.submissions) == 1
+    assert fetched.record.submissions[0].scv == 'SCV000000003'
+    assert fetched.record.submissions[0].classification == ''
 
 
 def test_an_assertion_without_an_accession_raises() -> None:
-    assertion = ET.Element('ClinicalAssertion', {'ID': '4'})
-    ET.SubElement(ET.SubElement(assertion, 'Classification'), 'GermlineClassification').text = 'Pathogenic'
+    def mutate(assertion_list: ET.Element, template: ET.Element) -> None:
+        acc = template.find('ClinVarAccession')
+        assert acc is not None
+        template.remove(acc)
+        assertion_list[:] = [template]
 
     with pytest.raises(ValueError, match='no SCV accession'):
-        clinvar._submission(assertion)
+        _archive_with_modified_assertions(mutate)
 
 
 def test_an_expert_panel_curation_carries_its_evidence_repository_link() -> None:
@@ -508,7 +561,8 @@ def test_the_pool_refuses_a_bound_it_cannot_fetch_under(limit: int) -> None:
     ],
 )
 def test_review_stars_mapping(review_status: str, stars: int) -> None:
-    assert clinvar._review_stars(review_status) == stars
+    pool = _pool_over(['Pathogenic'], review_status=review_status, floor=0)
+    assert [r.review_stars for r in pool.records] == [stars]
 
 
 def test_an_unknown_review_status_raises() -> None:
@@ -518,7 +572,7 @@ def test_an_unknown_review_status_raises() -> None:
     policy, so the star count it filters on has to be ClinVar's answer, not this map's fallback.
     """
     with pytest.raises(ValueError, match='unknown ClinVar review status'):
-        clinvar._review_stars('reviewed by an expert panel')
+        _pool_over(['Pathogenic'], review_status='reviewed by an expert panel', floor=0)
 
 
 def test_zero_star_records_are_excluded_from_the_gene_pool() -> None:
@@ -676,7 +730,9 @@ def test_the_entrez_property_spells_a_comma_bearing_term_without_its_comma() -> 
     Entrez would not refuse the malformed clause either — it would return no record, reading back
     as ClinVar holding none of that classification for the gene.
     """
-    assert clinvar._clinsig_property('pathogenic, low penetrance') == '"clinsig pathogenic low penetrance"[Properties]'
+    term = _pool_terms(0)[0]
+    assert '"clinsig pathogenic low penetrance"[Properties]' in term
+    assert 'pathogenic, low penetrance' not in term
 
 
 def test_an_unrecognised_classification_in_the_pool_is_a_fault() -> None:

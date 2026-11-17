@@ -209,7 +209,7 @@ def test_gene_identity_prefers_flagged_canonical_transcript() -> None:
             },
         ],
     }
-    result = vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', predictors=())
+    result = _fetch(lambda _: httpx2.Response(200, json=[annotation]), [])
     assert (result.gene_symbol, result.hgnc_id) == ('NF1', 'HGNC:7765')
 
 
@@ -220,7 +220,7 @@ def test_gene_identity_leaves_hgnc_id_empty_when_vep_omits_it() -> None:
             {'transcript_id': 'ENST00000358273', 'gene_symbol': 'NF1', 'consequence_terms': ['missense_variant']}
         ],
     }
-    result = vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', predictors=())
+    result = _fetch(lambda _: httpx2.Response(200, json=[annotation]), [])
     assert result.gene_symbol == 'NF1'
     assert result.hgnc_id == ''  # never fabricated
 
@@ -244,7 +244,8 @@ def test_gene_identity_leaves_hgnc_id_empty_when_vep_omits_it() -> None:
     ],
 )
 def test_consequence_for_so_term(so_term: str, expected: int) -> None:
-    assert vep.consequence_for_so_term(so_term) == expected
+    result = _fetch(lambda _: httpx2.Response(200, json=[{'most_severe_consequence': so_term}]), [])
+    assert result.most_severe_consequence == expected
 
 
 @pytest.mark.parametrize('variant', ['17-31232881-G-C', '17:g.41209079dup'])
@@ -431,9 +432,12 @@ def test_a_score_that_is_not_a_number_is_an_error() -> None:
 
 def test_a_score_that_is_not_finite_is_an_error() -> None:
     # Python's JSON decoder reads a bare NaN, so the adapter is what keeps it out of the score.
-    (annotation,) = _annotated(revel=float('nan'))
+    body = (
+        b'[{"most_severe_consequence":"missense_variant",'
+        b'"transcript_consequences":[{"transcript_id":"ENST00000358273","revel":NaN}]}]'
+    )
     with pytest.raises(ValueError, match='non-finite'):
-        vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', predictors=['REVEL'])
+        _fetch(lambda _: httpx2.Response(200, content=body), ['REVEL'])
 
 
 def test_a_mane_accession_that_is_not_text_is_an_error() -> None:
@@ -441,13 +445,10 @@ def test_a_mane_accession_that_is_not_text_is_an_error() -> None:
         _typed([], mane_select=['NM_001042492.3'])
 
 
-def _parsed(annotation: dict[str, object]) -> vep.VepResult:
-    return vep.parse_vep(annotation, dataset_versions=(f'VEP {_RELEASE}', 'GRCh38'), query='q', predictors=[])
-
-
 def test_an_annotation_without_transcript_consequences_annotates_none() -> None:
     """An intergenic variant: VEP states no transcript consequences at all."""
-    assert _parsed({'most_severe_consequence': 'intergenic_variant'}).transcripts == ()
+    result = _fetch(lambda _: httpx2.Response(200, json=[{'most_severe_consequence': 'intergenic_variant'}]), [])
+    assert result.transcripts == ()
 
 
 @pytest.mark.parametrize(
@@ -459,5 +460,6 @@ def test_an_annotation_without_transcript_consequences_annotates_none() -> None:
     ],
 )
 def test_a_malformed_transcript_consequence_is_an_error(consequences: object) -> None:
+    payload = [{'most_severe_consequence': 'missense_variant', 'transcript_consequences': consequences}]
     with pytest.raises(ValueError, match=r'transcript_consequences|transcript consequence'):
-        _parsed({'most_severe_consequence': 'missense_variant', 'transcript_consequences': consequences})
+        _fetch(lambda _: httpx2.Response(200, json=payload), [])

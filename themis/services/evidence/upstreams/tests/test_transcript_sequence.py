@@ -36,12 +36,12 @@ def test_the_sequence_is_indexed_by_the_transcripts_own_n_coordinates() -> None:
 def test_a_superseded_version_is_rejected_rather_than_spliced_against() -> None:
     """Efetch answers an older accession version with its own bases; the coordinates would not line up."""
     with pytest.raises(ValueError, match=re.escape('NM_001042492.2')):
-        transcript_sequence.parse_fasta('>NM_001042492.2 NF1\nACGT\n', accession=_ACCESSION, query='q')
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, text='>NM_001042492.2 NF1\nACGT\n')))
 
 
 def test_a_body_that_is_not_a_fasta_record_raises() -> None:
     with pytest.raises(ValueError, match='no FASTA record'):
-        transcript_sequence.parse_fasta('Error: failed to retrieve sequence', accession=_ACCESSION, query='q')
+        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, text='Error: failed to retrieve sequence')))
 
 
 @pytest.mark.parametrize('status', [403, 429])

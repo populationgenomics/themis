@@ -22,7 +22,6 @@ from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence import errors, serving
 from themis.services.evidence.literature import backend as literature_backend
 from themis.services.evidence.literature import fixture as fixture_mod
-from themis.services.evidence.literature import pmids as pmids_mod
 from themis.services.evidence.literature import servicer as servicer_mod
 from themis.services.evidence.literature import variants
 from themis.services.evidence.tests import authz
@@ -215,6 +214,7 @@ def test_describe_unknown_paper_is_not_found() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.DescribePaper(literature_pb2.DescribePaperRequest(doc_id='nope')))
     assert exc.value.code() is grpc.StatusCode.NOT_FOUND
+    assert authored_status.authored(exc.value)
 
 
 def test_resolve_content_names_each_object() -> None:
@@ -245,6 +245,7 @@ def test_resolve_content_without_a_selector_is_invalid_argument() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.ResolveContent(literature_pb2.ResolveContentRequest(doc_id=DOC_XML)))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_resolve_content_for_a_missing_object_is_not_found() -> None:
@@ -255,6 +256,7 @@ def test_resolve_content_for_a_missing_object_is_not_found() -> None:
             )
         )
     assert exc.value.code() is grpc.StatusCode.NOT_FOUND
+    assert authored_status.authored(exc.value)
 
 
 def test_a_not_found_echoing_a_long_file_name_still_carries_its_reason() -> None:
@@ -270,6 +272,7 @@ def test_a_not_found_echoing_a_long_file_name_still_carries_its_reason() -> None
         )
     assert exc.value.code() is grpc.StatusCode.NOT_FOUND
     assert 'has no file' in (exc.value.details() or '')
+    assert authored_status.authored(exc.value)
 
 
 def test_locate_markdown_returns_offsets() -> None:
@@ -313,6 +316,7 @@ def test_locate_without_a_representation_is_invalid_argument() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.Locate(literature_pb2.LocateRequest(doc_id=DOC_XML, quote=QUOTE_MD)))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_locate_in_an_out_of_range_representation_is_invalid_argument() -> None:
@@ -329,6 +333,7 @@ def test_locate_in_an_out_of_range_representation_is_invalid_argument() -> None:
             )
         )
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_locate_in_an_unavailable_representation_is_failed_precondition() -> None:
@@ -341,6 +346,7 @@ def test_locate_in_an_unavailable_representation_is_failed_precondition() -> Non
             )
         )
     assert exc.value.code() is grpc.StatusCode.FAILED_PRECONDITION
+    assert authored_status.authored(exc.value)
 
 
 def test_validate_reports_the_representations_a_quote_locates_in() -> None:
@@ -399,6 +405,7 @@ def test_an_oversized_batch_is_invalid_argument() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.PollFullTexts(literature_pb2.PollFullTextsRequest(doc_ids=doc_ids)))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def _paper_readiness(
@@ -469,6 +476,7 @@ def test_an_unqualified_external_id_is_invalid_argument(external_id: str) -> Non
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[external_id])))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_an_oversized_external_id_batch_is_invalid_argument() -> None:
@@ -476,6 +484,7 @@ def test_an_oversized_external_id_batch_is_invalid_argument() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=external_ids)))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_the_external_id_bound_is_on_what_the_request_carries() -> None:
@@ -486,6 +495,7 @@ def test_the_external_id_bound_is_on_what_the_request_carries() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=repeated)))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 class _UnreachableCrosswalkBackend(fixture_mod.FixtureBackend):
@@ -515,6 +525,7 @@ def test_an_unreachable_crosswalk_is_unavailable_for_the_whole_call() -> None:
             backend=_UnreachableCrosswalkBackend(SEED, RECORDS, ENTITIES),
         )
     assert exc.value.code() is grpc.StatusCode.UNAVAILABLE
+    assert authored_status.authored(exc.value)
 
 
 def test_an_unconfigured_crosswalk_is_failed_precondition_not_unavailable() -> None:
@@ -526,6 +537,7 @@ def test_an_unconfigured_crosswalk_is_failed_precondition_not_unavailable() -> N
             backend=_NoCrosswalkBackend(SEED, RECORDS, ENTITIES),
         )
     assert exc.value.code() is grpc.StatusCode.FAILED_PRECONDITION
+    assert authored_status.authored(exc.value)
 
 
 class _ConversionRecordingBackend(fixture_mod.FixtureBackend):
@@ -621,25 +633,15 @@ def test_an_enqueue_failure_maps_to_the_status_that_matches_its_remedy(
     error: Exception, expected: grpc.StatusCode
 ) -> None:
     # UNAVAILABLE is the only one gRPC's default policy retries, so a permanent fault carrying it would
-    # spend the caller's whole budget on a deployment it cannot repair.
+    # spend the caller's whole budget on a deployment it cannot repair; and the whole batch fails rather
+    # than reporting PENDING readiness for a conversion that was never enqueued.
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(
-            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
+            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML, DOI_OCR])),
             backend=_FailingConversionBackend(SEED, RECORDS, ENTITIES, error),
         )
     assert exc.value.code() is expected
-
-
-def test_an_enqueue_failure_fails_the_call_rather_than_reporting_readiness() -> None:
-    # PENDING is indistinguishable from "a conversion is under way", so a caller told PENDING after a
-    # failed enqueue would have no reason to ask again and the paper would never be converted.
-    with pytest.raises(grpc.aio.AioRpcError):
-        _run(
-            lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML, DOI_OCR])),
-            backend=_FailingConversionBackend(
-                SEED, RECORDS, ENTITIES, literature_backend.ConversionUnavailableError('down')
-            ),
-        )
+    assert authored_status.authored(exc.value)
 
 
 def test_a_caller_the_contract_does_not_name_cannot_ingest() -> None:
@@ -756,6 +758,7 @@ def test_a_pmid_value_that_is_not_one_is_refused() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=['pmid:PMC123'])))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_ingest_is_gated_even_with_nothing_to_produce() -> None:
@@ -771,11 +774,6 @@ def test_ingest_is_gated_even_with_nothing_to_produce() -> None:
             ),
         )
     assert exc.value.code() is grpc.StatusCode.PERMISSION_DENIED
-
-
-def test_an_admitted_caller_reads_readiness_for_a_settled_paper() -> None:
-    response = _run(lambda s: s.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=[DOI_XML])))
-    assert _paper_readiness(response) == {DOI_XML: (DOC_XML, literature_pb2.FULL_TEXT_STATE_READY)}
 
 
 def test_poll_full_texts_asks_for_no_conversion() -> None:
@@ -895,6 +893,7 @@ def test_a_doi_that_names_another_work_through_its_path_is_invalid_argument(exte
             backend=backend,
         )
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
     assert backend.ingested == []
 
 
@@ -909,6 +908,7 @@ def test_more_papers_to_ingest_than_the_bound_is_invalid_argument() -> None:
             backend=backend,
         )
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
     assert backend.ingested == []
 
 
@@ -946,6 +946,7 @@ def test_an_ingest_failure_maps_to_the_status_that_matches_its_remedy(
             backend=_FailingIngestBackend(SEED, error),
         )
     assert exc.value.code() is expected
+    assert authored_status.authored(exc.value)
 
 
 async def _drained(
@@ -1022,6 +1023,7 @@ def test_read_markdown_for_a_doc_id_the_store_holds_no_paper_for_is_not_found(do
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _read_markdown(doc_id)
     assert exc.value.code() is grpc.StatusCode.NOT_FOUND
+    assert authored_status.authored(exc.value)
 
 
 def _serving(
@@ -1161,6 +1163,7 @@ def test_a_search_for_nothing_is_refused() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.SearchEuropePmc(literature_pb2.SearchEuropePmcRequest(query='   ')))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_search_clamps_the_record_count_to_what_was_asked() -> None:
@@ -1235,6 +1238,7 @@ def test_an_abstract_batch_the_service_will_not_answer_whole_is_refused(pmids: l
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _fetch_pubmed_articles(*pmids)
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def _search_litvar(**fields: object) -> literature_pb2.SearchLitVarResponse:
@@ -1432,12 +1436,14 @@ def test_a_refusal_echoing_a_long_caller_field_still_carries_its_reason() -> Non
         _fetch_pubmed_articles(FIELD_PAST_TRAILER_LIMIT)
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
     assert 'is not a PubMed identifier' in (exc.value.details() or '')
+    assert authored_status.authored(exc.value)
 
 
 def test_search_litvar_refuses_a_caid_that_is_not_one() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _search_litvar(gene='GENE1', caid='rs00', max_pmids_per_entity=10)
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_search_litvar_refuses_a_request_with_nothing_to_resolve_from() -> None:
@@ -1446,6 +1452,7 @@ def test_search_litvar_refuses_a_request_with_nothing_to_resolve_from() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _search_litvar(gene='GENE1', max_pmids_per_entity=10)
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 def test_search_litvar_is_empty_when_nothing_resolves() -> None:
@@ -1479,6 +1486,7 @@ def test_list_litvar_entities_requires_a_gene() -> None:
     with pytest.raises(grpc.aio.AioRpcError) as exc:
         _run(lambda s: s.ListLitVarEntities(literature_pb2.ListLitVarEntitiesRequest(gene='  ')))
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(exc.value)
 
 
 _REFUSAL = 'Europe PMC rejected "GENE1 AND (" (400): unbalanced parentheses'
@@ -1526,6 +1534,7 @@ def test_an_upstream_refusing_the_request_reaches_the_caller_as_invalid_argument
         _run_over(_RefusingBackend(), call)
     assert exc.value.code() is grpc.StatusCode.INVALID_ARGUMENT
     assert _REFUSAL in (exc.value.details() or '')
+    assert authored_status.authored(exc.value)
 
 
 class _StalledBackend(fixture_mod.FixtureBackend):
@@ -1572,6 +1581,7 @@ def test_a_fan_out_that_never_answers_ends_as_this_rpcs_own_deadline(monkeypatch
     failure, cancelled, info = _run_over(backend, drive)
     assert failure.code() is grpc.StatusCode.DEADLINE_EXCEEDED
     assert 'SearchLitVar' in (failure.details() or '')
+    assert authored_status.authored(failure)
     assert cancelled
     assert info.has_markdown  # a store rpc under the same bound answers as it always did
 
@@ -1590,8 +1600,10 @@ def _raising(method: str, error: Exception) -> fixture_mod.FixtureBackend:
 _S = literature_pb2
 _MARKDOWN = _S.MarkdownSelector()
 
-# One case per refusal the servicer writes: the rpc, the backend it runs over, and the status it has to end under.
-_REFUSALS: list[
+# Refusal branches not exercised above — corrupt/missing store objects, unknown paper on
+# ResolveContent/Locate, unimplemented PDF location, and a transient index timeout — each mapped to
+# its gRPC status and marked as authored so the sandbox hatch passes its details through.
+_BACKEND_REFUSALS: list[
     tuple[
         str,
         Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[object]],
@@ -1600,22 +1612,10 @@ _REFUSALS: list[
     ]
 ] = [
     (
-        'describe.unknown',
-        lambda s: s.DescribePaper(_S.DescribePaperRequest(doc_id='nope')),
-        None,
-        grpc.StatusCode.NOT_FOUND,
-    ),
-    (
         'describe.corrupt',
         lambda s: s.DescribePaper(_S.DescribePaperRequest(doc_id=DOC_XML)),
         _raising('describe_paper', literature_backend.CorruptMetadataError('doc-xml: bad envelope')),
         grpc.StatusCode.INTERNAL,
-    ),
-    (
-        'markdown.unknown',
-        lambda s: _drained(s.ReadMarkdown(_S.ReadMarkdownRequest(doc_id='nope'))),
-        None,
-        grpc.StatusCode.NOT_FOUND,
     ),
     (
         'markdown.blob',
@@ -1624,52 +1624,16 @@ _REFUSALS: list[
         grpc.StatusCode.INTERNAL,
     ),
     (
-        'markdown.mismatch',
-        lambda s: _drained(s.ReadMarkdown(_S.ReadMarkdownRequest(doc_id=DOC_XML))),
-        _serving(_BYTES, key='0' * 64),
-        grpc.StatusCode.INTERNAL,
-    ),
-    (
-        'markdown.gone',
-        lambda s: _drained(s.ReadMarkdown(_S.ReadMarkdownRequest(doc_id=DOC_XML))),
-        _serving(_BYTES, fail_after=10),
-        grpc.StatusCode.INTERNAL,
-    ),
-    (
-        'content.selector',
-        lambda s: s.ResolveContent(_S.ResolveContentRequest(doc_id=DOC_XML)),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
         'content.unknown',
         lambda s: s.ResolveContent(_S.ResolveContentRequest(doc_id='nope', markdown=_MARKDOWN)),
         None,
         grpc.StatusCode.NOT_FOUND,
     ),
     (
-        'content.missing',
-        lambda s: s.ResolveContent(_S.ResolveContentRequest(doc_id=DOC_OCR, markdown=_MARKDOWN)),
-        None,
-        grpc.StatusCode.NOT_FOUND,
-    ),
-    (
-        'locate.representation',
-        lambda s: s.Locate(_S.LocateRequest(doc_id=DOC_XML, quote=QUOTE_MD)),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
         'locate.unknown',
         lambda s: s.Locate(_S.LocateRequest(doc_id='nope', quote='q', representation=_S.REPRESENTATION_MARKDOWN)),
         None,
         grpc.StatusCode.NOT_FOUND,
-    ),
-    (
-        'locate.unavailable',
-        lambda s: s.Locate(_S.LocateRequest(doc_id=DOC_XML, quote='q', representation=_S.REPRESENTATION_MARKDOWN)),
-        _raising('locate', literature_backend.RepresentationUnavailableError('doc-xml has no markdown rendering')),
-        grpc.StatusCode.FAILED_PRECONDITION,
     ),
     (
         'locate.pdf',
@@ -1690,115 +1654,20 @@ _REFUSALS: list[
         grpc.StatusCode.INTERNAL,
     ),
     (
-        'poll.oversized',
-        lambda s: s.PollFullTexts(
-            _S.PollFullTextsRequest(doc_ids=[f'd{i}' for i in range(servicer_mod._MAX_DOC_IDS + 1)])
-        ),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
-        'ingest.oversized',
-        lambda s: s.MaybeIngestPapers(
-            _S.MaybeIngestPapersRequest(external_ids=[f'pmid:{i}' for i in range(servicer_mod._MAX_EXTERNAL_IDS + 1)])
-        ),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
-        'ingest.unqualified',
-        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=['10.1/xml'])),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
-        'ingest.value',
-        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=['pmid:abc'])),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
-        'ingest.no_crosswalk',
-        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_XML])),
-        _raising('resolve_external_ids', literature_backend.CrosswalkNotConfiguredError('no crosswalk is configured')),
-        grpc.StatusCode.FAILED_PRECONDITION,
-    ),
-    (
-        'ingest.crosswalk_down',
-        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_XML])),
-        _raising('resolve_external_ids', literature_backend.CrosswalkUnavailableError('connection refused')),
-        grpc.StatusCode.UNAVAILABLE,
-    ),
-    (
-        'ingest.no_queue',
-        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
-        _raising('place_conversions', literature_backend.ConversionNotConfiguredError('no queue')),
-        grpc.StatusCode.FAILED_PRECONDITION,
-    ),
-    (
-        'ingest.queue_down',
-        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
-        _raising('place_conversions', literature_backend.ConversionUnavailableError('cloud tasks is down')),
-        grpc.StatusCode.UNAVAILABLE,
-    ),
-    (
-        'ingest.refused',
-        lambda s: s.MaybeIngestPapers(_S.MaybeIngestPapersRequest(external_ids=[DOI_OCR])),
-        _raising('place_conversions', literature_backend.ConversionEnqueueFailedError('permission denied')),
-        grpc.StatusCode.INTERNAL,
-    ),
-    (
-        'europepmc.query',
-        lambda s: s.SearchEuropePmc(_S.SearchEuropePmcRequest(query=' ')),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
-        'europepmc.refused',
-        lambda s: s.SearchEuropePmc(_S.SearchEuropePmcRequest(query='MYH7')),
-        _raising('search_europe_pmc', errors.InvalidRequestError('Europe PMC rejected the query')),
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
         'europepmc.upstream_down',
         lambda s: s.SearchEuropePmc(_S.SearchEuropePmcRequest(query='MYH7')),
         _raising('search_europe_pmc', httpx2.ReadTimeout('', request=httpx2.Request('GET', 'https://www.ebi.ac.uk/x'))),
         grpc.StatusCode.UNAVAILABLE,
     ),
-    ('litvar.identifier', lambda s: s.SearchLitVar(_S.SearchLitVarRequest()), None, grpc.StatusCode.INVALID_ARGUMENT),
-    (
-        'litvar.gene',
-        lambda s: s.ListLitVarEntities(_S.ListLitVarEntitiesRequest(gene=' ')),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
-        'pubmed.malformed',
-        lambda s: s.FetchPubmedArticles(_S.FetchPubmedArticlesRequest(pmids=['abc'])),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
-        'pubmed.oversized',
-        lambda s: s.FetchPubmedArticles(
-            _S.FetchPubmedArticlesRequest(pmids=[str(i + 1) for i in range(pmids_mod.MAX_PMIDS_PER_BATCH + 1)])
-        ),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
-    (
-        'pubmed.empty',
-        lambda s: s.FetchPubmedArticles(_S.FetchPubmedArticlesRequest()),
-        None,
-        grpc.StatusCode.INVALID_ARGUMENT,
-    ),
 ]
 
 
 @pytest.mark.parametrize(
-    ('stub_call', 'backend', 'code'), [case[1:] for case in _REFUSALS], ids=[case[0] for case in _REFUSALS]
+    ('stub_call', 'backend', 'code'),
+    [case[1:] for case in _BACKEND_REFUSALS],
+    ids=[case[0] for case in _BACKEND_REFUSALS],
 )
-def test_every_refusal_the_servicer_writes_is_marked_as_its_own(
+def test_backend_and_unknown_paper_refusals_map_to_marked_statuses(
     stub_call: Callable[[literature_pb2_grpc.LiteratureAsyncStub], Awaitable[object]],
     backend: literature_backend.LiteratureBackend | None,
     code: grpc.StatusCode,

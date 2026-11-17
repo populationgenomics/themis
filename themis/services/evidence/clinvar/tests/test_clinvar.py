@@ -18,6 +18,7 @@ import grpc.aio
 import httpx2
 import pytest
 
+from themis.common import authored_status
 from themis.rpc import clinvar_pb2, clinvar_pb2_grpc
 from themis.services.evidence.clinvar import backend as clinvar_backend
 from themis.services.evidence.clinvar import servicer as servicer_mod
@@ -64,6 +65,7 @@ def _refused(request: clinvar_pb2.DescribeVariantRequest) -> str:
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
     assert caught.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(caught.value)
     return caught.value.details() or ''
 
 
@@ -286,32 +288,73 @@ def test_clinvar_span_is_keyed_by_the_c_range_it_was_asked_about() -> None:
     assert not asyncio.run(run(1111, 1113)).records
 
 
-@pytest.mark.parametrize(
-    ('transcript', 'start', 'end', 'max_records'),
-    [
-        # c. numbering has no 0, so this is where an unset endpoint is caught rather than searched.
-        ('NM_001040142.2', 0, 1110, 50),
-        ('NM_001040142.2', 1108, 0, 50),
-        # Descending: read as a span it would search nothing and answer "no informative variant".
-        ('NM_001040142.2', 1110, 1108, 50),
-        ('NM_001040142.2', 1108, 1110, 0),
-        ('NM_001040142.2', 1108, 1110, 2001),
-    ],
-)
-def test_clinvar_span_refuses_a_request_that_would_search_the_wrong_thing(
-    transcript: str, start: int, end: int, max_records: int
-) -> None:
+@pytest.mark.parametrize(('start', 'end'), [(1, 1), (1, 100), (-20, -1), (-20, 100)])
+def test_clinvar_span_accepts_transcript_order_coordinates_across_5utr_and_cds(start: int, end: int) -> None:
+    tables = _backend(
+        search_coding_span={
+            f'NM_001040142.2:{start}:{end}': clinvar_pb2.SearchCodingSpanResponse(gene='SCN2A'),
+        }
+    )
+
     async def run() -> clinvar_pb2.SearchCodingSpanResponse:
-        async with _serving(_backend()) as stub:
+        async with _serving(tables) as stub:
             return await stub.SearchCodingSpan(
                 clinvar_pb2.SearchCodingSpanRequest(
-                    transcript=transcript, cds_start=start, cds_end=end, max_records=max_records
+                    transcript='NM_001040142.2', cds_start=start, cds_end=end, max_records=50
                 ),
             )
+
+    assert asyncio.run(run()).gene == 'SCN2A'
+
+
+def _refused_span(request: clinvar_pb2.SearchCodingSpanRequest) -> str:
+    async def run() -> clinvar_pb2.SearchCodingSpanResponse:
+        async with _serving(_backend()) as stub:
+            return await stub.SearchCodingSpan(request)
 
     with pytest.raises(grpc.aio.AioRpcError) as caught:
         asyncio.run(run())
     assert caught.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert authored_status.authored(caught.value)
+    return caught.value.details() or ''
+
+
+@pytest.mark.parametrize(
+    ('start', 'end', 'field'),
+    [
+        # c. numbering has no 0, so an unset endpoint arrives as 0 and is refused naming that field.
+        (0, 1110, 'cds_start'),
+        (1108, 0, 'cds_end'),
+        # (-10, 0) ascends numerically, so only the explicit cds_end == 0 check catches it.
+        (-10, 0, 'cds_end'),
+    ],
+)
+def test_clinvar_span_refuses_a_zero_coordinate(start: int, end: int, field: str) -> None:
+    details = _refused_span(
+        clinvar_pb2.SearchCodingSpanRequest(transcript='NM_001040142.2', cds_start=start, cds_end=end, max_records=50)
+    )
+    assert field in details
+    assert 'no 0' in details
+
+
+@pytest.mark.parametrize(('start', 'end'), [(1110, 1108), (-1, -20)])
+def test_clinvar_span_refuses_a_descending_range(start: int, end: int) -> None:
+    # Read as a span, a descending range would search nothing and answer "no informative variant".
+    details = _refused_span(
+        clinvar_pb2.SearchCodingSpanRequest(transcript='NM_001040142.2', cds_start=start, cds_end=end, max_records=50)
+    )
+    assert 'transcript order' in details
+
+
+@pytest.mark.parametrize('max_records', [0, 501])
+def test_clinvar_span_refuses_an_out_of_bounds_record_cap(max_records: int) -> None:
+    details = _refused_span(
+        clinvar_pb2.SearchCodingSpanRequest(
+            transcript='NM_001040142.2', cds_start=1108, cds_end=1110, max_records=max_records
+        )
+    )
+    assert 'max_records' in details
+    assert '1-500' in details
 
 
 def test_the_clinvar_span_fixture_refuses_an_unseeded_span() -> None:

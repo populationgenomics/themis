@@ -99,10 +99,11 @@ def test_the_live_adapter_keeps_every_entity_its_queries_reach() -> None:
 def test_the_live_adapter_drops_the_gene_level_entity_autocomplete_throws_in() -> None:
     # Autocomplete matches the gene-level entity loosely; it holds the gene's whole literature and
     # answers no variant question, so paging it would spend the budget on the wrong thing entirely.
-    found, _ = _live(
+    found, asked = _live(
         _UPSTREAM,
         lambda d: d.search_litvar(_requested(gene='GENE1', protein_change='A355T'), max_results=10, max_entities=8),
     )
+    assert [key for key in asked if key.startswith('autocomplete:')] == ['autocomplete:GENE1 A355T']
     # The loosely-matched sibling stays — it names an allele, and its disagreement is stated, not
     # acted on. The gene-level entity names none, so it is not a candidate at all.
     assert [entity.labels.id for entity in found.entities] == ['litvar@#77#p.A355T', 'litvar@rs00##']
@@ -138,7 +139,12 @@ def test_the_live_adapter_spends_the_entity_ceiling_across_the_queries() -> None
     found, _ = _live(
         upstream, lambda d: d.search_litvar(_requested(caid='CA1000', rsid='rs00'), max_results=10, max_entities=4)
     )
-    assert 'litvar@rs00##' in [entity.labels.id for entity in found.entities]
+    assert [entity.labels.id for entity in found.entities] == [
+        'litvar@CA10000##',
+        'litvar@rs00##',
+        'litvar@CA10001##',
+        'litvar@CA10002##',
+    ]
 
 
 def test_the_live_adapter_stops_resolving_at_the_entity_ceiling() -> None:
@@ -161,12 +167,42 @@ def test_an_entity_id_the_index_does_not_hold_is_an_empty_answer() -> None:
     assert found.total_entities == 0
 
 
-def test_the_live_adapter_asks_upstream_under_the_normalised_identifiers() -> None:
+def test_the_live_adapter_asks_upstream_under_the_normalised_identifiers_most_specific_first() -> None:
     _, asked = _live(
-        {**_UPSTREAM, 'autocomplete:CA1000': []},
-        lambda d: d.search_litvar(_requested(caid='CA001000', rsid='00'), max_results=10, max_entities=8),
+        {
+            **_UPSTREAM,
+            'autocomplete:CA1000': [],
+            'autocomplete:GENE1 c.1063G>A': [],
+        },
+        lambda d: d.search_litvar(
+            _requested(
+                gene='GENE1',
+                hgvs_c='NM_1.1:c.1063G>A',
+                protein_change='NP_1.1:p.A355T',
+                rsid='00',
+                caid='CA001000',
+            ),
+            max_results=10,
+            max_entities=8,
+        ),
     )
-    assert asked[:2] == ['autocomplete:CA1000', 'autocomplete:rs00']
+    assert [key for key in asked if key.startswith('autocomplete:')] == [
+        'autocomplete:CA1000',
+        'autocomplete:rs00',
+        'autocomplete:GENE1 A355T',
+        'autocomplete:GENE1 c.1063G>A',
+    ]
+
+
+def test_the_live_adapter_skips_change_queries_without_a_gene() -> None:
+    # A bare change string matches across every gene the index knows, so it is never sent alone.
+    _, asked = _live(
+        _UPSTREAM,
+        lambda d: d.search_litvar(
+            _requested(hgvs_c='c.1063G>A', protein_change='p.A355T', rsid='rs00'), max_results=10, max_entities=8
+        ),
+    )
+    assert [key for key in asked if key.startswith('autocomplete:')] == ['autocomplete:rs00']
 
 
 def test_the_live_gene_listing_narrows_and_ranks() -> None:

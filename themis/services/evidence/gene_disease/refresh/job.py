@@ -68,12 +68,18 @@ class RefreshReport:
     panelapp_gene_count: int
 
 
-async def run(store: object_store.ReferenceObjectStore, *, client: httpx2.AsyncClient) -> RefreshReport:
+async def run(
+    store: object_store.ReferenceObjectStore,
+    *,
+    client: httpx2.AsyncClient,
+    refresh_date: str | None = None,
+) -> RefreshReport:
     """Refresh all four reference dumps into the bucket ``store`` writes to.
 
     Args:
         store: The resources-bucket object store the dumps are written to.
         client: The caller-owned async client every upstream request rides.
+        refresh_date: Optional ISO date stamped onto the PanelApp dump; today (UTC) if omitted.
 
     Returns:
         A report of what each raw refresh did and the PanelApp gene count written.
@@ -88,7 +94,7 @@ async def run(store: object_store.ReferenceObjectStore, *, client: httpx2.AsyncC
         )
         for source in _RAW_SOURCES
     ]
-    dump = await panelapp.build_dump(client)
+    dump = await panelapp.build_dump(client, refresh_date=refresh_date)
     serialised = panelapp.serialise_dump(dump)
     try:
         panelapp_table.PanelAppTable.from_bytes(serialised)

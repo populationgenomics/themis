@@ -1,8 +1,8 @@
 """LiveBackend composition: the entity assembly and the entity resolution `DescribeGene` runs.
 
-The reference tables are seeded in memory and the MONDO client function is replaced with a canned
-Result, so no test here touches the network — which several of them assert outright, since an
-unresolved request is meant to stay a pure table lookup.
+The reference tables are seeded in memory and OLS4 is served by an httpx2 `MockTransport`, so no test
+here touches the network — which every unresolved request asserts outright, since an unresolved
+request is meant to stay a pure table lookup.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import dataclasses
 import datetime
 import pathlib
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 import httpx2
 import pytest
@@ -22,7 +22,7 @@ from google.cloud import storage
 from themis.rpc import gene_disease_pb2
 from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
-from themis.services.evidence.upstreams import clingen_dosage, clingen_validity, gencc, hgnc, mondo, panelapp
+from themis.services.evidence.upstreams import clingen_dosage, clingen_validity, gencc, hgnc, panelapp
 from tools.resources import manifest
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[2] / 'upstreams' / 'tests' / 'fixtures'
@@ -36,13 +36,34 @@ _CURATED_TERM = 'MONDO:0000101'
 _PARENT_TERM = 'MONDO:0000100'
 
 
-def _returns[T](value: T) -> Callable[..., Awaitable[T]]:
-    """An async stand-in for an upstream client function that ignores its args and returns `value`."""
+def _no_network(request: httpx2.Request) -> httpx2.Response:
+    raise AssertionError(f'unexpected network call: {request.url}')
 
-    async def fake(*_args: object, **_kwargs: object) -> T:
-        return value
 
-    return fake
+def _ols4_transport(
+    ancestors_by_term: Mapping[str, Sequence[str]],
+    *,
+    asked_terms: list[str] | None = None,
+) -> httpx2.MockTransport:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == '/ols4/api/ontologies/mondo':
+            return httpx2.Response(200, json={'config': {'version': '2026-07-01'}})
+        match = re.search(r'MONDO_\d+', str(request.url))
+        assert match is not None, f'unexpected OLS4 request: {request.url}'
+        term = match.group(0).replace('_', ':')
+        if asked_terms is not None:
+            asked_terms.append(term)
+        assert term in ancestors_by_term, f'unexpected curated term queried: {term}'
+        terms = [{'obo_id': ancestor, 'label': f'label of {ancestor}'} for ancestor in ancestors_by_term[term]]
+        return httpx2.Response(
+            200,
+            json={
+                '_embedded': {'terms': terms},
+                'page': {'totalPages': 1, 'totalElements': len(terms)},
+            },
+        )
+
+    return httpx2.MockTransport(handler)
 
 
 def _tables(
@@ -77,9 +98,12 @@ def _hgnc_set(approved: Mapping[str, str]) -> hgnc.HgncCompleteSet:
 def _run[T](
     tables: gene_disease_backend.ReferenceTables,
     call: Callable[[gene_disease_backend.LiveBackend], Awaitable[T]],
+    *,
+    transport: httpx2.MockTransport | None = None,
 ) -> T:
     async def run() -> T:
-        async with httpx2.AsyncClient() as client:
+        active_transport = transport if transport is not None else httpx2.MockTransport(_no_network)
+        async with httpx2.AsyncClient(transport=active_transport) as client:
             return await call(gene_disease_backend.LiveBackend(client, tables))
 
     return asyncio.run(run())
@@ -225,15 +249,136 @@ def test_gene_disease_returns_every_curated_entity_unreduced() -> None:
     ]
 
 
-def test_gene_disease_gencc_only_tier_keeps_its_own_vocabulary_and_gate_level() -> None:
+def _validity_rows(
+    hgnc_id: str, *curations: tuple[str, str, str], gene_symbol: str = 'GENE'
+) -> clingen_validity.ClinGenValidity:
+    rows = [
+        {
+            'GENE SYMBOL': gene_symbol,
+            'GENE ID (HGNC)': hgnc_id,
+            'DISEASE LABEL': f'condition {mondo_id}',
+            'DISEASE ID (MONDO)': mondo_id,
+            'MOI': moi,
+            'CLASSIFICATION': classification,
+        }
+        for mondo_id, moi, classification in curations
+    ]
+    return clingen_validity.ClinGenValidity({hgnc_id.upper(): rows}, ('2026-01-01',))
+
+
+def _gencc_rows(
+    hgnc_id: str, *rows_spec: tuple[str, str, str, str, str, str], gene_symbol: str = 'GENE'
+) -> gencc.GenCC:
+    rows = [
+        {
+            'gene_curie': hgnc_id,
+            'gene_symbol': gene_symbol,
+            'disease_title': f'condition {mondo_id}',
+            'disease_curie': mondo_id,
+            'classification_title': classification,
+            'moi_curie': moi_curie,
+            'moi_title': moi_title,
+            'submitter_title': submitter,
+            'submitted_as_notes': notes,
+            'submitted_run_date': '2026-01-01',
+        }
+        for mondo_id, moi_curie, moi_title, submitter, classification, notes in rows_spec
+    ]
+    return gencc.GenCC({hgnc_id.upper(): rows}, ('2026-01-01',))
+
+
+def test_gene_disease_non_gate_named_tiers_keep_their_own_vocabulary_and_gate_level() -> None:
     resp = _run(
-        _tables(gencc_table=_gencc_table('HGNC:2', 'Supportive')),
+        _tables(
+            validity=_validity_rows(
+                'HGNC:2',
+                (_CURATED_TERM, 'AD', 'Refuted'),
+                ('MONDO:0000102', 'AR', 'No Known Disease Relationship'),
+            ),
+            gencc_table=_gencc_table('HGNC:2', 'Supportive', mondo_id=_PARENT_TERM),
+        ),
         lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:2')),
     )
-    # `Supportive` is not a gate level; the entity carries the level so no caller maps it by hand.
+    # None of these three classifications is a gate level; the entity carries the level so no caller maps it by hand.
     assert [(e.validity_classification, e.gate_level) for e in resp.entities] == [
-        ('Supportive', gene_disease_pb2.GATE_LEVEL_LIMITED)
+        ('Refuted', gene_disease_pb2.GATE_LEVEL_DISPUTED_OR_REFUTED),
+        ('No Known Disease Relationship', gene_disease_pb2.GATE_LEVEL_LESS_THAN_LIMITED),
+        ('Supportive', gene_disease_pb2.GATE_LEVEL_LIMITED),
     ]
+
+
+def test_each_record_states_its_sources_own_mode_term() -> None:
+    resp = _run(
+        _tables(
+            validity=_validity_table('HGNC:1100', 'Definitive', 'XL'),
+            gencc_table=_gencc_rows(
+                'HGNC:1100',
+                (_CURATED_TERM, 'HP:0001419', 'X-linked recessive', 'Submitter X', 'Strong', ''),
+            ),
+        ),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100')),
+    )
+    assert [e.inheritance_term for e in resp.entities] == ['XL', 'X-linked recessive']
+
+
+def test_x_linked_dominant_and_recessive_assertions_stay_two_records() -> None:
+    resp = _run(
+        _tables(
+            gencc_table=_gencc_rows(
+                'HGNC:1100',
+                (_CURATED_TERM, 'HP:0001419', 'X-linked recessive', 'Submitter X', 'Limited', ''),
+                (_CURATED_TERM, 'HP:0001423', 'X-linked dominant', 'Submitter Y', 'Definitive', 'a narrative'),
+            ),
+        ),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100')),
+    )
+    assert [(e.inheritance_term, e.validity_classification) for e in resp.entities] == [
+        ('X-linked recessive', 'Limited'),
+        ('X-linked dominant', 'Definitive'),
+    ]
+
+
+def test_an_assertion_stating_no_mode_fails_loud() -> None:
+    with pytest.raises(ValueError, match='states no mode of inheritance'):
+        _run(
+            _tables(validity=_validity_table('HGNC:1100', 'Definitive', ' ')),
+            lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100')),
+        )
+
+
+def test_one_source_stating_one_record_twice_reduces_to_its_strongest() -> None:
+    resp = _run(
+        _tables(
+            validity=_validity_rows(
+                'HGNC:1100',
+                (_CURATED_TERM, 'AD', 'Limited'),
+                (_CURATED_TERM, 'AD', 'Definitive'),
+            )
+        ),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100')),
+    )
+    assert [(e.inheritance_term, e.validity_classification, e.gate_level) for e in resp.entities] == [
+        ('AD', 'Definitive', gene_disease_pb2.GATE_LEVEL_DEFINITIVE)
+    ]
+
+
+def test_a_gencc_entity_keeps_every_submitter_assertion_and_non_blank_note() -> None:
+    resp = _run(
+        _tables(
+            gencc_table=_gencc_rows(
+                'HGNC:1100',
+                (_CURATED_TERM, 'HP:0000006', 'Autosomal dominant', 'Submitter X', 'Definitive', 'a mechanism note'),
+                (_CURATED_TERM, 'HP:0000006', 'Autosomal dominant', 'Submitter Y', 'Limited', ''),
+            )
+        ),
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100')),
+    )
+    [entity] = resp.entities
+    assert [(s.submitter, s.validity_classification) for s in entity.submissions] == [
+        ('Submitter X', 'Definitive'),
+        ('Submitter Y', 'Limited'),
+    ]
+    assert [s.text for s in entity.mechanism_statements] == ['a mechanism note']
 
 
 def test_gene_disease_tells_an_absent_gene_from_one_with_no_validity_assertion() -> None:
@@ -460,29 +605,89 @@ def test_gene_disease_answers_a_gene_carrying_a_mode_outside_the_framework() -> 
     ]
 
 
-def test_gene_disease_resolving_a_parent_term_reads_the_subclass_closure(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        mondo,
-        'fetch_subclass_closure',
-        _returns(
-            mondo.MondoClosureResult(
-                ancestors={_CURATED_TERM: (_PARENT_TERM,)},
-                raw={_CURATED_TERM: [_PARENT_TERM]},
-                source='EBI OLS4 (MONDO)',
-                dataset_versions=('MONDO 2026-07-01',),
-                query=f'ancestors of [{_CURATED_TERM!r}]',
-            )
-        ),
-    )
+def test_gene_disease_resolving_a_parent_term_reads_the_subclass_closure() -> None:
+    asked: list[str] = []
     resp = _run(
-        _tables(validity=_validity_table('HGNC:1100', 'Definitive', 'AD')),
+        _tables(
+            validity=_validity_rows(
+                'HGNC:1100',
+                (_CURATED_TERM, 'AD', 'Definitive'),
+                (_CURATED_TERM, 'AR', 'Limited'),
+            ),
+            # A non-MONDO curie alongside the MONDO curations must stay out of the OLS4 closure query.
+            gencc_table=_gencc_table('HGNC:1100', 'Definitive', mondo_id='OMIM:123456'),
+        ),
         lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=_PARENT_TERM)),
+        transport=_ols4_transport({_CURATED_TERM: (_PARENT_TERM,)}, asked_terms=asked),
     )
+    assert asked == [_CURATED_TERM]
     assert resp.resolution.relation == gene_disease_pb2.TERM_RELATION_DESCENDANT
     assert resp.resolution.mondo_id == _CURATED_TERM
     assert resp.resolution.requested_mondo_id == _PARENT_TERM
+    assert [e.inheritance_term for e in resp.resolution.entities] == ['AD', 'AR']
     assert 'EBI OLS4 (MONDO)' in [p.source for p in resp.provenance]
     assert resp.raw['mondo_ancestors'] == {_CURATED_TERM: [_PARENT_TERM]}
+
+
+def test_gene_disease_resolves_the_requested_term_to_every_record_on_it_even_when_a_descendant_is_curated() -> None:
+    tables = _tables(
+        validity=_validity_rows(
+            'HGNC:1100',
+            (_PARENT_TERM, 'AD', 'Definitive'),
+            (_PARENT_TERM, 'AR', 'Limited'),
+            (_CURATED_TERM, 'AD', 'Definitive'),
+        ),
+        gencc_table=_gencc_rows(
+            'HGNC:1100',
+            (_PARENT_TERM, 'HP:0000007', 'Autosomal recessive', 'Submitter X', 'Strong', ''),
+            ('MONDO:0000102', 'HP:0000006', 'Autosomal dominant', 'Submitter Y', 'Definitive', ''),
+        ),
+    )
+    resp = _run(
+        tables,
+        lambda be: be.describe_gene(gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=_PARENT_TERM)),
+    )
+    assert resp.resolution.relation == gene_disease_pb2.TERM_RELATION_SAME
+    assert resp.resolution.mondo_id == _PARENT_TERM
+    assert [(e.source, e.inheritance_term, e.validity_classification) for e in resp.resolution.entities] == [
+        ('ClinGen Gene Validity', 'AD', 'Definitive'),
+        ('ClinGen Gene Validity', 'AR', 'Limited'),
+        ('GenCC', 'Autosomal recessive', 'Strong'),
+    ]
+
+
+def test_gene_disease_refuses_when_two_curated_terms_sit_under_the_requested_one() -> None:
+    sibling = 'MONDO:0000102'
+    asked: list[str] = []
+    with pytest.raises(errors.UnresolvedEntityError, match='names no one of them'):
+        _run(
+            _tables(
+                validity=_validity_rows(
+                    'HGNC:1100',
+                    (_CURATED_TERM, 'AD', 'Definitive'),
+                    (sibling, 'AD', 'Limited'),
+                )
+            ),
+            lambda be: be.describe_gene(
+                gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=_PARENT_TERM)
+            ),
+            transport=_ols4_transport(
+                {_CURATED_TERM: (_PARENT_TERM,), sibling: (_PARENT_TERM,)},
+                asked_terms=asked,
+            ),
+        )
+    assert sorted(asked) == [_CURATED_TERM, sibling]
+
+
+def test_gene_disease_never_asks_mondo_about_a_curated_term_outside_mondo() -> None:
+    tables = _tables(gencc_table=_gencc_table('HGNC:1100', 'Definitive', mondo_id='OMIM:123456'))
+    with pytest.raises(errors.UnresolvedEntityError, match='not the nearest level'):
+        _run(
+            tables,
+            lambda be: be.describe_gene(
+                gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=_PARENT_TERM)
+            ),
+        )
 
 
 def test_gene_disease_answers_an_uncurated_gene_with_its_coverage_not_a_refusal() -> None:
@@ -497,26 +702,14 @@ def test_gene_disease_answers_an_uncurated_gene_with_its_coverage_not_a_refusal(
     assert resp.gene_scoped.haploinsufficiency_score == 3
 
 
-def test_gene_disease_refuses_an_entity_the_gene_is_not_curated_for(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        mondo,
-        'fetch_subclass_closure',
-        _returns(
-            mondo.MondoClosureResult(
-                ancestors={_CURATED_TERM: ('MONDO:0000001',)},
-                raw={},
-                source='EBI OLS4 (MONDO)',
-                dataset_versions=('MONDO 2026-07-01',),
-                query='q',
-            )
-        ),
-    )
+def test_gene_disease_refuses_an_entity_the_gene_is_not_curated_for() -> None:
     with pytest.raises(errors.UnresolvedEntityError, match='not the nearest level'):
         _run(
             _tables(validity=_validity_table('HGNC:1100', 'Definitive', 'AD')),
             lambda be: be.describe_gene(
                 gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id=_PARENT_TERM)
             ),
+            transport=_ols4_transport({_CURATED_TERM: ('MONDO:0000001',)}),
         )
 
 

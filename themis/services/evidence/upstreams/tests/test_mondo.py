@@ -102,11 +102,13 @@ def test_a_rate_limited_or_failing_ols4_stays_retryable() -> None:
 
 def test_an_undated_ontology_is_refused() -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, json={'config': {}} if request.url.path == _VERSION_PATH else {})
+        if request.url.path == _VERSION_PATH:
+            return httpx2.Response(200, json={'config': {}})
+        return httpx2.Response(200, json=_collection(_term('MONDO:0000100')))
 
-    async def run() -> str:
+    async def run() -> mondo.MondoClosureResult:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-            return await mondo.fetch_mondo_version(http_client=client)
+            return await mondo.fetch_subclass_closure(['MONDO:0000101'], http_client=client)
 
     with pytest.raises(ValueError, match='states no version'):
         asyncio.run(run())

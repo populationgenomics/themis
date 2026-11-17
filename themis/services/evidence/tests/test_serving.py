@@ -119,6 +119,7 @@ def test_a_taxonomy_error_reaches_the_caller_as_its_own_status(error: Exception,
     failure = _refused(_RaisingBackend(error))
     assert failure.code() == code
     assert str(error) in (failure.details() or '')
+    assert authored_status.authored(failure)
 
 
 def test_every_taxonomy_error_is_mapped_to_a_status() -> None:
@@ -261,13 +262,6 @@ def test_a_failure_raised_with_no_request_is_still_reported() -> None:
     failure = _refused(_RaisingBackend(httpx2.ReadTimeout('stalled')))
     assert failure.code() == grpc.StatusCode.UNAVAILABLE
     assert 'an upstream did not answer in time' in (failure.details() or '')
-
-
-@pytest.mark.parametrize(('error', 'code'), _TAXONOMY, ids=[type(error).__name__ for error, _ in _TAXONOMY])
-def test_every_status_the_servicer_writes_is_marked_as_its_own(error: Exception, code: grpc.StatusCode) -> None:
-    """The hatch passes on only marked details, so an unmarked answer would reach the guest as a bare code."""
-    failure = _refused(_RaisingBackend(error))
-    assert failure.code() == code
     assert authored_status.authored(failure)
 
 

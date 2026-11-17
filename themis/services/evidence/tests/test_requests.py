@@ -3,8 +3,8 @@
 Unit tests on the validators rather than wire tests per rpc: one function serves several interfaces,
 so what is under test here is the rule each holds a caller to. That an rpc runs one at all is a
 separate property, and a separate suite: `test_request_wiring` drives every rpc taking a shared
-check, and the two that serve a single rpc (`require_cds_range`, `require_mondo_id`) are driven by
-that interface's own suite.
+check, and the validators that serve a single rpc (`require_cds_range`, `require_hgnc_id`,
+`require_mondo_id`, `require_vcv_accession`) are driven by that interface's own suite.
 """
 
 from __future__ import annotations
@@ -104,25 +104,6 @@ def test_the_builds_the_upstreams_align_to_are_accepted(genome_build: str) -> No
     requests.require_genome_build('GetStructure', genome_build)
 
 
-@pytest.mark.parametrize(
-    ('start', 'end'),
-    [
-        (0, 10),  # c. numbering has no 0, so this is where an unset field is caught
-        (10, 0),
-        (20, 10),  # descending
-        (-1, -20),  # descending across the 5'UTR, where integer order is still transcript order
-    ],
-)
-def test_a_c_range_that_is_not_in_transcript_order_is_refused(start: int, end: int) -> None:
-    with pytest.raises(errors.InvalidRequestError):
-        requests.require_cds_range('SearchCodingSpan', start, end)
-
-
-@pytest.mark.parametrize(('start', 'end'), [(1, 1), (1, 100), (-20, -1), (-20, 100)])
-def test_a_c_range_in_transcript_order_is_accepted(start: int, end: int) -> None:
-    requests.require_cds_range('SearchCodingSpan', start, end)
-
-
 def test_a_gene_is_stripped_so_no_upstream_is_sent_the_padding() -> None:
     assert requests.require_gene('DescribeVariant', '  BRCA1 ', purpose='for the gene pool') == 'BRCA1'
 
@@ -131,48 +112,3 @@ def test_a_gene_is_stripped_so_no_upstream_is_sent_the_padding() -> None:
 def test_an_empty_gene_is_refused(gene: str) -> None:
     with pytest.raises(errors.InvalidRequestError, match='HGNC symbol'):
         requests.require_gene('DescribeVariant', gene, purpose='for the gene pool')
-
-
-def test_an_unset_hgnc_id_is_refused_as_unset_and_not_as_the_wrong_shape() -> None:
-    """The remedies differ: one caller has an id to supply, the other put something else in the field."""
-    with pytest.raises(errors.InvalidRequestError, match='no hgnc_id') as caught:
-        requests.require_hgnc_id('DescribeGene', '')
-    assert 'and digits' not in str(caught.value)
-
-
-@pytest.mark.parametrize(
-    'hgnc_id',
-    [
-        '  ',
-        'BRCA1',
-        'HGNC:',
-        'HGNC:1100.1',
-        '1100',
-        ' HGNC:1100 ',
-        'HGNC:01100',
-        'HGNC:0',
-        'HGNC:12345678',
-        'HGNC:11\N{ARABIC-INDIC DIGIT ZERO}\N{ARABIC-INDIC DIGIT ZERO}',
-        'HGNC:1\N{FULLWIDTH DIGIT ONE}',
-    ],
-)
-def test_a_gene_that_is_not_an_hgnc_id_is_refused(hgnc_id: str) -> None:
-    """None of these keys the reference tables, so unchecked each answers "no source carries this gene"."""
-    with pytest.raises(errors.InvalidRequestError, match='"HGNC:" and digits'):
-        requests.require_hgnc_id('DescribeGene', hgnc_id)
-
-
-@pytest.mark.parametrize('hgnc_id', ['HGNC:1100', 'hgnc:1100'])
-def test_an_hgnc_id_is_accepted_in_either_casing_the_tables_resolve(hgnc_id: str) -> None:
-    """The tables key on the id upper-cased, so refusing the lowercase form would refuse a live answer."""
-    requests.require_hgnc_id('DescribeGene', hgnc_id)
-
-
-@pytest.mark.parametrize('mondo_id', ['', 'MONDO:123', 'MONDO:12345678', '0007254', 'Orphanet:145'])
-def test_a_disease_entity_that_is_not_a_mondo_curie_is_refused(mondo_id: str) -> None:
-    with pytest.raises(errors.InvalidRequestError, match='MONDO curie'):
-        requests.require_mondo_id('DescribeGene', mondo_id)
-
-
-def test_a_mondo_curie_is_accepted() -> None:
-    requests.require_mondo_id('DescribeGene', 'MONDO:0007254')

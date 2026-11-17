@@ -26,7 +26,7 @@ from google.cloud import storage, tasks_v2
 from google.protobuf import timestamp_pb2
 from pubmed_proto import pubmed_pb2
 
-from themis.common import sql
+from themis.common import authored_status, sql
 from themis.litcache import (
     efetch,
     enqueue,
@@ -462,7 +462,7 @@ def test_locate_pdf_without_a_pdf_is_failed_precondition_over_grpc(gcs_bucket: s
     assert exc.value.code() is grpc.StatusCode.FAILED_PRECONDITION
 
 
-def test_source_by_format_picks_the_newest_pdf_lineage_and_skips_revision_less() -> None:
+def test_resolve_content_picks_the_newest_pdf_lineage_and_skips_revision_less(gcs_bucket: storage.Bucket) -> None:
     def _pdf(handle: str, day: int) -> litcache_pb2.Source:
         return litcache_pb2.Source(
             handle=handle,
@@ -471,12 +471,34 @@ def test_source_by_format_picks_the_newest_pdf_lineage_and_skips_revision_less()
         )
 
     revisionless = litcache_pb2.Source(handle='empty', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF)
-    manifest = litcache_pb2.Manifest(sources=[_pdf('old', 0), revisionless, _pdf('new', 2), _pdf('mid', 1)])
-    picked = litcache_store._source_by_format(manifest, litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF)
-    assert picked is not None
-    assert picked.handle == 'new'  # newest captured_at, not array order
-    only_empty = litcache_pb2.Manifest(sources=[revisionless])  # a revision-less lineage alone is None, not a crash
-    assert litcache_store._source_by_format(only_empty, litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF) is None
+    _seed_paper(gcs_bucket, sources=[_pdf('old', 0), revisionless, _pdf('new', 2), _pdf('mid', 1)])
+    location = _run_over_grpc(
+        gcs_bucket,
+        lambda s: s.ResolveContent(literature_pb2.ResolveContentRequest(doc_id=_DOC, pdf=literature_pb2.PdfSelector())),
+    )
+    assert location.gcs_uri == f'gs://{gcs_bucket.name}/papers/{_DOC}/sources/new/new.pdf'
+
+
+def test_describe_paper_reports_a_revision_less_pdf_lineage_as_no_pdf(gcs_bucket: storage.Bucket) -> None:
+    revisionless = litcache_pb2.Source(handle='empty', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF)
+    _seed_paper(gcs_bucket, sources=[revisionless])
+    info = _run_over_grpc(gcs_bucket, lambda s: s.DescribePaper(literature_pb2.DescribePaperRequest(doc_id=_DOC)))
+    assert info.has_pdf is False
+
+
+def test_resolve_content_reports_a_revision_less_pdf_lineage_as_not_found(gcs_bucket: storage.Bucket) -> None:
+    revisionless = litcache_pb2.Source(handle='empty', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF)
+    _seed_paper(gcs_bucket, sources=[revisionless])
+    with pytest.raises(grpc.aio.AioRpcError) as exc:
+        _run_over_grpc(
+            gcs_bucket,
+            lambda s: s.ResolveContent(
+                literature_pb2.ResolveContentRequest(doc_id=_DOC, pdf=literature_pb2.PdfSelector())
+            ),
+        )
+    assert exc.value.code() is grpc.StatusCode.NOT_FOUND
+    assert authored_status.authored(exc.value)
+    assert 'has no PDF' in (exc.value.details() or '')
 
 
 def test_locate_maps_a_missing_rendering_blob_to_internal(gcs_bucket: storage.Bucket) -> None:
