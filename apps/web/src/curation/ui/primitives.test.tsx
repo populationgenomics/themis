@@ -192,3 +192,48 @@ describe("a table of rows a typed value selects", () => {
     }
   });
 });
+
+describe("a table whose sections cannot be drawn", () => {
+  const renderers: readonly [string, (cells: Cell[]) => string][] = [
+    ["ChoiceRows", choiceMarkup],
+    ["CountRows", countMarkup],
+    ["DerivedRows", derivedMarkup],
+  ];
+
+  test.each(renderers)(
+    "%s refuses a description that resumes after another",
+    (_, renderTable) => {
+      // Two runs of one description would print the same heading twice, with nothing to say which
+      // rows each covers.
+      expect(() =>
+        renderTable([
+          { id: "a", cell: "T.a", group: "First", label: "One" },
+          { id: "b", cell: "T.b", group: "Second", label: "Two" },
+          { id: "c", cell: "T.c", group: "First", label: "Three" },
+        ]),
+      ).toThrow(/resumes a section/);
+    },
+  );
+
+  test.each(renderers)(
+    "%s refuses a description that resumes after an undescribed row",
+    (_, renderTable) => {
+      expect(() =>
+        renderTable([
+          { id: "a", cell: "T.a", group: "First", label: "One" },
+          { id: "b", cell: "T.b", label: "Two" },
+          { id: "c", cell: "T.c", group: "First", label: "Three" },
+        ]),
+      ).toThrow(/resumes a section/);
+    },
+  );
+
+  test.each(renderers)(
+    "%s refuses a blank section description",
+    (_, renderTable) => {
+      expect(() =>
+        renderTable([{ id: "a", cell: "T.a", group: "   ", label: "One" }]),
+      ).toThrow(/blank section description/);
+    },
+  );
+});

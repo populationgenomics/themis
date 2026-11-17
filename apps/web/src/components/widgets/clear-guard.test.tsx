@@ -1,150 +1,231 @@
-import { describe, expect, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
-import type { ReactElement, ReactNode } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
-import { clearCopy } from "../workbench/clear-copy";
 import {
-  UnsavedChangesBody,
-  unsavedChangesGuard,
-  unsavedChangesQuestion,
-} from "./clear-guard";
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import { QueryClient } from "@tanstack/react-query";
+import { click, findAll, install, MiniElement } from "../minidom.test-support";
+import {
+  type ClearCopyGuard,
+  ClearCopyGuardContext,
+  clearCopy,
+} from "../workbench/clear-copy";
 import { judgementStore } from "./judgements";
-import { WidgetStates } from "./widget-state";
+import { useWidgetStates, WidgetStatesProvider } from "./widget-state";
 
 // A clear of an Analysis's copy discards the changes its widgets have not saved yet, so it asks
 // first while there are any: how many, in the curator's words, and it goes ahead only on their say.
 
 const COMMIT = "c0".padEnd(40, "0");
 
-/** Widget states holding one checklist of `an_1` with a tick saving on each of `items`. */
-function withTicks(...items: string[]) {
-  const states = new WidgetStates();
-  const store = states.entry("an_1", "assets/c.binpb", "checklist", () =>
-    judgementStore(async () => true),
-  );
-  for (const [index, itemId] of items.entries()) {
-    store.dispatch({
-      kind: "made",
-      key: `items[${itemId}].checked`,
-      seq: index + 1,
-      value: true,
-      drawnAt: COMMIT,
-      judged: new Uint8Array(),
-    });
-  }
-  return { states, store };
+let dom: ReturnType<typeof install>;
+let React: typeof import("react");
+let createRoot: typeof import("react-dom/client").createRoot;
+let UnsavedChangesGuard: typeof import("./clear-guard").UnsavedChangesGuard;
+const unmounts: (() => void)[] = [];
+
+beforeAll(async () => {
+  dom = install();
+  React = await import("react");
+  ({ createRoot } = await import("react-dom/client"));
+  ({ UnsavedChangesGuard } = await import("./clear-guard"));
+});
+
+afterEach(() => {
+  while (unmounts.length > 0) unmounts.pop()?.();
+});
+
+afterAll(() => {
+  dom.uninstall();
+});
+
+function GuardProbe({
+  onMount,
+}: {
+  onMount: (
+    states: ReturnType<typeof useWidgetStates>,
+    guard: ClearCopyGuard | null,
+  ) => void;
+}): null {
+  const states = useWidgetStates();
+  const guard = React.useContext(ClearCopyGuardContext);
+  React.useEffect(() => {
+    onMount(states, guard);
+  }, [onMount, states, guard]);
+  return null;
 }
 
-/** Clear `an_1`'s copy through the widget guard, the curator answering `answer`. */
-async function clearWith(states: WidgetStates, answer: boolean) {
-  const asked: number[] = [];
+/** Mounts `UnsavedChangesGuard` over widget states holding unsaved ticks by analysis id. */
+async function mountGuard(ticksByAnalysis: Record<string, string[]>) {
+  let capturedGuard: ClearCopyGuard | null = null;
+  let capturedStates: ReturnType<typeof useWidgetStates> | null = null;
+
+  const container = dom.document.createElement("div");
+  dom.document.body.appendChild(container);
+  const root = createRoot(container as unknown as Element);
+  unmounts.push(() => {
+    React.act(() => root.unmount());
+    dom.document.body.removeChild(container);
+  });
+  await React.act(async () => {
+    root.render(
+      <WidgetStatesProvider>
+        <UnsavedChangesGuard>
+          <GuardProbe
+            onMount={(states, guard) => {
+              capturedStates = states;
+              capturedGuard = guard;
+            }}
+          />
+        </UnsavedChangesGuard>
+      </WidgetStatesProvider>,
+    );
+  });
+
+  if (capturedStates === null) throw new Error("states not mounted");
+  const states = capturedStates as ReturnType<typeof useWidgetStates>;
+  await React.act(async () => {
+    for (const [analysisId, items] of Object.entries(ticksByAnalysis)) {
+      const store = states.entry(
+        analysisId,
+        "assets/c.binpb",
+        "checklist",
+        () => judgementStore(async () => true),
+      );
+      for (const [index, itemId] of items.entries()) {
+        store.dispatch({
+          kind: "made",
+          key: `items[${itemId}].checked`,
+          seq: index + 1,
+          value: true,
+          drawnAt: COMMIT,
+          judged: new Uint8Array(),
+        });
+      }
+    }
+  });
+
   const resets: string[] = [];
   const client = new QueryClient();
   client.setQueryData(["workspace-document", "an_1", COMMIT], {
     commit: COMMIT,
     value: "# Doc\n",
   });
-  await clearCopy(
-    "an_1",
-    {
-      guard: unsavedChangesGuard(states, async (unsaved) => {
-        asked.push(unsaved);
-        return answer;
-      }),
-      reset: async (analysisId) => {
-        resets.push(analysisId);
-      },
-      announce: () => {},
-      queryClient: client,
+
+  return {
+    container,
+    resets,
+    states,
+    cachedDocument: () =>
+      client.getQueryData(["workspace-document", "an_1", COMMIT]),
+    dialogs: () =>
+      findAll(
+        container,
+        (node) => node instanceof MiniElement && node.tagName === "DIALOG",
+      ) as MiniElement[],
+    startClear: () => {
+      if (capturedGuard === null) throw new Error("guard not mounted");
+      return clearCopy(
+        "an_1",
+        {
+          guard: capturedGuard,
+          reset: async (analysisId) => {
+            resets.push(analysisId);
+          },
+          announce: () => {},
+          queryClient: client,
+        },
+        () => {},
+      );
     },
-    () => {},
-  );
-  const read = client.getQueryData(["workspace-document", "an_1", COMMIT]);
-  return { asked, resets, read };
+    pressButton: async (label: string) => {
+      const [button] = findAll(
+        container,
+        (node) =>
+          node instanceof MiniElement &&
+          node.tagName === "BUTTON" &&
+          node.textContent === label,
+      );
+      if (!(button instanceof MiniElement)) {
+        throw new Error(`no "${label}" button drawn`);
+      }
+      expect(button.disabled).toBe(false);
+      await React.act(async () => click(container, button));
+    },
+  };
 }
 
-describe("the question before a clear", () => {
-  test("names how many changes it discards, and that the saved stay", () => {
-    expect(unsavedChangesQuestion(1)).toBe(
-      "You have 1 unsaved change. Clearing the cache discards it. Everything already saved stays as it is.",
-    );
-    expect(unsavedChangesQuestion(3)).toBe(
-      "You have 3 unsaved changes. Clearing the cache discards them. Everything already saved stays as it is.",
-    );
-    expect(() => unsavedChangesQuestion(0)).toThrow();
-  });
-
-  test("offers to discard and reload, or to cancel", () => {
-    const html = renderToStaticMarkup(
-      <UnsavedChangesBody question={{ unsaved: 2, answer: () => {} }} />,
-    );
-    expect(html).toContain("You have 2 unsaved changes.");
-    expect(html).toContain("Discard and reload");
-    expect(html).toContain("Cancel");
-  });
-
-  test("answers as the button pressed", () => {
-    const answers: boolean[] = [];
-    const body = UnsavedChangesBody({
-      question: { unsaved: 1, answer: (discard) => answers.push(discard) },
+describe("UnsavedChangesGuard", () => {
+  test("asks with the count, and cancelled leaves the ticks and the copy as they were", async () => {
+    const h = await mountGuard({ an_1: ["ps3", "pm2"] });
+    let done: Promise<void> | undefined;
+    await React.act(async () => {
+      done = h.startClear();
     });
-    for (const label of ["Cancel", "Discard and reload"]) {
-      const button = findButton(body, label);
-      if (button === undefined) throw new Error(`no ${label} button`);
-      button.props.onClick();
-    }
-    expect(answers).toEqual([false, true]);
-  });
-});
 
-describe("a clear of a copy whose widgets hold unsaved changes", () => {
-  test("asks with their count, and cancelled leaves the ticks and the copy as they were", async () => {
-    const { states, store } = withTicks("ps3", "pm2");
-    const { asked, resets, read } = await clearWith(states, false);
-    expect(asked).toEqual([2]);
-    expect(resets).toEqual([]);
-    expect(read).toBeDefined();
-    expect(store.unsaved()).toBe(2);
+    const [dialog] = h.dialogs();
+    expect(dialog?.open).toBe(true);
+    expect(dialog?.textContent).toContain("2 unsaved changes");
+    expect(dialog?.textContent).toContain("discards them");
+    expect(dialog?.textContent).toContain(
+      "Everything already saved stays as it is.",
+    );
+
+    await h.pressButton("Cancel");
+    await done;
+
+    expect(h.dialogs()).toEqual([]);
+    expect(h.resets).toEqual([]);
+    expect(h.cachedDocument()).toBeDefined();
+    expect(h.states.unsaved("an_1")).toBe(2);
   });
 
-  test("goes ahead once the curator chooses to discard them", async () => {
-    const { states } = withTicks("ps3");
-    const { asked, resets, read } = await clearWith(states, true);
-    expect(asked).toEqual([1]);
-    expect(resets).toEqual(["an_1"]);
-    expect(read).toBeUndefined();
+  test("goes ahead once the curator chooses to discard a single unsaved change", async () => {
+    const h = await mountGuard({ an_1: ["ps3"] });
+    let done: Promise<void> | undefined;
+    await React.act(async () => {
+      done = h.startClear();
+    });
+
+    const [dialog] = h.dialogs();
+    expect(dialog?.open).toBe(true);
+    expect(dialog?.textContent).toContain("1 unsaved change");
+    expect(dialog?.textContent).not.toContain("1 unsaved changes");
+    expect(dialog?.textContent).toContain("discards it");
+    expect(dialog?.textContent).toContain(
+      "Everything already saved stays as it is.",
+    );
+
+    await h.pressButton("Discard and reload");
+    await done;
+
+    expect(h.dialogs()).toEqual([]);
+    expect(h.resets).toEqual(["an_1"]);
+    expect(h.cachedDocument()).toBeUndefined();
   });
 
   test("with nothing unsaved asks nothing, and goes ahead", async () => {
-    const { states } = withTicks();
-    const { asked, resets } = await clearWith(states, false);
-    expect(asked).toEqual([]);
-    expect(resets).toEqual(["an_1"]);
+    const h = await mountGuard({ an_1: [] });
+    await React.act(async () => {
+      await h.startClear();
+    });
+
+    expect(h.dialogs()).toEqual([]);
+    expect(h.resets).toEqual(["an_1"]);
+    expect(h.cachedDocument()).toBeUndefined();
   });
 
   test("counts only its own Analysis's changes", async () => {
-    const { states } = withTicks("ps3");
-    expect(states.unsaved("an_2")).toBe(0);
+    const h = await mountGuard({ an_2: ["ps3"] });
+    await React.act(async () => {
+      await h.startClear();
+    });
+
+    expect(h.dialogs()).toEqual([]);
+    expect(h.resets).toEqual(["an_1"]);
+    expect(h.states.unsaved("an_2")).toBe(1);
   });
 });
-
-function findButton(
-  node: ReactNode,
-  label: string,
-): ReactElement<{ onClick: () => void }> | undefined {
-  if (node === null || typeof node !== "object") return undefined;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findButton(child, label);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-  const element = node as ReactElement<{
-    children?: ReactNode;
-    onClick: () => void;
-  }>;
-  if (element.type === "button" && element.props.children === label)
-    return element;
-  return findButton(element.props.children, label);
-}

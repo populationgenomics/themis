@@ -33,19 +33,19 @@ const INNER_RATIO_KEY = "workbench:innerRatio";
 
 /** The persisted-value validators reject anything the reducer's types forbid, so a stale or
  *  hand-edited record falls back to the default rather than corrupting state. */
-export function parseEdge(raw: unknown): Edge | null {
+function parseEdge(raw: unknown): Edge | null {
   return raw === "left" || raw === "right" || raw === "top" || raw === "bottom"
     ? raw
     : null;
 }
 
-export function parseRatio(raw: unknown): number | null {
+function parseRatio(raw: unknown): number | null {
   return typeof raw === "number" && Number.isFinite(raw) && raw > 0 && raw < 1
     ? raw
     : null;
 }
 
-export function parseLabelMode(raw: unknown): boolean | null {
+function parseLabelMode(raw: unknown): boolean | null {
   return typeof raw === "boolean" ? raw : null;
 }
 

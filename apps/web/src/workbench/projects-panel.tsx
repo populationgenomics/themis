@@ -14,7 +14,7 @@ import { userContext } from "@/server/context";
 // Self-contained: it resolves its own caller and does its own reads, so the landing page composes
 // it without holding a backend or knowing what a Project is.
 
-export interface ProjectRow {
+interface ProjectRow {
   project: Project;
   analysisCount: number;
   latestIso: string | null;
@@ -22,10 +22,7 @@ export interface ProjectRow {
 
 /** Each Project with what the card shows: how many Analyses it holds and when the most recent
  *  arrived. Analyses outside the listed Projects cannot occur — both come from the same membership. */
-export function projectRows(
-  projects: Project[],
-  analyses: Analysis[],
-): ProjectRow[] {
+function projectRows(projects: Project[], analyses: Analysis[]): ProjectRow[] {
   return projects.map((project) => {
     const own = analyses.filter((a) => a.projectId === project.id);
     const latest = own
@@ -45,8 +42,12 @@ export function projectRows(
   });
 }
 
-export async function ProjectsPanel() {
-  const { backend } = await userContext(await headers());
+export async function ProjectsPanel({
+  requestHeaders,
+}: {
+  requestHeaders?: Headers;
+} = {}) {
+  const { backend } = await userContext(requestHeaders ?? (await headers()));
   const [projects, analyses] = await Promise.all([
     backend.listProjects(),
     backend.listAllAnalyses(),

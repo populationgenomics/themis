@@ -5,7 +5,6 @@ import {
   INITIAL_WORKSPACE_STATE,
   labelKey,
   pinnedDocumentCommit,
-  readDocumentPin,
   workspaceModelReducer as reduce,
   type Source,
   type Tab,
@@ -893,39 +892,6 @@ describe("patchTab safety (failed-reveal rollback)", () => {
 
 const COMMIT = "c41e".padEnd(40, "0");
 
-describe("readDocumentPin", () => {
-  test("a valid pin round-trips", () => {
-    expect(
-      readDocumentPin({ pin: { analysisId: "an-1", commit: COMMIT } }),
-    ).toEqual({ analysisId: "an-1", commit: COMMIT });
-  });
-
-  test.each([
-    ["an absent payload", undefined],
-    ["a null payload", null],
-    ["a non-object payload", "pin"],
-    ["a payload without a pin", {}],
-    ["a null pin (follow the tip)", { pin: null }],
-    ["a non-object pin", { pin: 3 }],
-    ["a pin missing its analysisId", { pin: { commit: COMMIT } }],
-    [
-      "a pin with an empty analysisId",
-      { pin: { analysisId: "", commit: COMMIT } },
-    ],
-    ["a pin missing its commit", { pin: { analysisId: "an-1" } }],
-    [
-      "a pin naming an abbreviated commit",
-      { pin: { analysisId: "an-1", commit: "c41e" } },
-    ],
-    [
-      "a pin naming a version number",
-      { pin: { analysisId: "an-1", version: 3 } },
-    ],
-  ])("%s reads as null", (_name, payload) => {
-    expect(readDocumentPin(payload)).toBeNull();
-  });
-});
-
 describe("pinnedDocumentCommit", () => {
   const payload = { pin: { analysisId: "an-1", commit: COMMIT } };
 
@@ -936,7 +902,34 @@ describe("pinnedDocumentCommit", () => {
   test.each([
     ["a pin naming another analysis", payload, "an-2"],
     ["no analysis open", payload, null],
+    ["an absent payload", undefined, "an-1"],
+    ["a null payload", null, "an-1"],
+    ["a non-object payload", "pin", "an-1"],
     ["an unpinned payload", {}, "an-1"],
+    ["a null pin (follow the tip)", { pin: null }, "an-1"],
+    ["a non-object pin", { pin: 3 }, "an-1"],
+    ["a pin missing its analysisId", { pin: { commit: COMMIT } }, "an-1"],
+    [
+      "a pin with a null analysisId when no analysis is open",
+      { pin: { analysisId: null, commit: COMMIT } },
+      null,
+    ],
+    [
+      "a pin with an empty analysisId",
+      { pin: { analysisId: "", commit: COMMIT } },
+      "",
+    ],
+    ["a pin missing its commit", { pin: { analysisId: "an-1" } }, "an-1"],
+    [
+      "a pin naming an abbreviated commit",
+      { pin: { analysisId: "an-1", commit: "c41e" } },
+      "an-1",
+    ],
+    [
+      "a pin naming a version number",
+      { pin: { analysisId: "an-1", version: 3 } },
+      "an-1",
+    ],
   ])("%s follows the tip (null)", (_name, p, analysisId) => {
     expect(pinnedDocumentCommit(p, analysisId)).toBeNull();
   });

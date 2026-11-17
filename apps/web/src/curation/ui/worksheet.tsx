@@ -674,7 +674,7 @@ export function VerdictCard({
 
 /** How many drafts a submission would take, by the server's rule: the answered workflows on screen,
  *  and every worksheet-level section that holds a draft. Zero is the one case the server refuses. */
-export function submittable(
+function submittable(
   answers: Record<string, WorkflowAssessment>,
   visible: WorkflowDef[],
   heldSections: ReadonlySet<string>,
@@ -687,7 +687,7 @@ export function submittable(
 
 /** The answered workflows the routing leaves off the screen, by code and id. Their drafts stay saved
  *  and a submission leaves them out: the curator cannot see what they would submit. */
-export function hiddenAnswers(
+function hiddenAnswers(
   answers: Record<string, WorkflowAssessment>,
   visible: WorkflowDef[],
 ): string[] {

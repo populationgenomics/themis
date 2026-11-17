@@ -1,10 +1,25 @@
-import { describe, expect, test } from "bun:test";
-import type { ReactElement, ReactNode } from "react";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { workspaceCopy } from "@/workspace-copy/client";
+import { click, findAll, install, MiniElement } from "../minidom.test-support";
 import type { CopyClearing } from "./clear-copy";
-import { REGISTRY, type RenderContext } from "./content-kinds";
 import { WorkingDocumentView } from "./tab-views";
+import type { WorkspaceModelController } from "./use-workspace-model";
 import type { WorkingDocumentState } from "./working-document";
+import { INITIAL_WORKSPACE_STATE } from "./workspace-model";
+import type {
+  CrossWindowDrag,
+  WindowActions,
+  WorkingDocumentSignal,
+} from "./workspace-sync";
 
 // What a curator sees of the working document while the Poll cannot read the workspace: what the
 // tab showed stays, and a notice says it may be out of date.
@@ -20,6 +35,48 @@ const SHOWN: WorkingDocumentState = {
 const noop = () => {};
 
 const IDLE: CopyClearing = { state: { kind: "idle" }, clear: noop };
+
+let dom: ReturnType<typeof install>;
+let React: typeof import("react");
+let createRoot: typeof import("react-dom/client").createRoot;
+let QueryClient: typeof import("@tanstack/react-query").QueryClient;
+let QueryClientProvider: typeof import("@tanstack/react-query").QueryClientProvider;
+let Pane: typeof import("./pane").Pane;
+let WorkspaceDataProvider: typeof import("./workspace-context").WorkspaceDataProvider;
+const realReset = workspaceCopy.reset;
+const unmounts: (() => void)[] = [];
+
+beforeAll(async () => {
+  dom = install();
+  React = await import("react");
+  ({ createRoot } = await import("react-dom/client"));
+  ({ QueryClient, QueryClientProvider } = await import(
+    "@tanstack/react-query"
+  ));
+  ({ Pane } = await import("./pane"));
+  ({ WorkspaceDataProvider } = await import("./workspace-context"));
+});
+
+afterEach(() => {
+  workspaceCopy.reset = realReset;
+  while (unmounts.length > 0) unmounts.pop()?.();
+});
+
+afterAll(() => {
+  dom.uninstall();
+});
+
+async function mount(element: ReactElement): Promise<MiniElement> {
+  const container = dom.document.createElement("div");
+  dom.document.body.appendChild(container);
+  const root = createRoot(container as unknown as Element);
+  unmounts.push(() => {
+    React.act(() => root.unmount());
+    dom.document.body.removeChild(container);
+  });
+  await React.act(async () => root.render(element));
+  return container;
+}
 
 function render(
   document: WorkingDocumentState,
@@ -84,26 +141,6 @@ const CACHE_FAILED =
 const NOTHING_LOST =
   "Only this browser&#x27;s cached copy is cleared. Nothing saved is lost.";
 
-/** The first element under `node`, expanding function components as React would, whose own type
- *  is `type`: enough of a render to reach a handler without a DOM. */
-function findElement(node: ReactNode, type: string): ReactElement | undefined {
-  if (node === null || typeof node !== "object") return undefined;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findElement(child, type);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-  const element = node as ReactElement<{ children?: ReactNode }>;
-  if (element.type === type) return element;
-  if (typeof element.type === "function") {
-    const component = element.type as (props: unknown) => ReactNode;
-    return findElement(component(element.props), type);
-  }
-  return findElement(element.props.children, type);
-}
-
 describe("clearing the browser's copy from the working document", () => {
   test("is offered beside a failed read of the copy, saying nothing saved is lost", () => {
     const html = render({ kind: "copyFailed" }, false);
@@ -134,7 +171,7 @@ describe("clearing the browser's copy from the working document", () => {
     expect(failed).toContain(CLEAR);
   });
 
-  test("clears the copy when its button is pressed", () => {
+  test("clears the copy when its button is pressed", async () => {
     let cleared = 0;
     const clearing: CopyClearing = {
       state: { kind: "idle" },
@@ -142,75 +179,191 @@ describe("clearing the browser's copy from the working document", () => {
         cleared += 1;
       },
     };
-    const button = findElement(
-      WorkingDocumentView({
-        document: { kind: "copyFailed" },
-        unavailable: false,
-        clearing,
-        signal: null,
-        curatorEmail: "curator@example.org",
-        onCitation: noop,
-      }),
-      "button",
-    ) as ReactElement<{ onClick: () => void }> | undefined;
-    if (button === undefined) throw new Error("no button");
-    button.props.onClick();
+    const container = await mount(
+      <WorkingDocumentView
+        document={{ kind: "copyFailed" }}
+        unavailable={false}
+        clearing={clearing}
+        signal={null}
+        curatorEmail="curator@example.org"
+        onCitation={noop}
+      />,
+    );
+    const [button] = findAll(
+      container,
+      (node) =>
+        node instanceof MiniElement &&
+        node.tagName === "BUTTON" &&
+        node.textContent === CLEAR,
+    );
+    if (!(button instanceof MiniElement)) throw new Error("no clear button");
+    expect(button.disabled).toBe(false);
+    await React.act(async () => click(container, button));
     expect(cleared).toBe(1);
   });
 });
 
-describe("the working document's pane menu", () => {
-  const ctx = (
-    workingDocument: WorkingDocumentState,
-    clearCopy: CopyClearing | null = IDLE,
-  ): RenderContext => ({
-    events: [],
-    workingDocument,
-    documentSignal: {
-      analysisId: "an_1",
-      tip: { kind: "commit", commit: "9e27".padEnd(40, "0") },
-      pollFailed: false,
-      unavailable: false,
-      damaged: workingDocument.kind === "damaged",
-    },
-    documentVersions: null,
-    clearCopy,
-    curatorEmail: "curator@example.org",
-    highlight: undefined,
-    onCitation: noop,
-    patch: noop,
-  });
-  const items = (context: RenderContext) =>
-    REGISTRY["working-doc"].menuItems?.({}, context) ?? [];
+const controller: WorkspaceModelController = {
+  state: INITIAL_WORKSPACE_STATE,
+  activateTab: noop,
+  activatePane: noop,
+  setSplitRatio: noop,
+  split: noop,
+  reorderTab: noop,
+  moveTabToPane: noop,
+  swapPanes: noop,
+  moveTabToWindow: noop,
+  moveTabToNewWindow: noop,
+  closeWindow: noop,
+  closeTab: noop,
+  openTab: async () => {},
+  setConversationEdge: noop,
+  setLabel: noop,
+  setHighlight: noop,
+  patchTab: noop,
+  reopenClosed: noop,
+  consolidate: noop,
+  readOuterRatio: async () => null,
+  writeOuterRatio: noop,
+};
 
-  test("offers to clear the cache, saying everything saved stays", () => {
-    for (const state of [SHOWN, { kind: "copyFailed" } as const]) {
-      const [item] = items(ctx(state));
-      expect(item?.label).toBe(CLEAR);
-      expect(item?.description).toBe(
-        "Clears this workspace from your browser's cache and loads it fresh. Everything saved stays as it is.",
-      );
-    }
-  });
+const windowActions: WindowActions = {
+  canOpenWindow: true,
+  destinations: () => [],
+  moveToWindow: noop,
+  moveToNewWindow: noop,
+  moveTabsToNewWindow: noop,
+};
 
-  test("does not offer it over a damaged workspace, or while a clear runs", () => {
-    expect(items(ctx({ kind: "damaged" }))).toEqual([]);
-    expect(
-      items(ctx(SHOWN, { state: { kind: "clearing" }, clear: noop })),
-    ).toEqual([]);
-  });
+const crossWindowDrag: CrossWindowDrag = {
+  begin: noop,
+  end: noop,
+  resolve: () => null,
+};
 
-  test("clears the copy when its item is chosen", () => {
-    let cleared = 0;
-    const [item] = items(
-      ctx(SHOWN, {
-        state: { kind: "idle" },
-        clear: () => {
-          cleared += 1;
-        },
-      }),
+async function mountWorkingDocPane(workingDocument: WorkingDocumentState) {
+  const win = INITIAL_WORKSPACE_STATE.windows[0];
+  const signal: WorkingDocumentSignal = {
+    analysisId: "an_1",
+    tip: { kind: "commit", commit: TIP },
+    pollFailed: false,
+    unavailable: false,
+    damaged: workingDocument.kind === "damaged",
+  };
+  const container = await mount(
+    <QueryClientProvider client={new QueryClient()}>
+      <WorkspaceDataProvider
+        value={{
+          events: [],
+          workingDocument,
+          documentSignal: signal,
+          documentVersions: null,
+          curatorEmail: "curator@example.org",
+        }}
+      >
+        <Pane
+          win={win}
+          pane={win.panes[0]}
+          side="a"
+          controller={controller}
+          windowActions={windowActions}
+          crossWindowDrag={crossWindowDrag}
+          onCitation={noop}
+          drag={{ active: false, begin: noop, end: noop }}
+        />
+      </WorkspaceDataProvider>
+    </QueryClientProvider>,
+  );
+
+  const openMenu = async (): Promise<MiniElement> => {
+    const [trigger] = findAll(
+      container,
+      (node) =>
+        node instanceof MiniElement &&
+        node.tagName === "BUTTON" &&
+        node.getAttribute("aria-label") === "Pane actions",
     );
-    item?.onSelect();
-    expect(cleared).toBe(1);
+    if (!(trigger instanceof MiniElement)) throw new Error("no pane menu");
+    expect(trigger.disabled).toBe(false);
+    await React.act(async () => click(container, trigger));
+    const [menu] = findAll(
+      container,
+      (node) =>
+        node instanceof MiniElement && node.getAttribute("role") === "menu",
+    );
+    if (!(menu instanceof MiniElement)) throw new Error("menu did not open");
+    return menu;
+  };
+
+  return { container, openMenu };
+}
+
+describe("the working document's pane menu", () => {
+  test.each([
+    ["the document is shown", SHOWN],
+    ["a read of the copy failed", { kind: "copyFailed" } as const],
+  ])(
+    "offers to clear the cache when %s, saying everything saved stays",
+    async (_, state) => {
+      const { openMenu } = await mountWorkingDocPane(state);
+      const menu = await openMenu();
+      const [item] = findAll(
+        menu,
+        (node) =>
+          node instanceof MiniElement &&
+          node.getAttribute("role") === "menuitem" &&
+          node.textContent.includes(CLEAR),
+      );
+      expect(item?.textContent).toBe(
+        `${CLEAR}Clears this workspace from your browser's cache and loads it fresh. Everything saved stays as it is.`,
+      );
+    },
+  );
+
+  test("does not offer to clear the cache over a damaged workspace", async () => {
+    const { openMenu } = await mountWorkingDocPane({ kind: "damaged" });
+    const menu = await openMenu();
+    expect(menu.textContent).toContain("Show tab titles");
+    expect(menu.textContent).not.toContain(CLEAR);
+  });
+
+  test("clears the copy when its item is chosen, and hides the item while the clear runs", async () => {
+    const resets: string[] = [];
+    let finishReset: (() => void) | undefined;
+    workspaceCopy.reset = (analysisId) => {
+      resets.push(analysisId);
+      return new Promise<undefined>((resolve) => {
+        finishReset = () => resolve(undefined);
+      });
+    };
+
+    const { container, openMenu } = await mountWorkingDocPane(SHOWN);
+    const menu = await openMenu();
+    const [item] = findAll(
+      menu,
+      (node) =>
+        node instanceof MiniElement &&
+        node.getAttribute("role") === "menuitem" &&
+        node.textContent.includes(CLEAR),
+    );
+    if (!(item instanceof MiniElement)) throw new Error("no clear menu item");
+    expect(item.disabled).toBe(false);
+    await React.act(async () => click(container, item));
+
+    expect(resets).toEqual(["an_1"]);
+    expect(container.textContent).toContain(
+      "Clearing the cache and reloading…",
+    );
+
+    const runningMenu = await openMenu();
+    expect(runningMenu.textContent).toContain("Show tab titles");
+    expect(runningMenu.textContent).not.toContain(CLEAR);
+
+    await React.act(async () => {
+      finishReset?.();
+    });
+    expect(container.textContent).not.toContain("Clearing the cache");
+    expect(container.textContent).not.toContain("couldn't be cleared");
+    expect(container.textContent).toContain("Variant summary");
   });
 });

@@ -10,7 +10,7 @@ import type { DocumentVersion } from "./working-document";
 
 /** The picker's rows, newest first. `commit` is what selecting the row means: null for the tip
  *  (follow the branch), the commit itself for an older version (pin it). */
-export function versionMenuItems(
+function versionMenuItems(
   versions: readonly DocumentVersion[],
   selected: string,
 ): {
@@ -34,7 +34,7 @@ export function versionMenuItems(
 
 /** The trigger's label for the commit shown: its version number, or its abbreviated id while the
  *  picker's versions do not name it. */
-export function versionLabel(
+function versionLabel(
   versions: readonly DocumentVersion[],
   selected: string,
 ): string {

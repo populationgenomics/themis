@@ -5,7 +5,7 @@ import {
   type WorkflowAssessment,
   WorkflowAssessmentSchema,
 } from "@/gen/themis/curation/models/curation_pb";
-import { type Cell, fieldValue, sections, withField } from "../ui/primitives";
+import { type Cell, fieldValue, withField } from "../ui/primitives";
 import { ALL_WORKFLOWS, refuseUnreadableDescriptions } from "./registry";
 import type { WorkflowDef } from "./types";
 
@@ -121,46 +121,6 @@ describe("the transcribed tables", () => {
     // Every body in every state is several thousand renders: seconds on a CI runner.
     { timeout: 30_000 },
   );
-});
-
-describe("a table whose sections cannot be drawn", () => {
-  test("is refused when one description resumes after another", () => {
-    // Two runs of one description would print the same heading twice, with nothing to say which
-    // rows each covers.
-    expect(() =>
-      sections([
-        { id: "a", cell: "T.a", group: "First", label: "One" },
-        { id: "b", cell: "T.b", group: "Second", label: "Two" },
-        { id: "c", cell: "T.c", group: "First", label: "Three" },
-      ]),
-    ).toThrow(/resumes a section/);
-  });
-
-  test("is refused when one description resumes after an undescribed row", () => {
-    expect(() =>
-      sections([
-        { id: "a", cell: "T.a", group: "First", label: "One" },
-        { id: "b", cell: "T.b", label: "Two" },
-        { id: "c", cell: "T.c", group: "First", label: "Three" },
-      ]),
-    ).toThrow(/resumes a section/);
-  });
-
-  test("is refused when a description is blank", () => {
-    expect(() =>
-      sections([{ id: "a", cell: "T.a", group: "   ", label: "One" }]),
-    ).toThrow(/blank section description/);
-  });
-
-  test("is drawable with an undescribed row between two descriptions", () => {
-    expect(() =>
-      sections([
-        { id: "a", cell: "T.a", group: "First", label: "One" },
-        { id: "b", cell: "T.b", label: "Ungrouped" },
-        { id: "c", cell: "T.c", group: "Second", label: "Two" },
-      ]),
-    ).not.toThrow();
-  });
 });
 
 describe("a description a curator would never read", () => {

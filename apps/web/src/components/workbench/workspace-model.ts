@@ -34,7 +34,7 @@ const COMMIT_ID = /^[0-9a-f]{40}$/;
 
 /** The pin in a working-doc tab payload, or null when absent or malformed. Structural, not a cast:
  *  payloads cross the BroadcastChannel between windows that may run different bundle versions. */
-export function readDocumentPin(payload: unknown): DocumentPin | null {
+function readDocumentPin(payload: unknown): DocumentPin | null {
   if (typeof payload !== "object" || payload === null) return null;
   const pin = (payload as { pin?: unknown }).pin;
   if (typeof pin !== "object" || pin === null) return null;

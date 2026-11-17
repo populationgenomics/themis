@@ -19,7 +19,7 @@ import { useWidgetStates, type WidgetStates } from "./widget-state";
 
 /** The guard a clear of `analysisId`'s copy asks: with no change unsaved in its widgets it goes
  *  ahead; otherwise it goes ahead only if `ask`, given how many there are, resolves true. */
-export function unsavedChangesGuard(
+function unsavedChangesGuard(
   states: Pick<WidgetStates, "unsaved">,
   ask: (unsaved: number) => Promise<boolean>,
 ): ClearCopyGuard {
@@ -30,7 +30,7 @@ export function unsavedChangesGuard(
 }
 
 /** What the curator is asked before a clear discards `unsaved` changes. */
-export function unsavedChangesQuestion(unsaved: number): string {
+function unsavedChangesQuestion(unsaved: number): string {
   if (!Number.isInteger(unsaved) || unsaved < 1) {
     throw new Error(`no question to ask about ${unsaved} unsaved changes`);
   }
@@ -113,7 +113,7 @@ function UnsavedChangesDialog({
 }
 
 /** The dialog's text and its two answers. */
-export function UnsavedChangesBody({
+function UnsavedChangesBody({
   question,
 }: {
   question: Question;

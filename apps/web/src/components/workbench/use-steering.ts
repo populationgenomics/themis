@@ -1,10 +1,9 @@
 "use client";
 
-import type { DescMethod } from "@bufbuild/protobuf";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { useRef, useState } from "react";
 import { useInterrupt, useSteer } from "@/lib/queries";
-import { isAgentBusy } from "@/lib/rpc";
-import { type ConversationEvent, Workbench } from "@/models/workbench";
+import type { ConversationEvent } from "@/models/workbench";
 import {
   accepted,
   dropped,
@@ -29,14 +28,16 @@ export interface SteeringFailure {
   cause: unknown;
 }
 
-const ACT_METHODS: Readonly<Record<SteeringFailure["act"], DescMethod>> = {
-  send: Workbench.method.steer,
-  stop: Workbench.method.interrupt,
-};
-
-/** True when the failed act was a turn the run refused because the agent is mid-step. */
+/** True when the failed act was a turn the run refused because the agent is mid-step: the
+ *  composer words this itself, pointing at the stop control beside it. Only a turn is refused
+ *  that way, as Connect `FailedPrecondition`; the same code from another method means something
+ *  else, so the code alone does not say the agent is busy. */
 export function isBusyRefusal(failure: SteeringFailure): boolean {
-  return isAgentBusy(ACT_METHODS[failure.act], failure.cause);
+  return (
+    failure.act === "send" &&
+    failure.cause instanceof ConnectError &&
+    failure.cause.code === Code.FailedPrecondition
+  );
 }
 
 export interface Steering {

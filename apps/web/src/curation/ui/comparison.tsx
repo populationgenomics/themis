@@ -36,7 +36,7 @@ export interface CuratorAnswers {
 }
 
 /** One curator's submission, split into the worksheet's two sections and its workflows. */
-export interface Submitted {
+interface Submitted {
   curator: string;
   workflowsVersion: string;
   routing?: RoutingAssessment;
@@ -52,7 +52,7 @@ const SECTION_KINDS: ReadonlyMap<string, Assessment["kind"]["case"]> = new Map([
 /** Decodes a submission. Refuses one holding an assessment of the wrong kind under an id: the
  *  worksheet stores each section under its own id and every workflow as a workflow, so a mismatch
  *  is a fault in what was stored, not an answer to draw. */
-export function decodeSubmitted(answers: CuratorAnswers): Submitted {
+function decodeSubmitted(answers: CuratorAnswers): Submitted {
   const submitted: Submitted = {
     curator: answers.curator,
     workflowsVersion: answers.workflowsVersion,
@@ -83,7 +83,7 @@ export function decodeSubmitted(answers: CuratorAnswers): Submitted {
 
 /** The workflows any curator answered, in registry order; ids the registry no longer holds follow,
  *  in id order. */
-export function workflowOrder(submitted: Submitted[]): string[] {
+function workflowOrder(submitted: Submitted[]): string[] {
   const answered = new Set(submitted.flatMap((s) => [...s.workflows.keys()]));
   const known = ALL_WORKFLOWS.filter((w) => answered.has(w.id)).map(
     (w) => w.id,
@@ -95,14 +95,14 @@ export function workflowOrder(submitted: Submitted[]): string[] {
 }
 
 /** A section's tag: whether the curators agree, and in what words. */
-export interface Agreement {
+interface Agreement {
   agreed: boolean;
   label: string;
 }
 
 /** Whether every curator stated an answer and all stated the same one: two unstated answers are
  *  not a shared one. */
-export function agreed<T>(stated: (T | undefined)[], unstated: T): boolean {
+function agreed<T>(stated: (T | undefined)[], unstated: T): boolean {
   return (
     stated.every((value) => value !== undefined && value !== unstated) &&
     new Set(stated).size === 1
@@ -116,7 +116,7 @@ export function agreed<T>(stated: (T | undefined)[], unstated: T): boolean {
  *  and its value is the chosen row's id — which the label, that row's own, already names. Only the
  *  registry knows which ids are rows, and only for its own transcription, so a worksheet pinned to
  *  another version, or a workflow the registry no longer holds, prints every value. */
-export function printedValue(
+function printedValue(
   field: FieldValue,
   workflow: WorkflowDef | undefined,
   workflowsVersion: string,
@@ -139,7 +139,7 @@ export function printedValue(
  *
  *  Read off the stored fields, never off `printedValue`: which values print depends on the version
  *  a worksheet pins, and the same row chosen under two versions is still the same answer. */
-export function workflowAgreement(
+function workflowAgreement(
   answers: (WorkflowAssessment | undefined)[],
 ): Agreement {
   const given = answers.filter(
@@ -168,9 +168,7 @@ export function workflowAgreement(
 
 /** Each item of a list that may name one item twice, keyed so a repeat cannot collide with the
  *  first. */
-export function keyedByOccurrence(
-  items: string[],
-): { item: string; key: string }[] {
+function keyedByOccurrence(items: string[]): { item: string; key: string }[] {
   const seen = new Map<string, number>();
   return items.map((item) => {
     const count = (seen.get(item) ?? 0) + 1;

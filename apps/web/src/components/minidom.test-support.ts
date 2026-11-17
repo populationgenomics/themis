@@ -51,7 +51,12 @@ class MiniNode {
     this.listeners[type].push(listener);
   }
 
-  removeEventListener(): void {}
+  removeEventListener(type: string, listener: (event: unknown) => void): void {
+    const list = this.listeners[type];
+    if (list === undefined) return;
+    const index = list.indexOf(listener);
+    if (index >= 0) list.splice(index, 1);
+  }
 
   get textContent(): string {
     return this.childNodes.map((child) => child.textContent).join("");
@@ -91,7 +96,67 @@ export class MiniElement extends MiniNode {
     removeProperty(key: string): void;
   };
   checked = false;
-  disabled = false;
+  selected = false;
+  defaultSelected = false;
+  scrollHeight = 0;
+  private currentValue: string | null = null;
+
+  get value(): string {
+    if (this.tagName === "SELECT") {
+      return (
+        this.options.find((opt) => opt.selected)?.value ??
+        this.options[0]?.value ??
+        ""
+      );
+    }
+    if (this.tagName === "OPTION") {
+      return (
+        this.currentValue ?? this.getAttribute("value") ?? this.textContent
+      );
+    }
+    return this.currentValue ?? this.getAttribute("value") ?? "";
+  }
+
+  set value(next: string) {
+    const text = String(next);
+    if (this.tagName === "SELECT") {
+      for (const opt of this.options) opt.selected = opt.value === text;
+      return;
+    }
+    this.currentValue = text;
+  }
+
+  get options(): MiniElement[] {
+    return findAll(
+      this,
+      (node) => node instanceof MiniElement && node.tagName === "OPTION",
+    ) as MiniElement[];
+  }
+
+  get disabled(): boolean {
+    return this.hasAttribute("disabled");
+  }
+
+  set disabled(next: boolean) {
+    if (next) this.setAttribute("disabled", "");
+    else this.removeAttribute("disabled");
+  }
+
+  get open(): boolean {
+    return this.hasAttribute("open");
+  }
+
+  set open(next: boolean) {
+    if (next) this.setAttribute("open", "");
+    else this.removeAttribute("open");
+  }
+
+  showModal(): void {
+    if (this.tagName !== "DIALOG") {
+      throw new Error(`showModal called on <${this.tagName}>`);
+    }
+    this.open = true;
+  }
 
   constructor(ownerDocument: MiniDocument | null, tag: string) {
     super(ownerDocument);
@@ -152,6 +217,7 @@ class MiniDocument extends MiniNode {
   documentElement: MiniElement;
   activeElement: MiniElement | null = null;
   defaultView: unknown;
+  oninput: (() => void) | null = null;
 
   constructor() {
     super(null);
@@ -192,8 +258,11 @@ export function findAll(
 }
 
 /** Dispatch a click on `target` to the listeners React put on `root`, as a browser's would reach
- *  them by bubbling. */
+ *  them by bubbling. A disabled control (or child of one) suppresses the click, as browsers do. */
 export function click(root: MiniNode, target: MiniElement): void {
+  for (let at: MiniNode | null = target; at !== null; at = at.parentNode) {
+    if (at instanceof MiniElement && at.disabled) return;
+  }
   if (target instanceof MiniElement && target.tagName === "INPUT") {
     target.checked = !target.checked;
   }
@@ -213,6 +282,33 @@ export function click(root: MiniNode, target: MiniElement): void {
   for (const listener of root.listeners.click ?? []) listener(event);
 }
 
+/** Type `value` into `target` and dispatch `input` to the listeners React put on `root`. */
+export function input(
+  root: MiniNode,
+  target: MiniElement,
+  value: string,
+): void {
+  for (let at: MiniNode | null = target; at !== null; at = at.parentNode) {
+    if (at instanceof MiniElement && at.disabled) return;
+  }
+  Object.getOwnPropertyDescriptor(MiniElement.prototype, "value")?.set?.call(
+    target,
+    value,
+  );
+  const event = {
+    type: "input",
+    target,
+    bubbles: true,
+    cancelable: false,
+    timeStamp: 0,
+    defaultPrevented: false,
+    preventDefault() {},
+    stopPropagation() {},
+    composedPath: () => [],
+  };
+  for (const listener of root.listeners.input ?? []) listener(event);
+}
+
 /** Put a mini DOM on the global object; returns its document and what removes it again. */
 export function install(): { document: MiniDocument; uninstall: () => void } {
   const global = globalThis as Record<string, unknown>;
@@ -223,7 +319,12 @@ export function install(): { document: MiniDocument; uninstall: () => void } {
     HTMLIFrameElement: class {},
     HTMLElement: MiniElement,
     Node: MiniNode,
-    // Lays nothing out, so it never reports a size: a component draws as before its first measurement.
+    // Lays nothing out, so nothing intersects and nothing reports a size.
+    IntersectionObserver: class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    },
     ResizeObserver: class {
       observe(): void {}
       unobserve(): void {}

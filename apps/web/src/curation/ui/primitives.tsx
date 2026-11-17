@@ -45,7 +45,7 @@ export function cellLabel(cell: Cell): string {
 }
 
 /** A run of consecutive cells under one section description, or a run under none. */
-export interface Section {
+interface Section {
   group?: string;
   cells: Cell[];
 }
@@ -57,7 +57,7 @@ export interface Section {
  *  another has intervened, which would print the same heading twice with nothing to say which rows
  *  each covers. Refused here rather than over a workflow's cells, because only the array a table is
  *  handed says what is consecutive on screen. */
-export function sections(cells: Cell[]): Section[] {
+function sections(cells: Cell[]): Section[] {
   const found: Section[] = [];
   const closed = new Set<string>();
   for (const cell of cells) {
