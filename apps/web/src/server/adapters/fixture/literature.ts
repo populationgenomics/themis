@@ -92,7 +92,7 @@ interface SeededFile {
   mediaType: string;
 }
 
-interface FixturePaper {
+export interface FixturePaper {
   info: PaperInfo;
   markdown: string | null;
   pdf: string | null;
@@ -106,7 +106,7 @@ interface FixturePaper {
  *  Range, so an astral character before the quote must not shift it. This adapter is the reference the
  *  pane's conversion is developed against, so it honours the contract even where the seeded corpus is
  *  all-BMP today. */
-export function markdownOffsets(
+function markdownOffsets(
   markdown: string,
   quote: string,
 ): { start: number; end: number } | null {
@@ -181,10 +181,12 @@ const fileObject = (docId: string, name: string): string =>
   `${docId}/files/${name}`;
 
 /** The seeded content store the fixture `ContentPort` serves from — every rendering and file byte in
- *  `CORPUS`, keyed by the same `{FIXTURE_BUCKET}/object` path `resolveObject` produces. */
-export function seedContentStore(): Map<string, Uint8Array> {
+ *  `corpus`, keyed by the same `{FIXTURE_BUCKET}/object` path `resolveObject` produces. */
+export function seedContentStore(
+  corpus: ReadonlyMap<string, FixturePaper> = CORPUS,
+): Map<string, Uint8Array> {
   const store = new Map<string, Uint8Array>();
-  for (const [docId, paper] of CORPUS) {
+  for (const [docId, paper] of corpus) {
     if (paper.markdown !== null) {
       store.set(
         objectKey(FIXTURE_BUCKET, markdownObject(docId)),
@@ -205,7 +207,10 @@ export function seedContentStore(): Map<string, Uint8Array> {
 }
 
 export class FixtureLiterature implements LiteraturePort {
-  constructor(private readonly content: ContentPort) {}
+  constructor(
+    private readonly content: ContentPort,
+    private readonly corpus: ReadonlyMap<string, FixturePaper> = CORPUS,
+  ) {}
 
   async describePaper(docId: string): Promise<PaperInfo> {
     return this.paper(docId).info;
@@ -297,7 +302,7 @@ export class FixtureLiterature implements LiteraturePort {
   }
 
   private paper(docId: string): FixturePaper {
-    const paper = CORPUS.get(docId);
+    const paper = this.corpus.get(docId);
     if (paper === undefined) {
       throw new ResourceNotFoundError(`unknown paper ${docId}`);
     }

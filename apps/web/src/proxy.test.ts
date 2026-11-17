@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-web";
@@ -9,7 +9,6 @@ import {
   ProjectGrantSchema,
   Role,
 } from "@/gen/themis/rpc/auth_pb";
-import * as csp from "@/lib/csp";
 import { Workbench } from "@/models/workbench";
 import type { Gate } from "@/server/admission";
 import { UnauthenticatedError } from "@/server/errors";
@@ -20,13 +19,7 @@ import {
   READ_MAX_BYTES,
 } from "@/server/rpc/limits";
 import nextConfig from "../next.config";
-import {
-  decide,
-  enforceRequestPolicy,
-  config as proxyConfig,
-  servesWorkerScripts,
-  servingChunk,
-} from "./proxy";
+import { proxy, config as proxyConfig } from "./proxy";
 
 // The perimeter with its identity and access answers supplied, so every outcome is reachable without
 // the live adapters' env or a network call. The live identity's own checks are
@@ -96,17 +89,39 @@ const fetched = (path: string, method = "POST") =>
     headers: { "sec-fetch-mode": "cors", "sec-fetch-site": "same-origin" },
   });
 
-function refusal(decision: Response | null): Response {
-  if (decision === null) throw new Error("the request was served");
-  return decision;
+const gateHolder = globalThis as typeof globalThis & { __themisGate?: Gate };
+let savedBackend: string | undefined;
+let savedGate: Gate | undefined;
+
+beforeEach(() => {
+  savedBackend = process.env.THEMIS_BACKEND;
+  savedGate = gateHolder.__themisGate;
+  process.env.THEMIS_BACKEND = "fixture";
+});
+
+afterEach(() => {
+  if (savedBackend === undefined) delete process.env.THEMIS_BACKEND;
+  else process.env.THEMIS_BACKEND = savedBackend;
+  gateHolder.__themisGate = savedGate;
+});
+
+const underPolicy = (req: NextRequest, gate: Gate) => {
+  gateHolder.__themisGate = gate;
+  return proxy(req);
+};
+
+function refusal(response: Response): Response {
+  if (response.headers.get("x-middleware-next") !== null) {
+    throw new Error("the request was served");
+  }
+  return response;
 }
 
 const throughRefusingPerimeter = async (
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> =>
-  (await decide(new NextRequest(new Request(input, init)), REFUSING)) ??
-  new Response(null);
+  underPolicy(new NextRequest(new Request(input, init)), REFUSING);
 
 /** The generated client, talking to a perimeter that refuses every request. The transport
  *  never reaches the RPC mount, so what it parses is the refusal itself. */
@@ -141,7 +156,7 @@ describe("the request-auth perimeter", () => {
     ["a request with no Fetch Metadata", request("/")],
   ])("%s with no verifiable assertion is answered 401", async (_, req) => {
     // Only a request that went around IAP arrives without one, so there is no sign-in to send it to.
-    const response = refusal(await decide(req, REFUSING));
+    const response = refusal(await underPolicy(req, REFUSING));
     expect(response.status).toBe(401);
     expect(response.headers.get("location")).toBeNull();
     expect(await response.json()).toEqual({
@@ -159,14 +174,14 @@ describe("the request-auth perimeter", () => {
         },
       },
     };
-    expect(refusal(await decide(fetched("/api/rpc/x"), asking)).status).toBe(
-      401,
-    );
+    expect(
+      refusal(await underPolicy(fetched("/api/rpc/x"), asking)).status,
+    ).toBe(401);
   });
 
   test("a caller the deployment does not admit is refused 403", async () => {
     const response = refusal(
-      await decide(fetched("/api/rpc/x"), NOT_ADMITTING),
+      await underPolicy(fetched("/api/rpc/x"), NOT_ADMITTING),
     );
     expect(response.status).toBe(403);
     expect(((await response.json()) as { code: string }).code).toBe(
@@ -176,18 +191,20 @@ describe("the request-auth perimeter", () => {
 
   test("a page load by a caller not admitted is told so in words", async () => {
     // IAP signed the person in; the ACL is the decision, so there is nothing to redirect to.
-    const response = refusal(await decide(pageLoad("/"), NOT_ADMITTING));
+    const response = refusal(await underPolicy(pageLoad("/"), NOT_ADMITTING));
     expect(response.status).toBe(403);
     expect(response.headers.get("location")).toBeNull();
     expect(await response.text()).toContain("not admitted");
   });
 
   test("an admitted caller is served", async () => {
-    expect(await decide(fetched("/api/rpc/x"), ADMITTING)).toBeNull();
+    const response = await underPolicy(fetched("/api/rpc/x"), ADMITTING);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
   test("the liveness probe is served without an assertion", async () => {
-    expect(await decide(request("/api/healthz"), UNREACHED)).toBeNull();
+    const response = await underPolicy(request("/api/healthz"), UNREACHED);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
   test.each([
@@ -197,9 +214,9 @@ describe("the request-auth perimeter", () => {
     "/auth/login",
     "/auth/callback",
   ])("%s is not exempt: the exemption matches exactly", async (path) => {
-    expect(refusal(await decide(fetched(path, "GET"), REFUSING)).status).toBe(
-      401,
-    );
+    expect(
+      refusal(await underPolicy(fetched(path, "GET"), REFUSING)).status,
+    ).toBe(401);
   });
 
   test("a refusal minted by another module graph is still the perimeter's 401", async () => {
@@ -215,9 +232,9 @@ describe("the request-auth perimeter", () => {
       },
       access: access(true),
     };
-    expect(refusal(await decide(fetched("/api/rpc/x"), foreign)).status).toBe(
-      401,
-    );
+    expect(
+      refusal(await underPolicy(fetched("/api/rpc/x"), foreign)).status,
+    ).toBe(401);
   });
 
   test("an outage is not answered as an unverifiable caller", async () => {
@@ -231,7 +248,7 @@ describe("the request-auth perimeter", () => {
         },
       },
     };
-    await expect(decide(fetched("/api/rpc/x"), outage)).rejects.toThrow(
+    await expect(underPolicy(fetched("/api/rpc/x"), outage)).rejects.toThrow(
       "ECONNREFUSED",
     );
   });
@@ -245,7 +262,7 @@ describe("the request-auth perimeter", () => {
         },
       },
     };
-    const error = await decide(fetched("/api/rpc/x"), stale).catch(
+    const error = await underPolicy(fetched("/api/rpc/x"), stale).catch(
       (thrown: unknown) => thrown,
     );
     expect(ConnectError.from(error).code).toBe(Code.Unavailable);
@@ -257,16 +274,6 @@ describe("the request-auth perimeter", () => {
 // again before the app's own response leaves), so both are observable from the one response.
 const RESPONSE_POLICY = "content-security-policy";
 const APP_POLICY = "x-middleware-request-content-security-policy";
-
-/** The policy inputs are the composition root's to resolve; these tests are about the composition. */
-const OFFLINE: csp.PolicyOptions = {
-  development: false,
-  contentSources: [],
-  sheafSources: [],
-};
-
-const underPolicy = (req: NextRequest, gate: Gate) =>
-  enforceRequestPolicy(req, gate, OFFLINE);
 
 describe("the content security policy", () => {
   test("a served request renders under the policy its response declares", async () => {
@@ -356,32 +363,38 @@ describe("the content security policy", () => {
   });
 });
 
-describe("the worker policy", () => {
-  test("a script chunk carries it, so the worker it starts runs under it", () => {
-    // A worker takes the policy delivered with its own entry script, not the page's.
-    const response = servingChunk(OFFLINE);
-    expect(response.headers.get(RESPONSE_POLICY)).toBe(
-      csp.workerPolicy(OFFLINE),
-    );
-  });
-
-  test("a chunk is served like every other build asset, with no credential", () => {
-    expect(servingChunk(OFFLINE).headers.get("x-middleware-next")).toBe("1");
-  });
-});
-
-describe("where a worker's script can be", () => {
+describe("the proxy entry point on worker script paths", () => {
   test.each([
-    "/_next/static/chunks/turbopack-worker-2gqdcwp7k90ea.js",
-    "/_next/static/media/pdf.worker.min.2th4soq4xwzz7.mjs",
-  ])("%s is served the worker policy, and the proxy runs for it", (path) => {
-    // pdf.js starts its own worker from an emitted asset, which parses third-party PDF bytes.
-    expect(servesWorkerScripts(path)).toBe(true);
-    const prefix = path.slice(0, path.lastIndexOf("/") + 1);
-    expect(proxyConfig.matcher).toContain(`${prefix}:path*`);
-  });
+    [
+      "/_next/static/chunks/turbopack-worker-2gqdcwp7k90ea.js",
+      "/_next/static/chunks/:path*",
+    ],
+    [
+      "/_next/static/media/pdf.worker.min.2th4soq4xwzz7.mjs",
+      "/_next/static/media/:path*",
+    ],
+  ])(
+    "%s is served the worker policy with no credential, and the matcher covers it",
+    async (path, matcherEntry) => {
+      // A worker takes the policy delivered with its own entry script, not the page's; pdf.js starts
+      // its own worker from an emitted asset, which parses third-party PDF bytes.
+      const response = await underPolicy(request(path), UNREACHED);
 
-  test("a page is not", () => {
-    expect(servesWorkerScripts("/analysis/an_1")).toBe(false);
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+      expect(response.headers.get(RESPONSE_POLICY)).toBe(
+        "default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'",
+      );
+      expect(proxyConfig.matcher).toContain(matcherEntry);
+    },
+  );
+
+  test("a page runs through the auth perimeter, not the worker branch", async () => {
+    const response = await underPolicy(pageLoad("/analysis/an_1"), REFUSING);
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("x-middleware-next")).toBeNull();
+    expect(response.headers.get(RESPONSE_POLICY)).toContain(
+      "frame-ancestors 'none'",
+    );
   });
 });

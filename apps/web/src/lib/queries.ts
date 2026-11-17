@@ -113,7 +113,7 @@ const RETRYABLE_COPY_FAILURES = new Set([
 ]);
 
 /** Whether a read of the copy that failed `failureCount` times with `error` is tried again. */
-export function retryCopy(failureCount: number, error: Error): boolean {
+function retryCopy(failureCount: number, error: Error): boolean {
   return RETRYABLE_COPY_FAILURES.has(error.name) && failureCount < 3;
 }
 

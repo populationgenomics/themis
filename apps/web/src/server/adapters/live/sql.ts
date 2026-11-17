@@ -1,7 +1,7 @@
 import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
 import { timestampFromDate } from "@bufbuild/protobuf/wkt";
 import type { Attributes } from "@opentelemetry/api";
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import {
   type Analysis,
   type AnalysisInputs,
@@ -30,7 +30,7 @@ import { clientSpan } from "../../tracing/spans";
 
 const ANALYSIS_COLUMNS = "id, session_id, project_id, inputs, created_at";
 
-export interface AnalysisRow {
+interface AnalysisRow {
   id: string;
   session_id: string;
   project_id: string;
@@ -50,16 +50,27 @@ export interface InsertAnalysisInput {
 }
 
 export class Sql {
-  constructor(private readonly config: SqlConfig) {}
+  private readonly openPool: () => Promise<Pool>;
+  private readonly database: string;
 
-  private async pool() {
-    return getPool(this.config);
+  constructor(source: SqlConfig | Pool) {
+    if ("connectionName" in source) {
+      this.openPool = () => getPool(source);
+      this.database = source.database;
+    } else {
+      this.openPool = async () => source;
+      this.database = source.options.database ?? "postgres";
+    }
+  }
+
+  private async pool(): Promise<Pool> {
+    return this.openPool();
   }
 
   private attributes(): Attributes {
     return {
       "db.system.name": "postgresql",
-      "db.namespace": this.config.database,
+      "db.namespace": this.database,
     };
   }
 
@@ -176,7 +187,7 @@ export class Sql {
 
 /** An Analysis whose stored inputs did not decode, shaped so a listing can render it: the oneof is
  *  unset, which is the state `lib/scenario.ts` already names as a scenario it cannot read. */
-export function analysisForListing(row: AnalysisRow): Analysis {
+function analysisForListing(row: AnalysisRow): Analysis {
   try {
     return parseAnalysis(row);
   } catch (e) {

@@ -3,7 +3,7 @@ import * as crypto from "node:crypto";
 import { type gaxios, OAuth2Client } from "google-auth-library";
 import { UnauthenticatedError } from "../../errors";
 import { loadIapConfig } from "./config";
-import { freshSeconds, IapVerifier } from "./identity";
+import { IapVerifier } from "./identity";
 
 // The verifier's real signature, issuer and audience checks, against a key the test
 // holds in place of IAP's published ones.
@@ -208,12 +208,38 @@ describe("IapVerifier's keys", () => {
     expect(client.fetches).toBe(2);
   });
 
+  test("are reused across the full max-age when no Age header is present", async () => {
+    const start = Date.now();
+    const client = new CountingKeyClient({
+      "cache-control": "public, max-age=3000",
+    });
+    const cached = new IapVerifier(CONFIG, client);
+    try {
+      await cached.authenticate(carrying(assertion({})));
+      setSystemTime(start + 2_999_000);
+      await cached.authenticate(carrying(assertion({})));
+      expect(client.fetches).toBe(1);
+      setSystemTime(start + 3_001_000);
+      await cached.authenticate(carrying(assertion({})));
+      expect(client.fetches).toBe(2);
+    } finally {
+      setSystemTime();
+    }
+  });
+
   test.each([
     ["states no max-age", { "cache-control": "no-cache" }],
+    ["names only s-maxage", { "cache-control": "s-maxage=60" }],
     [
       "has spent its max-age in a cache",
       { "cache-control": "max-age=60", age: "60" },
     ],
+    [
+      "has spent more than its max-age in a cache",
+      { "cache-control": "max-age=60, must-revalidate", age: "90" },
+    ],
+    ["carries a malformed age", { "cache-control": "max-age=60", age: "soon" }],
+    ["carries no cache-control header", {}],
     ["carries no headers", undefined],
   ])("are fetched anew when the response %s", async (_, headers) => {
     const client = new CountingKeyClient(headers);
@@ -246,20 +272,6 @@ describe("IapVerifier's keys", () => {
       email: "curator@example.org",
     });
     expect(client.fetches).toBe(2);
-  });
-});
-
-describe("freshSeconds", () => {
-  test.each([
-    [{ "cache-control": "public, max-age=3000" }, 3000],
-    [{ "cache-control": "public, max-age=3000", age: "132" }, 2868],
-    [{ "cache-control": "max-age=60, must-revalidate", age: "90" }, 0],
-    [{ "cache-control": "s-maxage=60" }, undefined],
-    [{ "cache-control": "no-store" }, undefined],
-    [{}, undefined],
-    [{ "cache-control": "max-age=60", age: "soon" }, undefined],
-  ])("reads %j as %p", (headers, expected) => {
-    expect(freshSeconds(new Headers(headers))).toBe(expected);
   });
 });
 

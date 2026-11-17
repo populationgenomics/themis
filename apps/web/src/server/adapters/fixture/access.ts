@@ -54,9 +54,16 @@ const GRANTS_BY_EMAIL: ReadonlyMap<string, readonly ProjectGrant[]> = new Map([
  *  ACL does not list is granted no Project, so is not admitted: default-deny, not a landing
  *  default. */
 export class FixtureAccess implements AccessPort {
+  constructor(
+    private readonly grants: ReadonlyMap<
+      string,
+      readonly ProjectGrant[]
+    > = GRANTS_BY_EMAIL,
+  ) {}
+
   async getAccess(email: string): Promise<GetAccessResponse> {
     return create(GetAccessResponseSchema, {
-      projects: [...(GRANTS_BY_EMAIL.get(email) ?? [])],
+      projects: [...(this.grants.get(email) ?? [])],
     });
   }
 }

@@ -12,7 +12,8 @@ import { writePayload } from "./asset";
 import {
   addressName,
   type GuardAddress,
-  guardIn,
+  judgementIn,
+  judgementInAsset,
   setGuardFile,
 } from "./guard-operation";
 
@@ -257,16 +258,37 @@ describe("a judgement on an SVCv4 classification", () => {
   });
 });
 
-describe("a judgement on an absent singular message", () => {
-  test("finds no guard, and writes none", () => {
+describe("a judgement on an absent element or invalid asset", () => {
+  test("judgementIn finds no guard in an unset singular message", () => {
     const payload = fbn1Classification();
     payload.routing = undefined;
-    const address: GuardAddress = {
-      steps: [{ field: "routing" }],
-      guard: "note",
-    };
     expect(
-      guardIn(Svcv4ClassificationSchema, payload, address),
+      judgementIn(Svcv4ClassificationSchema, payload, {
+        steps: [{ field: "routing" }],
+        guard: "note",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("judgementInAsset finds no guard when a keyed element is absent from a valid asset", () => {
+    const bytes = writePayload(Svcv4ClassificationSchema, fbn1Classification());
+    expect(
+      judgementInAsset(bytes, {
+        steps: [{ field: "codes", key: "XYZ_ABC" }],
+        guard: "note",
+      }),
+    ).toBeUndefined();
+  });
+
+  test("judgementInAsset returns undefined when asset bytes fail payload validation", () => {
+    const payload = fbn1Classification();
+    payload.routing = undefined;
+    const invalidBytes = toBinary(
+      AnySchema,
+      anyPack(Svcv4ClassificationSchema, payload),
+    );
+    expect(
+      judgementInAsset(invalidBytes, { steps: [], guard: "reviewed" }),
     ).toBeUndefined();
   });
 });

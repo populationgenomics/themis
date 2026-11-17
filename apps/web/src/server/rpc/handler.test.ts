@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { MethodOptions_IdempotencyLevel } from "@bufbuild/protobuf/wkt";
 import { Code, ConnectError } from "@connectrpc/connect";
@@ -11,6 +11,7 @@ import { FixtureDataPlane } from "@/server/adapters/fixture/data-plane";
 import { DEV_USER_EMAIL } from "@/server/adapters/fixture/identity";
 import { DOC_XML, XML_QUOTE } from "@/server/adapters/fixture/literature";
 import { FixtureWorkspace } from "@/server/adapters/fixture/workspace";
+import type { Gate } from "@/server/admission";
 import { AuthorizedBackend } from "@/server/authorized-backend";
 import {
   UnauthenticatedError,
@@ -22,7 +23,7 @@ import { GrantedMembership } from "@/server/membership";
 import { setUserContext } from "./context";
 import type { FetchRouter } from "./fetch-router";
 import { createFetchRouter } from "./fetch-router";
-import { maskInternal, serveRpc, servingRpc } from "./handler";
+import { serveRpc, servingRpc } from "./handler";
 import { errors, INTERNAL_MESSAGE, identity } from "./interceptors";
 import { READ_MAX_BYTES } from "./limits";
 import { workbenchService } from "./service";
@@ -32,7 +33,29 @@ import { workbenchService } from "./service";
 // The backend is named explicitly and `server/context.ts` memoizes whichever one the
 // first request builds, so this must precede any call. The fixture's dev user belongs to
 // one seeded Project.
-process.env.THEMIS_BACKEND = "fixture";
+interface Globals {
+  __themisGate?: Gate;
+  __themisComposition?: unknown;
+}
+const globals = globalThis as typeof globalThis & Globals;
+let savedBackend: string | undefined;
+let savedGate: Gate | undefined;
+let savedComposition: unknown;
+
+beforeEach(() => {
+  savedBackend = process.env.THEMIS_BACKEND;
+  savedGate = globals.__themisGate;
+  savedComposition = globals.__themisComposition;
+  process.env.THEMIS_BACKEND = "fixture";
+  globals.__themisGate = undefined;
+  globals.__themisComposition = undefined;
+});
+afterEach(() => {
+  if (savedBackend === undefined) delete process.env.THEMIS_BACKEND;
+  else process.env.THEMIS_BACKEND = savedBackend;
+  globals.__themisGate = savedGate;
+  globals.__themisComposition = savedComposition;
+});
 
 const SERVICE = "/themis.workbench.rpc.Workbench";
 
@@ -82,21 +105,23 @@ function get(method: string, message: unknown): Promise<Response> {
   );
 }
 
-/** A router whose one implemented method raises, for the failure paths the fixture
- *  backend cannot produce. */
+/** A router whose one implemented method raises, behind the full RPC boundary, for the failure
+ *  paths the fixture backend cannot produce. */
 function raising(error: unknown): FetchRouter {
-  return createFetchRouter({
-    grpc: false,
-    grpcWeb: false,
-    interceptors: [errors(), identity()],
-    routes: (router) => {
-      router.service(Workbench, {
-        listProjects() {
-          throw error;
-        },
-      });
-    },
-  });
+  return servingRpc(
+    createFetchRouter({
+      grpc: false,
+      grpcWeb: false,
+      interceptors: [errors(), identity()],
+      routes: (router) => {
+        router.service(Workbench, {
+          listProjects() {
+            throw error;
+          },
+        });
+      },
+    }),
+  );
 }
 
 /** A workspace repository whose every read of the ref document fails with `failure`. */
@@ -695,11 +720,9 @@ describe("failures reaching the client", () => {
     };
     let result: RpcResult;
     try {
-      result = await send(
-        async (request, path) => maskInternal(await router(request, path)),
-        "ListAnalyses",
-        { projectId: "fixture-cohort" },
-      );
+      result = await send(servingRpc(router), "ListAnalyses", {
+        projectId: "fixture-cohort",
+      });
     } finally {
       console.error = wasError;
     }
@@ -735,7 +758,7 @@ describe("failures reaching the client", () => {
     );
     const { status, body } = await send(router, "ListProjects", {});
     expect(status).toBe(500);
-    expect(body?.code).toBe("internal");
+    expect(body).toEqual({ code: "internal", message: INTERNAL_MESSAGE });
     const wire = JSON.stringify(body);
     expect(wire).not.toContain("hunter2");
     expect(wire).not.toContain("ECONNREFUSED");
@@ -850,7 +873,7 @@ describe("failures reaching the client", () => {
   test("behind the boundary, a damaged workspace still reaches the caller as data_loss", async () => {
     // Connect answers data_loss with a 500, the status the boundary masks.
     const { status, body, headers } = await send(
-      servingRpc(raising(new WorkspaceDamagedError("refs.pb: truncated"))),
+      raising(new WorkspaceDamagedError("refs.pb: truncated")),
       "ListProjects",
       {},
     );
@@ -858,22 +881,6 @@ describe("failures reaching the client", () => {
     expect(body?.code).toBe("data_loss");
     expect(JSON.stringify(body)).not.toContain("refs.pb");
     expect(headers.get("cache-control")).toBe("private, no-store");
-  });
-
-  test.each([
-    ["an unrecognized failure", new Error("dsn=hunter2")],
-    [
-      "a service's own data_loss",
-      new ConnectError("sheaf detail", Code.DataLoss),
-    ],
-  ])("behind the boundary, %s is still masked", async (_name, error) => {
-    const { status, body } = await send(
-      servingRpc(raising(error)),
-      "ListProjects",
-      {},
-    );
-    expect(status).toBe(500);
-    expect(body).toEqual({ code: "internal", message: INTERNAL_MESSAGE });
   });
 
   test("a malformed publish keeps the service's reason; the others a fixed phrase", async () => {

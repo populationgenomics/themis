@@ -30,45 +30,36 @@ const CONTENT_URL_TTL_SECONDS = 15 * 60;
  *  the edge of its window must still point at a live signature; the margin absorbs that gap. */
 const CONTENT_URL_CACHE_SECONDS = CONTENT_URL_TTL_SECONDS - 60;
 
-/** Sign a read URL for `object` and build the `302` to it, forcing off-allowlist media to an
- *  attachment download through the signed URL's response override. Pure over an injected `sign` +
- *  `nowMs`, so the egress and cache-window decisions are testable without GCS. */
-export async function signedRedirect(
-  object: ContentObject,
-  sign: ObjectSigner,
-  nowMs: number,
-): Promise<Response> {
-  const url = await sign(object.bucket, object.object, {
-    expiresMs: nowMs + CONTENT_URL_TTL_SECONDS * 1000,
-    responseType: object.mediaType,
-    responseDisposition: contentDisposition(
-      object.mediaType,
-      object.downloadName,
-    ),
-  });
-  return new Response(null, {
-    status: 302,
-    headers: {
-      location: url,
-      "cache-control": `private, max-age=${CONTENT_URL_CACHE_SECONDS}`,
-    },
-  });
-}
-
 class LiveContent implements ContentPort {
   private storage?: Storage;
+  private readonly signObject: ObjectSigner;
+  private readonly now: () => number;
 
-  serve(object: ContentObject): Promise<Response> {
-    return signedRedirect(
-      object,
-      (bucket, name, opts) => this.gcsSign(bucket, name, opts),
-      Date.now(),
-    );
+  constructor(deps: { sign?: ObjectSigner; now?: () => number } = {}) {
+    this.signObject =
+      deps.sign ?? ((bucket, name, opts) => this.gcsSign(bucket, name, opts));
+    this.now = deps.now ?? Date.now;
   }
 
-  /** A keyless V4 read URL via the Storage client (the web SA's `signBlob`, no stored key). Not
-   *  exercised offline — the fake supports no signing — so it stays a thin wrapper over `getSignedUrl`;
-   *  `signedRedirect`'s decisions are what the tests cover, through an injected signer. */
+  async serve(object: ContentObject): Promise<Response> {
+    const url = await this.signObject(object.bucket, object.object, {
+      expiresMs: this.now() + CONTENT_URL_TTL_SECONDS * 1000,
+      responseType: object.mediaType,
+      responseDisposition: contentDisposition(
+        object.mediaType,
+        object.downloadName,
+      ),
+    });
+    return new Response(null, {
+      status: 302,
+      headers: {
+        location: url,
+        "cache-control": `private, max-age=${CONTENT_URL_CACHE_SECONDS}`,
+      },
+    });
+  }
+
+  /** A keyless V4 read URL via the Storage client (the web SA's `signBlob`, no stored key). */
   private async gcsSign(
     bucket: string,
     object: string,
@@ -101,6 +92,8 @@ class LiveContent implements ContentPort {
   }
 }
 
-export function createContent(): ContentPort {
-  return new LiveContent();
+export function createContent(
+  deps: { sign?: ObjectSigner; now?: () => number } = {},
+): ContentPort {
+  return new LiveContent(deps);
 }

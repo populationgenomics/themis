@@ -65,7 +65,7 @@ export class AddressError extends Error {
  *  plain tick or text guard of the element. A guard with presence, a proto3 `optional` or a message,
  *  is refused, since a tick or text cannot say it is unset. Raises `AssetError` when two elements of
  *  a list share the key a step names, which the payload's rules and the agent's hook both refuse. */
-export function guardIn(
+function guardIn(
   schema: DescMessage,
   payload: Message,
   address: GuardAddress,
@@ -180,7 +180,7 @@ export function judgementIn(
 
 /** The guard `address` names in the asset `bytes`, read and validated as the payload type it names;
  *  undefined when the asset is no payload this build knows, fails its rules, or has no such
- *  element. An address that does not fit the payload's schema raises, as `guardIn` does. */
+ *  element. An address that does not fit the payload's schema raises, as `judgementIn` does. */
 export function judgementInAsset(
   bytes: Uint8Array,
   address: GuardAddress,

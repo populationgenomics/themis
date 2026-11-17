@@ -14,7 +14,7 @@ import {
 /** Map a thrown value to a compact JSON error response. `ResourceNotFoundError` → 404,
  *  `UnauthenticatedError` → 401, `NotAdmittedError` → 403, then a generic 500 that never leaks
  *  internals. */
-export function toErrorResponse(error: unknown): NextResponse {
+function toErrorResponse(error: unknown): NextResponse {
   if (isResourceNotFoundError(error)) {
     return NextResponse.json(
       { error: { code: "not_found", message: "resource not found" } },

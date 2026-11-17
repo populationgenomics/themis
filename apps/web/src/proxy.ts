@@ -51,7 +51,7 @@ function notAdmitted(request: NextRequest): NextResponse {
  *  no decision here can drop what the app sees. A failure that is neither an unverifiable nor an
  *  unadmitted caller — the auth service or IAP's key source unreachable — propagates as the outage
  *  it is. */
-export async function decide(
+async function decide(
   request: NextRequest,
   gate: Gate,
 ): Promise<NextResponse | null> {
@@ -69,7 +69,7 @@ export async function decide(
 /** The perimeter's answer to one request, under a fresh Content Security Policy: the app renders
  *  under the policy — Next takes the render nonce out of it — and the response declares the same
  *  one, refusal and pass-through alike. */
-export async function enforceRequestPolicy(
+async function enforceRequestPolicy(
   request: NextRequest,
   gate: Gate,
   options: csp.PolicyOptions,
@@ -98,14 +98,14 @@ const WORKER_SCRIPT_PREFIXES = [
 ];
 
 /** Whether `pathname` is served from where a worker's script can be. */
-export function servesWorkerScripts(pathname: string): boolean {
+function servesWorkerScripts(pathname: string): boolean {
   return WORKER_SCRIPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 /** The answer to a static asset a worker can start from: served to anyone, like the rest of Next's
  *  build assets, under the worker policy, which governs the one that is a worker's script. Every
  *  other asset there carries it inertly, so no asset has to be recognised as a worker's by its name. */
-export function servingChunk(options: csp.PolicyOptions): NextResponse {
+function servingChunk(options: csp.PolicyOptions): NextResponse {
   const response = NextResponse.next();
   response.headers.set("content-security-policy", csp.workerPolicy(options));
   return response;

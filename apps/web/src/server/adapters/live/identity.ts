@@ -100,7 +100,7 @@ export class IapVerifier implements UserIdentity {
 /** How long a response may be reused, by its headers: `max-age` less the `Age` a cache in front of
  *  the origin already spent. `undefined`, so not reused, when `Cache-Control` states no `max-age` or
  *  `Age` is malformed. */
-export function freshSeconds(headers: Headers | undefined): number | undefined {
+function freshSeconds(headers: Headers | undefined): number | undefined {
   const maxAge = headers
     ?.get("cache-control")
     ?.match(/(?:^|,)\s*max-age=(\d+)\s*(?:,|$)/)?.[1];

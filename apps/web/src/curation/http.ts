@@ -51,7 +51,7 @@ export interface CurationBoundary {
 }
 
 /** Whether `email` holds the curator role on `projectId`, by the access answer for that person. */
-export function curatorCheckThrough(access: AccessPort): CuratorCheck {
+function curatorCheckThrough(access: AccessPort): CuratorCheck {
   return async (email, projectId) =>
     new GrantedMembership((await access.getAccess(email)).projects).hasRole(
       projectId,

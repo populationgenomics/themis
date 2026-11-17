@@ -36,7 +36,7 @@ import { idTokenInterceptor } from "./id-token";
 // through the service, pins it to the corpus bucket, and hands it to the injected `ContentPort` to
 // serve.
 
-class LiveLiterature implements LiteraturePort {
+export class LiveLiterature implements LiteraturePort {
   constructor(
     private readonly client: Client<typeof Literature>,
     private readonly content: ContentPort,
@@ -105,9 +105,8 @@ class LiveLiterature implements LiteraturePort {
 
 /** The resolved `gs://` location as a `ContentObject`, pinned to the corpus bucket: an evidence-service
  *  bug must not name an object in another bucket the web SA can read (the per-tenant working-document
- *  bucket), so a resolution outside `corpusBucket` is refused before it reaches the signer. Pure, so
- *  the pin is testable without gRPC. */
-export function corpusObject(
+ *  bucket), so a resolution outside `corpusBucket` is refused before it reaches the signer. */
+function corpusObject(
   location: { gcsUri: string; mediaType: string },
   corpusBucket: string,
   downloadName?: string,

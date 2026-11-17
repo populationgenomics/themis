@@ -1,29 +1,26 @@
 import { describe, expect, test } from "bun:test";
 import type { ContentObject } from "@/server/ports";
-import { type ObjectSigner, signedRedirect } from "./content";
+import { createContent, type ObjectSigner } from "./content";
 
 // LiveContent's GCS signing is exercised end-to-end against the deployed service (no fake verifies a
-// V4 signature, and keyless signBlob has no local emulator). What is offline-checkable is
-// `signedRedirect`'s decisions, through an injected signer: the egress disposition and the cache
-// window. The real signature stays deploy-verified.
-describe("signedRedirect", () => {
+// V4 signature, and keyless signBlob has no local emulator). Offline tests drive `ContentPort.serve`
+// through an injected signer and clock to check the 302 redirect, cache window, and signed-URL
+// disposition overrides.
+describe("LiveContent.serve", () => {
   const NOW = 1_000_000;
 
-  function recordingSigner(): {
-    sign: ObjectSigner;
-    calls: Array<Parameters<ObjectSigner>>;
-  } {
+  function recordingContent() {
     const calls: Array<Parameters<ObjectSigner>> = [];
     const sign: ObjectSigner = async (bucket, object, opts) => {
       calls.push([bucket, object, opts]);
-      return `https://signed/${object}`;
+      return `https://storage.googleapis.com/${bucket}/${object}?sig=v4`;
     };
-    return { sign, calls };
+    return { content: createContent({ sign, now: () => NOW }), calls };
   }
 
   function object(mediaType: string, downloadName?: string): ContentObject {
     return {
-      bucket: "corpus",
+      bucket: "example-corpus",
       object: "papers/x/obj",
       mediaType,
       downloadName,
@@ -31,11 +28,14 @@ describe("signedRedirect", () => {
   }
 
   test("302s to the signed URL, cacheable only within — not up to — the signature lifetime", async () => {
-    const { sign, calls } = recordingSigner();
-    const res = await signedRedirect(object("application/pdf"), sign, NOW);
+    const { content, calls } = recordingContent();
+    const res = await content.serve(object("application/pdf"));
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("https://signed/papers/x/obj");
-    const [, name, opts] = calls[0];
+    expect(res.headers.get("location")).toBe(
+      "https://storage.googleapis.com/example-corpus/papers/x/obj?sig=v4",
+    );
+    const [bucket, name, opts] = calls[0];
+    expect(bucket).toBe("example-corpus");
     expect(name).toBe("papers/x/obj");
     expect(opts.responseType).toBe("application/pdf");
     // The cache window must be strictly inside the signature lifetime, or a redirect reused at the
@@ -47,14 +47,14 @@ describe("signedRedirect", () => {
   });
 
   test("off-allowlist media is forced to an attachment download via the signed URL", async () => {
-    const { sign, calls } = recordingSigner();
-    await signedRedirect(object("image/svg+xml"), sign, NOW);
+    const { content, calls } = recordingContent();
+    await content.serve(object("image/svg+xml"));
     expect(calls[0][2].responseDisposition).toBe("attachment");
   });
 
   test("a download name is carried into the signed URL's disposition", async () => {
-    const { sign, calls } = recordingSigner();
-    await signedRedirect(object("text/csv", "supplement.csv"), sign, NOW);
+    const { content, calls } = recordingContent();
+    await content.serve(object("text/csv", "supplement.csv"));
     // The object key is content-addressed; without this the browser saves the download as `obj`.
     expect(calls[0][2].responseDisposition).toBe(
       "attachment; filename*=UTF-8''supplement.csv",
@@ -62,8 +62,8 @@ describe("signedRedirect", () => {
   });
 
   test("allowlisted media is served inline (no forced disposition)", async () => {
-    const { sign, calls } = recordingSigner();
-    await signedRedirect(object("image/png"), sign, NOW);
+    const { content, calls } = recordingContent();
+    await content.serve(object("image/png"));
     expect(calls[0][2].responseDisposition).toBeUndefined();
   });
 });

@@ -37,7 +37,7 @@ const MASKED = JSON.stringify({ code: "internal", message: INTERNAL_MESSAGE });
  *  code: the protocol handler around it never does (Connect raises `data_loss` only decoding a
  *  binary header, which a Connect-protocol router does not), and `errors` masks every
  *  `ConnectError` a service this BFF called raises, `data_loss` included. */
-export async function maskInternal(response: Response): Promise<Response> {
+async function maskInternal(response: Response): Promise<Response> {
   if (response.status !== 500) {
     return response;
   }

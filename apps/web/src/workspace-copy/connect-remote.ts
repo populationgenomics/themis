@@ -38,7 +38,7 @@ const FAULTS: ReadonlySet<Code> = new Set([
 
 /** A relayed call's failure as the copy's error: `DataLoss`, which every relayed call can answer,
  *  is a damaged repository; anything else is the error as it came. */
-export function relayFailure(error: unknown): Error {
+function relayFailure(error: unknown): Error {
   const connect = ConnectError.from(error);
   return connect.code === Code.DataLoss
     ? new WorkspaceDamagedError(connect.rawMessage)
@@ -47,7 +47,7 @@ export function relayFailure(error: unknown): Error {
 
 /** A publish's failure as the copy's error: a refusal, a fault, a damaged repository, or the error
  *  as it came. */
-export function publishFailure(error: unknown): Error {
+function publishFailure(error: unknown): Error {
   const connect = ConnectError.from(error);
   const refusal = REFUSALS.get(connect.code);
   if (refusal !== undefined)

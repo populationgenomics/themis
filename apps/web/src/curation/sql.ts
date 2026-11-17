@@ -25,7 +25,7 @@ export const REGISTRATION_KEY = "variants_registration_key";
 const WORKSHEET_COLUMNS =
   "id, variant_id, curator_email, workflows_version, assigned_by, assigned_at";
 
-export interface VariantRow {
+interface VariantRow {
   id: string;
   project_id: string;
   gene: string;
@@ -55,10 +55,15 @@ interface EntryRow {
 }
 
 export class SqlCurationStore implements CurationStore {
-  constructor(private readonly config: SqlConfig) {}
+  private readonly openPool: () => Promise<Pool>;
+
+  constructor(source: SqlConfig | Pool) {
+    this.openPool =
+      "connectionName" in source ? () => getPool(source) : async () => source;
+  }
 
   private async pool(): Promise<Pool> {
-    return getPool(this.config);
+    return this.openPool();
   }
 
   private async query<R>(text: string, values: unknown[] = []): Promise<R[]> {
@@ -289,7 +294,7 @@ export class SqlCurationStore implements CurationStore {
 
 /** A `curation.variants` row as the variant it registers. Throws for a row with no clinical context,
  *  naming it: the column is required, so one without a value is a fault in the database. */
-export function parseVariant(row: VariantRow): Variant {
+function parseVariant(row: VariantRow): Variant {
   if (row.clinical_context === null) {
     throw new Error(
       `curation.variants row ${row.id} holds no clinical context`,

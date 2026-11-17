@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import { create } from "@bufbuild/protobuf";
-import { type Client, Code, ConnectError } from "@connectrpc/connect";
+import {
+  Code,
+  ConnectError,
+  createClient,
+  createRouterTransport,
+} from "@connectrpc/connect";
+import { createConnectTransport } from "@connectrpc/connect-web";
 import { PublishIntentSchema } from "@/models/sheaf";
-import type { Workbench } from "@/models/workbench";
-import { connectRemote, DEADLINES, publishFailure } from "./connect-remote";
+import { Workbench } from "@/models/workbench";
+import { connectRemote, DEADLINES } from "./connect-remote";
 import { COLLABORATIVE_BRANCH } from "./copy";
 import { FixtureWorkspace, fixtureRemote } from "./fixture-remote.test-support";
 import { directoryStorage, scratchDir } from "./git.test-support";
@@ -14,6 +20,7 @@ import {
   DownloadError,
   PublishFaultError,
   PublishRefusedError,
+  type Remote,
   WorkspaceDamagedError,
 } from "./remote";
 import type { CopyRecord } from "./residency";
@@ -22,14 +29,33 @@ import { CopyService } from "./service";
 // The relay passes four refusals through as the sheaf service's own codes; the browser has to tell
 // them from a fault, after which the identical publish may be sent again, and from anything else.
 
+function remotePublishing(publishWorkspace: () => never): Remote {
+  const transport = createRouterTransport(({ service }) => {
+    service(Workbench, { publishWorkspace });
+  });
+  return connectRemote(
+    createClient(Workbench, transport),
+    "an_7f3c",
+    "http://localhost",
+    DEADLINES,
+  );
+}
+
 describe("a failed publish", () => {
+  const publish = (remote: Remote) =>
+    remote.publish(create(PublishIntentSchema, {}), new Uint8Array());
+
   test.each([
     [Code.Aborted, "raceLost"],
     [Code.FailedPrecondition, "branchMoved"],
     [Code.ResourceExhausted, "overCeiling"],
     [Code.InvalidArgument, "malformed"],
-  ] as const)("code %s is the refusal %s", (code, refusal) => {
-    const error = publishFailure(new ConnectError("refused", code));
+  ] as const)("code %s is the refusal %s", async (code, refusal) => {
+    const error = await publish(
+      remotePublishing(() => {
+        throw new ConnectError("refused", code);
+      }),
+    ).catch((thrown: unknown) => thrown);
     expect(error).toBeInstanceOf(PublishRefusedError);
     expect((error as PublishRefusedError).refusal).toBe(refusal);
   });
@@ -39,22 +65,42 @@ describe("a failed publish", () => {
     Code.Internal,
     Code.Unavailable,
     Code.DeadlineExceeded,
-  ])("code %s leaves the outcome unknown", (code) => {
-    expect(publishFailure(new ConnectError("lost", code))).toBeInstanceOf(
-      PublishFaultError,
-    );
+  ])("code %s leaves the outcome unknown", async (code) => {
+    await expect(
+      publish(
+        remotePublishing(() => {
+          throw new ConnectError("lost", code);
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PublishFaultError);
   });
 
-  test("a network failure leaves the outcome unknown", () => {
-    expect(publishFailure(new TypeError("Failed to fetch"))).toBeInstanceOf(
-      PublishFaultError,
+  test("a network failure leaves the outcome unknown", async () => {
+    const transport = createConnectTransport({
+      baseUrl: "http://localhost/api/rpc",
+      fetch: (async () => {
+        throw new TypeError("Failed to fetch");
+      }) as unknown as typeof globalThis.fetch,
+    });
+    const remote = connectRemote(
+      createClient(Workbench, transport),
+      "an_7f3c",
+      "http://localhost",
+      DEADLINES,
     );
+    await expect(publish(remote)).rejects.toBeInstanceOf(PublishFaultError);
   });
 
   test.each([Code.NotFound, Code.Unauthenticated, Code.PermissionDenied])(
     "code %s is neither",
-    (code) => {
-      const error = publishFailure(new ConnectError("no", code));
+    async (code) => {
+      const error = await publish(
+        remotePublishing(() => {
+          throw new ConnectError("no", code);
+        }),
+      ).catch((thrown: unknown) => thrown);
+      expect(error).toBeInstanceOf(ConnectError);
+      expect((error as ConnectError).code).toBe(code);
       expect(error).not.toBeInstanceOf(PublishRefusedError);
       expect(error).not.toBeInstanceOf(PublishFaultError);
       expect(error).not.toBeInstanceOf(WorkspaceDamagedError);
@@ -67,12 +113,15 @@ describe("a DATA_LOSS answer", () => {
   const damaged = async (): Promise<never> => {
     throw new ConnectError("the stored document does not parse", Code.DataLoss);
   };
-  const remote = connectRemote(
-    {
+  const transport = createRouterTransport(({ service }) => {
+    service(Workbench, {
       readWorkspaceRefDoc: damaged,
       signWorkspacePackUrls: damaged,
       publishWorkspace: damaged,
-    } as unknown as Client<typeof Workbench>,
+    });
+  });
+  const remote = connectRemote(
+    createClient(Workbench, transport),
     "an_7f3c",
     "http://localhost",
     DEADLINES,
@@ -87,13 +136,6 @@ describe("a DATA_LOSS answer", () => {
     ],
   ] as const)("to %s is a damaged repository", async (_call, call) => {
     await expect(call()).rejects.toBeInstanceOf(WorkspaceDamagedError);
-  });
-
-  test("to a publish is neither a refusal nor a fault", () => {
-    const error = publishFailure(new ConnectError("damaged", Code.DataLoss));
-    expect(error).toBeInstanceOf(WorkspaceDamagedError);
-    expect(error).not.toBeInstanceOf(PublishRefusedError);
-    expect(error).not.toBeInstanceOf(PublishFaultError);
   });
 });
 
