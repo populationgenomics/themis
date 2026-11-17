@@ -120,7 +120,8 @@ export const FigureSchema: GenMessage<Figure> = /*@__PURE__*/
  */
 export type Panel = Message<"themis.litcache.models.figures.Panel"> & {
   /**
-   * the panel's letter as printed; empty when it has none
+   * The panel's tag as printed beside or in it: a letter ("A", "b"), or a name such as a family's or a case's
+   * ("F1", "Family 3"); empty when it has none.
    *
    * @generated from field: string label = 1;
    */

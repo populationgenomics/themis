@@ -42,7 +42,9 @@ message Figure {
 
 // One separately drawn part of a figure; a figure with a single image is one panel.
 message Panel {
-  string label = 1;  // the panel's letter as printed; empty when it has none
+  // The panel's tag as printed beside or in it: a letter ("A", "b"), or a name such as a family's or a case's
+  // ("F1", "Family 3"); empty when it has none.
+  string label = 1;
   // Every kind drawn in the panel: a pedigree with a sequence trace under each person is both.
   repeated FigureKind kinds = 2 [
     (buf.validate.field).repeated = {
