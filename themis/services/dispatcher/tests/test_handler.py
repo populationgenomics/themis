@@ -6,7 +6,9 @@ import asyncio
 import base64
 import datetime
 import json
+from collections import abc
 
+import pytest
 import standardwebhooks
 
 from themis.clients.auth.tests import fixture_deriver
@@ -30,8 +32,8 @@ def _dispatcher(work_queue: work_queue_mod.WorkQueue) -> handler_mod.Dispatcher:
     )
 
 
-def _signed(body: bytes) -> dict[str, str]:
-    timestamp = datetime.datetime.now(datetime.UTC)
+def _signed(body: bytes, *, at: datetime.datetime | None = None) -> dict[str, str]:
+    timestamp = at or datetime.datetime.now(datetime.UTC)
     return {
         'webhook-id': 'msg_1',
         'webhook-timestamp': str(int(timestamp.timestamp())),
@@ -48,10 +50,29 @@ def _spawns(dispatcher: handler_mod.Dispatcher) -> list[str]:
     return [s.session_id for s in dispatcher.job_runner.spawns]
 
 
-def test_forged_signature_is_unauthorized() -> None:
-    dispatcher = _dispatcher(fixture_work_queue.FixtureWorkQueue([]))
-    status = asyncio.run(handler_mod.process_delivery(dispatcher, {}, b'{}'))
+@pytest.mark.parametrize(
+    'headers_for',
+    [
+        pytest.param(lambda _body: {}, id='missing-headers'),
+        pytest.param(lambda _body: _signed(b'{"type":"event","data":{"type":"other"}}'), id='tampered-body'),
+        pytest.param(
+            lambda body: _signed(body, at=datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=10)),
+            id='stale-delivery',
+        ),
+    ],
+)
+def test_unverified_delivery_is_unauthorized_without_draining(
+    headers_for: abc.Callable[[bytes], dict[str, str]],
+) -> None:
+    work_queue = fixture_work_queue.FixtureWorkQueue(
+        [work_queue_mod.WorkItem(work_id='work-1', session_id='sess', item_type='session')]
+    )
+    dispatcher = _dispatcher(work_queue)
+    body = _event('session.status_run_started')
+    status = asyncio.run(handler_mod.process_delivery(dispatcher, headers_for(body), body))
     assert status == 401
+    assert work_queue.polls == 0
+    assert _spawns(dispatcher) == []
 
 
 def test_run_started_drains_the_queue() -> None:
@@ -61,6 +82,18 @@ def test_run_started_drains_the_queue() -> None:
     dispatcher = _dispatcher(work_queue)
     body = _event('session.status_run_started')
     status = asyncio.run(handler_mod.process_delivery(dispatcher, _signed(body), body))
+    assert status == 204
+    assert _spawns(dispatcher) == ['sess']
+
+
+def test_case_insensitive_signature_headers_are_accepted() -> None:
+    work_queue = fixture_work_queue.FixtureWorkQueue(
+        [work_queue_mod.WorkItem(work_id='work-1', session_id='sess', item_type='session')]
+    )
+    dispatcher = _dispatcher(work_queue)
+    body = _event('session.status_run_started')
+    headers = {key.title(): value for key, value in _signed(body).items()}
+    status = asyncio.run(handler_mod.process_delivery(dispatcher, headers, body))
     assert status == 204
     assert _spawns(dispatcher) == ['sess']
 

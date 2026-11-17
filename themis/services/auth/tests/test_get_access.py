@@ -103,6 +103,32 @@ def test_the_gate_resolves_a_claimed_session_through_the_service_itself() -> Non
     assert asyncio.run(run()) == [grpc.StatusCode.OK, grpc.StatusCode.PERMISSION_DENIED]
 
 
+def test_a_claimed_session_whose_project_left_the_acl_is_permission_denied() -> None:
+    async def run() -> list[grpc.StatusCode]:
+        async with harness.serving() as served:
+            before = await _code(served, harness.JANE, auth_fixture.CLU_WITH_SESSION)
+            served.backend.acl = harness.acl_version(
+                {**harness.ACL, 'projects': {'epi': {'managers': [], 'curators': [harness.JANE]}}}
+            )
+            await served.acl.refresh()
+            return [before, await _code(served, harness.JANE, auth_fixture.CLU_WITH_SESSION)]
+
+    assert asyncio.run(run()) == [grpc.StatusCode.OK, grpc.StatusCode.PERMISSION_DENIED]
+
+
+def test_a_claimed_session_is_unavailable_once_the_acl_copy_is_stale() -> None:
+    async def run() -> grpc.StatusCode:
+        async with harness.serving() as served:
+            served.backend.acl = OSError('secret unreachable')
+            served.clock.advance(harness.STALENESS_LIMIT_SECONDS + 1)
+            await served.acl.refresh()
+            # Empty email: GetAccess itself rejects '' with INVALID_ARGUMENT before reading the ACL,
+            # so UNAVAILABLE proves the gate's in-process session resolver ended the call first.
+            return await _code(served, '', auth_fixture.CLU_WITH_SESSION)
+
+    assert asyncio.run(run()) is grpc.StatusCode.UNAVAILABLE
+
+
 @pytest.mark.parametrize('email', [harness.JOHN, harness.OPERATOR])
 def test_every_call_is_unavailable_once_the_copy_is_stale(email: str) -> None:
     async def run() -> list[grpc.StatusCode]:

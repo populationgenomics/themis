@@ -23,10 +23,13 @@ operator account ``GetAccess`` admits to every Project.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
+from collections import abc
 
+import grpc.aio
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from opentelemetry.sdk import metrics as sdk_metrics
 
@@ -124,7 +127,12 @@ def _live_backend_from_env() -> auth_backend.AuthBackend:
     return live.LiveBackend(sessions, acl)
 
 
-async def _serve(clock: startup.StartupClock) -> None:
+@contextlib.asynccontextmanager
+async def _running(
+    clock: startup.StartupClock,
+    *,
+    monotonic: abc.Callable[[], float] = time.monotonic,
+) -> abc.AsyncIterator[tuple[grpc.aio.Server, int, acl_holder.AclHolder]]:
     backend = build_backend()
     clock.step('backend built')
     limit = staleness_limit_seconds()
@@ -139,7 +147,7 @@ async def _serve(clock: startup.StartupClock) -> None:
             backend.read_acl,
             read_timeout_seconds=auth_backend.ACL_READ_TIMEOUT_SECONDS,
             staleness_limit_seconds=limit,
-            clock=time.monotonic,
+            clock=monotonic,
             outcomes=acl_holder.LoadOutcomes(meter),
         )
         clock.step('ACL loaded')
@@ -152,16 +160,24 @@ async def _serve(clock: startup.StartupClock) -> None:
         health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]
         await health_servicer.set('', health_pb2.HealthCheckResponse.SERVING)
         health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
-        server.add_insecure_port(f'[::]:{os.environ.get("PORT", "8080")}')  # TLS terminated by Cloud Run
+        port = server.add_insecure_port(f'[::]:{os.environ.get("PORT", "8080")}')  # TLS terminated by Cloud Run
         await server.start()
         clock.step('server started')
-        # The refresher only ends by raising: exit rather than serve a copy nothing refreshes.
-        refresher = asyncio.create_task(acl.refresh_forever(acl_holder.REFRESH_INTERVAL_SECONDS))
-        await serving.serve_until_stopped(server, watch=[refresher])
+        try:
+            yield server, port, acl
+        finally:
+            await server.stop(None)
     finally:
         if meter_provider is not None:
             meter_provider.shutdown(timeout_millis=serving.FLUSH_TIMEOUT.total_seconds() * 1000)
         tracing.flush(serving.FLUSH_TIMEOUT)
+
+
+async def _serve(clock: startup.StartupClock) -> None:
+    async with _running(clock) as (server, _port, acl):
+        # The refresher only ends by raising: exit rather than serve a copy nothing refreshes.
+        refresher = asyncio.create_task(acl.refresh_forever(acl_holder.REFRESH_INTERVAL_SECONDS))
+        await serving.serve_until_stopped(server, watch=[refresher])
 
 
 def main() -> None:

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import datetime
 import json
+import typing
 import zoneinfo
-from collections.abc import Mapping, Sequence
-from typing import override
+from collections import abc
 
 import pytest
 
-from themis.services.cost_exporter import promql, report, report_queries, slack
+from themis.services.cost_exporter import chart, promql, report, report_queries, slack
 
 _END = datetime.datetime(2026, 9, 6, 22, 0, tzinfo=datetime.UTC)
 _HOUR = datetime.timedelta(hours=1)
@@ -35,20 +35,20 @@ class _Source(promql.PromQL):
 
     def __init__(
         self,
-        instants: Mapping[str, float] | None = None,
-        ranges: Mapping[str, Sequence[promql.Point]] | None = None,
+        instants: abc.Mapping[str, float] | None = None,
+        ranges: abc.Mapping[str, abc.Sequence[promql.Point]] | None = None,
     ) -> None:
         self._instants = dict(instants or {})
         self._ranges = dict(ranges or {})
         self.instant_queries: list[tuple[str, datetime.datetime]] = []
         self.range_queries: list[tuple[str, datetime.datetime, datetime.datetime, datetime.timedelta]] = []
 
-    @override
+    @typing.override
     def instant(self, query: str, *, at: datetime.datetime) -> float | None:
         self.instant_queries.append((query, at))
         return self._instants.get(query)
 
-    @override
+    @typing.override
     def range(
         self, query: str, *, start: datetime.datetime, end: datetime.datetime, step: datetime.timedelta
     ) -> tuple[promql.Point, ...]:
@@ -68,8 +68,8 @@ class _Faltering(_Source):
         query: str,
         failures: int,
         *,
-        instants: Mapping[str, float] | None = None,
-        ranges: Mapping[str, Sequence[promql.Point]] | None = None,
+        instants: abc.Mapping[str, float] | None = None,
+        ranges: abc.Mapping[str, abc.Sequence[promql.Point]] | None = None,
     ) -> None:
         super().__init__(instants, ranges)
         self._query = query
@@ -83,12 +83,12 @@ class _Faltering(_Source):
         if self.requests <= self._failures:
             raise promql.UnavailableError(f'{query} got no response')
 
-    @override
+    @typing.override
     def instant(self, query: str, *, at: datetime.datetime) -> float | None:
         self._request(query)
         return super().instant(query, at=at)
 
-    @override
+    @typing.override
     def range(
         self, query: str, *, start: datetime.datetime, end: datetime.datetime, step: datetime.timedelta
     ) -> tuple[promql.Point, ...]:
@@ -100,7 +100,7 @@ class _Channel(slack.ReportChannel):
     def __init__(self) -> None:
         self.posts: list[tuple[str, str, bytes, str]] = []
 
-    @override
+    @typing.override
     def post(self, channel_id: str, text: str, png: bytes, filename: str) -> None:
         self.posts.append((channel_id, text, png, filename))
 
@@ -133,16 +133,15 @@ def _run(
     )
 
 
-def _message(day: report.Day) -> list[str]:
-    return report.message(day, _END, _SYDNEY, dashboard_url=_DASHBOARD).splitlines()
-
-
-def _day(**cents: float | None) -> report.Day:
-    return report.Day(**{key: cents.get(key) for key in report_queries.DAY_KEYS})
-
-
-def test_nothing_moved_posts_nothing_and_reads_no_hourly_series() -> None:
-    source = _Source(instants={'day/sessions': 0.0, 'day/sessions_runtime': 0.0})
+@pytest.mark.parametrize(
+    'instants',
+    [
+        pytest.param({}, id='no-series'),
+        pytest.param({'day/sessions': 0.0, 'day/sessions_runtime': 0.0, 'day/convert': 0.0}, id='zero-spend'),
+    ],
+)
+def test_nothing_moved_posts_nothing_and_reads_no_hourly_series(instants: dict[str, float]) -> None:
+    source = _Source(instants=instants)
     channel = _Channel()
 
     outcome = _run(source, channel)
@@ -184,21 +183,23 @@ def test_spend_posts_once_with_the_total_first_then_every_producer() -> None:
 
 
 def test_sessions_with_no_series_carries_no_split() -> None:
-    lines = _message(_day(convert=500))
+    channel = _Channel()
 
-    assert lines[1] == '• Managed Agents sessions: no data'
+    _run(_Source(instants={'day/convert': 500}), channel)
+
+    [(_, text, _, _)] = channel.posts
+    lines = text.splitlines()
     assert lines[0].endswith(': $5.00')
+    assert lines[1] == '• Managed Agents sessions: no data'
 
 
 def test_a_share_with_no_series_reads_no_data_inside_the_split() -> None:
-    lines = _message(_day(sessions=500, sessions_runtime=100, sessions_search=0))
+    channel = _Channel()
 
-    assert lines[1] == '• Managed Agents sessions: $5.00 — runtime $1.00, tokens no data, web search $0.00'
+    _run(_Source(instants={'day/sessions': 500, 'day/sessions_runtime': 100, 'day/sessions_search': 0}), channel)
 
-
-def test_no_producer_with_a_series_is_no_total() -> None:
-    assert _day().total is None
-    assert _message(_day())[0].endswith(': no data')
+    [(_, text, _, _)] = channel.posts
+    assert text.splitlines()[1] == '• Managed Agents sessions: $5.00 — runtime $1.00, tokens no data, web search $0.00'
 
 
 def test_a_negative_day_is_shown_as_negative_and_still_posted() -> None:
@@ -215,9 +216,27 @@ def test_a_negative_day_is_shown_as_negative_and_still_posted() -> None:
 
 def test_a_share_moving_while_the_total_stands_still_posts() -> None:
     # A deleted session on one agent cancelling another's spend leaves a day with something to report.
-    assert _day(sessions=0, sessions_runtime=200, sessions_tokens=-200).moved is True
-    assert _day(sessions=0, convert=0).moved is False
-    assert _day().moved is False
+    source = _Source(instants={'day/sessions': 0, 'day/sessions_runtime': 200, 'day/sessions_tokens': -200})
+    channel = _Channel()
+
+    outcome = _run(source, channel)
+
+    assert outcome.posted is True
+    [(_, text, _, _)] = channel.posts
+    lines = text.splitlines()
+    assert lines[0].endswith(': $0.00')
+    assert lines[1] == '• Managed Agents sessions: $0.00 — runtime $2.00, tokens -$2.00, web search no data'
+
+
+def test_a_share_moving_with_no_producer_series_posts_no_data_as_the_total() -> None:
+    source = _Source(instants={'day/sessions_runtime': 100})
+    channel = _Channel()
+
+    outcome = _run(source, channel)
+
+    assert outcome.posted is True
+    [(_, text, _, _)] = channel.posts
+    assert text.splitlines()[0].endswith(': no data')
 
 
 def test_the_day_is_read_at_the_windows_end_and_the_hours_tile_the_window() -> None:
@@ -233,15 +252,30 @@ def test_the_day_is_read_at_the_windows_end_and_the_hours_tile_the_window() -> N
 
 
 def test_hourly_cents_reach_the_chart_as_dollars_under_the_producers_names() -> None:
-    source = _Source(ranges={'hourly/convert': _points(150, 25)})
-
-    series = report.read_hourly(
-        _QUERIES.hourly, source, start=_END - 24 * _HOUR, end=_END, deadline=_deadline(), sleep=lambda _: None
+    source = _Source(
+        instants={'day/sessions': 300, 'day/convert': 175, 'day/ci': 135},
+        ranges={
+            'hourly/sessions': _points(300),
+            'hourly/convert': _points(150, 25),
+            'hourly/ci': _points(75, 50, 10),
+        },
     )
+    channel = _Channel()
 
-    assert [one.label for one in series] == ['Managed Agents sessions', 'Convert worker', 'CI (Claude Code)']
-    assert [value for _, value in series[1].points] == [1.5, 0.25]
-    assert series[0].points == []
+    _run(source, channel)
+
+    [(_, _, png, _)] = channel.posts
+    expected = chart.render(
+        'Themis spend per hour, by producer — 24 h to Mon 7 Sep 2026 08:00 (Australia/Sydney)',
+        [
+            chart.Series('Managed Agents sessions', [(_END, 3.0)]),
+            chart.Series('Convert worker', [(_END - _HOUR, 1.5), (_END, 0.25)]),
+            chart.Series('CI (Claude Code)', [(_END - 2 * _HOUR, 0.75), (_END - _HOUR, 0.5), (_END, 0.1)]),
+        ],
+        window=(_END - 24 * _HOUR, _END),
+        tz=_SYDNEY,
+    )
+    assert png == expected, 'posted chart PNG did not match the three producers in dollars'
 
 
 def test_a_naive_clock_fails_before_any_query() -> None:
@@ -276,7 +310,7 @@ def test_a_spent_deadline_stops_the_run_before_the_next_call() -> None:
 
 def test_a_failed_read_posts_nothing_and_is_not_asked_again() -> None:
     class _Failing(_Source):
-        @override
+        @typing.override
         def instant(self, query: str, *, at: datetime.datetime) -> float | None:
             self.instant_queries.append((query, at))
             raise promql.QueryError('query did not succeed')

@@ -1,23 +1,27 @@
-"""`_serve` orchestration ordering, with every collaborator faked.
+"""`_serve` orchestration, sandbox profile, and session tool wiring, with external collaborators faked.
 
 Asserts the sequence the worker must hold regardless of the SDK internals: verify the sandbox (fail-closed boot gate)
 → restore ``/workspace`` → ack the work item (restore proven) → serve the session → teardown (the push) → clean up;
-that the repository's verdict at restore acks + stops the item terminally instead of serving; and that the mirror
-runs over a `RemoteStore` whose token file is the worker's alone. The dispatch mechanics are covered in
-``test_session_dispatch.py``; here only the wiring order and cleanup matter.
+that a repository verdict at restore acks + stops the item terminally instead of serving; that the mirror runs over a
+`RemoteStore` whose token file is the worker's alone; and that `_serve` wires the host uid mapping, required request
+bind, hatchless guest file tools, hatched `shell` tool, tool spans, memory-store refusal, and skills permissions.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import json
 import os
 import pathlib
 import signal
 import stat
-from typing import ClassVar, Self, cast
+import typing
+from collections import abc
 
 import postern
 import pytest
+from anthropic.lib import environments, tools
 from anthropic.lib.tools import agent_toolset
 from anthropic.types import beta
 from anthropic.types.beta import sessions
@@ -26,8 +30,7 @@ from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis import sheaf
 from themis.clients.sheaf import store as remote_mod
-from themis.services.sandbox_worker import file_tools, tool_tracing, worker
-from themis.services.sandbox_worker import tool as tool_mod
+from themis.services.sandbox_worker import file_tools, worker
 from themis.sheaf.wire import bare
 
 _REQUIRED_ENV = (
@@ -50,6 +53,7 @@ _CLEANUP = {
     'hello_sync.close',
     'evidence_sync.close',
     'sandbox.close',
+    'file_sandbox.close',
 }
 
 
@@ -68,7 +72,7 @@ def _env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _Client:
-    async def __aenter__(self) -> Self:
+    async def __aenter__(self) -> typing.Self:
         return self
 
     async def __aexit__(self, *_exc: object) -> bool:
@@ -102,6 +106,62 @@ class _Mirrors(list[bare.BareRepo]):
         self.token_modes.append(stat.S_IMODE(pathlib.Path(mirror.store.descriptor()['token_file']).stat().st_mode))
 
 
+type _ToolsFactory = abc.Callable[[agent_toolset.AgentToolContext], abc.Sequence[environments.BetaAnyRunnableTool]]
+
+
+@dataclasses.dataclass
+class _Inspection:
+    """Observations recorded from ``_serve``'s faked collaborators during one run."""
+
+    profiles: list[postern.SandboxProfile] = dataclasses.field(default_factory=list)
+    request_dirs_present_at_verify: list[bool] = dataclasses.field(default_factory=list)
+    hatchless_runs: list[tuple[list[str], str]] = dataclasses.field(default_factory=list)
+    hatched_python_runs: list[str] = dataclasses.field(default_factory=list)
+    memory_sync_intervals: list[float | None] = dataclasses.field(default_factory=list)
+
+
+def _sandbox_cls(tmp_path: pathlib.Path, log: _Recorder, inspection: _Inspection | None) -> type:
+    class _Sandbox:
+        def __init__(self, profile: postern.SandboxProfile, *, hatch: object = None) -> None:
+            self.workspace = tmp_path
+            self._profile = profile
+            self._serving = hatch is not None
+            if inspection is not None:
+                inspection.profiles.append(profile)
+
+        def verify(self, *, timeout: float = 30) -> None:
+            del timeout
+            log.event('verify')
+            if inspection is not None:
+                inspection.request_dirs_present_at_verify.extend(
+                    pathlib.Path(host).is_dir()
+                    for host, guest in self._profile.required_ro_binds
+                    if guest == file_tools.GUEST_REQUESTS
+                )
+
+        def run(self, argv: list[str], *, timeout: float = 60, max_output: int | None = None) -> postern.ProcResult:
+            del timeout, max_output
+            guest_request = pathlib.PurePosixPath(argv[-1])
+            binds = {guest: host for host, guest in self._profile.required_ro_binds}
+            host_request = pathlib.Path(binds[str(guest_request.parent)]) / guest_request.name
+            payload = json.loads(host_request.read_text('utf-8'))
+            tool_name = str(payload['tool'])
+            if not self._serving and inspection is not None:
+                inspection.hatchless_runs.append((argv[:3], tool_name))
+            return postern.ProcResult(0, json.dumps({'content': f'ran:{tool_name}'}), '')
+
+        def run_python(self, code: str, *, timeout: float = 60) -> postern.ProcResult:
+            del timeout
+            if self._serving and inspection is not None:
+                inspection.hatched_python_runs.append(code)
+            return postern.ProcResult(0, 'shell ok', '')
+
+        def close(self) -> None:
+            log.event('sandbox.close' if self._serving else 'file_sandbox.close')
+
+    return _Sandbox
+
+
 def _patch_serve_collaborators(
     monkeypatch: pytest.MonkeyPatch,
     log: _Recorder,
@@ -110,6 +170,8 @@ def _patch_serve_collaborators(
     restore_error: Exception | None = None,
     serve_error: Exception | None = None,
     mirrors: _Mirrors | None = None,
+    inspection: _Inspection | None = None,
+    on_session: abc.Callable[[_ToolsFactory], abc.Coroutine[object, object, None]] | None = None,
 ) -> dict[str, list[str]]:
     """Replace every ``_serve`` collaborator with an event-logging fake.
 
@@ -119,19 +181,6 @@ def _patch_serve_collaborators(
     """
     acked: dict[str, list[str]] = {'ack': [], 'stop': []}
     sync_tags = iter(('hello_sync.close', 'evidence_sync.close'))
-
-    class _Sandbox:
-        def __init__(self, _profile: object, *, hatch: object = None) -> None:
-            self.workspace = tmp_path
-            self._serving = hatch is not None
-
-        def verify(self, *, timeout: float = 30) -> None:
-            del timeout
-            log.event('verify')
-
-        def close(self) -> None:
-            if self._serving:
-                log.event('sandbox.close')
 
     class _WorkspaceSync:
         def __init__(self, **_kwargs: object) -> None: ...
@@ -158,10 +207,23 @@ def _patch_serve_collaborators(
             acked['stop'].append(work_id)
 
     class _Worker:
-        def __init__(self, _client: object, **_kwargs: object) -> None: ...
+        def __init__(
+            self,
+            _client: object,
+            *,
+            tools: abc.Callable[[agent_toolset.AgentToolContext], abc.Sequence[environments.BetaAnyRunnableTool]],
+            workdir: pathlib.Path,
+            memory_sync_interval: float | None = environments.DEFAULT_MEMORY_SYNC_INTERVAL,
+        ) -> None:
+            self._tools = tools
+            self._workdir = workdir
+            if inspection is not None:
+                inspection.memory_sync_intervals.append(memory_sync_interval)
 
         async def handle_item(self) -> None:
             log.event('serve')
+            if on_session is not None:
+                await on_session(self._tools)
             await _fail_session(serve_error)
 
     class _SyncChannel:
@@ -175,13 +237,12 @@ def _patch_serve_collaborators(
         def close(self) -> None:
             log.event('hatch.close')
 
-    monkeypatch.setattr(worker.postern, 'Sandbox', _Sandbox)
+    monkeypatch.setattr(worker.postern, 'Sandbox', _sandbox_cls(tmp_path, log, inspection))
     monkeypatch.setattr(worker.id_token, 'channel_credentials', lambda _url: object())
     monkeypatch.setattr(worker.grpc, 'secure_channel', lambda *_a, **_k: _SyncChannel(next(sync_tags)))
     monkeypatch.setattr(worker.hatch_mod, 'build_hatch', lambda *_a, **_k: _Hatch())
     monkeypatch.setattr(worker.sync_mod, 'WorkspaceSync', _WorkspaceSync)
     monkeypatch.setattr(worker.work_queue_mod, 'AnthropicWorkQueue', _WorkQueue)
-    monkeypatch.setattr(worker.tool_mod, 'make_shell', lambda *_a, **_k: object())
     monkeypatch.setattr(worker.anthropic, 'AsyncAnthropic', lambda **_k: _Client())
     monkeypatch.setattr(worker.environments, 'EnvironmentWorker', _Worker)
     _patch_repository_collaborators(monkeypatch, log, mirrors=mirrors)
@@ -194,7 +255,7 @@ def _patch_repository_collaborators(
     """Fake the hatches and the guest's git over the mirror; the mirror itself, and its store, are real."""
 
     class _GitHatches:
-        hatches: ClassVar[list[object]] = []
+        hatches: typing.ClassVar[list[object]] = []
 
         def __init__(self, mirror: bare.BareRepo, **_kwargs: object) -> None:
             if mirrors is not None:
@@ -347,84 +408,252 @@ def test_serve_fails_loud_on_a_missing_env_var(monkeypatch: pytest.MonkeyPatch, 
 
 
 @pytest.mark.usefixtures('_env')
-def test_host_identity_is_both_or_neither(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert worker._host_identity() is None
-    monkeypatch.setenv(worker._HOST_UID_ENV, '61000')
-    with pytest.raises(SystemExit, match=worker._HOST_GID_ENV):
-        worker._host_identity()
-    monkeypatch.setenv(worker._HOST_GID_ENV, '61000')
-    assert worker._host_identity() == (61000, 61000)
-    monkeypatch.setenv(worker._HOST_GID_ENV, 'nobody')
+@pytest.mark.parametrize(
+    'present',
+    [worker._HOST_UID_ENV, worker._HOST_GID_ENV],
+)
+def test_serve_requires_host_uid_and_gid_together(monkeypatch: pytest.MonkeyPatch, present: str) -> None:
+    monkeypatch.setattr(os, 'geteuid', lambda: 0)
+    monkeypatch.setenv(present, '61000')
+    with pytest.raises(SystemExit, match='set together'):
+        asyncio.run(worker._serve())
+
+
+@pytest.mark.usefixtures('_env')
+@pytest.mark.parametrize(('uid', 'gid'), [('nobody', '61000'), ('61000', 'nobody')])
+def test_serve_requires_integer_host_uid_and_gid(monkeypatch: pytest.MonkeyPatch, uid: str, gid: str) -> None:
+    monkeypatch.setenv(worker._HOST_UID_ENV, uid)
+    monkeypatch.setenv(worker._HOST_GID_ENV, gid)
     with pytest.raises(SystemExit, match='integers'):
-        worker._host_identity()
+        asyncio.run(worker._serve())
 
 
-def test_the_profile_carries_the_host_identity_into_bwraps_credentials(tmp_path: pathlib.Path) -> None:
-    profile = worker._build_profile((61000, 61001), tmp_path)
-    assert (profile.host_uid, profile.host_gid) == (61000, 61001)
-    unmapped = worker._build_profile(None, tmp_path)
-    assert (unmapped.host_uid, unmapped.host_gid) == (None, None)
+@pytest.mark.usefixtures('_env')
+def test_serve_leaves_host_identity_unset_in_the_profile_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    inspection = _Inspection()
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, inspection=inspection)
+
+    asyncio.run(worker._serve())
+
+    assert len(inspection.profiles) == 3
+    assert {(profile.host_uid, profile.host_gid) for profile in inspection.profiles} == {(None, None)}
 
 
-def test_the_profile_requires_the_file_tools_request_directory(tmp_path: pathlib.Path) -> None:
+@pytest.mark.usefixtures('_env')
+def test_serve_carries_the_configured_host_identity_into_the_sandbox_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    monkeypatch.setenv(worker._HOST_UID_ENV, '61000')
+    monkeypatch.setenv(worker._HOST_GID_ENV, '61001')
+    monkeypatch.setattr(os, 'geteuid', lambda: 0)
+    inspection = _Inspection()
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, inspection=inspection)
+
+    asyncio.run(worker._serve())
+
+    assert len(inspection.profiles) == 3
+    assert {(profile.host_uid, profile.host_gid) for profile in inspection.profiles} == {(61000, 61001)}
+
+
+@pytest.mark.usefixtures('_env')
+def test_serve_requires_the_file_tools_request_directory_in_the_sandbox_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
     # A required bind, not a -try one: a launch without the directory fails instead of the tool failing in the guest.
-    profile = worker._build_profile(None, tmp_path)
-    assert (str(tmp_path), file_tools.GUEST_REQUESTS) in profile.required_ro_binds
-    assert file_tools.GUEST_REQUESTS not in dict(profile.ro_binds).values()
+    inspection = _Inspection()
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, inspection=inspection)
+
+    asyncio.run(worker._serve())
+
+    assert len(inspection.profiles) == 3
+    bound = {tuple(profile.required_ro_binds) for profile in inspection.profiles}
+    [(required_binds,)] = [[b for b in binds if b[1] == file_tools.GUEST_REQUESTS] for binds in bound]
+    host_requests = required_binds[0]
+    assert all(file_tools.GUEST_REQUESTS not in dict(profile.ro_binds).values() for profile in inspection.profiles)
+    assert inspection.request_dirs_present_at_verify == [True]
+    assert not pathlib.Path(host_requests).exists()
 
 
 def _session_with(*resources: object) -> beta.BetaManagedAgentsSession:
     return beta.BetaManagedAgentsSession.model_construct(id='sesn_1', resources=list(resources))
 
 
-_SHELL = tool_mod.make_shell(cast('postern.Sandbox', object()))  # never called: these tests only build the toolset
-
-
-def _runner(tmp_path: pathlib.Path) -> file_tools.GuestRunner:
-    launcher = cast('file_tools.Launcher', object())  # never launched: these tests only build the toolset
-    return file_tools.GuestRunner(launcher, tmp_path, worker._GUEST_FILE_TOOL, 30)
-
-
-def test_session_tools_run_every_file_tool_in_the_guest_and_append_shell(tmp_path: pathlib.Path) -> None:
+@pytest.mark.usefixtures('_env')
+def test_serve_runs_each_session_file_tool_in_the_hatchless_guest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    inspection = _Inspection()
     file = sessions.BetaManagedAgentsFileResource.model_construct(type='file', file_id='file_1')
     ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with(file))
-    tools = worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), None)
-    assert all(isinstance(tool, tool_tracing.TracedTool) for tool in tools)
-    served = [cast('tool_tracing.TracedTool', tool).tool for tool in tools]
-    guest_tools = served[:-1]
-    assert {tool.name for tool in guest_tools} == {'read', 'write', 'edit', 'glob', 'grep'}
-    assert all(isinstance(tool, file_tools.GuestFileTool) for tool in guest_tools)
-    assert served[-1] is _SHELL
+    served_names: list[str] = []
+    results: dict[str, object] = {}
+
+    async def call_file_tools(factory: _ToolsFactory) -> None:
+        for tool in factory(ctx):
+            served_names.append(tool.name)
+            if tool.name != 'shell':
+                assert isinstance(tool, tools.BetaAsyncBuiltinFunctionTool)
+                results[tool.name] = await tool.call({'path': 'notes.txt'})
+
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, inspection=inspection, on_session=call_file_tools)
+
+    asyncio.run(worker._serve())
+
+    expected_names = {'read', 'write', 'edit', 'glob', 'grep'}
+    assert len(served_names) == 6
+    assert set(served_names) == expected_names | {'shell'}
+    assert results == {name: f'ran:{name}' for name in expected_names}
+    assert {name for _, name in inspection.hatchless_runs} == expected_names
+    assert {tuple(entrypoint) for entrypoint, _ in inspection.hatchless_runs} == {worker._GUEST_FILE_TOOL}
+    assert inspection.hatched_python_runs == []
 
 
-def test_a_toolset_the_guest_does_not_serve_is_refused(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.usefixtures('_env')
+def test_serve_runs_the_session_shell_tool_in_the_hatched_sandbox(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    inspection = _Inspection()
+    ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with())
+    outputs: list[object] = []
+
+    async def call_shell(factory: _ToolsFactory) -> None:
+        built = {tool.name: tool for tool in factory(ctx)}
+        shell_tool = built['shell']
+        assert isinstance(shell_tool, tools.BetaAsyncBuiltinFunctionTool)
+        outputs.append(await shell_tool.call({'command': 'echo hi', 'intent': 'greet'}))
+
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, inspection=inspection, on_session=call_shell)
+
+    asyncio.run(worker._serve())
+
+    assert outputs == ['shell ok']
+    assert len(inspection.hatched_python_runs) == 1
+    assert "'echo hi'" in inspection.hatched_python_runs[0]
+    assert inspection.hatchless_runs == []
+
+
+@pytest.mark.usefixtures('_env')
+def test_serve_records_each_session_tool_call_as_a_child_span(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
+) -> None:
+    ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with())
+
+    async def call_every_tool(factory: _ToolsFactory) -> None:
+        for tool in factory(ctx):
+            assert isinstance(tool, tools.BetaAsyncBuiltinFunctionTool)
+            payload = {'command': 'echo hi', 'intent': 'greet'} if tool.name == 'shell' else {'path': 'notes.txt'}
+            await tool.call(payload)
+
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, on_session=call_every_tool)
+
+    asyncio.run(worker._serve())
+
+    spans = recorded_spans.get_finished_spans()
+    [session_span] = [span for span in spans if span.name == 'sandbox session']
+    assert session_span.context is not None
+    tool_spans = [span for span in spans if span is not session_span]
+    assert {span.name for span in tool_spans} == {
+        'execute_tool read',
+        'execute_tool write',
+        'execute_tool edit',
+        'execute_tool glob',
+        'execute_tool grep',
+        'execute_tool shell',
+    }
+    assert all(span.parent is not None and span.parent.span_id == session_span.context.span_id for span in tool_spans)
+
+
+@pytest.mark.usefixtures('_env')
+def test_serve_refuses_a_toolset_the_guest_does_not_serve(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     sdk_toolset = agent_toolset.beta_agent_toolset_20260401
     monkeypatch.setattr(agent_toolset, 'beta_agent_toolset_20260401', lambda ctx: sdk_toolset(ctx)[:-1])
     ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with())
+
+    async def build(factory: _ToolsFactory) -> None:
+        factory(ctx)
+
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, on_session=build)
+
     with pytest.raises(RuntimeError, match='not the file tools'):
-        worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), None)
+        asyncio.run(worker._serve())
 
 
-def test_a_session_with_a_memory_store_is_refused(tmp_path: pathlib.Path) -> None:
+@pytest.mark.usefixtures('_env')
+def test_serve_disables_worker_memory_sync(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inspection = _Inspection()
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, inspection=inspection)
+
+    asyncio.run(worker._serve())
+
+    assert inspection.memory_sync_intervals == [None]
+
+
+@pytest.mark.usefixtures('_env')
+def test_serve_refuses_a_session_with_a_memory_store(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = sessions.BetaManagedAgentsMemoryStoreResource.model_construct(type='memory_store', memory_store_id='m_1')
     ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with(store))
+
+    async def build(factory: _ToolsFactory) -> None:
+        factory(ctx)
+
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, on_session=build)
+
     with pytest.raises(ValueError, match='memory store'):
-        worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), None)
+        asyncio.run(worker._serve())
 
 
-def test_a_context_without_a_session_is_refused(tmp_path: pathlib.Path) -> None:
+@pytest.mark.usefixtures('_env')
+def test_serve_refuses_a_tool_context_without_a_session(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def build(factory: _ToolsFactory) -> None:
+        factory(agent_toolset.AgentToolContext(workdir=tmp_path))
+
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, on_session=build)
+
     with pytest.raises(ValueError, match='no session'):
-        worker._tools_for_session(agent_toolset.AgentToolContext(workdir=tmp_path), _SHELL, _runner(tmp_path), None)
+        asyncio.run(worker._serve())
 
 
-@pytest.mark.parametrize(('host_identity', 'mode'), [(None, 0o700), ((61000, 61001), 0o755)])
-def test_skills_are_opened_to_reading_only_under_a_mapping(
-    tmp_path: pathlib.Path, host_identity: tuple[int, int] | None, mode: int
+@pytest.mark.usefixtures('_env')
+def test_serve_leaves_skills_permissions_untouched_without_a_host_identity(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / 'skills').mkdir(mode=0o700)  # as the SDK downloads them, before it asks for the tools
     ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with())
-    worker._tools_for_session(ctx, _SHELL, _runner(tmp_path), host_identity)
-    assert stat.S_IMODE((tmp_path / 'skills').stat().st_mode) == mode
+
+    async def build(factory: _ToolsFactory) -> None:
+        factory(ctx)
+
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, on_session=build)
+
+    asyncio.run(worker._serve())
+    assert stat.S_IMODE((tmp_path / 'skills').stat().st_mode) == 0o700
+
+
+@pytest.mark.usefixtures('_env')
+def test_serve_opens_skills_to_reading_under_a_host_identity(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(worker._HOST_UID_ENV, '61000')
+    monkeypatch.setenv(worker._HOST_GID_ENV, '61001')
+    monkeypatch.setattr(os, 'geteuid', lambda: 0)
+    (tmp_path / 'skills').mkdir(mode=0o700)
+    ctx = agent_toolset.AgentToolContext(workdir=tmp_path, session=_session_with())
+
+    async def build(factory: _ToolsFactory) -> None:
+        factory(ctx)
+
+    _patch_serve_collaborators(monkeypatch, _Recorder(), tmp_path, on_session=build)
+
+    asyncio.run(worker._serve())
+    assert stat.S_IMODE((tmp_path / 'skills').stat().st_mode) == 0o755
 
 
 @pytest.mark.usefixtures('_env')

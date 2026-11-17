@@ -6,12 +6,8 @@ import asyncio
 
 import grpc
 import grpc.aio
-import pytest
 
-from themis.clients.auth import interceptor as interceptor_mod
-from themis.clients.auth import session as session_mod
 from themis.rpc import auth_pb2
-from themis.services.auth import servicer as servicer_mod
 from themis.services.auth.tests import harness
 
 _ASD = auth_pb2.ProjectGrant(id='asd')
@@ -73,21 +69,3 @@ def test_every_call_is_unavailable_once_the_copy_is_stale_and_resolves_again_onc
             return [*stale, await _code(served, harness.TOKEN)]
 
     assert asyncio.run(run()) == [grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.OK]
-
-
-def test_the_gate_s_in_process_resolver_reports_a_gone_project_as_unresolved_and_a_stale_copy_as_unavailable() -> None:
-    async def run() -> grpc.StatusCode:
-        async with harness.serving() as served:
-            resolver = servicer_mod.in_process_session_resolver(
-                servicer_mod.Servicer(served.backend, served.acl, operator=harness.OPERATOR)
-            )
-            served.backend.acl = _acl_with(epi=harness.ACL['projects']['epi'])  # pyright: ignore[reportIndexIssue]
-            await served.acl.refresh()
-            with pytest.raises(session_mod.UnresolvedSessionError):
-                await resolver(harness.TOKEN)
-            served.clock.advance(harness.STALENESS_LIMIT_SECONDS + 1)
-            with pytest.raises(interceptor_mod.StatusError) as stale:
-                await resolver(harness.TOKEN)
-            return stale.value.code
-
-    assert asyncio.run(run()) is grpc.StatusCode.UNAVAILABLE

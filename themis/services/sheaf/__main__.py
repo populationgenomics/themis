@@ -21,8 +21,11 @@ auth interceptor (rpc-authorization.md).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+from collections import abc
 
+import grpc.aio
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from opentelemetry.sdk import metrics as sdk_metrics
 
@@ -111,7 +114,8 @@ def build_limits() -> servicer_mod.Limits:
         raise SystemExit(f'the sheaf limits are out of range: {exc}') from exc
 
 
-async def _serve() -> None:
+@contextlib.asynccontextmanager
+async def _running() -> abc.AsyncIterator[tuple[grpc.aio.Server, int]]:
     authorizer, backend, limits = build_authorizer(), build_backend(), build_limits()
     install_tracing()
     meter_provider = install_metrics()
@@ -126,13 +130,21 @@ async def _serve() -> None:
         health_servicer = health.aio.HealthServicer()  # pyright: ignore[reportAttributeAccessIssue]
         await health_servicer.set('', health_pb2.HealthCheckResponse.SERVING)
         health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
-        server.add_insecure_port(f'[::]:{os.environ.get("PORT", "8080")}')  # TLS terminated by Cloud Run
+        port = server.add_insecure_port(f'[::]:{os.environ.get("PORT", "8080")}')  # TLS terminated by Cloud Run
         await server.start()
-        await serving.serve_until_stopped(server)
+        try:
+            yield server, port
+        finally:
+            await server.stop(None)
     finally:
         if meter_provider is not None:
             meter_provider.shutdown(timeout_millis=serving.FLUSH_TIMEOUT.total_seconds() * 1000)
         tracing.flush(serving.FLUSH_TIMEOUT)
+
+
+async def _serve() -> None:
+    async with _running() as (server, _port):
+        await serving.serve_until_stopped(server)
 
 
 def main() -> None:

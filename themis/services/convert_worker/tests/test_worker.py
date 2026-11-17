@@ -1,13 +1,10 @@
-"""Tests for the /convert worker: the body→producer→status decision and the entrypoint's env wiring.
+"""Tests for the /convert worker: the body→producer→status decision and the assembled app over HTTP.
 
-The status mapping runs offline against a fake producer (no GCS, no network). One integration test
-drives the real producer through the handler over a fake-gcs bucket (Docker-gated) with the fetch and
-PDF converter injected, proving the handler→producer→GCS path writes a rendering end to end; another
-drives the assembled aiohttp app to pin the routing and the load-bearing producer-raise→500 mapping.
-
-The Claude converter is never called: the tests assert what the entrypoint binds and what it hands
-the producer, and the transcription itself is `tests/litcache/test_anthropic_ocr.py`'s. Building the
-federation credential touches no network, so binding it needs no fake.
+The status mapping runs offline against a fake producer (no GCS, no network). Integration tests drive
+the real producer and the assembled aiohttp app (`build_app`) over a fake-gcs bucket (Docker-gated)
+with the transcription converter stubbed at the `litcache.anthropic_ocr` seam, verifying routing,
+startup validation and tracing, producer-raise→500 propagation, per-call federation credentials, and
+request-token recording. The Claude API transcription itself is `tests/litcache/test_anthropic_ocr.py`'s.
 """
 
 from __future__ import annotations
@@ -20,12 +17,13 @@ import functools
 import json
 import pathlib
 import threading
+import typing
 import uuid
-from collections.abc import Collection
-from typing import NoReturn, override
+from collections import abc
 
 import aiohttp.test_utils
 import aiohttp.web
+import anthropic.types
 import pytest
 from anthropic.lib import credentials as anthropic_credentials
 from google.api_core import exceptions as api_exceptions
@@ -44,7 +42,8 @@ from themis.litcache import produce as produce_mod
 from themis.litcache.models import litcache_pb2, work_pb2
 from themis.services.convert_worker import __main__ as main_mod
 from themis.services.convert_worker import handler as handler_mod
-from themis.telemetry import names, request_tokens, startup, tracing
+from themis.telemetry import metrics as telemetry_metrics
+from themis.telemetry import names, startup, tracing
 from themis.testing import in_memory_metrics, litcache_pedigrees, litcache_variants
 
 _DOC_ID = '9f3a0000-0000-4000-8000-000000000010'
@@ -57,15 +56,6 @@ _DELIVERY = {
     'X-CloudTasks-TaskName': '9f3a--main_text',
     'X-CloudTasks-TaskRetryCount': '2',
 }
-
-
-@dataclasses.dataclass(frozen=True)
-class _Usage:
-    input_tokens: int
-    output_tokens: int
-    cache_read_input_tokens: int | None = None
-    cache_creation_input_tokens: int | None = None
-
 
 _PDF_BYTES = b'%PDF-1.7 seed'
 
@@ -124,7 +114,7 @@ class _Provider(sdk_metrics.MeterProvider):
         super().__init__(metric_readers=[self.reader], shutdown_on_exit=False)
         self.shutdowns = 0
 
-    @override
+    @typing.override
     def shutdown(self, timeout_millis: float = 30_000) -> None:
         self.shutdowns += 1
         super().shutdown(timeout_millis=timeout_millis)
@@ -133,8 +123,40 @@ class _Provider(sdk_metrics.MeterProvider):
 def _stub_meter_provider(monkeypatch: pytest.MonkeyPatch) -> _Provider:
     """Stand the in-memory pipeline in for the Telemetry API one, which needs the metadata server and ADC."""
     provider = _Provider()
-    monkeypatch.setattr(main_mod, '_meter_provider', lambda _service: provider)
+    monkeypatch.setattr(telemetry_metrics, 'service_meter_provider', lambda _service: provider)
     return provider
+
+
+def _use_gcs_emulator(
+    monkeypatch: pytest.MonkeyPatch, gcs_endpoint: str, bucket_name: str | None
+) -> list[storage.Client]:
+    """Point ``storage.Client()`` at ``gcs_endpoint`` with a fresh client per open so cleanup may close it."""
+    assert bucket_name is not None
+    real_client = storage.Client
+    created: list[storage.Client] = []
+
+    def make_client() -> storage.Client:
+        client = real_client(
+            project='themis-test',
+            credentials=credentials.AnonymousCredentials(),
+            client_options={'api_endpoint': gcs_endpoint},
+        )
+        created.append(client)
+        return client
+
+    monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', bucket_name)
+    monkeypatch.setattr(storage, 'Client', make_client)
+    return created
+
+
+def _boot(app: aiohttp.web.Application) -> None:
+    """Start and stop ``app`` through aiohttp's server lifecycle."""
+
+    async def run() -> None:
+        async with aiohttp.test_utils.TestServer(app):
+            pass
+
+    asyncio.run(run())
 
 
 def _lazy_bucket(name: str = 'unused') -> storage.Bucket:
@@ -152,7 +174,7 @@ class _Call:
 
 def _producer(result: outcome_mod.Readiness, seen: list[_Call] | None = None) -> handler_mod.Producer:
     async def produce(
-        _bucket: storage.Bucket, doc_id: str, /, *, targets: Collection[str], attempt: joblog.Attempt
+        _bucket: storage.Bucket, doc_id: str, /, *, targets: abc.Collection[str], attempt: joblog.Attempt
     ) -> outcome_mod.Readiness:
         if seen is not None:
             seen.append(_Call(doc_id, tuple(targets), attempt))
@@ -449,6 +471,38 @@ def _write_pdf_paper(bucket: storage.Bucket) -> None:
     )
 
 
+def _write_unfetchable_pdf_paper(bucket: storage.Bucket, doc_id: str = _DOC_ID) -> None:
+    """Seed a ``binhash``-keyed PDF paper so the free OA steps have no input and ``transcription`` runs directly."""
+    binhash = doc_id.replace('-', '') * 2
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.pmid.value = '29089047'
+    metadata = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
+    writer.write_paper(
+        bucket,
+        writer.PaperInput(
+            doc_id=doc_id,
+            external_ids=litcache_pb2.ExternalIds(),
+            claim_key=f'binhash:{binhash}',
+            equivalence=litcache_pb2.Equivalence(edges=[], canonical_doc_id=doc_id),
+            retraction=litcache_pb2.Retraction(),
+            sources=[_pdf_source()],
+            renderings=[],
+            metadata=metadata.SerializeToString(),
+        ),
+    )
+
+
+def _post_convert(app: aiohttp.web.Application, *bodies: bytes) -> list[int]:
+    headers = {**_DELIVERY, 'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
+
+    async def drive() -> list[int]:
+        async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
+            responses = [await client.post('/convert', data=body, headers=headers) for body in bodies]
+            return [response.status for response in responses]
+
+    return asyncio.run(drive())
+
+
 def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: storage.Bucket) -> None:
     _write_pdf_paper(gcs_bucket)
 
@@ -491,13 +545,13 @@ def test_handler_runs_the_real_producer_and_commits_a_rendering(gcs_bucket: stor
 
 
 def test_the_assembled_app_serves_its_routes_over_the_startup_bucket(
-    gcs_bucket: storage.Bucket, monkeypatch: pytest.MonkeyPatch
+    gcs_bucket: storage.Bucket, gcs_endpoint: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Drives the app `main` actually builds, startup included, so the wiring between build_app and
     # _on_startup is covered: a revision that never binds the bucket passes its startup probe and
     # then 500s every task, because /healthz answers without touching it.
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_readable_bucket', lambda _name: gcs_bucket)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
     _stub_meter_provider(monkeypatch)
     app = main_mod.build_app(startup.StartupClock())
 
@@ -589,36 +643,26 @@ def test_concurrent_requests_render_through_the_one_pdfium_thread() -> None:
     assert rendered[0] > 0
 
 
-def test_a_producer_failure_reaches_the_transport_as_a_500(gcs_bucket: storage.Bucket) -> None:
-    # The retry contract rests on aiohttp turning a producer raise into the 500 Cloud Tasks retries.
-    app = aiohttp.web.Application()
-    app[main_mod._BUCKET] = gcs_bucket
+def test_a_producer_failure_reaches_the_transport_as_a_500(
+    gcs_bucket: storage.Bucket, gcs_endpoint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The retry contract rests on the assembled app letting a producer raise become the 500 Cloud Tasks retries.
+    _write_unfetchable_pdf_paper(gcs_bucket)
+    _set_startup_env(monkeypatch)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
+    _stub_meter_provider(monkeypatch)
 
-    async def convert(request: aiohttp.web.Request) -> aiohttp.web.Response:
-        status = await handler_mod.process_conversion(
-            request.app[main_mod._BUCKET],
-            await request.read(),
-            content_type=request.content_type,
-            headers=request.headers,
-            produce=_raising(),
-            executor=executor,
-        )
-        return aiohttp.web.Response(status=status)
+    async def failing_convert(
+        _pdf_bytes: bytes, *, timeout: float | None = None, **_kwargs: object
+    ) -> ocr.OcrRendering:
+        del timeout
+        raise RuntimeError('transient fetch failure')
 
-    app.router.add_post('/convert', convert)
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    monkeypatch.setattr(anthropic_ocr, 'convert_pdf', failing_convert)
+    app = main_mod.build_app(startup.StartupClock())
 
-    async def drive() -> int:
-        async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
-            response = await client.post(
-                '/convert', data=_request(), headers={**_DELIVERY, 'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
-            )
-            return response.status
-
-    try:
-        assert asyncio.run(drive()) == 500
-    finally:
-        executor.shutdown()
+    assert _post_convert(app, _request(targets=('transcription',))) == [500]
+    assert outcome_mod.read_readiness(gcs_bucket, _DOC_ID) is outcome_mod.Readiness.PENDING
 
 
 # --- entrypoint env wiring (fail loud) ---
@@ -632,26 +676,23 @@ def test_startup_requires_each_variable_naming_a_resource_before_it_reaches_for_
     _set_startup_env(monkeypatch)
     monkeypatch.delenv(missing)
 
-    def reached(*_args: object, **_kwargs: object) -> NoReturn:
+    def reached(*_args: object, **_kwargs: object) -> typing.NoReturn:
         raise AssertionError(f'reached for a resource with {missing} unset')
 
-    monkeypatch.setattr(main_mod, '_readable_bucket', reached)
+    monkeypatch.setattr(storage, 'Client', reached)
     monkeypatch.setattr(variant_reference, 'References', reached)
-    monkeypatch.setattr(main_mod, '_meter_provider', reached)
+    monkeypatch.setattr(telemetry_metrics, 'service_meter_provider', reached)
     with pytest.raises(SystemExit, match=missing):
-        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+        _boot(main_mod.build_app(startup.StartupClock()))
 
 
-def test_startup_refuses_a_bucket_that_does_not_exist(
-    monkeypatch: pytest.MonkeyPatch, gcs_client: storage.Client
-) -> None:
+def test_startup_refuses_a_bucket_that_does_not_exist(monkeypatch: pytest.MonkeyPatch, gcs_endpoint: str) -> None:
     # A named-but-absent bucket has to fail the startup probe: /healthz never touches the bucket, so a
     # revision that starts anyway goes live and 500s every task until the queue drops it.
     _set_startup_env(monkeypatch)
-    monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', f'themis-absent-{uuid.uuid4().hex}')
-    monkeypatch.setattr(main_mod.storage, 'Client', lambda: gcs_client)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, f'themis-absent-{uuid.uuid4().hex}')
     with pytest.raises(SystemExit, match='does not exist or is not readable'):
-        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+        _boot(main_mod.build_app(startup.StartupClock()))
 
 
 @pytest.mark.parametrize('value', [None, '', '0', '-1', 'four'])
@@ -663,7 +704,7 @@ def test_startup_requires_a_positive_request_concurrency(value: str | None, monk
     else:
         monkeypatch.setenv('THEMIS_CONVERT_CONCURRENCY', value)
     with pytest.raises(SystemExit, match='THEMIS_CONVERT_CONCURRENCY'):
-        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+        _boot(main_mod.build_app(startup.StartupClock()))
 
 
 @pytest.mark.parametrize('missing', sorted(_FEDERATION_ENV))
@@ -674,17 +715,16 @@ def test_startup_requires_each_anthropic_federation_id(missing: str, monkeypatch
     _set_startup_env(monkeypatch)
     monkeypatch.delenv(missing, raising=False)
     with pytest.raises(SystemExit, match=missing):
-        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+        _boot(main_mod.build_app(startup.StartupClock()))
 
 
 def test_startup_opens_the_pinned_reference_builds_through_the_fulltext_buckets_client(
-    monkeypatch: pytest.MonkeyPatch,
+    gcs_bucket: storage.Bucket, gcs_endpoint: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # hgvs-weaver-data makes storage clients of its own for an open handed none, and each one authenticates and
     # connects inside the startup probe's budget.
     _set_startup_env(monkeypatch)
-    bucket = _lazy_bucket()
-    monkeypatch.setattr(main_mod, '_readable_bucket', lambda _name: bucket)
+    clients = _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
     _stub_meter_provider(monkeypatch)
     opened: list[_References] = []
 
@@ -694,22 +734,26 @@ def test_startup_opens_the_pinned_reference_builds_through_the_fulltext_buckets_
 
     monkeypatch.setattr(variant_reference, 'References', opening)
 
-    asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+    _boot(main_mod.build_app(startup.StartupClock()))
 
+    [client] = clients
     [references] = opened
     assert references.root == f'gs://{_RESOURCES_BUCKET}'
     assert references.builds is variant_reference.BUILDS
-    assert references.storage_client is bucket.client
+    assert references.storage_client is client
 
 
 def test_startup_installs_the_trace_pipeline_under_the_services_name_before_it_starts_a_span(
-    monkeypatch: pytest.MonkeyPatch, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
 ) -> None:
     # The interactive and bulk services run one image, so the name is what tells their traces apart. A span
     # started before the pipeline is in is never recorded, and each step under it would be a trace of its own.
     del recorded_spans  # with no recording provider, no span is ever current and the check below could not fail
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
     _stub_meter_provider(monkeypatch)
     installed: list[tuple[str, bool]] = []
 
@@ -718,19 +762,22 @@ def test_startup_installs_the_trace_pipeline_under_the_services_name_before_it_s
 
     monkeypatch.setattr(tracing, 'install_from_env', install)
 
-    asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+    _boot(main_mod.build_app(startup.StartupClock()))
 
     assert installed == [(_SERVICE, False)]
 
 
 def test_a_cold_start_is_one_trace_whose_steps_are_spans_under_its_root(
-    monkeypatch: pytest.MonkeyPatch, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
 ) -> None:
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
     _stub_meter_provider(monkeypatch)
 
-    asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+    _boot(main_mod.build_app(startup.StartupClock()))
 
     finished = recorded_spans.get_finished_spans()
     [root] = [span for span in finished if span.parent is None]
@@ -742,120 +789,175 @@ def test_a_cold_start_is_one_trace_whose_steps_are_spans_under_its_root(
 
 
 def test_a_start_that_exits_leaves_its_trace_marked_failed(
-    monkeypatch: pytest.MonkeyPatch, recorded_spans: in_memory_span_exporter.InMemorySpanExporter
+    gcs_endpoint: str,
+    monkeypatch: pytest.MonkeyPatch,
+    recorded_spans: in_memory_span_exporter.InMemorySpanExporter,
 ) -> None:
     # A start fails loud with SystemExit, which OpenTelemetry alone would let through as a span that succeeded.
     _set_startup_env(monkeypatch)
-
-    def unreadable(name: str) -> storage.Bucket:
-        raise SystemExit(f'THEMIS_FULLTEXT_BUCKET {name!r} does not exist or is not readable')
-
-    monkeypatch.setattr(main_mod, '_readable_bucket', unreadable)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, f'themis-absent-{uuid.uuid4().hex}')
 
     with pytest.raises(SystemExit):
-        asyncio.run(main_mod._on_startup(main_mod.build_app(startup.StartupClock())))
+        _boot(main_mod.build_app(startup.StartupClock()))
 
     finished = recorded_spans.get_finished_spans()
     assert finished
     assert all(span.status.status_code is trace.StatusCode.ERROR for span in finished)
 
 
-def test_cleanup_exports_the_last_token_counts_before_it_flushes_spans(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cleanup_exports_the_last_token_counts_before_it_flushes_spans(
+    gcs_bucket: storage.Bucket, gcs_endpoint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Cloud Run leaves a stopping instance ten seconds. If they run out, the export still to come is the one
     # lost, and that must not be the token counts of the last interval.
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
     provider = _stub_meter_provider(monkeypatch)
-    app = main_mod.build_app(startup.StartupClock())
-    asyncio.run(main_mod._on_startup(app))
     shutdowns_before_each_flush: list[int] = []
     monkeypatch.setattr(tracing, 'flush', lambda _timeout: shutdowns_before_each_flush.append(provider.shutdowns))
 
-    asyncio.run(main_mod._on_cleanup(app))
+    _boot(main_mod.build_app(startup.StartupClock()))
 
     assert shutdowns_before_each_flush == [1]
 
 
-# --- the Claude converter the entrypoint binds ---
+# --- the Claude converter the entrypoint binds, driven through POST /convert ---
 
 
-def _bound_converter(monkeypatch: pytest.MonkeyPatch) -> functools.partial[object]:
-    """The converter `_on_startup` binds, with the bucket read stubbed out."""
-    _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
-    _stub_meter_provider(monkeypatch)
-    app = main_mod.build_app(startup.StartupClock())
-    asyncio.run(main_mod._on_startup(app))
-    converter = app[main_mod._CONVERT_PDF]
-    assert isinstance(converter, functools.partial)
-    return converter
-
-
-def test_startup_binds_the_claude_converter_on_a_federation_credential(monkeypatch: pytest.MonkeyPatch) -> None:
-    converter = _bound_converter(monkeypatch)
-    assert converter.func is anthropic_ocr.convert_pdf
-
+def test_convert_mints_a_fresh_federation_credential_for_each_transcription(
+    gcs_bucket: storage.Bucket, gcs_endpoint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # A provider per call, not one shared: the client closes the provider it is handed, so a shared
     # one would be spent after the first transcription.
-    with converter.keywords['credentials']() as first, converter.keywords['credentials']() as second:
-        assert isinstance(first, anthropic_credentials.WorkloadIdentityCredentials)
-        assert first is not second
-
-
-def test_startup_binds_the_converter_to_the_apps_request_token_counter(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The counter has to be on the app's own provider, or what a transcription records is never exported.
+    _write_unfetchable_pdf_paper(gcs_bucket, _DOC_ID)
+    _write_unfetchable_pdf_paper(gcs_bucket, _OTHER_DOC_ID)
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
-    provider = _stub_meter_provider(monkeypatch)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
+    _stub_meter_provider(monkeypatch)
+    issued: list[anthropic_credentials.AccessTokenProvider | None] = []
+
+    async def convert(
+        _pdf_bytes: bytes,
+        *,
+        timeout: float | None = None,
+        credentials: anthropic_ocr.CredentialsFactory | None = None,
+        **_kwargs: object,
+    ) -> ocr.OcrRendering:
+        del timeout
+        provider = credentials() if credentials is not None else None
+        issued.append(provider)
+        if isinstance(provider, anthropic_credentials.WorkloadIdentityCredentials):
+            provider.close()
+        return ocr.OcrRendering(markdown='# transcribed\n', model='claude-sonnet-5', converter_version='1.1')
+
+    monkeypatch.setattr(anthropic_ocr, 'convert_pdf', convert)
     app = main_mod.build_app(startup.StartupClock())
-    asyncio.run(main_mod._on_startup(app))
-    converter = app[main_mod._CONVERT_PDF]
-    assert isinstance(converter, functools.partial)
 
-    tokens = converter.keywords['tokens']
-    assert isinstance(tokens, request_tokens.RequestTokens)
-    tokens.add(_Usage(input_tokens=3, output_tokens=4), model='m', stop_reason='end_turn')
-    assert set(in_memory_metrics.collected(provider.reader)) == {names.REQUEST_TOKENS}
+    statuses = _post_convert(
+        app,
+        _request(_DOC_ID, targets=('transcription',)),
+        _request(_OTHER_DOC_ID, targets=('transcription',)),
+    )
+    assert statuses == [200, 200]
+    assert len(issued) == 2
+    assert isinstance(issued[0], anthropic_credentials.WorkloadIdentityCredentials)
+    assert isinstance(issued[1], anthropic_credentials.WorkloadIdentityCredentials)
+    assert issued[0] is not issued[1]
 
 
-def test_each_federation_id_reaches_the_credential_argument_it_names(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_convert_passes_each_federation_id_to_the_credential_argument_it_names(
+    gcs_bucket: storage.Bucket, gcs_endpoint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Two of the four transposed is the worst failure this wiring has: every id is present and
     # well-formed, the revision deploys healthy, and only the first token exchange fails.
-    federation = _bound_converter(monkeypatch).keywords['credentials']
-    assert isinstance(federation, functools.partial)
-    assert federation.func is anthropic_wif.credentials
-    assert federation.keywords == {
-        'federation_rule_id': _FEDERATION_ENV['ANTHROPIC_FEDERATION_RULE_ID'],
-        'organization_id': _FEDERATION_ENV['ANTHROPIC_ORGANIZATION_ID'],
-        'service_account_id': _FEDERATION_ENV['ANTHROPIC_SERVICE_ACCOUNT_ID'],
-        'workspace_id': _FEDERATION_ENV['ANTHROPIC_WORKSPACE_ID'],
-    }
-
-
-def test_the_convert_route_hands_the_producer_the_bound_converter(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The binding is only worth anything if it reaches the producer: /convert has to pass the app's
-    # converter as produce.run's `convert_pdf`, not fall back to a default.
+    _write_unfetchable_pdf_paper(gcs_bucket)
     _set_startup_env(monkeypatch)
-    monkeypatch.setattr(main_mod, '_readable_bucket', _lazy_bucket)
+    monkeypatch.setenv('ANTHROPIC_FEDERATION_RULE_ID', 'fdrl_worker_9')
+    monkeypatch.setenv('ANTHROPIC_ORGANIZATION_ID', '11111111-2222-4333-8444-555555555555')
+    monkeypatch.setenv('ANTHROPIC_SERVICE_ACCOUNT_ID', 'svac_worker_9')
+    monkeypatch.setenv('ANTHROPIC_WORKSPACE_ID', 'wrkspc_worker_9')
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
     _stub_meter_provider(monkeypatch)
+    real_credentials = anthropic_wif.credentials
+    seen_kwargs: list[dict[str, str]] = []
+
+    def recording_credentials(
+        *,
+        federation_rule_id: str,
+        organization_id: str,
+        service_account_id: str,
+        workspace_id: str,
+    ) -> anthropic_credentials.WorkloadIdentityCredentials:
+        seen_kwargs.append(
+            {
+                'federation_rule_id': federation_rule_id,
+                'organization_id': organization_id,
+                'service_account_id': service_account_id,
+                'workspace_id': workspace_id,
+            }
+        )
+        return real_credentials(
+            federation_rule_id=federation_rule_id,
+            organization_id=organization_id,
+            service_account_id=service_account_id,
+            workspace_id=workspace_id,
+        )
+
+    async def convert(
+        _pdf_bytes: bytes,
+        *,
+        timeout: float | None = None,
+        credentials: anthropic_ocr.CredentialsFactory | None = None,
+        **_kwargs: object,
+    ) -> ocr.OcrRendering:
+        del timeout
+        provider = credentials() if credentials is not None else None
+        if isinstance(provider, anthropic_credentials.WorkloadIdentityCredentials):
+            provider.close()
+        return ocr.OcrRendering(markdown='# transcribed\n', model='claude-sonnet-5', converter_version='1.1')
+
+    monkeypatch.setattr(anthropic_wif, 'credentials', recording_credentials)
+    monkeypatch.setattr(anthropic_ocr, 'convert_pdf', convert)
     app = main_mod.build_app(startup.StartupClock())
-    seen: list[ocr.PdfConverter] = []
 
-    async def produce(_bucket: storage.Bucket, _doc_id: str, *, convert_pdf: ocr.PdfConverter, **_kw: object) -> None:
-        seen.append(convert_pdf)
-        raise produce_mod.PaperNotInCorpusError(_doc_id)
+    assert _post_convert(app, _request(targets=('transcription',))) == [200]
+    assert seen_kwargs == [
+        {
+            'federation_rule_id': 'fdrl_worker_9',
+            'organization_id': '11111111-2222-4333-8444-555555555555',
+            'service_account_id': 'svac_worker_9',
+            'workspace_id': 'wrkspc_worker_9',
+        }
+    ]
 
-    monkeypatch.setattr(produce_mod, 'run', produce)
 
-    async def drive() -> int:
-        async with aiohttp.test_utils.TestClient(aiohttp.test_utils.TestServer(app)) as client:
-            response = await client.post(
-                '/convert', data=_request(), headers={**_DELIVERY, 'Content-Type': work.WORK_REQUEST_MEDIA_TYPE}
-            )
-            return response.status
+def test_convert_records_transcription_tokens_on_the_apps_meter_provider(
+    gcs_bucket: storage.Bucket, gcs_endpoint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The counter has to be on the app's own provider, or what a transcription records is never exported.
+    _write_unfetchable_pdf_paper(gcs_bucket)
+    _set_startup_env(monkeypatch)
+    _use_gcs_emulator(monkeypatch, gcs_endpoint, gcs_bucket.name)
+    provider = _stub_meter_provider(monkeypatch)
 
-    assert asyncio.run(drive()) == 200
-    assert seen == [app[main_mod._CONVERT_PDF]]
+    async def convert(
+        _pdf_bytes: bytes,
+        *,
+        timeout: float | None = None,
+        tokens: ocr.TokenCounter,
+        **_kwargs: object,
+    ) -> ocr.OcrRendering:
+        del timeout
+        usage = anthropic.types.Usage.model_construct(input_tokens=3, output_tokens=4)
+        tokens.add(usage, model='claude-sonnet-5', stop_reason='end_turn')
+        return ocr.OcrRendering(markdown='# transcribed\n', model='claude-sonnet-5', converter_version='1.1')
+
+    monkeypatch.setattr(anthropic_ocr, 'convert_pdf', convert)
+    app = main_mod.build_app(startup.StartupClock())
+
+    assert _post_convert(app, _request(targets=('transcription',))) == [200]
+    assert outcome_mod.read_readiness(gcs_bucket, _DOC_ID) is outcome_mod.Readiness.READY
+    assert set(in_memory_metrics.collected(provider.reader)) == {names.REQUEST_TOKENS}
 
 
 def test_a_converter_failure_that_is_not_terminal_leaves_the_paper_pending(gcs_bucket: storage.Bucket) -> None:
