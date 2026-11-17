@@ -1,15 +1,16 @@
 """The trace pipeline's configuration, its sampling decision, and the exporter it is built on.
 
-Nothing here reaches a network: the exporter is built, never used, and the providers under test carry no
-exporter at all.
+Nothing here reaches a network: the exporter is built, never used, and installed providers are
+shut down before any span is exported.
 """
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import override
 
 import grpc
@@ -26,17 +27,11 @@ from themis.telemetry import telemetry_api, tracing
 _TIMEOUT = datetime.timedelta(seconds=5)
 
 
-@pytest.mark.parametrize(('raw', 'ratio'), [('0', 0.0), ('1', 1.0), ('1.0', 1.0), ('0.25', 0.25)])
-def test_a_ratio_from_0_to_1_is_read(monkeypatch: pytest.MonkeyPatch, raw: str, ratio: float) -> None:
-    monkeypatch.setenv(tracing.SAMPLE_RATIO_VAR, raw)
-    assert tracing.sample_ratio_from_env() == ratio
-
-
 @pytest.mark.parametrize('raw', ['', 'one', '-0.1', '1.5', 'nan', 'inf'])
 def test_a_ratio_that_is_not_a_fraction_exits(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
     monkeypatch.setenv(tracing.SAMPLE_RATIO_VAR, raw)
     with pytest.raises(SystemExit, match=tracing.SAMPLE_RATIO_VAR):
-        tracing.sample_ratio_from_env()
+        tracing.install_from_env('themis-test')
 
 
 def test_an_unset_ratio_exits(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -49,14 +44,87 @@ def _no_credentials() -> tuple[google_credentials.Credentials, str]:
     raise AssertionError('Application Default Credentials were read')
 
 
-def test_a_ratio_of_0_installs_nothing_and_reads_no_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(tracing.SAMPLE_RATIO_VAR, '0')
+@pytest.mark.parametrize('raw', ['0', '0.0'])
+def test_a_ratio_of_0_installs_nothing_and_reads_no_credentials(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    monkeypatch.setenv(tracing.SAMPLE_RATIO_VAR, raw)
     monkeypatch.setattr(telemetry_api, 'application_default_credentials', _no_credentials)
     before = trace.get_tracer_provider()
 
     tracing.install_from_env('themis-test')
 
     assert trace.get_tracer_provider() is before
+
+
+@contextlib.contextmanager
+def _isolated_provider_slot(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[sdk_trace.TracerProvider]]:
+    installed: list[sdk_trace.TracerProvider] = []
+
+    def get_provider() -> trace.TracerProvider:
+        return installed[-1] if installed else trace.ProxyTracerProvider()
+
+    def set_provider(provider: trace.TracerProvider) -> None:
+        assert isinstance(provider, sdk_trace.TracerProvider)
+        installed.append(provider)
+
+    monkeypatch.setattr(trace, 'get_tracer_provider', get_provider)
+    monkeypatch.setattr(trace, 'set_tracer_provider', set_provider)
+    monkeypatch.setattr(
+        telemetry_api,
+        'application_default_credentials',
+        lambda: (google_credentials.AnonymousCredentials(), 'themis-test'),
+    )
+    try:
+        yield installed
+    finally:
+        for provider in installed:
+            provider.shutdown()
+
+
+def _records_on(provider: sdk_trace.TracerProvider, trace_id: str, *, parent_sampled: bool = True) -> bool:
+    parent = trace.NonRecordingSpan(
+        trace.SpanContext(
+            trace_id=int(trace_id, 16),
+            span_id=0x00F067AA0BA902B7,
+            is_remote=True,
+            trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED if parent_sampled else trace.TraceFlags.DEFAULT),
+        )
+    )
+    span = provider.get_tracer('t').start_span('s', context=trace.set_span_in_context(parent, context.Context()))
+    return span.is_recording()
+
+
+def test_install_from_env_places_spans_on_the_detected_workload_resource(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Detected(resources.ResourceDetector):
+        @override
+        def detect(self) -> resources.Resource:
+            return resources.Resource({'cloud.region': 'australia-southeast1', resources.SERVICE_NAME: 'detected'})
+
+    monkeypatch.setenv(tracing.SAMPLE_RATIO_VAR, '1')
+    with _isolated_provider_slot(monkeypatch) as installed:
+        tracing.install_from_env('themis-sheaf', detectors=[_Detected()])
+        (provider,) = installed
+        assert provider.resource.attributes[telemetry_api.GCP_PROJECT_ID] == 'themis-test'
+        assert provider.resource.attributes[resources.SERVICE_NAME] == 'themis-sheaf'
+        assert provider.resource.attributes['cloud.region'] == 'australia-southeast1'
+
+
+@pytest.mark.parametrize(
+    ('raw', 'trace_id', 'recorded'),
+    [
+        ('1', 'ffffffffffffffffffffffffffffffff', True),
+        ('1.0', 'ffffffffffffffffffffffffffffffff', True),
+        ('0.25', '4bf92f3577b34da63fffffffffffffff', True),
+        ('0.25', '4bf92f3577b34da64000000000000000', False),
+    ],
+)
+def test_install_from_env_samples_at_the_configured_ratio(
+    monkeypatch: pytest.MonkeyPatch, raw: str, trace_id: str, recorded: bool
+) -> None:
+    monkeypatch.setenv(tracing.SAMPLE_RATIO_VAR, raw)
+    with _isolated_provider_slot(monkeypatch) as installed:
+        tracing.install_from_env('themis-sheaf', detectors=())
+        (provider,) = installed
+        assert _records_on(provider, trace_id) is recorded
 
 
 def test_a_second_provider_is_refused(
@@ -68,21 +136,6 @@ def test_a_second_provider_is_refused(
     monkeypatch.setattr(telemetry_api, 'application_default_credentials', _no_credentials)
     with pytest.raises(RuntimeError, match='already installed'):
         tracing.install_from_env('themis-test')
-
-
-def _records(ratio: float, trace_id: str, *, parent_sampled: bool) -> bool:
-    """Whether a provider at `ratio` records a span continuing a remote parent in trace `trace_id`."""
-    provider = tracing.tracer_provider(resource=resources.Resource.get_empty(), sample_ratio=ratio)
-    parent = trace.NonRecordingSpan(
-        trace.SpanContext(
-            trace_id=int(trace_id, 16),
-            span_id=0x00F067AA0BA902B7,
-            is_remote=True,
-            trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED if parent_sampled else trace.TraceFlags.DEFAULT),
-        )
-    )
-    span = provider.get_tracer('t').start_span('s', context=trace.set_span_in_context(parent, context.Context()))
-    return span.is_recording()
 
 
 # The boundary cases `apps/web/src/server/tracing/sampler.test.ts` holds the web server's sampler to: a trace
@@ -100,21 +153,9 @@ _DECISIONS = [
 @pytest.mark.parametrize(('ratio', 'trace_id', 'recorded'), _DECISIONS)
 def test_the_decision_is_the_trace_ids_alone(ratio: float, trace_id: str, recorded: bool) -> None:
     # The parent's flag is Cloud Run's decision, not the caller's; whichever way it points, the id decides.
-    assert _records(ratio, trace_id, parent_sampled=True) is recorded
-    assert _records(ratio, trace_id, parent_sampled=False) is recorded
-
-
-def test_the_resource_names_the_project_and_the_service() -> None:
-    class _Detected(resources.ResourceDetector):
-        @override
-        def detect(self) -> resources.Resource:
-            return resources.Resource({'cloud.region': 'australia-southeast1', resources.SERVICE_NAME: 'detected'})
-
-    resource = tracing.workload_resource(project='themis-test', service_name='themis-sheaf', detectors=[_Detected()])
-
-    assert resource.attributes[telemetry_api.GCP_PROJECT_ID] == 'themis-test'
-    assert resource.attributes[resources.SERVICE_NAME] == 'themis-sheaf'
-    assert resource.attributes['cloud.region'] == 'australia-southeast1'
+    provider = tracing.tracer_provider(resource=resources.Resource.get_empty(), sample_ratio=ratio)
+    assert _records_on(provider, trace_id, parent_sampled=True) is recorded
+    assert _records_on(provider, trace_id, parent_sampled=False) is recorded
 
 
 def test_the_exporter_is_built_for_the_telemetry_api_over_tls(monkeypatch: pytest.MonkeyPatch) -> None:

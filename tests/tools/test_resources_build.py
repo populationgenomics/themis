@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
-import concurrent.futures
+import contextlib
 import gzip
+import http.server
 import json
+import os
 import pathlib
+import shutil
+import signal
 import subprocess
 import sys
 import threading
-import time
+import urllib.parse
+from collections.abc import Callable, Iterator, Sequence
+from typing import TextIO, override
 
 import pytest
+import requests
+from google.auth import credentials
 from google.cloud import storage
 from weaver_data_provider import genome as genome_mod
+from weaver_data_provider import store as store_mod
 
 from tests.tools import conftest
-from tools.resources import build, manifest, mirror, status
+from tools.resources import build, job, manifest, mirror, status
 
 _FASTA = gzip.compress(b'>NC_000001.11 Homo sapiens chromosome 1\nACGTACGTAC\nGTACGTACGT\n')
 
@@ -31,6 +40,142 @@ def _genome(pinned: manifest.Manifest, bucket: storage.Bucket) -> build.Build:
     ]
     assert genome is not None
     return genome
+
+
+def _ensembl_store(pinned: manifest.Manifest, bucket: storage.Bucket) -> build.Build:
+    (store,) = [
+        p.build for p in build.plan(pinned, bucket=bucket, genomes=_no_genome_dir) if p.label == 'ensembl-grch38 store'
+    ]
+    assert store is not None
+    return store
+
+
+def _mirror_ensembl_inputs(
+    pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, *, genome_bytes: bytes = _FASTA
+) -> None:
+    ncbi = pinned.assembly('ncbi-grch38')
+    put_mirrored(ncbi.object('genome'), genome_bytes)
+    put_mirrored(ncbi.object('alignments'), b'bam')
+    put_mirrored(ncbi.object('alignments/index'), b'bai')
+    ensembl = pinned.assembly('ensembl-grch38')
+    for path, entry in ensembl.objects.items():
+        if path != 'genome':
+            put_mirrored(entry, path.encode())
+    for table in pinned.tables.values():
+        put_mirrored(table, table.id.encode())
+
+
+def _stub_ensembl_popen(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    seen_genomes: list[pathlib.Path],
+    on_genome_start: Callable[[], None] | None = None,
+) -> None:
+    """Intercept ``weaver-data-build`` subprocess launches for ``ensembl`` and ``index`` steps."""
+    real_popen = subprocess.Popen
+    cli_prefix = [sys.executable, '-m', 'weaver_data_provider.build.cli']
+
+    def popen(
+        command: Sequence[str],
+        *,
+        stdout: TextIO | None = None,
+        stderr: int | None = None,
+        text: bool = True,
+        errors: str | None = None,
+    ) -> subprocess.Popen[str]:
+        cmd = list(command)
+        if cmd[:3] == cli_prefix:
+            args = cmd[3:]
+            if args[0] == 'genome' and on_genome_start is not None:
+                on_genome_start()
+            elif args[0] == 'ensembl':
+                genome_dir = pathlib.Path(args[args.index('--genome') + 1])
+                assert (genome_dir / genome_mod.CATALOGUE).is_file()
+                assert (genome_dir / genome_mod.BLOCKS).is_file()
+                seen_genomes.append(genome_dir)
+                shards = pathlib.Path(args[args.index('--shards') + 1])
+                shards.mkdir(parents=True, exist_ok=True)
+                shard = shards / 'ensembl.bagz'
+                shard.write_bytes(b'shard')
+                return real_popen(
+                    [sys.executable, '-c', f'print({str(shard)!r})'],
+                    stdout=stdout,
+                    stderr=stderr,
+                    text=text,
+                    errors=errors,
+                )
+            elif args[0] == 'index':
+                out = pathlib.Path(args[args.index('--out') + 1])
+                out.mkdir(parents=True, exist_ok=True)
+                (out / store_mod.MANIFEST).write_bytes(b'manifest')
+                return real_popen([sys.executable, '-c', ''], stdout=stdout, stderr=stderr, text=text, errors=errors)
+        return real_popen(cmd, stdout=stdout, stderr=stderr, text=text, errors=errors)
+
+    monkeypatch.setattr(build.subprocess, 'Popen', popen)
+
+
+@contextlib.contextmanager
+def _gcs_proxy(
+    upstream: str,
+    bucket_name: str,
+    *,
+    on_request: Callable[[str, str, bytes], int | None] | None = None,
+) -> Iterator[storage.Bucket]:
+    """Forward GCS HTTP calls to ``fake-gcs-server``, running ``on_request(method, path, body)`` first."""
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        @override
+        def log_message(self, format: str, *args: object) -> None:
+            del format, args
+
+        def _forward(self) -> None:
+            length = int(self.headers.get('Content-Length', '0'))
+            body = self.rfile.read(length) if length else b''
+            decoded_path = urllib.parse.unquote(self.path)
+            status_override = on_request(self.command, decoded_path, body) if on_request is not None else None
+            if status_override is not None:
+                payload = json.dumps({'error': {'code': status_override, 'message': 'aborted'}}).encode()
+                self.send_response(status_override)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            forwarded = {k: v for k, v in self.headers.items() if k.lower() not in ('host', 'content-length')}
+            resp = requests.request(self.command, f'{upstream}{self.path}', data=body, headers=forwarded, timeout=10)
+            self.send_response(resp.status_code)
+            for k, v in resp.headers.items():
+                if k.lower() not in ('transfer-encoding', 'content-encoding', 'content-length', 'connection'):
+                    self.send_header(k, v)
+            self.send_header('Content-Length', str(len(resp.content)))
+            self.end_headers()
+            self.wfile.write(resp.content)
+
+        def do_GET(self) -> None:
+            self._forward()
+
+        def do_POST(self) -> None:
+            self._forward()
+
+        def do_PUT(self) -> None:
+            self._forward()
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address[:2]
+    try:
+        client = storage.Client(
+            project='themis-test',
+            credentials=credentials.AnonymousCredentials(),
+            client_options={'api_endpoint': f'http://{host}:{port}'},
+        )
+        with contextlib.closing(client):
+            yield client.bucket(bucket_name)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_a_genome_is_built_once_under_its_build_id(
@@ -88,47 +233,89 @@ def test_an_object_mirrored_from_another_url_is_not_built_from(
     assert 'manifest pins' in str(genome.error)
 
 
-def test_a_store_placed_against_a_genome_built_this_run_waits_for_it(
-    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, tmp_path: pathlib.Path
+def test_a_store_placed_against_a_genome_built_this_run_waits_for_and_reuses_it(
+    gcs_endpoint: str,
+    gcs_bucket: storage.Bucket,
+    pinned: manifest.Manifest,
+    put_mirrored: conftest.PutMirrored,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
-    genome = _genome(pinned, gcs_bucket)  # not built in the bucket, so only the settled directory can answer
-    genomes = build._Genomes(gcs_bucket, tmp_path, build.Abandon())
-    genomes.expect(genome)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        waiting = pool.submit(genomes, genome)
-        try:
-            with pytest.raises(concurrent.futures.TimeoutError):
-                waiting.result(timeout=0.2)
-            genomes.settle(genome, tmp_path / 'built')
-            assert waiting.result(timeout=10) == tmp_path / 'built'
-        finally:
-            genomes.settle(genome, None)  # a waiter left blocked would hang the pool's exit
+    assert gcs_bucket.name is not None
+    _mirror_ensembl_inputs(pinned, put_mirrored)
+    seen_genomes: list[pathlib.Path] = []
+    downloaded_paths: list[str] = []
+    _stub_ensembl_popen(monkeypatch, seen_genomes=seen_genomes)
+
+    def record_downloads(method: str, path: str, _body: bytes) -> int | None:
+        if method == 'GET' and '/download/' in path:
+            downloaded_paths.append(path)
+        return None
+
+    with _gcs_proxy(gcs_endpoint, gcs_bucket.name, on_request=record_downloads) as proxied_bucket:
+        failed = build.build_all(pinned, bucket=proxied_bucket, dry_run=False)
+
+    assert 'ncbi-grch38 genome' not in failed
+    assert 'ensembl-grch38 store' not in failed
+    assert len(seen_genomes) == 1
+    assert downloaded_paths
+    assert not any(genome_mod.CATALOGUE in path for path in downloaded_paths)
+    assert build.exists(gcs_bucket, _ensembl_store(pinned, gcs_bucket))
 
 
 def test_a_store_placed_against_a_genome_built_earlier_downloads_it(
-    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, tmp_path: pathlib.Path
+    gcs_bucket: storage.Bucket,
+    pinned: manifest.Manifest,
+    put_mirrored: conftest.PutMirrored,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
-    genome = _genome(pinned, gcs_bucket)
     build.build_all(pinned, bucket=gcs_bucket, dry_run=False)
-    genomes = build._Genomes(gcs_bucket, tmp_path, build.Abandon())
-    genomes.expect(genome)
-    genomes.settle(genome, None)
-    directory = genomes(genome)
-    assert (directory / genome_mod.CATALOGUE).exists()
+    _mirror_ensembl_inputs(pinned, put_mirrored)
+    seen_genomes: list[pathlib.Path] = []
+
+    def must_not_rebuild_genome() -> None:
+        raise AssertionError('already-built genome should be downloaded, not rebuilt')
+
+    _stub_ensembl_popen(monkeypatch, seen_genomes=seen_genomes, on_genome_start=must_not_rebuild_genome)
+
+    failed = build.build_all(pinned, bucket=gcs_bucket, dry_run=False)
+
+    assert 'ncbi-grch38 genome' not in failed
+    assert 'ensembl-grch38 store' not in failed
+    assert len(seen_genomes) == 1
+    assert build.exists(gcs_bucket, _ensembl_store(pinned, gcs_bucket))
 
 
-def test_a_store_placed_against_a_genome_whose_build_failed_fails(
-    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, tmp_path: pathlib.Path
+def test_a_store_placed_against_a_genome_whose_build_failed_settles_and_fails(
+    gcs_bucket: storage.Bucket,
+    pinned: manifest.Manifest,
+    put_mirrored: conftest.PutMirrored,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
+    _mirror_ensembl_inputs(pinned, put_mirrored, genome_bytes=b'not a gzipped fasta')
+
+    failed = build.build_all(pinned, bucket=gcs_bucket, dry_run=False)
+
+    assert 'ncbi-grch38 genome' in failed
+    assert 'ensembl-grch38 store' in failed
+    assert 'is not built' in capsys.readouterr().err
+
+
+def test_a_kept_genome_with_a_partial_prefix_settles_so_dependent_stores_do_not_hang(
+    gcs_bucket: storage.Bucket,
+    pinned: manifest.Manifest,
+    put_mirrored: conftest.PutMirrored,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _mirror_ensembl_inputs(pinned, put_mirrored)
     genome = _genome(pinned, gcs_bucket)
-    genomes = build._Genomes(gcs_bucket, tmp_path, build.Abandon())
-    genomes.expect(genome)
-    genomes.settle(genome, None)
-    with pytest.raises(build.BuildError, match='is not built'):
-        genomes(genome)
+    gcs_bucket.blob(f'{genome.prefix}/provenance.json').upload_from_string('{}')
+
+    failed = build.build_all(pinned, bucket=gcs_bucket, dry_run=False)
+
+    assert 'ncbi-grch38 genome' in failed
+    assert 'ensembl-grch38 store' in failed
+    assert 'stopped before writing' in capsys.readouterr().err
 
 
 def test_a_builder_step_names_its_build_on_every_line(
@@ -152,82 +339,153 @@ def test_abandoning_a_pass_kills_its_running_builder_children() -> None:
         assert child.wait(timeout=10) != 0
 
 
-def test_a_kept_genome_whose_build_fails_is_settled_so_nothing_waits_for_it(
-    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, put_mirrored: conftest.PutMirrored, tmp_path: pathlib.Path
+def test_an_error_no_build_absorbs_kills_running_builder_steps_at_once(
+    tmp_path: pathlib.Path,
+    gcs_bucket: storage.Bucket,
+    pinned: manifest.Manifest,
+    put_mirrored: conftest.PutMirrored,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
-    genome = _genome(pinned, gcs_bucket)
-    gcs_bucket.blob(f'{genome.prefix}/provenance.json').upload_from_string('{}')  # a build that stopped partway
-    genomes = build._Genomes(gcs_bucket, tmp_path, build.Abandon())
-    genomes.expect(genome)
-    planned = build.Planned(genome.label, genome, keep=True)
-    failed = build._make(
-        planned, bucket=gcs_bucket, genomes=genomes, abandon=build.Abandon(), scratch=str(tmp_path), dry_run=False
-    )
-    assert failed
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        asked = pool.submit(genomes, genome)
-        try:
-            with pytest.raises(build.BuildError, match='stopped before writing'):
-                asked.result(timeout=10)
-        finally:
-            genomes.settle(genome, None)  # a waiter left blocked would hang the pool's exit
-
-
-def test_an_error_no_build_absorbs_abandons_the_pass_at_once_and_waits_out_the_uploads_begun(
-    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
-) -> None:
-    seen: list[bool] = []
-
-    def make(planned: build.Planned, *, abandon: build.Abandon, **_: object) -> bool:
-        if planned.label == 'ncbi-grch38 genome':  # first in the plan: mid-upload when a later build raises
-            abandoned_in_time = abandon._set.wait(timeout=10)
-            time.sleep(0.2)  # the upload already begun, finishing
-            seen.append(abandoned_in_time)
-            return False
-        raise RuntimeError(planned.label)
-
-    monkeypatch.setattr(build, '_make', make)
     monkeypatch.setattr(build.tempfile, 'tempdir', str(tmp_path))
-    with pytest.raises(RuntimeError):
-        build.build_all(pinned, bucket=gcs_bucket, dry_run=True)
-    assert seen == [True]
+    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
+    put_mirrored(pinned.assembly('ncbi-grch37').object('genome'), _FASTA)
+    child_running = threading.Event()
+    spawned: list[subprocess.Popen[str]] = []
+    real_popen = subprocess.Popen
+
+    def popen(
+        command: Sequence[str],
+        *,
+        stdout: TextIO | None = None,
+        stderr: int | None = None,
+        text: bool = True,
+        errors: str | None = None,
+    ) -> subprocess.Popen[str]:
+        joined = ' '.join(command)
+        if 'GCF_1.40_GRCh38' in joined:
+            # Exits 0 after 5s if not killed; SIGKILL from `abandon()` ends it immediately (<0).
+            child = real_popen(
+                [sys.executable, '-c', 'import time; time.sleep(5)'],
+                stdout=stdout,
+                stderr=stderr,
+                text=text,
+                errors=errors,
+            )
+            spawned.append(child)
+            child_running.set()
+            return child
+        assert child_running.wait(timeout=10)
+        raise RuntimeError('unexpected bug in grch37')
+
+    monkeypatch.setattr(build.subprocess, 'Popen', popen)
+    try:
+        with pytest.raises(RuntimeError, match='unexpected bug in grch37'):
+            build.build_all(pinned, bucket=gcs_bucket, dry_run=False)
+        assert len(spawned) == 1
+        assert spawned[0].returncode is not None
+        assert spawned[0].returncode < 0
+    finally:
+        for child in spawned:
+            child.kill()
+            child.wait(timeout=5)
 
 
-class _Stop(BaseException):
-    """Stands in for the job's SIGTERM."""
+def test_an_error_no_build_absorbs_waits_out_uploads_already_begun(
+    tmp_path: pathlib.Path,
+    gcs_endpoint: str,
+    gcs_bucket: storage.Bucket,
+    pinned: manifest.Manifest,
+    put_mirrored: conftest.PutMirrored,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert gcs_bucket.name is not None
+    monkeypatch.setattr(build.tempfile, 'tempdir', str(tmp_path))
+    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
+    put_mirrored(pinned.assembly('ncbi-grch37').object('genome'), _FASTA)
+    genome = _genome(pinned, gcs_bucket)
+    upload_started = threading.Event()
+    abandon_fired = threading.Event()
+    real_popen = subprocess.Popen
+    real_abandon_call = build.Abandon.__call__
+
+    def notify_abandon(abandon: build.Abandon) -> None:
+        real_abandon_call(abandon)
+        abandon_fired.set()
+
+    def popen(
+        command: Sequence[str],
+        *,
+        stdout: TextIO | None = None,
+        stderr: int | None = None,
+        text: bool = True,
+        errors: str | None = None,
+    ) -> subprocess.Popen[str]:
+        if 'GCF_1.25_GRCh37' in ' '.join(command):
+            assert upload_started.wait(timeout=10)
+            raise RuntimeError('unexpected bug in grch37')
+        return real_popen(command, stdout=stdout, stderr=stderr, text=text, errors=errors)
+
+    def pause_first_upload(method: str, _path: str, body: bytes) -> int | None:
+        if method == 'POST' and genome.prefix.encode() in body and not upload_started.is_set():
+            upload_started.set()
+            assert abandon_fired.wait(timeout=10)
+        return None
+
+    monkeypatch.setattr(build.Abandon, '__call__', notify_abandon)
+    monkeypatch.setattr(build.subprocess, 'Popen', popen)
+    with (
+        _gcs_proxy(gcs_endpoint, gcs_bucket.name, on_request=pause_first_upload) as proxied_bucket,
+        pytest.raises(RuntimeError, match='unexpected bug in grch37'),
+    ):
+        build.build_all(pinned, bucket=proxied_bucket, dry_run=False)
+
+    assert build.exists(gcs_bucket, genome)
 
 
 def test_a_stopped_pass_does_not_wait_out_the_uploads_begun(
-    gcs_bucket: storage.Bucket, pinned: manifest.Manifest, monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+    tmp_path: pathlib.Path,
+    gcs_endpoint: str,
+    gcs_bucket: storage.Bucket,
+    pinned: manifest.Manifest,
+    put_mirrored: conftest.PutMirrored,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    reached, release = threading.Event(), threading.Event()
-    seen: list[bool] = []
-
-    def make(planned: build.Planned, *, abandon: build.Abandon, **_: object) -> bool:
-        if planned.label == 'ncbi-grch38 genome':
-            reached.set()
-            release.wait(timeout=10)
-            seen.append(abandon._set.is_set())
-        return False
-
-    def stop(*_: object, **__: object) -> None:
-        reached.wait(timeout=10)
-        raise _Stop
-
-    monkeypatch.setattr(build, '_make', make)
+    assert gcs_bucket.name is not None
     monkeypatch.setattr(build.tempfile, 'tempdir', str(tmp_path))
-    monkeypatch.setattr(build.concurrent.futures, 'wait', stop)
-    try:
-        with pytest.raises(_Stop):
-            build.build_all(pinned, bucket=gcs_bucket, dry_run=True)
-        assert seen == []  # returned with the upload still in progress
-    finally:
-        release.set()
-    deadline = time.monotonic() + 10
-    while not seen and time.monotonic() < deadline:
-        time.sleep(0.05)
-    assert seen == [True]
+    put_mirrored(pinned.assembly('ncbi-grch38').object('genome'), _FASTA)
+    genome = _genome(pinned, gcs_bucket)
+    sigterm_sent = threading.Event()
+    release_upload = threading.Event()
+    work_cleaned = threading.Event()
+    worker_threads: list[threading.Thread] = []
+    real_rmtree = shutil.rmtree
+
+    def tracked_rmtree(path: str | os.PathLike[str], *, ignore_errors: bool = False) -> None:
+        real_rmtree(path, ignore_errors=ignore_errors)
+        worker_threads.append(threading.current_thread())
+        work_cleaned.set()
+
+    def stop_on_upload(method: str, _path: str, body: bytes) -> int | None:
+        if method == 'POST' and genome.prefix.encode() in body:
+            if not sigterm_sent.is_set():
+                sigterm_sent.set()
+                os.kill(os.getpid(), signal.SIGTERM)
+            release_upload.wait(timeout=10)
+            return 403
+        return None
+
+    monkeypatch.setattr(build.shutil, 'rmtree', tracked_rmtree)
+    with _gcs_proxy(gcs_endpoint, gcs_bucket.name, on_request=stop_on_upload) as proxied_bucket:
+        try:
+            with pytest.raises(job.Stopped), job.stoppable():
+                build.build_all(pinned, bucket=proxied_bucket, dry_run=False)
+            assert not work_cleaned.is_set()
+            assert not build.exists(gcs_bucket, genome)
+        finally:
+            release_upload.set()
+            assert work_cleaned.wait(timeout=10)
+            for worker in worker_threads:
+                worker.join(timeout=10)
 
 
 def test_an_abandoned_pass_starts_no_more_builder_steps(

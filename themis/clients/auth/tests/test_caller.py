@@ -177,50 +177,67 @@ def test_a_certificate_fetch_failure_propagates_rather_than_declining(monkeypatc
         _run(verify(_ctx(_bearer('good'))))
 
 
-def test_the_caching_transport_fetches_once_per_max_age(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cloud_run_verifier_fetches_certificates_once_per_max_age(
+    monkeypatch: pytest.MonkeyPatch, google_key: tuple[str, str]
+) -> None:
     fetches: list[str] = []
+    body = json.dumps({_KEY_ID: google_key[1]}).encode()
 
     class _Transport:
         def __call__(self, url: str, **_k: object) -> _FakeResponse:
             fetches.append(url)
-            return _FakeResponse(headers={'cache-control': 'public, max-age=600'}, data=b'{"kid": "cert"}')
+            return _FakeResponse(headers={'cache-control': 'public, max-age=600'}, data=body)
 
     monkeypatch.setattr(caller_mod.google_auth_requests, 'Request', _Transport)
-    request = caller_mod._CachingRequest()
-    first = request('https://certs')
-    second = request('https://certs')
-    assert fetches == ['https://certs']
-    assert first.data == second.data == b'{"kid": "cert"}'
+    verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
+    token = _id_token(google_key, audience=_AUDIENCE)
+
+    assert _run(verify(_ctx(_bearer(token)))) == 'sa@x'
+    assert _run(verify(_ctx(_bearer(token)))) == 'sa@x'
+    assert len(fetches) == 1
 
 
-def test_the_caching_transport_refetches_once_the_max_age_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cloud_run_verifier_refetches_certificates_once_the_max_age_passes(
+    monkeypatch: pytest.MonkeyPatch, google_key: tuple[str, str]
+) -> None:
     fetches: list[str] = []
     clock = [1000.0]
+    body = json.dumps({_KEY_ID: google_key[1]}).encode()
 
     class _Transport:
         def __call__(self, url: str, **_k: object) -> _FakeResponse:
             fetches.append(url)
-            return _FakeResponse(headers={'cache-control': 'max-age=60'})
+            return _FakeResponse(headers={'cache-control': 'max-age=60'}, data=body)
 
     monkeypatch.setattr(caller_mod.google_auth_requests, 'Request', _Transport)
     monkeypatch.setattr(caller_mod.time, 'monotonic', lambda: clock[0])
-    request = caller_mod._CachingRequest()
-    request('https://certs')
+    verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
+    token = _id_token(google_key, audience=_AUDIENCE)
+
+    assert _run(verify(_ctx(_bearer(token)))) == 'sa@x'
     clock[0] += 61
-    request('https://certs')
-    assert fetches == ['https://certs', 'https://certs']
+    assert _run(verify(_ctx(_bearer(token)))) == 'sa@x'
+    assert len(fetches) == 2
 
 
-def test_the_caching_transport_does_not_cache_a_failed_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cloud_run_verifier_does_not_cache_a_failed_certificate_fetch(
+    monkeypatch: pytest.MonkeyPatch, google_key: tuple[str, str]
+) -> None:
     fetches: list[str] = []
+    body = json.dumps({_KEY_ID: google_key[1]}).encode()
 
     class _Transport:
         def __call__(self, url: str, **_k: object) -> _FakeResponse:
             fetches.append(url)
-            return _FakeResponse(status=503)
+            if len(fetches) == 1:
+                return _FakeResponse(status=503)
+            return _FakeResponse(headers={'cache-control': 'max-age=600'}, data=body)
 
     monkeypatch.setattr(caller_mod.google_auth_requests, 'Request', _Transport)
-    request = caller_mod._CachingRequest()
-    request('https://certs')
-    request('https://certs')
-    assert fetches == ['https://certs', 'https://certs']
+    verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
+    token = _id_token(google_key, audience=_AUDIENCE)
+
+    with pytest.raises(google_auth_exceptions.TransportError):
+        _run(verify(_ctx(_bearer(token))))
+    assert _run(verify(_ctx(_bearer(token)))) == 'sa@x'
+    assert len(fetches) == 2

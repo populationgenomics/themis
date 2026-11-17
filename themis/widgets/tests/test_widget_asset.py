@@ -25,12 +25,11 @@ from google.protobuf import (
     descriptor_pool,
     json_format,
     message,
-    message_factory,
     timestamp_pb2,
 )
 
 from themis.widgets import asset
-from themis.widgets.models import checklist_pb2, svcv4_classification_pb2
+from themis.widgets.models import checklist_pb2, svcv4_classification_pb2, widget_pb2
 from themis.widgets.tests import case_files, ownership_cases
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -233,15 +232,18 @@ def test_every_type_the_widget_option_marks_is_in_the_widgets_package() -> None:
 
 
 # A payload whose map values, group bodies and closed enum hold fields of their own: the wire types are checked beneath
-# each as upb reads them. In a pool of its own, so no other test sees its types.
+# each as upb reads them, through the public `parse` and `decode` entry points.
+_NESTED_TYPE = 'themis.widgets.cases.nested.Holder'
 _NESTED = {
     'name': 'themis/widgets/cases/nested.proto',
     'package': 'themis.widgets.cases.nested',
+    'dependency': [widget_pb2.DESCRIPTOR.name],
     'syntax': 'proto2',
     'enumType': [{'name': 'Kind', 'value': [{'name': 'KIND_A', 'number': 0}, {'name': 'KIND_B', 'number': 1}]}],
     'messageType': [
         {
             'name': 'Holder',
+            'options': {'[themis.widgets.models.widget]': True},
             'field': [
                 {
                     'name': 'by_name',
@@ -292,12 +294,13 @@ _NESTED = {
 }
 
 
-def _nested(value: bytes) -> message.Message:
-    pool = descriptor_pool.DescriptorPool()
-    pool.Add(json_format.ParseDict(_NESTED, descriptor_pb2.FileDescriptorProto()))
-    holder = message_factory.GetMessageClass(pool.FindMessageTypeByName('themis.widgets.cases.nested.Holder'))()
-    holder.ParseFromString(value)
-    return holder
+def _nested_asset(value: bytes) -> bytes:
+    pool = descriptor_pool.Default()
+    try:
+        pool.FindFileByName(str(_NESTED['name']))
+    except KeyError:
+        pool.Add(json_format.ParseDict(_NESTED, descriptor_pb2.FileDescriptorProto()))
+    return any_pb2.Any(type_url=f'type.googleapis.com/{_NESTED_TYPE}', value=value).SerializeToString()
 
 
 def _entry(body: bytes) -> bytes:
@@ -306,34 +309,47 @@ def _entry(body: bytes) -> bytes:
 
 
 @pytest.mark.parametrize(
-    ('value', 'problem'),
+    'value',
     [
-        (_entry(b'\x0a\x01k\x12\x02\x08\x01'), None),
-        (_entry(b'\x0a\x01k\x12\x02\x0a\x00'), 'Holder.by_name carries its field done in a wire type'),
-        (_entry(b'\x0a\x01k\x10\x05'), 'Holder carries an entry of its map by_name'),
-        (_entry(b'\x08\x01\x12\x00'), 'Holder carries an entry of its map by_name'),
-        (_entry(b'\x0a\x01k\x12\x02\x08\x01\x18\x01'), 'Holder carries an entry of its map by_name'),
-        (b'\x13\x18\x01\x14', None),
-        (b'\x13\x1a\x00\x14', 'Holder.part carries its field done in a wire type'),
-        (b'\x20\x07', None),
-        (b'\x28\x07', 'Holder carries its field label in a wire type'),
+        _entry(b'\x0a\x01k\x12\x02\x08\x01'),
+        b'\x13\x18\x01\x14',
+        b'\x20\x07',
     ],
     ids=[
         "a map value's field in its own wire type",
+        "a group's field in its own wire type",
+        'a closed enum value this build does not know',
+    ],
+)
+def test_fields_in_their_own_wire_types_parse_and_decode(value: bytes) -> None:
+    raw = _nested_asset(value)
+    parsed = asset.parse(raw)
+    assert parsed is not None
+    assert asset.decode(raw) == parsed
+
+
+@pytest.mark.parametrize(
+    ('value', 'problem'),
+    [
+        (_entry(b'\x0a\x01k\x12\x02\x0a\x00'), f'{_NESTED_TYPE}.by_name carries its field done in a wire type'),
+        (_entry(b'\x0a\x01k\x10\x05'), f'{_NESTED_TYPE} carries an entry of its map by_name'),
+        (_entry(b'\x08\x01\x12\x00'), f'{_NESTED_TYPE} carries an entry of its map by_name'),
+        (_entry(b'\x0a\x01k\x12\x02\x08\x01\x18\x01'), f'{_NESTED_TYPE} carries an entry of its map by_name'),
+        (b'\x13\x1a\x00\x14', f'{_NESTED_TYPE}.part carries its field done in a wire type'),
+        (b'\x28\x07', f'{_NESTED_TYPE} carries its field label in a wire type'),
+    ],
+    ids=[
         "a map value's field in another",
         "a map entry's value in another wire type",
         "a map entry's key in another wire type",
         'a map entry holding a third field',
-        "a group's field in its own wire type",
         "a group's field in another",
-        'a closed enum value this build does not know',
         'a string written as a varint',
     ],
 )
-def test_a_known_field_is_refused_only_in_a_wire_type_other_than_its_own(value: bytes, problem: str | None) -> None:
-    holder = _nested(value)
-    if problem is None:
-        asset._require_wire_types(holder, 'Holder')
-    else:
-        with pytest.raises(asset.AssetError, match=re.escape(problem)):
-            asset._require_wire_types(holder, 'Holder')
+def test_a_known_field_in_another_wire_type_is_refused_by_parse_and_decode(value: bytes, problem: str) -> None:
+    raw = _nested_asset(value)
+    with pytest.raises(asset.AssetError, match=re.escape(problem)):
+        asset.parse(raw)
+    with pytest.raises(asset.AssetError, match=re.escape(problem)):
+        asset.decode(raw)

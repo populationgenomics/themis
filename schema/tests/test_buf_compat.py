@@ -6,8 +6,9 @@ and the verdict it produces committed beside it as ``expected.txt``. The gate's 
 *is* its product, so a golden makes a change to it reviewable in a diff.
 
 The two Docker-gated tests outside that set assert properties of the repo's own
-committed module, which is not an a/b scenario. The two without Docker cover the tool
-failing rather than reporting — a condition no module pair can produce. The rule on who
+committed module via ``main`` and ``compare``. The non-Docker tests cover CLI argument
+and environment guards (missing Docker binary, unresolvable baseline ref) and the tool
+failing rather than reporting — conditions no module pair can produce. The rule on who
 writes a released widget field has one case in the set, and is held to each kind of
 change without Docker, over descriptor sets built here.
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import pathlib
 import shutil
+import sys
 import tempfile
 from collections.abc import Sequence
 
@@ -55,14 +57,28 @@ def test_compat_case(case: str) -> None:
 
 
 @pytest.mark.usefixtures('docker_daemon')
-def test_committed_protos_resolve_their_declared_deps() -> None:
-    """The committed module builds — a proto importing `buf/validate` compiles."""
-    with tempfile.TemporaryDirectory(dir=buf_compat._REPO_ROOT, prefix='.buf-') as tmp:
-        scratch = pathlib.Path(tmp)
-        buf_compat._materialise(scratch / 'new', None)
-        buf_compat._materialise(scratch / 'base', None)
-        outcome = buf_compat.compare(scratch, _BASELINE)
-    assert outcome.failure is None, outcome.lines
+def test_main_passes_against_a_resolvable_baseline_ref(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CLI resolves ``--baseline-ref``, materialises both sides, and builds the committed module."""
+    monkeypatch.setattr(sys, 'argv', ['buf_compat', '--baseline-ref', 'HEAD'])
+    assert buf_compat.main() == 0
+    assert 'vs HEAD: no incompatibility' in capsys.readouterr().out
+
+
+def test_main_fails_loud_on_an_unresolvable_baseline_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A bad baseline ref must fail loud, not degrade to a silent "no baseline" pass.
+    monkeypatch.setattr(buf_compat.shutil, 'which', lambda _cmd: '/usr/bin/docker')
+    monkeypatch.setattr(sys, 'argv', ['buf_compat', '--baseline-ref', 'definitely-not-a-real-ref-zzz'])
+    with pytest.raises(SystemExit, match='does not resolve to a commit'):
+        buf_compat.main()
+
+
+def test_main_fails_loud_when_docker_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(buf_compat.shutil, 'which', lambda _cmd: None)
+    monkeypatch.setattr(sys, 'argv', ['buf_compat', '--baseline-ref', 'HEAD'])
+    with pytest.raises(SystemExit, match='docker not found'):
+        buf_compat.main()
 
 
 @pytest.mark.usefixtures('docker_daemon')

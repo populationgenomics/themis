@@ -63,22 +63,27 @@ def test_calls_accumulate_and_cache_counts_the_response_omits_are_zero() -> None
 
 
 @pytest.mark.parametrize(
-    ('usage', 'expected'),
+    ('usage', 'expected_prompt_length'),
     [
-        pytest.param(_Usage(100_000, 1), names.PromptLength.UP_TO_100K, id='at-the-boundary'),
-        pytest.param(_Usage(100_001, 1), names.PromptLength.OVER_100K, id='one-past-the-boundary'),
+        pytest.param(_Usage(100_000, 1), 'upTo100k', id='at-the-boundary'),
+        pytest.param(_Usage(100_001, 1), 'over100k', id='one-past-the-boundary'),
         # The prompt is everything the request sent: a cached prefix counts whether it was read or written.
-        pytest.param(_Usage(1, 1, cache_read_input_tokens=100_000), names.PromptLength.OVER_100K, id='cache-read'),
-        pytest.param(_Usage(1, 1, cache_creation_input_tokens=100_000), names.PromptLength.OVER_100K, id='cache-write'),
-        pytest.param(_Usage(50_000, 1, 25_000, 25_000), names.PromptLength.UP_TO_100K, id='all-three-at-the-boundary'),
+        pytest.param(_Usage(1, 1, cache_read_input_tokens=100_000), 'over100k', id='cache-read'),
+        pytest.param(_Usage(1, 1, cache_creation_input_tokens=100_000), 'over100k', id='cache-write'),
+        pytest.param(_Usage(50_000, 1, 25_000, 25_000), 'upTo100k', id='all-three-at-the-boundary'),
         # The answer is not part of the prompt, however long.
-        pytest.param(_Usage(1, 500_000), names.PromptLength.UP_TO_100K, id='long-output'),
+        pytest.param(_Usage(1, 500_000), 'upTo100k', id='long-output'),
     ],
 )
 def test_a_requests_prompt_length_is_its_input_and_cached_tokens_against_the_boundary(
-    usage: _Usage, expected: names.PromptLength
+    usage: _Usage, expected_prompt_length: str
 ) -> None:
-    assert request_tokens.prompt_length(usage) is expected
+    counter, reader = _counter()
+
+    counter.add(usage, model='m', stop_reason='end_turn')
+
+    recorded = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
+    assert {dict(labels)['prompt_length'] for labels in recorded} == {expected_prompt_length}
 
 
 def test_each_call_counts_all_four_components_under_its_own_prompt_length() -> None:

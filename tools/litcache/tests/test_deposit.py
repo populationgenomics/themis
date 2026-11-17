@@ -1,10 +1,8 @@
 """Tests for the supplied-paper deposit command (`tools.litcache.deposit`).
 
-The fail-loud helpers (id resolution, licence basis, PDF probe, metadata build) run pure — no
-network, no container. The end-to-end deposit runs against a real fake-gcs-server bucket (the
-writer's own fixture) and a throwaway Postgres (the crosswalk's own pattern), so the
-content-addressed write and the lookup-before-mint idempotence are exercised, not mocked. Both
-integration paths are Docker-gated and skip without a daemon.
+CLI validation refusals are exercised through ``deposit.main()`` before any cloud client opens.
+End-to-end deposits run through ``deposit.main()`` and ``deposit.deposit()`` against a real
+``fake-gcs-server`` bucket and a throwaway Postgres instance.
 """
 
 from __future__ import annotations
@@ -16,16 +14,19 @@ import io
 import json
 import pathlib
 import typing
+import uuid
+from collections.abc import Callable
 
 import pg8000.dbapi
 import pypdfium2
 import pytest
 from google.api_core import exceptions as api_exceptions
+from google.auth import credentials as google_credentials
 from google.cloud import storage as gcs
 from google.cloud import tasks_v2
 from google.protobuf import json_format
 
-from themis.litcache import crosswalk, enqueue, sourced_metadata, writer
+from themis.litcache import crosswalk, enqueue, metadata_fields, sourced_metadata, writer
 from themis.litcache.models import litcache_pb2, work_pb2
 from tools.litcache import deposit
 
@@ -61,6 +62,14 @@ class _TasksClient:
         return task
 
 
+class _TrackingPool:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 _TARGET = enqueue.ConversionTarget(
     queue_path='projects/p/locations/l/queues/themis-convert-bulk',
     worker_url='https://worker.example',
@@ -69,7 +78,9 @@ _TARGET = enqueue.ConversionTarget(
 
 
 def _metadata(title: str = _TITLE) -> bytes:
-    return deposit._build_metadata(title=title, metadata_file=None)
+    source = litcache_pb2.MetadataSource(crossref_json=json.dumps({'title': [title]}))
+    sourced = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
+    return sourced_metadata.to_canonical_bytes(sourced)
 
 
 def _deposit(
@@ -95,128 +106,158 @@ def _deposit(
     )
 
 
-# --- Pure fail-loud paths -------------------------------------------------------------------
+def _wire_main_backends(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_client: gcs.Client,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+) -> tuple[_TasksClient, _TrackingPool, list[tuple[str, str, str]]]:
+    tasks = _TasksClient()
+    pool = _TrackingPool()
+    sql_dials: list[tuple[str, str, str]] = []
+
+    def dial_sql(_pool: object, *, connection_name: str, database: str, db_user: str) -> pg8000.dbapi.Connection:
+        sql_dials.append((connection_name, database, db_user))
+        return crosswalk_connect()
+
+    monkeypatch.setattr(deposit.gcs, 'Client', lambda project: gcs_client)  # noqa: ARG005
+    monkeypatch.setattr(deposit.clu, 'impersonated', lambda _sa: google_credentials.AnonymousCredentials())
+    monkeypatch.setattr(
+        deposit.clu, 'run_service_url', lambda service, *, project: f'https://{service}.{project}.run.app'
+    )
+    monkeypatch.setattr(deposit.tasks_v2, 'CloudTasksClient', lambda **_kwargs: tasks)
+    monkeypatch.setattr(deposit.connector, 'Connector', lambda **_kwargs: pool)
+    monkeypatch.setattr(deposit.sql, 'iam_connect', dial_sql)
+    return tasks, pool, sql_dials
 
 
-def test_resolve_ids_requires_at_least_one() -> None:
-    with pytest.raises(deposit.DepositError, match='at least one'):
-        deposit._resolve_ids([])
-
-
-def test_resolve_ids_rejects_an_unscheme_qualified_id() -> None:
-    with pytest.raises(deposit.DepositError, match='scheme-qualified'):
-        deposit._resolve_ids(['10.1016/j.ajhg.2021.03.001'])
-
-
-def test_resolve_ids_rejects_an_unrecognised_id() -> None:
-    with pytest.raises(deposit.DepositError, match='not a recognised'):
-        deposit._resolve_ids(['doi:not-a-doi'])
-
-
-def test_resolve_ids_rejects_a_scheme_the_value_contradicts() -> None:
-    # A PMCID value under the pmid scheme: identity classifies it as pmcid, so the claim would be wrong.
-    with pytest.raises(deposit.DepositError, match='recognised as pmcid'):
-        deposit._resolve_ids(['pmid:PMC7'])
-
-
-def test_resolve_ids_yields_identity_over_recognised_ids() -> None:
-    ident = deposit._resolve_ids(['doi:10.1016/j.ajhg.2021.03.001', 'pmid:33811808'])
-    assert set(ident.mint_keys) == {'doi:10.1016/j.ajhg.2021.03.001', 'pmid:33811808'}
-    # DOI outranks PMID for the claim key (identity's precedence).
-    assert ident.claim_key == 'doi:10.1016/j.ajhg.2021.03.001'
+# --- CLI validation refusals via deposit.main() ---------------------------------------------
 
 
 @pytest.mark.parametrize(
-    ('name', 'expected'),
+    ('extra_args', 'expected_reason'),
     [
-        ('ARTIFACT', litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT),
-        ('ASSERTED', litcache_pb2.LicenceBasis.LICENCE_BASIS_ASSERTED),
+        (
+            ['--licence', _LICENCE, '--licence-basis', 'ASSERTED', '--title', _TITLE],
+            'at least one --id is required',
+        ),
+        (
+            ['--id', 'doi:10.1/abc', '--licence', '   ', '--licence-basis', 'ASSERTED', '--title', _TITLE],
+            '--licence is required',
+        ),
+        (
+            ['--id', 'doi:10.1/abc', '--licence', _LICENCE, '--title', _TITLE],
+            '--licence-basis is required',
+        ),
+        (
+            ['--id', 'doi:10.1/abc', '--licence', _LICENCE, '--licence-basis', 'PUBLIC_DOMAIN', '--title', _TITLE],
+            'ARTIFACT or ASSERTED',
+        ),
+        (
+            ['--id', 'doi:10.1/abc', '--licence', _LICENCE, '--licence-basis', 'ASSERTED', '--title', ''],
+            'no title',
+        ),
+        (
+            ['--id', 'doi:10.1/abc', '--licence', _LICENCE, '--licence-basis', 'ASSERTED'],
+            'exactly one',
+        ),
     ],
 )
-def test_licence_basis_maps_each_value(name: str, expected: litcache_pb2.LicenceBasis) -> None:
-    assert deposit._licence_basis(name) == expected
+def test_main_refuses_invalid_cli_inputs(
+    tmp_path: pathlib.Path, extra_args: list[str], expected_reason: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pdf_path = tmp_path / 'paper.pdf'
+    pdf_path.write_bytes(b'%PDF-stub')
+
+    code = deposit.main([str(pdf_path), '--project', 'cpg-themis-test', *extra_args])
+
+    assert code == 1
+    assert expected_reason in capsys.readouterr().err
 
 
-def test_licence_basis_rejects_an_unknown_value() -> None:
-    with pytest.raises(deposit.DepositError, match='ARTIFACT or ASSERTED'):
-        deposit._licence_basis('PUBLIC_DOMAIN')
+def test_main_refuses_both_title_and_metadata_file(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    pdf_path = tmp_path / 'paper.pdf'
+    pdf_path.write_bytes(b'%PDF-stub')
+
+    code = deposit.main(
+        [
+            str(pdf_path),
+            '--project',
+            'cpg-themis-test',
+            '--id',
+            'doi:10.1/abc',
+            '--licence',
+            _LICENCE,
+            '--licence-basis',
+            'ASSERTED',
+            '--title',
+            _TITLE,
+            '--metadata-file',
+            str(tmp_path / 'm.json'),
+        ]
+    )
+
+    assert code == 1
+    assert 'exactly one' in capsys.readouterr().err
 
 
-def test_pdf_probe_rejects_a_non_pdf() -> None:
-    with pytest.raises(deposit.DepositError, match='not a PDF'):
-        deposit._pdf_has_text_layer(b'this is not a pdf')
+def test_main_refuses_a_missing_pdf_path(tmp_path: pathlib.Path, capsys: pytest.CaptureFixture[str]) -> None:
+    code = deposit.main(
+        [
+            str(tmp_path / 'absent.pdf'),
+            '--project',
+            'cpg-themis-test',
+            '--id',
+            'doi:10.1/abc',
+            '--licence',
+            _LICENCE,
+            '--licence-basis',
+            'ASSERTED',
+            '--title',
+            _TITLE,
+        ]
+    )
+
+    assert code == 1
+    assert 'no such PDF' in capsys.readouterr().err
 
 
-def test_pdf_probe_reads_a_loadable_pdf() -> None:
-    # A page with no drawn text has no recoverable text layer; the point is it loads and reports.
-    assert deposit._pdf_has_text_layer(_pdf_bytes()) is False
+@pytest.mark.parametrize(
+    ('filename', 'content', 'expected_reason'),
+    [
+        ('empty.json', '{}', 'no index record'),
+        ('meta.txt', 'anything', '.json or .pb'),
+    ],
+)
+def test_main_refuses_bad_metadata_files(
+    tmp_path: pathlib.Path,
+    filename: str,
+    content: str,
+    expected_reason: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pdf_path = tmp_path / 'paper.pdf'
+    pdf_path.write_bytes(b'%PDF-stub')
+    meta_path = tmp_path / filename
+    meta_path.write_text(content, 'utf-8')
 
+    code = deposit.main(
+        [
+            str(pdf_path),
+            '--project',
+            'cpg-themis-test',
+            '--id',
+            'doi:10.1/abc',
+            '--licence',
+            _LICENCE,
+            '--licence-basis',
+            'ASSERTED',
+            '--metadata-file',
+            str(meta_path),
+        ]
+    )
 
-def test_resolve_ids_rejects_a_value_normalisation_would_alter() -> None:
-    # A DOI ending in .pdf: identity's seed-key normaliser would strip the suffix and mint a
-    # truncated id; the deposit refuses rather than silently claim the wrong DOI.
-    with pytest.raises(deposit.DepositError, match='altered by normalisation'):
-        deposit._resolve_ids(['doi:10.1/abc.pdf'])
-
-
-@pytest.mark.parametrize('ids', [['doi:10.1/a', 'doi:10.2/b'], ['doi:10.1/ABC', 'doi:10.1/abc']])
-def test_manifest_ids_refuse_two_ids_of_one_scheme(ids: list[str]) -> None:
-    with pytest.raises(deposit.DepositError, match='two doi ids'):
-        deposit._manifest_external_ids(deposit._resolve_ids(ids))
-
-
-def test_build_metadata_from_title_names_the_paper() -> None:
-    assert sourced_metadata.read_metadata(_metadata('The paper title')).title == 'The paper title'
-
-
-def test_build_metadata_rejects_an_empty_title() -> None:
-    with pytest.raises(deposit.DepositError, match='no title'):
-        deposit._build_metadata(title='', metadata_file=None)
-
-
-def test_build_metadata_requires_exactly_one_of_title_or_file(tmp_path: pathlib.Path) -> None:
-    with pytest.raises(deposit.DepositError, match='exactly one'):
-        deposit._build_metadata(title=None, metadata_file=None)
-    with pytest.raises(deposit.DepositError, match='exactly one'):
-        deposit._build_metadata(title='t', metadata_file=tmp_path / 'm.json')
-
-
-@pytest.mark.parametrize('suffix', ['.json', '.pb'])
-def test_build_metadata_fills_from_a_metadata_file(tmp_path: pathlib.Path, suffix: str) -> None:
-    work = {
-        'title': ['The <i>BRCA1</i> gene'],
-        'author': [{'given': 'Jane', 'family': 'Doe'}],
-        'issued': {'date-parts': [[2020]]},
-    }
-    source = litcache_pb2.MetadataSource(crossref_json=json.dumps(work))
-    path = tmp_path / f'meta{suffix}'
-    if suffix == '.json':
-        path.write_text(json_format.MessageToJson(source), 'utf-8')
-    else:
-        path.write_bytes(source.SerializeToString())
-    metadata = sourced_metadata.read_metadata(deposit._build_metadata(title=None, metadata_file=path))
-    assert metadata.title == 'The BRCA1 gene'
-    assert [a.name for a in metadata.authors] == ['Jane Doe']
-    assert metadata.year == '2020'
-
-
-def test_build_metadata_rejects_a_source_with_no_record(tmp_path: pathlib.Path) -> None:
-    empty = tmp_path / 'empty.json'
-    empty.write_text('{}', 'utf-8')
-    with pytest.raises(deposit.DepositError, match='no index record'):
-        deposit._build_metadata(title=None, metadata_file=empty)
-
-
-def test_build_metadata_rejects_an_unknown_suffix(tmp_path: pathlib.Path) -> None:
-    weird = tmp_path / 'meta.txt'
-    weird.write_text('anything', 'utf-8')
-    with pytest.raises(deposit.DepositError, match=r'\.json or \.pb'):
-        deposit._build_metadata(title=None, metadata_file=weird)
-
-
-def test_the_default_bucket_is_the_project_corpus() -> None:
-    args = deposit._parse_args(['paper.pdf', '--project', 'cpg-themis-prod'])
-    assert args.bucket == 'cpg-themis-prod-fulltext'
+    assert code == 1
+    assert expected_reason in capsys.readouterr().err
 
 
 # --- End-to-end deposit (Docker-gated: fake-gcs-server bucket + throwaway Postgres) ---------
@@ -235,6 +276,190 @@ def _crosswalk_rows(conn: pg8000.dbapi.Connection) -> dict[str, str]:
     with contextlib.closing(conn.cursor()) as cur:
         cur.execute('SELECT external_id, doc_id FROM litcache.crosswalk')
         return dict(cur.fetchall())
+
+
+def test_main_defaults_bucket_to_project_corpus_and_builds_title_metadata(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    gcs_client: gcs.Client,
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+) -> None:
+    project = f'themis-test-{uuid.uuid4().hex[:8]}'
+    bucket = gcs_client.bucket(f'{project}-fulltext')
+    bucket.create()
+    pdf_path = tmp_path / 'paper.pdf'
+    pdf_path.write_bytes(_pdf_bytes())
+    tasks, pool, sql_dials = _wire_main_backends(monkeypatch, gcs_client, crosswalk_connect)
+
+    code = deposit.main(
+        [
+            str(pdf_path),
+            '--project',
+            project,
+            '--id',
+            'doi:10.1016/j.ajhg.2021.03.001',
+            '--licence',
+            _LICENCE,
+            '--licence-basis',
+            'ASSERTED',
+            '--title',
+            'The paper title',
+        ]
+    )
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert pool.closed is True
+    assert sql_dials == [(f'{project}:australia-southeast1:themis-sql', 'themis', f'themis-clu@{project}.iam')]
+    doc_id = _crosswalk_rows(conn)['doi:10.1016/j.ajhg.2021.03.001']
+    assert tasks.tasks[0].name.startswith(
+        f'projects/{project}/locations/australia-southeast1/queues/themis-convert-bulk/tasks/{doc_id}--main_text--gen-'
+    )
+    assert f'gs://{project}-fulltext/papers/{doc_id}/manifest.pb' in out
+    stored_meta = sourced_metadata.read_metadata(bucket.blob(writer.metadata_path(doc_id)).download_as_bytes())
+    assert stored_meta.title == 'The paper title'
+
+
+@pytest.mark.parametrize(
+    ('basis_flag', 'expected_basis'),
+    [
+        ('ARTIFACT', litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT),
+        ('ASSERTED', litcache_pb2.LicenceBasis.LICENCE_BASIS_ASSERTED),
+    ],
+)
+def test_main_records_requested_licence_basis(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_client: gcs.Client,
+    gcs_bucket: gcs.Bucket,
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+    basis_flag: str,
+    expected_basis: litcache_pb2.LicenceBasis,
+) -> None:
+    assert gcs_bucket.name is not None
+    pdf_path = tmp_path / 'paper.pdf'
+    pdf_path.write_bytes(_pdf_bytes())
+    _wire_main_backends(monkeypatch, gcs_client, crosswalk_connect)
+
+    code = deposit.main(
+        [
+            str(pdf_path),
+            '--project',
+            'cpg-themis-test',
+            '--bucket',
+            gcs_bucket.name,
+            '--id',
+            'doi:10.1/basis',
+            '--licence',
+            _LICENCE,
+            '--licence-basis',
+            basis_flag,
+            '--title',
+            _TITLE,
+        ]
+    )
+
+    assert code == 0
+    doc_id = _crosswalk_rows(conn)['doi:10.1/basis']
+    manifest = litcache_pb2.Manifest.FromString(gcs_bucket.blob(writer.manifest_path(doc_id)).download_as_bytes())
+    assert manifest.sources[0].licence_basis == expected_basis
+
+
+_CROSSREF_SOURCE = litcache_pb2.MetadataSource(
+    crossref_json=json.dumps(
+        {
+            'title': ['The <i>BRCA1</i> gene'],
+            'author': [{'given': 'Jane', 'family': 'Doe'}],
+            'issued': {'date-parts': [[2020]]},
+        }
+    )
+)
+
+
+@pytest.mark.parametrize(
+    ('filename', 'meta_bytes'),
+    [
+        ('meta.json', json_format.MessageToJson(_CROSSREF_SOURCE).encode('utf-8')),
+        ('meta.pb', _CROSSREF_SOURCE.SerializeToString()),
+    ],
+)
+def test_main_fills_metadata_from_metadata_file(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_client: gcs.Client,
+    gcs_bucket: gcs.Bucket,
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+    filename: str,
+    meta_bytes: bytes,
+) -> None:
+    assert gcs_bucket.name is not None
+    meta_path = tmp_path / filename
+    meta_path.write_bytes(meta_bytes)
+    pdf_path = tmp_path / 'paper.pdf'
+    pdf_path.write_bytes(_pdf_bytes())
+    _wire_main_backends(monkeypatch, gcs_client, crosswalk_connect)
+
+    code = deposit.main(
+        [
+            str(pdf_path),
+            '--project',
+            'cpg-themis-test',
+            '--bucket',
+            gcs_bucket.name,
+            '--id',
+            'doi:10.1/brca1',
+            '--licence',
+            _LICENCE,
+            '--licence-basis',
+            'ASSERTED',
+            '--metadata-file',
+            str(meta_path),
+        ]
+    )
+
+    assert code == 0
+    doc_id = _crosswalk_rows(conn)['doi:10.1/brca1']
+    stored = sourced_metadata.read_metadata(gcs_bucket.blob(writer.metadata_path(doc_id)).download_as_bytes())
+    assert stored.title == 'The BRCA1 gene'
+    assert [a.name for a in stored.authors] == ['Jane Doe']
+    assert stored.year == '2020'
+
+
+@pytest.mark.parametrize(
+    ('ids', 'reason'),
+    [
+        ([], 'at least one'),
+        (['10.1016/j.ajhg.2021.03.001'], 'scheme-qualified'),
+        (['doi:not-a-doi'], 'not a recognised'),
+        (['pmid:PMC7'], 'recognised as pmcid'),
+        (['doi:10.1/abc.pdf'], 'altered by normalisation'),
+    ],
+)
+def test_deposit_refuses_invalid_external_ids_before_minting(
+    gcs_bucket: gcs.Bucket, conn: pg8000.dbapi.Connection, ids: list[str], reason: str
+) -> None:
+    with pytest.raises(deposit.DepositError, match=reason):
+        _deposit(gcs_bucket, conn, ids=ids, pdf=_pdf_bytes())
+    assert _crosswalk_rows(conn) == {}
+
+
+@pytest.mark.parametrize(
+    ('pdf_data', 'reason'),
+    [
+        (b'this is not a pdf', 'not a PDF'),
+        (b'%PDF-1.7\nnot loadable', 'not a loadable PDF'),
+    ],
+)
+def test_deposit_refuses_unreadable_pdf_before_minting(
+    gcs_bucket: gcs.Bucket, conn: pg8000.dbapi.Connection, pdf_data: bytes, reason: str
+) -> None:
+    with pytest.raises(deposit.DepositError, match=reason):
+        _deposit(gcs_bucket, conn, ids=['doi:10.1/abc'], pdf=pdf_data)
+    assert _crosswalk_rows(conn) == {}
 
 
 def test_deposit_writes_the_paper_directory(gcs_bucket: gcs.Bucket, conn: pg8000.dbapi.Connection) -> None:
@@ -299,12 +524,13 @@ def test_deposit_refuses_ids_that_bridge_two_papers(gcs_bucket: gcs.Bucket, conn
         _deposit(gcs_bucket, conn, ids=['doi:10.1/abc', 'pmid:33811808'], pdf=_pdf_bytes())
 
 
+@pytest.mark.parametrize('ids', [['doi:10.1/a', 'doi:10.2/b'], ['doi:10.1/ABC', 'doi:10.1/abc']])
 def test_deposit_refuses_two_ids_of_one_scheme_before_minting(
-    gcs_bucket: gcs.Bucket, conn: pg8000.dbapi.Connection
+    gcs_bucket: gcs.Bucket, conn: pg8000.dbapi.Connection, ids: list[str]
 ) -> None:
     with pytest.raises(deposit.DepositError, match='two doi ids'):
-        _deposit(gcs_bucket, conn, ids=['doi:10.1/a', 'doi:10.2/b'], pdf=_pdf_bytes())
-    assert not crosswalk.lookup(conn, ['doi:10.1/a', 'doi:10.2/b'])
+        _deposit(gcs_bucket, conn, ids=ids, pdf=_pdf_bytes())
+    assert _crosswalk_rows(conn) == {}
 
 
 def test_deposit_completes_an_interrupted_run(gcs_bucket: gcs.Bucket, conn: pg8000.dbapi.Connection) -> None:

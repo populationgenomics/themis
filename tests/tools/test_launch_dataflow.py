@@ -1,86 +1,233 @@
-"""Tests for the Dataflow launcher's target resolution (`tools.litcache.launch_dataflow`).
-
-Argument parsing only — submitting a job needs Dataflow. What is worth pinning is that
-naming a project moves *every* project-scoped resource with it: a flag that moved some of
-them would send a run at one deployment's instance with another's bucket.
-"""
+"""Tests for the Dataflow launcher (`tools.litcache.launch_dataflow`) through ``main()``."""
 
 from __future__ import annotations
 
-import argparse
+import dataclasses
+import uuid
 
 import pytest
+from apache_beam.options import pipeline_options
+from google.cloud import storage as gcs
 
+from themis.litcache import cloudsql, ingest_beam, openalex
 from tools.litcache import launch_dataflow
 
-_REQUIRED = ['--sdk-image', 'img', '--limit', '1']
+
+class _SubmittedError(Exception):
+    """Stops ``launch_dataflow.main`` at the ``ingest_beam.run_ingestion`` boundary."""
 
 
-def _parse(*extra: str) -> argparse.Namespace:
-    return launch_dataflow._parse_args([*_REQUIRED, *extra])
+@dataclasses.dataclass(frozen=True)
+class _CapturedSubmission:
+    run_bucket: str
+    conn_config: dict[str, str]
+    options: dict[str, object]
+    openalex_api_key: str
 
 
-def test_project_is_required() -> None:
-    with pytest.raises(SystemExit):
-        _parse()
+def _seed_source_and_scratch(
+    gcs_client: gcs.Client, *, source_name: str, scratch_name: str
+) -> tuple[gcs.Bucket, gcs.Bucket]:
+    source = gcs_client.bucket(source_name)
+    source.create()
+    source.blob('ingest/10.1_seed.pdf').upload_from_string(b'%PDF-seed')
+    scratch = gcs_client.bucket(scratch_name)
+    scratch.create()
+    return source, scratch
 
 
-def test_region_defaults() -> None:
-    args = _parse('--project', 'cpg-themis-test')
-    assert args.target.region == launch_dataflow._DEFAULT_REGION
+def _submit(monkeypatch: pytest.MonkeyPatch, gcs_client: gcs.Client, *argv: str) -> _CapturedSubmission:
+    captured: list[_CapturedSubmission] = []
 
+    def intercept_run(
+        *,
+        bucket_factory: ingest_beam.BucketFactory,
+        conn_factory: ingest_beam.ConnFactory,
+        options: pipeline_options.PipelineOptions,
+        openalex_api_key_factory: ingest_beam.ApiKeyFactory,
+        **_kwargs: object,
+    ) -> ingest_beam.IngestionRun:
+        run_bucket = bucket_factory().name
+        assert run_bucket is not None
+        assert isinstance(conn_factory, cloudsql.CrosswalkConnFactory)
+        captured.append(
+            _CapturedSubmission(
+                run_bucket=run_bucket,
+                conn_config=conn_factory.__getstate__(),
+                options=options.get_all_options(),
+                openalex_api_key=openalex_api_key_factory().value,
+            )
+        )
+        raise _SubmittedError
 
-def test_every_derived_resource_follows_the_project() -> None:
-    args = _parse('--project', 'cpg-themis-test')
-    derived = [
-        args.target.sql_connection_name,
-        args.target.ingest_sa,
-        args.target.ingest_db_user,
-        args.target.subnetwork,
-        args.scratch_bucket,
-        args.source_bucket,
-    ]
-    assert all('cpg-themis-test' in value for value in derived)
-
-
-def test_region_reaches_the_instance_and_the_subnet() -> None:
-    args = _parse('--project', 'cpg-themis-test', '--region', 'europe-west2')
-    assert 'europe-west2' in args.target.sql_connection_name
-    assert 'europe-west2' in args.target.subnetwork
-    assert launch_dataflow._DEFAULT_REGION not in args.target.subnetwork
+    monkeypatch.setattr(launch_dataflow.gcs, 'Client', lambda: gcs_client)
+    monkeypatch.setattr(
+        launch_dataflow.openalex_key, 'from_secret_manager', lambda proj: openalex.ApiKey(f'key-for-{proj}')
+    )
+    monkeypatch.setattr(ingest_beam, 'run_ingestion', intercept_run)
+    with pytest.raises(_SubmittedError):
+        launch_dataflow.main(list(argv))
+    (submission,) = captured
+    return submission
 
 
 @pytest.mark.parametrize(
-    ('flag', 'overridden', 'still_derived'),
+    ('argv', 'expected_error'),
     [
-        ('--scratch-bucket', 'scratch_bucket', 'source_bucket'),
-        ('--source-bucket', 'source_bucket', 'scratch_bucket'),
+        (['--sdk-image', 'img', '--limit', '1'], '--project'),
+        (['--project', 'p', '--sdk-image', 'img'], '--limit is required unless --direct'),
+        (['--project', 'p', '--sdk-image', 'img', '--limit', '0'], '--limit must be positive'),
+        (
+            ['--project', 'p', '--sdk-image', 'img', '--limit', '1', '--max-dead-letters', '-1'],
+            '--max-dead-letters must not be negative',
+        ),
+        (
+            ['--project', 'p', '--sdk-image', 'img', '--direct'],
+            '--worker-url is required for a --direct run into the store',
+        ),
     ],
 )
-def test_an_explicit_bucket_overrides_only_its_own_default(flag: str, overridden: str, still_derived: str) -> None:
-    # Which attribute the flag lands on is the property worth pinning: swapping the two
-    # would leave a staged run reading the seed from scratch and writing output to source.
-    args = _parse('--project', 'cpg-themis-test', flag, 'someone-elses-bucket')
-    assert getattr(args, overridden) == 'someone-elses-bucket'
-    assert getattr(args, still_derived).startswith('cpg-themis-test-')
+def test_invalid_arguments_are_rejected(
+    argv: list[str], expected_error: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit):
+        launch_dataflow.main(argv)
+    assert expected_error in capsys.readouterr().err
 
 
-def test_dataflow_options_carry_the_target() -> None:
-    # The mirror of the bug this guards: a flag that reaches everything except the options
-    # would submit to one project while minting into another's Cloud SQL.
-    target = launch_dataflow._Target(project='cpg-themis-test', region='europe-west2')
-    options = launch_dataflow._dataflow_options(
-        target=target,
-        scratch_bucket='scratch',
-        sdk_image='img',
-        job_name='job',
-        max_workers=1,
-        worker_machine_type='n1-highmem-4',
+def test_every_derived_resource_and_dataflow_option_follows_the_project_and_default_region(
+    monkeypatch: pytest.MonkeyPatch, gcs_client: gcs.Client
+) -> None:
+    project = f'themis-test-{uuid.uuid4().hex[:8]}'
+    _, scratch = _seed_source_and_scratch(
+        gcs_client,
+        source_name=f'{project}-fulltext',
+        scratch_name=f'{project}-litcache-scratch',
     )
-    resolved = options.get_all_options()
 
-    assert resolved['machine_type'] == 'n1-highmem-4'
-    assert resolved['project'] == 'cpg-themis-test'
-    assert resolved['region'] == 'europe-west2'
-    assert resolved['subnetwork'] == target.subnetwork
-    assert resolved['service_account_email'] == target.ingest_sa
+    sub = _submit(
+        monkeypatch,
+        gcs_client,
+        '--project',
+        project,
+        '--sdk-image',
+        'img:v1',
+        '--limit',
+        '5',
+        '--worker-machine-type',
+        'n1-highmem-4',
+    )
+
+    assert scratch.blob('ingest/10.1_seed.pdf').exists()
+    assert sub.run_bucket == f'{project}-litcache-scratch'
+    assert sub.conn_config == {
+        'connection_name': f'{project}:australia-southeast1:themis-sql',
+        'database': 'themis',
+        'iam_user': f'themis-ingest@{project}.iam',
+    }
+    assert sub.openalex_api_key == f'key-for-{project}'
+    assert sub.options['project'] == project
+    assert sub.options['region'] == 'australia-southeast1'
+    assert sub.options['sdk_container_image'] == 'img:v1'
+    assert sub.options['machine_type'] == 'n1-highmem-4'
+    assert sub.options['temp_location'] == f'gs://{project}-litcache-scratch/dataflow/tmp'
+    assert sub.options['staging_location'] == f'gs://{project}-litcache-scratch/dataflow/staging'
+    assert sub.options['service_account_email'] == f'themis-ingest@{project}.iam.gserviceaccount.com'
+    assert sub.options['subnetwork'] == (
+        f'https://www.googleapis.com/compute/v1/projects/{project}'
+        '/regions/australia-southeast1/subnetworks/themis-ingest'
+    )
+
+
+def test_explicit_region_reaches_sql_instance_subnet_and_dataflow_options(
+    monkeypatch: pytest.MonkeyPatch, gcs_client: gcs.Client
+) -> None:
+    project = f'themis-test-{uuid.uuid4().hex[:8]}'
+    _seed_source_and_scratch(
+        gcs_client,
+        source_name=f'{project}-fulltext',
+        scratch_name=f'{project}-litcache-scratch',
+    )
+
+    sub = _submit(
+        monkeypatch,
+        gcs_client,
+        '--project',
+        project,
+        '--region',
+        'europe-west2',
+        '--sdk-image',
+        'img:v1',
+        '--limit',
+        '1',
+    )
+
+    assert sub.conn_config['connection_name'] == f'{project}:europe-west2:themis-sql'
+    assert sub.options['region'] == 'europe-west2'
+    assert sub.options['subnetwork'] == (
+        f'https://www.googleapis.com/compute/v1/projects/{project}/regions/europe-west2/subnetworks/themis-ingest'
+    )
+
+
+def test_explicit_scratch_bucket_overrides_only_scratch_and_keeps_derived_source(
+    monkeypatch: pytest.MonkeyPatch, gcs_client: gcs.Client
+) -> None:
+    project = f'themis-test-{uuid.uuid4().hex[:8]}'
+    custom_scratch = f'custom-scratch-{uuid.uuid4().hex[:8]}'
+    _, scratch = _seed_source_and_scratch(
+        gcs_client,
+        source_name=f'{project}-fulltext',
+        scratch_name=custom_scratch,
+    )
+
+    sub = _submit(
+        monkeypatch,
+        gcs_client,
+        '--project',
+        project,
+        '--scratch-bucket',
+        custom_scratch,
+        '--sdk-image',
+        'img:v1',
+        '--limit',
+        '1',
+    )
+
+    assert scratch.blob('ingest/10.1_seed.pdf').exists()
+    assert sub.run_bucket == custom_scratch
+    assert sub.options['temp_location'] == f'gs://{custom_scratch}/dataflow/tmp'
+    assert sub.options['staging_location'] == f'gs://{custom_scratch}/dataflow/staging'
+
+
+def test_explicit_source_bucket_overrides_only_source_and_keeps_derived_scratch(
+    monkeypatch: pytest.MonkeyPatch, gcs_client: gcs.Client
+) -> None:
+    project = f'themis-test-{uuid.uuid4().hex[:8]}'
+    default_source = gcs_client.bucket(f'{project}-fulltext')
+    default_source.create()
+    default_source.blob('ingest/10.2_wrong.pdf').upload_from_string(b'%PDF-wrong')
+    custom_source = f'custom-source-{uuid.uuid4().hex[:8]}'
+    _, scratch = _seed_source_and_scratch(
+        gcs_client,
+        source_name=custom_source,
+        scratch_name=f'{project}-litcache-scratch',
+    )
+
+    sub = _submit(
+        monkeypatch,
+        gcs_client,
+        '--project',
+        project,
+        '--source-bucket',
+        custom_source,
+        '--sdk-image',
+        'img:v1',
+        '--limit',
+        '1',
+    )
+
+    assert scratch.blob('ingest/10.1_seed.pdf').exists()
+    assert not scratch.blob('ingest/10.2_wrong.pdf').exists()
+    assert sub.run_bucket == f'{project}-litcache-scratch'
+    assert sub.options['temp_location'] == f'gs://{project}-litcache-scratch/dataflow/tmp'
+    assert sub.options['staging_location'] == f'gs://{project}-litcache-scratch/dataflow/staging'

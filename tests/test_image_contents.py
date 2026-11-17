@@ -759,18 +759,12 @@ def test_stdlib_and_third_party_imports_are_not_followed(tmp_path: pathlib.Path)
     assert set(_reachable(tmp_path, 'pkg.a')) == {'pkg.a'}
 
 
-def test_every_package_init_on_the_way_down_is_a_source_file(tmp_path: pathlib.Path) -> None:
+def test_every_package_init_on_the_way_down_must_be_shipped(tmp_path: pathlib.Path) -> None:
     _write(tmp_path, {'pkg/__init__.py': '', 'pkg/sub/__init__.py': '', 'pkg/sub/leaf.py': ''})
-    assert _source_files(tmp_path, 'pkg.sub.leaf') == [
-        pathlib.PurePosixPath('pkg/__init__.py'),
-        pathlib.PurePosixPath('pkg/sub/__init__.py'),
-        pathlib.PurePosixPath('pkg/sub/leaf.py'),
+    assert _absent(tmp_path, 'COPY pkg/sub/leaf.py ./pkg/sub/\nCMD ["python", "-m", "pkg.sub.leaf"]\n') == [
+        'pkg/__init__.py',
+        'pkg/sub/__init__.py',
     ]
-
-
-def test_a_namespace_package_contributes_no_source_file(tmp_path: pathlib.Path) -> None:
-    _write(tmp_path, {'pkg/sub/leaf.py': ''})
-    assert _source_files(tmp_path, 'pkg.sub.leaf') == [pathlib.PurePosixPath('pkg/sub/leaf.py')]
 
 
 @pytest.mark.parametrize(
@@ -917,11 +911,6 @@ def test_a_stage_copy_landing_clear_of_the_tree_is_passed_over(tmp_path: pathlib
     _write(tmp_path, {'pkg/__main__.py': 'import pkg.a\n', 'pkg/a.py': ''})
     body = 'COPY --from=build /app/.venv /app/.venv\nCOPY pkg/__main__.py ./pkg/\nCMD ["python", "-m", "pkg"]\n'
     assert _absent(tmp_path, body) == ['pkg/a.py']
-
-
-@pytest.mark.parametrize(('runtime', 'walks'), [('python', True), ('bun', False)])
-def test_the_declared_runtime_decides_whether_the_import_path_is_walked(runtime: str, walks: bool) -> None:
-    assert _walks_the_import_path(runtime, 'Dockerfile') is walks
 
 
 def test_a_declared_runtime_the_walk_does_not_handle_raises() -> None:
