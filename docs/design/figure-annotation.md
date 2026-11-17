@@ -22,9 +22,11 @@ drawn without printed labels, whose legend is on another page or does not use an
 So Themis looks at the pages instead. One step shows a small vision model, Haiku 5.5, each page of a paper's PDF on its
 own, and records every figure it finds: each panel with its page, a box around it, and every kind drawn in it, one of
 which is "pedigree". The pages' answers are then joined into the paper's figures, each with its label and the place of
-its legend. On the 60 papers this found all 31 pedigree pages that Sonnet 5.5 finds, for 0.6 cents a paper. The record
-is stored under a `figures` ref, the manifest's pointer to a paper's current record of a kind
-([`litcache-manifest.md`](litcache-manifest.md)), and the steps that read figures start from it.
+its legend. Most drawings are joined by the figure label they print. The rest are joined by matching the panel tags a
+legend names, letters or names such as a family's, to the panels that print them. On the 60 papers this found all 31
+pedigree pages that Sonnet 5.5 finds, for 0.6 cents a paper. The record is stored under a `figures` ref, the manifest's
+pointer to a paper's current record of a kind ([`litcache-manifest.md`](litcache-manifest.md)), and the steps that read
+figures start from it.
 
 ## Background
 
@@ -41,8 +43,9 @@ the chromatograms of its family in panel B. A single panel can also draw two kin
 draws a family's pedigree with a sequence trace under each person, and that panel is both a pedigree and a chromatogram.
 
 The figure's legend is a block of text, usually directly below the figure. It is sometimes on the facing page, and in an
-author manuscript the legends are often gathered on pages of their own, away from the figures. A large figure can also
-run across two or more pages, its label printed once.
+author manuscript or a supplement the legends are often gathered on pages of their own, away from the figures. A large
+figure can also run across two or more pages, its label printed once. The legend describes the panels by their letters,
+"(A) ... (B) ...", and a panel can be tagged with a name instead, such as a family's or a case's.
 
 ### Asking a model where something is
 
@@ -78,7 +81,8 @@ tokens, so a request carrying more than about 20 pages crosses the boundary. In 
 
 ### One request per page
 
-A request that names a target needing figures runs the `figures` step on the paper. The obvious design shows the model
+A request that names a target needing figures runs the `figures` step on the paper
+([`themis/litcache/figure_annotate.py`](../../themis/litcache/figure_annotate.py)). The obvious design shows the model
 every page of the paper in one request. It sees the paper's layout as a whole: it can join a figure on one page to its
 legend on the next, and follow a figure that runs across pages. This design was built first, and two facts broke it.
 
@@ -92,8 +96,9 @@ flagged one page per-page did not, and it held references, not a pedigree.
 
 So the step renders each page and sends it to Haiku 5.5 as a request of its own, at most eight of a paper's pages at
 once. The model answers through a tool: every figure drawn on the page, with its label as printed there, the box of its
-legend if the legend is on the page, and its panels, each with a box and every kind drawn in it; and every legend on the
-page, with the label it begins with. The page number comes from the request, never from the model.
+legend if the legend is on the page, and its panels, each with a box, its tag as printed, and every kind drawn in it;
+and every legend on the page, with the label it begins with and every panel tag it names. The page number comes from the
+request, never from the model.
 
 ```mermaid
 flowchart LR
@@ -137,52 +142,141 @@ A prompt rule against them cost a real pedigree page in 40, so they are accepted
 
 ### Joining pages into figures
 
-A page seen alone cannot say which legend on another page is its figure's, or that it continues the figure before it.
-The step joins the pages' answers deterministically, by these rules, in page order:
+A page seen alone cannot say which legend on another page belongs to its drawing, or whether its drawing continues a
+figure from the page before. So once every page has answered, the step joins the answers into figures, by rules that use
+no model. A drawing here is what one page shows of one figure: the panels the model reported together on that page.
 
-1. A label counts only when some legend in the paper carries it, the legend the answer attached to the drawing included.
-   A page holding the second half of a figure can come back labelled with a guess: one test paper's page 5 came back as
-   "Figure 3", and the paper has no Figure 3. A drawing whose label does not count is treated as unlabelled, and if it
-   takes a legend by rule 4, it takes that legend's label.
-1. Drawings on neighbouring pages that share a counted label are one figure, its panels in page order. "Figure S2" and
-   "Supplementary Figure 2" are the same label. The same label far from the figure's pages starts another figure, since
-   one of the two is a misreading.
-1. A labelled figure whose answer gave it no legend looks for one with its label. It tries a page next to its own first,
-   then its own pages, then the nearest page. A neighbouring page comes first because the model attaches a legend that
-   is on the figure's own page to the figure itself; a legend with the same label left unattached on the same page is
-   more often the model echoing the label from the drawing than a second caption.
-1. An unlabelled drawing with no legend of its own looks for a legend no other figure claims. A legend is claimed by any
-   drawing in the paper that prints its label. The drawing tries its own page first, then the page before and the page
-   after. Each page's unclaimed legends go to that page's own drawings before any neighbour's, so a page that only
-   continues a figure never takes the legend of the figure drawn on the next page.
-1. An unlabelled drawing that finds no legend continues the figure before it in reading order: the last figure on its
-   page, or else the last on the page before. A page can come back as one labelled figure and two unlabelled drawings
-   that are its other panels.
+The obvious join uses page order. A drawing with no label and no legend of its own continues the figure on the page
+before. That is right for a figure drawn across pages: one paper's supplement prints a legend alone on a page, then
+three pages of family pedigrees with no label, and they are one figure. But page order cannot tell that case from two
+others. Re-reading 171 papers' pedigrees under this join turned up both. Of the 6 figures it had joined across pages
+there, 4 were wrong. Two of them:
 
-A legend goes to one figure, except that figures sharing a label share it. The model reports a figure's legend twice, on
-the figure and in the page's list, with boxes drawn by eye; two boxes that mostly overlap and name no different figures
-are one legend.
+- One paper draws two photographs on page 4, lettered A and B, with no label or legend. Page 5 draws photograph C under
+  the legend of Figure 2, which describes A, B and C. The join gave page 4 to Figure 1, the charts on page 3, because
+  Figure 2's legend was taken by page 5's drawing.
+- Another paper's supplement draws one family's pedigree per page for eight pages, each headed with its case id, none
+  with a legend. The join made them a single figure of eight pages. That is more pages than the pedigree step shows the
+  model at once, so none of the families was read.
 
-For example, take a paper whose page 4 draws "Fig. 1" with its legend, and whose page 5 draws the rest of it and comes
-back labelled "Figure 3". It records one figure, "Fig. 1", with panels on pages 4 and 5 and its legend on page 4: rule 1
-discards the label "Figure 3", and rule 5 joins page 5 to the figure before it. Now give the same paper a page 6 that
-draws "Figure 2" with no legend, and a page 7 that holds only the legend "Figure 2". Rule 3 gives Figure 2 the legend on
-page 7, the next page. And if page 6's drawing printed no label at all, rule 4 would give it the same legend: page 7's
-legend names no figure any drawing prints, so it is unclaimed, and it is on the page after.
+Position on the page looks like the next fix: a figure whose legend sits below its panels ends at the legend, so a
+drawing on the next page starts a new figure. It breaks on layouts that papers use all the time. A legend can sit beside
+its figure. In two columns, a figure in one column can have its legend at the foot of the other. A full-width figure can
+sit above two columns of text.
 
-On the 60 papers, the join gave every pedigree figure the legend page the whole-paper request gave it. Neither is
-reliable for a legend on another page, though. The canary has 15 pedigree figures whose legend the whole-paper request
-put on another page, and an earlier version of the join was checked on them against the PDF's text layer, taking a line
-that begins with the figure's label as its caption. In 11 of the 15 the text layer pointed to one caption page that told
-the two answers apart; in the other 4 it pointed to two pages or none. Of the 11, one request per page was right in 6
-and the whole-paper request in 6: both in 2, each alone in 4, and neither in 1. The pedigree step shows the model a
-figure's legend page when that is another page, so a wrong legend page costs an image that does not help, and could
-mislead the reading if that page's legend describes another family.
+The fact that settles most of these cases is printed on the page. A figure's panels carry tags, mostly letters, and its
+legend names them: "(A, B) photographs of the proband's hands; (C) radiograph". A tag can also be a name, such as a
+family ("F1", "Family 3") or a case id. So the model reports each panel's tag as printed, and for each legend its label
+and every panel tag it names. A drawing showing panels A and B belongs to a nearby legend that names A and B, if no
+drawing already placed under that legend shows them.
+
+The step places each drawing by the first of these rules that applies:
+
+1. **Its label.** A drawing whose printed label names a numbered figure, such as "Fig. 2", and which some legend in the
+   paper carries, belongs to that figure. "Figure S2" and "Supplementary Figure 2" are the same label. Drawings on
+   neighbouring pages that share a label are one figure. The same label far away starts another, since one of the two is
+   a misreading. The figure keeps a legend the model reported with one of its drawings. Failing that, it takes the
+   legend with its label on a page next to its own, then on its own pages, then the nearest. A neighbouring page comes
+   first because a legend listed on the figure's own page is sometimes the model echoing the drawing's label. Two
+   figures with the same label far apart share its legend.
+1. **Its own legend.** A drawing whose answer gave it a legend on its own page takes that legend.
+1. **Its tags.** A drawing's tags are its panels' tags, and its own label when that names no figure, such as "Family 2".
+   A drawing whose tags are all named by a legend on its own page or the next or previous page takes that legend, as
+   long as no drawing already under the legend shows those tags. The nearest page wins. On a tie the page after wins,
+   since a legend more often follows its figure.
+1. **A free legend on its page.** A legend is free when no figure holds it, the model did not report it with some
+   drawing, it is not a table's caption, and its label names no figure a drawing prints. A drawing takes a free legend
+   on its own page that carries a figure number, if the legend names the drawing's tags or either has none. The model
+   sometimes lists a block of unlabelled body text as a legend; the number keeps it out. Tags run first, so a legend
+   naming the drawing's tags on the next page wins over an untagged one on its own.
+1. **Legends printed together.** Many supplements print all their legends one after another, then the figures, one to a
+   page and unlabelled. The rule looks for two or more free legends with a figure number, on one page or on consecutive
+   pages. It counts the drawings without a figure number on the pages after the last of those legends, to the end of the
+   paper. If the two counts are equal, the first such drawing takes the first legend, the second the second, and so on.
+   If any one pair's tags disagree, no drawing is paired. For example, legends for Supplementary Figures 1 and 2 on page
+   13, then unlabelled drawings on pages 16 and 17, give page 16 to Supplementary Figure 1 and page 17 to Supplementary
+   Figure 2. A third unlabelled drawing on page 30 would make the counts differ, and neither would be paired.
+1. **A free legend on the next page.** A drawing with no label and no tags takes a free legend with a figure number on
+   the next page.
+1. **Continuation.** A drawing with no label and no tags continues the figure before it, the last on its page or else on
+   the page before, if that figure has a legend.
+
+A drawing no rule places is a figure of its own, with no legend. A drawing labelled as a table, such as "Table 1", is
+also a figure of its own with no legend, whatever the rules say, and nothing after it continues the figure before it.
+The model reports a table pasted in as an image, and under the rules it would take a figure's legend. Drawings placed
+under one legend are one figure, their panels in page order, and the figure takes its label from the legend.
+
+The model reports a figure's legend twice, once on the figure and once in the page's list, with boxes drawn by eye. Two
+boxes on a page that mostly overlap are one legend, unless their labels name different figures, or one names a table and
+the other a figure.
+
+For example, take the paper with the photographs:
+
+| page | drawing                                    | legends on the page                    |
+| ---- | ------------------------------------------ | -------------------------------------- |
+| 3    | "Figure 1", panels A, B, C                 | "Figure 1", naming A, B, C             |
+| 4    | no label, panels A, B                      | none                                   |
+| 5    | "Figure 2", panel C; "Figure 3", one panel | "Figure 2", naming A, B, C; "Figure 3" |
+
+The label rule gives page 3 to Figure 1 and page 5's drawings to Figures 2 and 3. Page 4's drawing has no label and no
+legend, so it falls to its tags. Figure 1's legend names A and B, but its drawing on page 3 shows them already. Figure
+2's legend names A and B, and its drawing shows only C. So page 4 joins Figure 2. The eight pages of case pedigrees come
+out as a figure for each drawing: their tags are case ids that no legend names, so no rule joins them, and the pedigree
+step reads each one.
+
+Continuation now needs a drawing with neither a label nor tags. Under the page-order join, a drawing whose numbered
+label no legend carries counted as unlabelled, and continued the figure before it. One paper's page 35 draws
+Supplementary Figure 5, panels a to e, and the paper prints no legend for it. The page-order join added it to
+Supplementary Figure 4 on the page before. Now it stands alone. A label the model misread is now a figure of its own
+too, where the page-order join would have attached it to the figure before. If its tags are named by a nearby legend,
+the tag rule still places it.
+
+These rules err towards splitting a figure. A figure split in two costs the pedigree step two reads, one of them perhaps
+without the legend. A wrong merge can push a figure past the pages the step shows at once, so that none of it is read.
+It can also show the reader another figure's legend.
+
+The rules were checked against Opus 5.5 on 471 papers, using about 2,100 drawings that Haiku reported with the tags
+above (§Appendix). Opus was shown the pages with each drawing and legend outlined. It did not see the rules' answers and
+said which legend each drawing belongs to. A drawing agrees when it has the legend Opus gives it and is grouped with the
+drawings Opus groups it with. 95.0% of drawings agreed under these rules, against 91.7% under the page-order join on the
+same answers. On drawings with a pedigree panel the figures were 95.9% and 92.7%.
+
+| rule                                 | drawings | Opus agrees |
+| ------------------------------------ | -------- | ----------- |
+| label                                | 1,848    | 96.5%       |
+| own legend                           | 51       | 94.1%       |
+| tags                                 | 57       | 93.0%       |
+| free legend on its page              | 0        | —           |
+| legends printed together             | 7        | 100%        |
+| free legend on next page             | 2        | 100%        |
+| continuation                         | 6        | 17%         |
+| table                                | 22       | 100%        |
+| none, a figure of its own            | 81       | 68%         |
+| on a page whose answer needs repairs | 14       | 79%         |
+
+The last row is drawings on pages whose answer the step would send back for a repair. The measurement did not repair
+them, and the join never saw them.
+
+The disagreements say where the rules fall short:
+
+- **Misread labels** make most of the label rule's misses. One paper's page 6 came back as "Fig. 2", but the figure it
+  draws is the third. That drawing takes Figure 2's legend, and Figure 2's real drawing on page 5 is left with none.
+- **Body text listed as a legend.** In two papers the model listed unlabelled body text on a drawing's page as a legend,
+  while the figure's legend was on the next page. The rules now leave such text alone, so the drawing stands without a
+  legend.
+- **Continuation**, 6 drawings. Five are pages of uncropped source blots after a figure's sections: Opus gives them no
+  legend, and a reader of the paper takes them as part of the figure.
+- **A legend alone on the page before**, among the drawings left without one. The supplement with three pages of family
+  pedigrees prints their legend alone on the page before them, naming no tags, so the three pages are three figures
+  without a legend. A rule giving such a drawing the legend on the page before agreed with Opus in 1 case of 5. In the
+  others the legend belonged to an earlier figure.
 
 ### The record
 
-The record lists a paper's figures. Each figure has its label as printed, the place of its legend, and its panels. A
-place is a page of the PDF and a box on that page. A panel has its letter, its kinds, and its place. For example:
+The record ([`figures.proto`](../../schema/proto/themis/litcache/models/figures.proto)) lists a paper's figures. Each
+figure has its label as printed, the place of its legend, and its panels. A place is a page of the PDF and a box on that
+page. A panel has its tag as printed, its kinds, and its place. The tags a legend names are not kept: the join uses them
+to decide which panels make a figure, and the record holds that answer. For example:
 
 ```
 figures {
@@ -264,6 +358,10 @@ than Sonnet's more often than the reverse. Haiku seeing one page at a time found
   every step that reads figures.
 - **The PDF as a document block.** The API accepts a PDF directly and shows the model each page as an image with its
   text. The images are sized by the API, so the step could not convert the model's coordinates back to the page.
+- **Joining by position on the page.** A figure would end at a legend printed below its panels. Legends beside their
+  figure, or at the foot of the other column, defeat it (§Joining pages into figures).
+- **A larger model joining the whole paper.** Opus 5.5, shown every page holding a figure, is the reference the join was
+  checked against. It cost about 10 cents a paper, more than ten times the annotation itself.
 - **A key of pedigree symbols in the prompt.** An image of the standard's symbols would cost little, read from the
   cache. The pedigree misses measured so far were a choice between two kinds both drawn in a panel, which a symbol key
   does not settle; it would help with unusual drawings, of which none has been seen missed.
@@ -273,9 +371,12 @@ than Sonnet's more often than the reverse. Haiku seeing one page at a time found
 - **Legend-only pages called pedigrees.** About 7 in 220 canary papers. A check that a pedigree panel's box covers drawn
   content in the PDF (images or vector paths, not text alone) would catch them in born-digital PDFs, though not in
   scanned ones, where every page is one image. Worth building if their Sonnet reads become a noticeable cost.
-- **A gold set.** The measurements compare Haiku with Sonnet, plus a hand check that the boxes are in place. A set of
-  papers with hand-marked figures and legends would give recall against the truth, and settle how well legends on other
-  pages are joined.
+- **A gold set.** The measurements compare Haiku with Sonnet and the join with Opus, plus hand checks of the boxes and
+  of six joined figures. A set of papers with hand-marked figures and legends would give recall against the truth.
+- **Misread labels.** Most of the label rule's misses are a drawing labelled with a neighbouring figure's number. A
+  check that a drawing's tags are among those its label's legend names would catch some of them.
+- **A legend alone on the page before.** It is the commonest legend the rules leave unused. A rule taking it was wrong 4
+  times in 5; one that also asks the legend to describe the drawing's kind might not be.
 - **Very long PDFs.** A PDF with its supplement can run to hundreds of pages. The step annotates at most 100 pages, a
   bound on what one paper spends; whether longer papers deserve their supplement's figures is open.
 - **Publishers' figure images.** A paper fetched as XML with no PDF has no figures to annotate. If the cache kept the
@@ -320,3 +421,23 @@ disagreed, asked only whether a pedigree is drawn on it.
 
 The 14 are the disputed pages the stricter definition of a pedigree then cut to 8, while flagging all 40 of a sample of
 the agreed pedigree pages.
+
+### The join measurement
+
+471 papers from the literature cache with a PDF: 300 drawn at random, and the 171 whose pedigrees had been read before
+the per-figure pedigree record. Haiku 5.5 answered every one of their 5,979 pages with the panel tags and legend tags,
+for $4.40, about 0.9 cents a paper. Opus 5.5 was shown each paper's 2,260 pages that hold a drawing or a legend, in
+requests of up to 20 pages, with every drawing outlined in red and every legend in blue, and asked which legend each
+drawing belongs to and whether each outlined legend is one. It cost $47.
+
+| drawings                   | count | rules agree with Opus | page-order join agrees with Opus |
+| -------------------------- | ----- | --------------------- | -------------------------------- |
+| all                        | 2,088 | 95.0%                 | 91.7%                            |
+| in the 300 random papers   | 1,261 | 95.6%                 | 92.5%                            |
+| in the 171 pedigree papers | 827   | 94.0%                 | 90.4%                            |
+| with a pedigree panel      | 317   | 95.9%                 | 92.7%                            |
+
+A drawing agrees when it has the legend Opus gives it, or none when Opus gives none, and the drawings grouped with it
+are those Opus groups with it. Where the model drew two boxes for one legend, Opus and the join can name different
+boxes, which counts as a disagreement. Six of the joined figures were also checked by hand. The rules get five right,
+and split the sixth, the three pages of family pedigrees, into three figures without their legend.
