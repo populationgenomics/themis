@@ -183,7 +183,9 @@ def test_a_box_a_little_past_the_edge_is_brought_back_to_it() -> None:
         _call([_figure(kinds=['cartoon'])]),  # a kind not offered
         _call([_figure(kinds=[])]),  # no kind
         _call(['Figure 1']),  # not a figure
-        _call([], legends=[{'label': 'Figure 1'}]),  # a legend with no box
+        _call([], legends=[{'label': 'Figure 1', 'panels': []}]),  # a legend with no box
+        _call([], legends=[{'label': 'Figure 1', 'box': [50, 100, 900, 300]}]),  # no list of the tags it names
+        _call([], legends=[{'label': 'Figure 1', 'panels': [1], 'box': [50, 100, 900, 300]}]),  # a tag not a string
     ],
 )
 def test_an_answer_no_reader_could_place_goes_back_and_its_fix_is_kept(bad: anthropic.types.Message) -> None:
@@ -313,18 +315,26 @@ def _place(page: int, top: float = 0.1) -> figures_pb2.Place:
     return figures_pb2.Place(pdf_page=page, box=figures_pb2.Box(left=0.1, top=top, right=0.9, bottom=top + 0.2))
 
 
-def _drawn(page: int, label: str = '', *, legend: bool = False) -> figure_annotate.Drawn:
-    panel = figures_pb2.Panel(kinds=['FIGURE_KIND_PEDIGREE'], place=_place(page))
-    return figure_annotate.Drawn(label=label, legend=_place(page, 0.7) if legend else None, panels=[panel])
+def _drawn(page: int, label: str = '', *, legend: bool = False, tags: Sequence[str] = ()) -> figure_annotate.Drawn:
+    """A drawing with a panel for each tag, or one untagged panel."""
+    panels = [figures_pb2.Panel(label=tag, kinds=['FIGURE_KIND_PEDIGREE'], place=_place(page)) for tag in tags or ['']]
+    return figure_annotate.Drawn(label=label, legend=_place(page, 0.7) if legend else None, panels=panels)
 
 
-def _page(number: int, *figures: figure_annotate.Drawn, legends: Sequence[str] = ()) -> figure_annotate.PageAnswer:
+def _page(
+    number: int, *figures: figure_annotate.Drawn, legends: Sequence[str | tuple[str, Sequence[str]]] = ()
+) -> figure_annotate.PageAnswer:
+    """A page's answer; a legend is its label, or its label and the panel tags it names."""
     # The first listed legend sits where `_drawn` puts a figure's own legend; the rest stack above it.
     tops = [0.7, 0.45, 0.2, 0.0]
+    named = [(legend, ()) if isinstance(legend, str) else legend for legend in legends]
     return figure_annotate.PageAnswer(
         number=number,
         figures=list(figures),
-        legends=[(label, _place(number, top)) for label, top in zip(legends, tops, strict=False)],
+        legends=[
+            figure_annotate.Legend(label, tuple(tags), _place(number, top))
+            for (label, tags), top in zip(named, tops, strict=False)
+        ],
     )
 
 
@@ -375,10 +385,16 @@ def test_a_figure_drawn_across_pages_under_one_label_is_one_figure() -> None:
     assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [4, 5], 4)]
 
 
-def test_a_label_no_legend_carries_is_a_guess_and_the_page_continues_the_figure_before() -> None:
-    pages = [_page(4, _drawn(4, 'Fig. 1', legend=True)), _page(5, _drawn(5, 'Figure 3'))]
+def test_a_numbered_label_no_legend_carries_never_continues_another_figure() -> None:
+    pages = [
+        _page(34, _drawn(34, 'Supplementary Figure 4', legend=True)),
+        _page(35, _drawn(35, 'Supplementary Figure 5')),
+    ]
 
-    assert _shape(figure_annotate.assemble(pages)) == [('Fig. 1', [4, 5], 4)]
+    assert _shape(figure_annotate.assemble(pages)) == [
+        ('Supplementary Figure 4', [34], 34),
+        ('Supplementary Figure 5', [35], None),
+    ]
 
 
 def test_a_guessed_label_yields_to_the_legend_its_drawing_takes_on_its_page() -> None:
@@ -427,7 +443,9 @@ def test_a_loose_legend_box_does_not_swallow_a_legend_naming_another_figure() ->
     right_column = figures_pb2.Place(pdf_page=5, box=figures_pb2.Box(left=0.55, top=0.65, right=0.9, bottom=0.9))
     pages = [
         _page(4, _drawn(4, 'Figure 1')),
-        figure_annotate.PageAnswer(number=5, figures=[figure_2], legends=[('Figure 1', right_column)]),
+        figure_annotate.PageAnswer(
+            number=5, figures=[figure_2], legends=[figure_annotate.Legend('Figure 1', (), right_column)]
+        ),
     ]
 
     assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [4], 5), ('Figure 2', [5], 5)]
@@ -495,3 +513,216 @@ def test_an_unlabelled_figure_with_nothing_before_it_stands_alone_without_a_lege
     pages = [_page(1, _drawn(1)), _page(2)]
 
     assert _shape(figure_annotate.assemble(pages)) == [('', [1], None)]
+
+
+def test_a_drawing_takes_the_legend_next_door_that_names_its_tags_and_whose_figure_does_not_show_them() -> None:
+    pages = [
+        _page(3, _drawn(3, 'Figure 1', legend=True, tags='ABC'), legends=[('Figure 1', 'ABC')]),
+        _page(4, _drawn(4, tags='AB')),
+        _page(5, _drawn(5, 'Figure 2', legend=True, tags='C'), legends=[('Figure 2', ['(a)', '(b)', '(c)'])]),
+    ]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [3, 3, 3], 3), ('Figure 2', [4, 4, 5], 5)]
+
+
+def test_drawings_tagged_with_names_no_legend_carries_are_figures_of_their_own() -> None:
+    pages = [_page(n, _drawn(n, tags=[f'CASE ID {n}'])) for n in range(14, 18)]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('', [n], None) for n in range(14, 18)]
+
+
+def test_a_tagged_drawing_does_not_continue_the_figure_before_it() -> None:
+    pages = [_page(1, _drawn(1, 'Figure 1', legend=True, tags='AB')), _page(2, _drawn(2, tags=['F1']))]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [1, 1], 1), ('', [2], None)]
+
+
+def test_an_untagged_drawing_continues_only_a_figure_with_a_legend() -> None:
+    pages = [_page(1, _drawn(1)), _page(2, _drawn(2))]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('', [1], None), ('', [2], None)]
+
+
+def test_legends_printed_together_go_to_the_figures_after_them_in_order() -> None:
+    pages = [
+        _page(13, legends=[('Supplementary Fig. 1', ''), ('Supplementary Fig. 2', 'abc')]),
+        _page(16, _drawn(16)),
+        _page(17, _drawn(17, tags='abc')),
+    ]
+
+    assert _shape(figure_annotate.assemble(pages)) == [
+        ('Supplementary Fig. 1', [16], 13),
+        ('Supplementary Fig. 2', [17, 17, 17], 13),
+    ]
+
+
+def test_legends_printed_together_are_not_paired_when_a_pair_names_other_tags() -> None:
+    pages = [
+        _page(13, legends=[('Supplementary Fig. 1', 'ab'), ('Supplementary Fig. 2', 'abc')]),
+        _page(16, _drawn(16, tags='abc')),
+        _page(17, _drawn(17, tags='ab')),
+    ]
+
+    assert [legend for _, _, legend in _shape(figure_annotate.assemble(pages))] == [None, None]
+
+
+def test_a_table_never_takes_a_figure_legend() -> None:
+    pages = [_page(4, _drawn(4, 'Figure 1', legend=True)), _page(5, _drawn(5, 'Table 1'), legends=['Figure 2'])]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [4], 4), ('Table 1', [5], None)]
+
+
+def test_the_tags_a_legend_names_reach_the_join_from_the_answer() -> None:
+    photographs = {
+        'label': '',
+        'legend': None,
+        'panels': [
+            {'label': tag, 'kinds': ['clinical_photograph'], 'box': [100 + 300 * i, 200, 350 + 300 * i, 700]}
+            for i, tag in enumerate('AB')
+        ],
+    }
+    panel_c = {'label': 'Figure 2', 'legend': None, 'panels': [{**_figure()['panels'][0], 'label': 'C'}]}
+    legend = {'label': 'Figure 2', 'panels': ['A', 'B', 'C'], 'box': [50, 1200, 900, 1300]}
+    client = _Client({1: [_call([_figure()])], 2: [_call([photographs])], 3: [_call([panel_c], [legend])]})
+
+    figures = _annotate(client).figure_set.figures
+
+    assert [(f.label, [p.place.pdf_page for p in f.panels]) for f in figures] == [
+        ('Figure 1', [1]),
+        ('Figure 2', [2, 2, 3]),
+    ]
+
+
+def test_a_table_caption_stays_with_its_table() -> None:
+    pages = [_page(5, _drawn(5, 'Table 1', legend=True), _drawn(5))]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Table 1', [5], None), ('', [5], None)]
+
+
+def test_nothing_continues_a_figure_past_a_table() -> None:
+    pages = [_page(1, _drawn(1, 'Figure 1', legend=True)), _page(2, _drawn(2, 'Table 1'), _drawn(2))]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [1], 1), ('Table 1', [2], None), ('', [2], None)]
+
+
+def test_a_second_copy_of_a_figure_legend_is_given_to_no_other_figure() -> None:
+    pages = [
+        _page(4, _drawn(4, 'Figure 1', legend=True)),
+        _page(5, _drawn(5, 'Figure 1', legend=True), legends=[('Figure 1', 'AB')]),
+        _page(6, _drawn(6, tags='AB')),
+        _page(8, _drawn(8)),
+    ]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [4, 5, 6, 6], 4), ('', [8], None)]
+
+
+def test_a_table_caption_never_absorbs_a_figure_legend_drawn_over_it() -> None:
+    caption = _place(5, 0.7)
+    table = figure_annotate.Drawn(
+        label='Table 2', legend=caption, panels=[figures_pb2.Panel(kinds=['FIGURE_KIND_TABLE_IMAGE'], place=_place(5))]
+    )
+    pages = [
+        figure_annotate.PageAnswer(
+            number=5,
+            figures=[table, _drawn(5, tags='AB')],
+            legends=[figure_annotate.Legend('Figure 2', ('A', 'B'), caption)],
+        )
+    ]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Table 2', [5], None), ('Figure 2', [5, 5], 5)]
+
+
+def test_tags_named_on_both_neighbouring_pages_go_to_the_legend_after() -> None:
+    pages = [
+        _page(3, legends=[('Figure 1', 'AB')]),
+        _page(4, _drawn(4, tags='AB')),
+        _page(5, legends=[('Figure 2', 'AB')]),
+    ]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 2', [4, 4], 5)]
+
+
+def test_legends_printed_together_are_not_paired_with_fewer_figures() -> None:
+    pages = [
+        _page(13, legends=['Supplementary Fig. 1', 'Supplementary Fig. 2']),
+        _page(16, _drawn(16)),
+    ]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('', [16], None)]
+
+
+def test_a_guessed_label_does_not_name_the_figure_whose_unlabelled_legend_it_takes() -> None:
+    pages = [_page(5, _drawn(5, 'Figure 3', tags='AB'), legends=[('', 'AB')])]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('', [5, 5], 5)]
+
+
+def test_unlabelled_text_listed_as_a_legend_on_a_page_goes_to_no_figure() -> None:
+    pages = [_page(5, _drawn(5), legends=['']), _page(6, legends=['Figure 2'])]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 2', [5], 6)]
+
+
+def test_a_table_caption_listed_on_its_page_goes_to_no_figure() -> None:
+    pages = [_page(5, _drawn(5), legends=['Table 1'])]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('', [5], None)]
+
+
+@pytest.mark.parametrize(
+    'legends',
+    [
+        [_page(2, legends=['Figure 2'])],  # one legend is not legends printed together
+        [_page(2, legends=['Figure S1']), _page(9, legends=['Figure S2'])],  # nor are legends pages apart
+    ],
+)
+def test_only_legends_printed_together_are_paired_with_the_figures_after_them(
+    legends: list[figure_annotate.PageAnswer],
+) -> None:
+    # As many unlabelled drawings after the legends as there are legends, as pairing needs.
+    pages = [*legends, *(_page(20 + 10 * k, _drawn(20 + 10 * k)) for k in range(len(legends)))]
+
+    assert [legend for _, _, legend in _shape(figure_annotate.assemble(pages))] == [None] * len(legends)
+
+
+def test_a_legend_naming_a_drawing_tags_wins_over_an_untagged_legend_on_its_page() -> None:
+    pages = [_page(4, _drawn(4, tags='AB'), legends=['Figure 1', ('Figure 2', 'AB')])]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 2', [4, 4], 4)]
+
+
+def test_a_legend_next_door_naming_a_drawing_tags_wins_over_an_untagged_legend_on_its_page() -> None:
+    pages = [
+        _page(4, _drawn(4, tags='AB'), legends=['Figure 1']),
+        _page(5, _drawn(5, 'Figure 2', legend=True, tags='C'), legends=[('Figure 2', 'ABC')]),
+    ]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 2', [4, 4, 5], 5)]
+
+
+def test_a_drawing_with_a_label_naming_no_figure_continues_nothing() -> None:
+    pages = [_page(4, _drawn(4, 'Figure 1', legend=True)), _page(5, _drawn(5, 'Family 2'))]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [4], 4), ('Family 2', [5], None)]
+
+
+def test_a_drawing_labelled_with_a_name_takes_the_legend_naming_it() -> None:
+    pages = [_page(5, _drawn(5, 'Family 2'), legends=[('Figure 3', ['Family 1', 'Family 2'])])]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 3', [5], 5)]
+
+
+def test_figures_sharing_a_label_far_apart_leave_its_legend_to_the_nearer_one() -> None:
+    pages = [
+        _page(2, _drawn(2, 'Figure 2')),
+        _page(9, _drawn(9, 'Figure 2', tags='A')),
+        _page(10, _drawn(10, tags='B'), legends=[('Figure 2', 'AB')]),
+    ]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 2', [2], 10), ('Figure 2', [9, 10], 10)]
+
+
+def test_unlabelled_text_listed_as_a_legend_on_the_next_page_goes_to_no_figure() -> None:
+    pages = [_page(1, _drawn(1, 'Figure 1', legend=True)), _page(2, _drawn(2)), _page(3, legends=[''])]
+
+    assert _shape(figure_annotate.assemble(pages)) == [('Figure 1', [1, 2], 1)]

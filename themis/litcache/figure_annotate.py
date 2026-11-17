@@ -14,6 +14,7 @@ import asyncio
 import dataclasses
 import datetime
 import hashlib
+import itertools
 import json
 import logging
 import re
@@ -28,7 +29,7 @@ from themis.litcache.models import figures_pb2
 _LOG = logging.getLogger(__name__)
 
 # A change to what the model does, or to how pages are joined, that `_harness_version` does not digest bumps this.
-_REVISION = '2'
+_REVISION = '3'
 MODEL = 'claude-haiku-5-5'
 _TIER = claude_images.HIGH_RESOLUTION
 _MAX_TOKENS = 8_000
@@ -95,7 +96,11 @@ TOOL: dict[str, Any] = {
                                 'properties': {
                                     'label': {
                                         'type': 'string',
-                                        'description': 'The panel letter as printed; "" if none.',
+                                        'description': (
+                                            "The panel's own tag as printed in or beside it: a letter or number "
+                                            "('A', 'b', 'ii'), or a name such as a family or case id ('F1', "
+                                            "'Family 3', 'CASE ID 7'); \"\" if none is printed."
+                                        ),
                                     },
                                     'kinds': {
                                         'type': 'array',
@@ -121,9 +126,17 @@ TOOL: dict[str, Any] = {
                             'type': 'string',
                             'description': 'The figure label the legend begins with, as printed; "" if none.',
                         },
+                        'panels': {
+                            'type': 'array',
+                            'items': {'type': 'string'},
+                            'description': (
+                                'Every panel tag this legend names, as printed in it, e.g. ["A", "B", "C"] for a '
+                                'legend with (A), (B) and (C), or ["Family 1", "Family 2"]; [] if it names none.'
+                            ),
+                        },
                         'box': _BOX,
                     },
-                    'required': ['label', 'box'],
+                    'required': ['label', 'panels', 'box'],
                 },
             },
         },
@@ -149,6 +162,8 @@ For each figure:
 - legend: the box of its legend (caption) text if that is on this page; null otherwise.
 - panels: each separately drawn sub-image on this page, lettered or not. A figure with one image is one panel;
   a figure whose legend is here but whose drawing is not has none. Each panel has:
+  - label: the panel's own tag as printed in or beside it, a letter or a name such as a family or case id; ""
+    if none is printed. Never infer one.
   - box: [x0, y0, x1, y1] in absolute pixel coordinates of the page image, top-left origin, enclosing the panel's
     drawing and its own labels but not the legend.
   - kinds: every kind drawn in the panel, one or more of {', '.join(KINDS)}. A panel has a kind only when that
@@ -159,7 +174,7 @@ For each figure:
     "sequence_chromatogram".
 
 Also list every legend on this page under `legends`, with the label it begins with, including a legend whose
-figure is on another page.
+figure is on another page, and every panel tag the legend names.
 
 Report by calling the `{TOOL['name']}` tool once."""
 # The instructions and tool repeat on every page of every paper: cached, unlike the page.
@@ -246,18 +261,33 @@ class Drawn:
 
 
 @dataclasses.dataclass(frozen=True)
+class Legend:
+    """One legend as one page prints it.
+
+    Attributes:
+        label: The figure label it begins with, as printed; empty when it prints none.
+        tags: Every panel tag it names, as printed.
+        place: Where it is.
+    """
+
+    label: str
+    tags: tuple[str, ...]
+    place: figures_pb2.Place
+
+
+@dataclasses.dataclass(frozen=True)
 class PageAnswer:
     """One page's accepted answer.
 
     Attributes:
         number: The page's 1-based number.
         figures: The figures drawn on it, in the order the model reported them.
-        legends: Each legend on it, as its printed label and its place.
+        legends: Each legend on it.
     """
 
     number: int
     figures: list[Drawn]
-    legends: list[tuple[str, figures_pb2.Place]]
+    legends: list[Legend]
 
 
 def _numbers(value: object) -> list[float] | None:
@@ -370,15 +400,20 @@ def _accept(answer: object, number: int, image: page_render.Image) -> PageAnswer
     legends = answer.get('legends', [])  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
     if not isinstance(legends, list):
         raise _RejectedError(f'legends is a list; got {type(legends).__name__}')  # pyright: ignore[reportUnknownArgumentType]
-    placed_legends: list[tuple[str, figures_pb2.Place]] = []
+    placed_legends: list[Legend] = []
     for i, legend in enumerate(legends):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-        label = legend.get('label', '') if isinstance(legend, dict) else None  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if not isinstance(legend, dict):
+            raise _RejectedError(f'legend {i}: a legend is an object with a label, the panel tags it names, and a box')
+        label = legend.get('label', '')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        tags = legend.get('panels')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
         if not isinstance(label, str):
-            raise _RejectedError(f'legend {i}: a legend is an object with a string label and a box')
-        placed_legends.append((label, _place(legend.get('box'), number, image, f'legend {i}')))  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            raise _RejectedError(f'legend {i}: label is a string')
+        if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):  # pyright: ignore[reportUnknownVariableType]
+            raise _RejectedError(f'legend {i}: panels is a list of the panel tags the legend names, [] if none')
+        placed_legends.append(Legend(label, tuple(tags), _place(legend.get('box'), number, image, f'legend {i}')))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
     drawn = [_drawn(f, number, image, f'figure {i}') for i, f in enumerate(figures)]  # pyright: ignore[reportUnknownArgumentType, reportUnknownVariableType]
     # A figure with only its legend on the page is that legend.
-    placed_legends += [(d.label, d.legend) for d in drawn if not d.panels and d.legend is not None]
+    placed_legends += [Legend(d.label, (), d.legend) for d in drawn if not d.panels and d.legend is not None]
     return PageAnswer(number=number, figures=[d for d in drawn if d.panels], legends=placed_legends)
 
 
@@ -387,6 +422,7 @@ _LABEL = re.compile(
 )
 # Two boxes on a page are one legend when their overlap covers this share of the smaller.
 _SAME_LEGEND = 0.5
+_TABLE = re.compile(r'\btables?\b', re.IGNORECASE)
 
 
 def figure_key(label: str) -> str | None:
@@ -402,19 +438,39 @@ def figure_key(label: str) -> str | None:
     return number if number.startswith('s') or match[1] is None else f's{number}'
 
 
+def _tag(tag: str) -> str:
+    """A panel tag as matched: "(A)" and "a" are the same tag."""
+    return tag.strip().strip('()').strip().casefold()
+
+
+def _tags(drawn: Drawn) -> frozenset[str]:
+    """A drawing's tags: its panels', and its own label when that names no figure or table, as "Family 2" does."""
+    tags = {_tag(p.label) for p in drawn.panels}
+    if figure_key(drawn.label) is None and not _TABLE.search(drawn.label):
+        tags.add(_tag(drawn.label))
+    return frozenset(t for t in tags if t)
+
+
 @dataclasses.dataclass(frozen=True)
 class _Legend:
     page: int
     label: str
     place: figures_pb2.Place
+    tags: frozenset[str]  # the panel tags it names, as `_tag` reads them
+
+
+@dataclasses.dataclass(frozen=True)
+class _Drawing:
+    page: int
+    drawn: Drawn
+    tags: frozenset[str]  # as `_tags` gives them
 
 
 @dataclasses.dataclass(eq=False)
-class _Joined:
+class _Figure:
     label: str
     legend: int | None  # an index into the paper's legends
-    panels: list[figures_pb2.Panel]
-    pages: set[int]
+    drawings: list[int]  # indices into the paper's drawings, which are in reading order
 
 
 def _overlap(a: figures_pb2.Box, b: figures_pb2.Box) -> float:
@@ -427,8 +483,10 @@ def _overlap(a: figures_pb2.Box, b: figures_pb2.Box) -> float:
 
 
 def _one_legend(label: str, place: figures_pb2.Place, other: _Legend) -> bool:
-    """Whether a listed legend is `other` drawn again: mostly the same box, and not naming another figure."""
+    """Whether a listed legend is `other` drawn again: mostly the same box, and not naming another figure or a table."""
     if _overlap(place.box, other.place.box) < _SAME_LEGEND:
+        return False
+    if bool(_TABLE.search(label)) != bool(_TABLE.search(other.label)) and label and other.label:
         return False
     mine, theirs = figure_key(label), figure_key(other.label)
     return mine is None or theirs is None or mine == theirs
@@ -439,7 +497,7 @@ def _legends(pages: Sequence[PageAnswer]) -> tuple[list[_Legend], dict[int, int]
 
     The model reports a figure's legend on the figure and again in the page's list, with boxes drawn twice by eye:
     on one page, boxes that mostly overlap and do not name different figures are one legend, labelled with whichever
-    label is printed.
+    label is printed and naming the tags the list gives it.
     """
     legends: list[_Legend] = []
     own: dict[int, int] = {}
@@ -448,72 +506,21 @@ def _legends(pages: Sequence[PageAnswer]) -> tuple[list[_Legend], dict[int, int]
         for drawn in page.figures:
             if drawn.legend is not None:
                 own[id(drawn)] = len(legends)
-                legends.append(_Legend(page.number, drawn.label, drawn.legend))
-        for label, place in page.legends:
-            same = next((i for i in range(first, len(legends)) if _one_legend(label, place, legends[i])), None)
+                legends.append(_Legend(page.number, drawn.label, drawn.legend, frozenset()))
+        for listed in page.legends:
+            tags = frozenset(_tag(t) for t in listed.tags if _tag(t))
+            same = next(
+                (i for i in range(first, len(legends)) if _one_legend(listed.label, listed.place, legends[i])), None
+            )
             if same is None:
-                legends.append(_Legend(page.number, label, place))
-            elif not legends[same].label:
-                legends[same] = dataclasses.replace(legends[same], label=label)
+                legends.append(_Legend(page.number, listed.label, listed.place, tags))
+            else:
+                legend = legends[same]
+                legends[same] = dataclasses.replace(legend, label=legend.label or listed.label, tags=legend.tags | tags)
     return legends, own
 
 
-def _reserve(
-    pages: Sequence[PageAnswer],
-    legends: Sequence[_Legend],
-    own: dict[int, int],
-    drawn_keys: set[str],
-    carried: set[str],
-) -> dict[int, int]:
-    """For each unlabelled drawing without a legend of its own, an unclaimed legend on its own page, if there is one.
-
-    Done for the whole paper before any drawing looks next door, so a page's own legend is never taken by a neighbour.
-    """
-    claimed = set(own.values())
-    reserved: dict[int, int] = {}
-    for page in pages:
-        free = [
-            i
-            for i, legend in enumerate(legends)
-            if legend.page == page.number and i not in claimed and figure_key(legend.label) not in drawn_keys
-        ]
-        for drawn in page.figures:
-            counted = figure_key(drawn.label) in carried
-            if not counted and id(drawn) not in own and free:
-                reserved[id(drawn)] = free.pop(0)
-    return reserved
-
-
-def _unlabelled(
-    number: int,
-    drawn: Drawn,
-    *,
-    legends: Sequence[_Legend],
-    drawn_keys: set[str],
-    claimed: set[int],
-    before: _Joined | None,
-) -> _Joined:
-    """The figure an unlabelled drawing with no legend on its own page belongs to.
-
-    An unclaimed legend on the page before or after, that no labelled drawing's label names, makes it a figure of its
-    own. Otherwise it continues the figure before it, if there is one, and stands alone if not.
-    """
-    candidates = sorted(
-        (i for i, legend in enumerate(legends) if abs(legend.page - number) == 1 and i not in claimed),
-        key=lambda i: legends[i].page,
-    )
-    for i in candidates:
-        if figure_key(legends[i].label) not in drawn_keys:
-            claimed.add(i)
-            return _Joined(legends[i].label, i, list(drawn.panels), {number})
-    if before is not None:
-        before.panels.extend(drawn.panels)
-        before.pages.add(number)
-        return before
-    return _Joined('', None, list(drawn.panels), {number})
-
-
-def _legend_by_label(key: str, figure: _Joined, legends: Sequence[_Legend]) -> int | None:
+def _legend_by_label(key: str, pages: set[int], legends: Sequence[_Legend]) -> int | None:
     """The legend a labelled figure takes when it has none of its own.
 
     One with its label on a page next to the figure's comes first, since a legend listed on the figure's own page is
@@ -522,23 +529,220 @@ def _legend_by_label(key: str, figure: _Joined, legends: Sequence[_Legend]) -> i
     matches = [i for i, legend in enumerate(legends) if figure_key(legend.label) == key]
 
     def distance(i: int) -> int:
-        return min(abs(legends[i].page - page) for page in figure.pages)
+        return min(abs(legends[i].page - page) for page in pages)
 
     adjacent = [i for i in matches if distance(i) == 1]
     on_its_pages = [i for i in matches if distance(i) == 0]
     return (adjacent or on_its_pages or sorted(matches, key=distance) or [None])[0]
 
 
+class _Join:
+    """One paper's drawings being placed into figures, rule by rule; see `assemble`."""
+
+    def __init__(self, pages: Sequence[PageAnswer]) -> None:
+        self.legends, reported_with = _legends(pages)
+        self.drawings = [_Drawing(page.number, drawn, _tags(drawn)) for page in pages for drawn in page.figures]
+        # Each drawing reported with its legend, to that legend; and back.
+        self.own = {i: j for i, d in enumerate(self.drawings) if (j := reported_with.get(id(d.drawn))) is not None}
+        self.owner = {j: i for i, j in self.own.items()}
+        carried = {k for legend in self.legends if (k := figure_key(legend.label)) is not None}
+        # A numbered label counts only when some legend carries it: a page showing part of a figure can come back
+        # labelled with a guess.
+        self.counted = [k if (k := figure_key(d.drawn.label)) in carried else None for d in self.drawings]
+        drawn_keys = {k for k in self.counted if k is not None}
+        # A legend reported with a drawing is that drawing's: a table's caption, or a second copy of a figure's.
+        self.reported = set(self.own.values())
+        self.table_legends = {j for j, legend in enumerate(self.legends) if _TABLE.search(legend.label)}
+        # A legend carrying a label some drawing prints is that figure's; only matching tags overrule that.
+        self.labelled = {j for j, legend in enumerate(self.legends) if figure_key(legend.label) in drawn_keys}
+        self.tables = {i for i, d in enumerate(self.drawings) if _TABLE.search(d.drawn.label)}
+        self.figure_of: dict[int, _Figure] = {}
+        self.under: dict[int, _Figure] = {}  # each legend's figure, once a drawing takes it
+
+    def _place(self, i: int, figure: _Figure) -> None:
+        figure.drawings.append(i)
+        self.figure_of[i] = figure
+        if figure.legend is not None:
+            self.under.setdefault(figure.legend, figure)
+
+    def _holder(self, legend: int) -> _Figure | None:
+        """The figure holding the legend, or holding the drawing it was reported with."""
+        figure = self.under.get(legend)
+        if figure is None and legend in self.owner:
+            figure = self.figure_of.get(self.owner[legend])
+        return figure
+
+    def _take(self, i: int, legend: int) -> None:
+        figure = self._holder(legend)
+        if figure is None:
+            printed = self.drawings[i].drawn.label
+            # A numbered label no legend carries is a guess; the legend's own label stands instead.
+            label = self.legends[legend].label or (printed if figure_key(printed) is None else '')
+            figure = _Figure(label, legend, [])
+        self._place(i, figure)
+
+    def _open(self, i: int) -> bool:
+        return i not in self.figure_of and i not in self.tables
+
+    def _free(self, legend: int, *, tagged: bool = False) -> bool:
+        """Whether no drawing holds the legend and a drawing may take it, by its tags when `tagged`."""
+        return (
+            legend not in self.under
+            and legend not in self.reported
+            and legend not in self.table_legends
+            and (tagged or legend not in self.labelled)
+        )
+
+    def _pages(self, figure: _Figure) -> set[int]:
+        return {self.drawings[j].page for j in figure.drawings}
+
+    def _shown(self, legend: int) -> frozenset[str]:
+        figure = self._holder(legend)
+        return frozenset() if figure is None else frozenset().union(*(self.drawings[j].tags for j in figure.drawings))
+
+    def by_label(self) -> None:
+        """Drawings on neighbouring pages sharing a counted label are one figure; the same label far away is another."""
+        last: dict[str, _Figure] = {}
+        opened: list[tuple[str, _Figure]] = []
+        for i, key in enumerate(self.counted):
+            if key is None or not self._open(i):
+                continue
+            page = self.drawings[i].page
+            figure = last.get(key)
+            if figure is None or page - max(self.drawings[j].page for j in figure.drawings) > 1:
+                figure = last[key] = _Figure(self.drawings[i].drawn.label, None, [])
+                opened.append((key, figure))
+            figure.drawings.append(i)
+            self.figure_of[i] = figure
+            if figure.legend is None and i in self.own:
+                figure.legend = self.own[i]
+        for key, figure in opened:
+            if figure.legend is None:
+                figure.legend = _legend_by_label(key, self._pages(figure), self.legends)
+        # Figures sharing a label far apart share its legend; the one nearest it holds it for the later rules.
+        sharing: dict[int, list[_Figure]] = {}
+        for _, figure in opened:
+            if figure.legend is not None:
+                sharing.setdefault(figure.legend, []).append(figure)
+        for legend, figures in sharing.items():
+            page = self.legends[legend].page
+            self.under[legend] = min(figures, key=lambda f: min(abs(page - p) for p in self._pages(f)))
+
+    def by_own_legend(self) -> None:
+        """A drawing takes the legend reported with it on its page."""
+        for i in range(len(self.drawings)):
+            if self._open(i) and i in self.own:
+                self._take(i, self.own[i])
+
+    def by_page_legend(self) -> None:
+        """A drawing takes a free numbered legend on its own page that names its tags, or where either names none."""
+        for i, d in enumerate(self.drawings):
+            if not self._open(i):
+                continue
+            for j, legend in enumerate(self.legends):
+                if (
+                    legend.page == d.page
+                    and self._free(j)
+                    and figure_key(legend.label) is not None
+                    and (not d.tags or not legend.tags or d.tags <= legend.tags)
+                ):
+                    self._take(i, j)
+                    break
+
+    def by_next_legend(self) -> None:
+        """A drawing with no label and no tags takes a free numbered legend on the next page."""
+        for i, d in enumerate(self.drawings):
+            if not self._open(i) or d.tags or d.drawn.label.strip():
+                continue
+            for j, legend in enumerate(self.legends):
+                if legend.page == d.page + 1 and self._free(j) and figure_key(legend.label) is not None:
+                    self._take(i, j)
+                    break
+
+    def by_tags(self) -> None:
+        """A tagged drawing takes the nearest legend on its page or next to it naming all its tags, none yet shown."""
+        for i, d in enumerate(self.drawings):
+            if not self._open(i) or not d.tags:
+                continue
+            candidates = [
+                j
+                for j, legend in enumerate(self.legends)
+                if abs(legend.page - d.page) <= 1
+                and (self._holder(j) is not None or self._free(j, tagged=True))
+                and d.tags <= legend.tags
+                and not d.tags & self._shown(j)
+            ]
+            if candidates:
+                self._take(
+                    i, min(candidates, key=lambda j: (abs(self.legends[j].page - d.page), -self.legends[j].page))
+                )
+
+    def by_sequence(self) -> None:
+        """Legends printed together, figures after: pair them in order when they are as many and their tags agree."""
+        free = [j for j, legend in enumerate(self.legends) if self._free(j) and figure_key(legend.label)]
+        pages = sorted({self.legends[j].page for j in free})
+        # Printed together: two or more, on one page or consecutive pages.
+        if len(free) < 2 or any(b - a > 1 for a, b in itertools.pairwise(pages)):
+            return
+        last = max(self.legends[j].page for j in free)
+        waiting = [
+            i
+            for i, d in enumerate(self.drawings)
+            if self._open(i) and figure_key(d.drawn.label) is None and d.page > last
+        ]
+        pairs = list(zip(waiting, free, strict=False))
+        if len(waiting) == len(free) and all(
+            not self.drawings[i].tags or not self.legends[j].tags or self.drawings[i].tags <= self.legends[j].tags
+            for i, j in pairs
+        ):
+            for i, j in pairs:
+                self._take(i, j)
+
+    def by_continuation(self) -> None:
+        """A drawing with no label and no tags continues the figure before it in reading order, if that has a legend.
+
+        Every drawing left over then stands alone; a table does, and nothing after it continues past it.
+        """
+        before: dict[int, _Figure] = {}  # the last figure on each page
+        for i, d in enumerate(self.drawings):
+            if self._open(i) and not d.tags and not d.drawn.label.strip():
+                figure = before.get(d.page) or before.get(d.page - 1)
+                if figure is not None and figure.legend is not None:
+                    self._place(i, figure)
+            if i not in self.figure_of:
+                self._place(i, _Figure(d.drawn.label, None, []))
+            before[d.page] = self.figure_of[i]
+
+    def figures(self) -> list[_Figure]:
+        """The figures, in the order of their first drawing."""
+        return sorted(dict.fromkeys(self.figure_of.values()), key=lambda f: min(f.drawings))
+
+
 def assemble(pages: Sequence[PageAnswer]) -> figures_pb2.FigureSet:
     """Join the pages' answers into the paper's figures.
 
-    A label counts only when some legend in the paper carries it: a page that shows only part of a figure can come
-    back labelled with a guess. Drawings on neighbouring pages that share a counted label are one figure, its panels
-    in page order; the same label far from the figure's pages starts another, since one of the two is a misreading. A
-    labelled figure without a legend of its own takes the legend with its label: next to its pages first, then on
-    them, then the nearest. An unlabelled drawing takes an unclaimed legend on its own page, then one on the page
-    before or after, that no labelled drawing's label names; otherwise it continues the figure before it, the last
-    on its page or else on the page before. A legend goes to one figure, except that figures sharing a label share it.
+    Each drawing (what one page shows of one figure) is placed by the first rule that applies. A drawing labelled as a
+    table is a figure of its own with no legend. A drawing's tags are its panels' tags, and its own label when that
+    names no figure or table ("Family 2"). A legend is free when no figure holds it, it was not reported with a drawing,
+    it is not a table's caption, and its label names no figure a drawing prints. Then:
+
+    1. Its label, when some legend carries it: drawings on neighbouring pages sharing a label are one figure, the same
+       label far away starts another. The figure takes the legend reported with one of its drawings, else the one with
+       its label next to its pages, then on them, then the nearest. Figures sharing that legend share it; the nearest
+       holds it for the rules below.
+    2. The legend reported with it on its page.
+    3. The nearest legend on its page or the next or previous one naming all its tags, none of which that legend's
+       figure shows yet, the later page on a tie: one a figure holds (a copy reported with a figure's drawing counts as
+       that figure's), or one free but for a printed label.
+    4. A free legend with a numbered label on its page that names its tags, or where either names none.
+    5. Free legends with a numbered label, two or more on one page or consecutive pages, as many as the drawings with
+       no numbered label after the last of them: paired in order, unless a pair's tags disagree.
+    6. With no label and no tags: a free legend with a numbered label on the next page.
+    7. With no label and no tags: the figure before it in reading order, the last on its page or else on the page
+       before, if that figure has a legend.
+
+    A drawing no rule places is a figure of its own, with no legend, and nothing continues past a table. Drawings
+    placed under one legend are one figure, which takes its label from the legend when the legend prints one.
 
     Args:
         pages: Every page's answer, in page order.
@@ -546,57 +750,22 @@ def assemble(pages: Sequence[PageAnswer]) -> figures_pb2.FigureSet:
     Returns:
         The figures, in the order their first panel appears.
     """
-    legends, own = _legends(pages)
-    carried = {k for legend in legends if (k := figure_key(legend.label)) is not None}
-    # The labels some drawn figure counts: a legend carrying one is that figure's, never a neighbour's.
-    drawn_keys = {k for page in pages for drawn in page.figures if (k := figure_key(drawn.label)) in carried}
-    reserved = _reserve(pages, legends, own, drawn_keys, carried)
-    claimed = set(own.values()) | set(reserved.values())
-    by_key: dict[str, _Joined] = {}
-    keyed: list[tuple[str, _Joined]] = []
-    joined: list[_Joined] = []
-    last_on: dict[int, _Joined] = {}
-    for page in pages:
-        for drawn in page.figures:
-            key = figure_key(drawn.label)
-            if key is not None and key in carried:
-                figure = by_key.get(key)
-                if figure is None or page.number - max(figure.pages) > 1:
-                    figure = by_key[key] = _Joined(drawn.label, None, [], set())
-                    keyed.append((key, figure))
-                    joined.append(figure)
-                figure.panels.extend(drawn.panels)
-                figure.pages.add(page.number)
-                if figure.legend is None and id(drawn) in own:
-                    figure.legend = own[id(drawn)]
-            elif (index := own.get(id(drawn), reserved.get(id(drawn)))) is not None:
-                # A numbered label no legend carries is a guess; the legend's own label stands instead.
-                label = legends[index].label or (drawn.label if figure_key(drawn.label) is None else '')
-                figure = _Joined(label, index, list(drawn.panels), {page.number})
-                joined.append(figure)
-            else:
-                # The figure before it in reading order: beside it on its page, or else at the end of the last page.
-                before = last_on.get(page.number) or last_on.get(page.number - 1)
-                figure = _unlabelled(
-                    page.number,
-                    drawn,
-                    legends=legends,
-                    drawn_keys=drawn_keys,
-                    claimed=claimed,
-                    before=before,
-                )
-                if figure is not before:
-                    joined.append(figure)
-            last_on[page.number] = figure
-    for key, figure in keyed:
-        if figure.legend is None:
-            figure.legend = _legend_by_label(key, figure, legends)
+    join = _Join(pages)
+    join.by_label()
+    join.by_own_legend()
+    join.by_tags()
+    join.by_page_legend()
+    join.by_sequence()
+    join.by_next_legend()
+    join.by_continuation()
     return figures_pb2.FigureSet(
         figures=[
             figures_pb2.Figure(
-                label=f.label, legend=None if f.legend is None else legends[f.legend].place, panels=f.panels
+                label=f.label,
+                legend=None if f.legend is None else join.legends[f.legend].place,
+                panels=[p for i in sorted(f.drawings) for p in join.drawings[i].drawn.panels],
             )
-            for f in joined
+            for f in join.figures()
         ]
     )
 
