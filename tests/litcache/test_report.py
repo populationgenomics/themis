@@ -9,12 +9,11 @@ exercised in `test_ingest_beam.py`.
 from __future__ import annotations
 
 import datetime
-import json
 
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
 
-from themis.litcache import ingest_beam, report
+from themis.litcache import report
 from themis.litcache.models import litcache_pb2
 
 _NOW = datetime.datetime(2026, 6, 25, tzinfo=datetime.UTC)
@@ -54,34 +53,17 @@ def _write(bucket: gcs.Bucket, manifest: litcache_pb2.Manifest) -> None:
     bucket.blob(f'papers/{manifest.doc_id}/manifest.pb').upload_from_string(manifest.SerializeToString())
 
 
-def test_flagged_lists_only_explicit_false(gcs_bucket: gcs.Bucket) -> None:
+def test_build_report_totals_and_flags_only_explicit_false_manifests(gcs_bucket: gcs.Bucket) -> None:
     _write(gcs_bucket, _manifest('aaa', has_text_layer=False))
     _write(gcs_bucket, _manifest('bbb', has_text_layer=True))
     _write(gcs_bucket, _manifest('ccc', has_text_layer=None))  # XML source of truth: probe skipped
-
-    flagged = report.flagged_no_text_layer(gcs_bucket)
-
-    assert [f.doc_id for f in flagged] == ['aaa']
-    assert flagged[0].claim_key == 'doi:10.1/aaa'
-    assert flagged[0].source_handles == ['pdf']
-
-
-def test_flagged_ignores_nested_non_manifest_keys(gcs_bucket: gcs.Bucket) -> None:
-    _write(gcs_bucket, _manifest('aaa', has_text_layer=False))
     gcs_bucket.blob('papers/aaa/sources/pdf/0.pdf').upload_from_string(b'not a manifest')
-
-    assert [f.doc_id for f in report.flagged_no_text_layer(gcs_bucket)] == ['aaa']
-
-
-def test_build_report_totals(gcs_bucket: gcs.Bucket) -> None:
-    _write(gcs_bucket, _manifest('aaa', has_text_layer=False))
-    _write(gcs_bucket, _manifest('bbb', has_text_layer=True))
-    counters = {'papers_seen': 3, 'paper_written': 2, 'paper_skipped': 0}
+    counters = {'papers_seen': 4, 'paper_written': 3, 'paper_skipped': 0}
 
     rep = report.build_report(gcs_bucket, unpaired_seeds=['ingest/lonely.json'], counters=counters, dead_lettered=1)
 
-    assert rep.papers_total == 2
-    assert [f.doc_id for f in rep.flagged] == ['aaa']
+    assert rep.papers_total == 3
+    assert rep.flagged == [report.FlaggedPaper(doc_id='aaa', claim_key='doi:10.1/aaa', source_handles=['pdf'])]
     assert rep.unpaired_seeds == ['ingest/lonely.json']
     assert rep.counters == counters
     assert rep.dead_lettered == 1
@@ -98,30 +80,6 @@ def test_render_report_mentions_flagged_and_unpaired(gcs_bucket: gcs.Bucket) -> 
     assert 'no_text_layer: 1' in rendered
     assert 'aaa (doi:10.1/aaa): pdf' in rendered
     assert 'unpaired: ingest/lonely.json' in rendered
-
-
-def test_write_dead_letter_summary_consolidates_records(gcs_bucket: gcs.Bucket) -> None:
-    # Records come from the real producer, so the shape this summary documents is pinned to
-    # what the pipeline writes rather than to a hand-written copy that can drift from it.
-    prefix, summary_path = ingest_beam.dead_letter_paths(_NOW)
-    ingest_beam._write_dead_letter(
-        gcs_bucket,
-        prefix=prefix,
-        key='10.1%2Fa.json',
-        reason='metadata unresolved',
-        claim_key='doi:10.1/a',
-        doi='10.1/a',
-    )
-    # an extract-stage failure has no identity yet
-    ingest_beam._write_dead_letter(gcs_bucket, prefix=prefix, key='b.json', reason='ValueError: boom')
-
-    count = report.write_dead_letter_summary(gcs_bucket, records_prefix=prefix, summary_path=summary_path)
-
-    assert count == 2
-    body = gcs_bucket.blob(summary_path).download_as_bytes().decode('utf-8')
-    records = [json.loads(line) for line in body.splitlines()]
-    assert {r['key']: r['claim_key'] for r in records} == {'10.1%2Fa.json': 'doi:10.1/a', 'b.json': None}
-    assert {r['reason'] for r in records} == {'metadata unresolved', 'ValueError: boom'}
 
 
 def test_write_dead_letter_summary_writes_nothing_when_clean(gcs_bucket: gcs.Bucket) -> None:

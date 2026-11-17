@@ -104,12 +104,12 @@ class _Decision:
     request: work_pb2.WorkRequest | None
 
 
-def sweep_pass(now: datetime.datetime) -> str:
+def _sweep_pass(now: datetime.datetime) -> str:
     """The pass name for a sweep started at `now`: the minute, in UTC, as a task id carries it."""
     return now.astimezone(datetime.UTC).strftime('%Y%m%dT%H%M')
 
 
-def request_for(
+def _request_for(
     manifest: litcache_pb2.Manifest,
     log: work_pb2.JobLog,
     *,
@@ -157,7 +157,7 @@ def _papers(bucket: gcs.Bucket) -> Iterator[tuple[str, _Paper | str]]:
 def _request(
     bucket: gcs.Bucket, paper: _Paper, *, now: datetime.datetime, deadline: datetime.timedelta, free_only: bool
 ) -> work_pb2.WorkRequest | None:
-    request = request_for(paper.manifest, paper.log, now=now, deadline=deadline, free_only=free_only)
+    request = _request_for(paper.manifest, paper.log, now=now, deadline=deadline, free_only=free_only)
     if request is not None or not produce.awaits_marker(paper.manifest, paper.log):
         return request
     if outcome.read_outcome(bucket, paper.manifest.doc_id) is not None:
@@ -170,7 +170,7 @@ def _decisions(
     bucket: gcs.Bucket, *, now: datetime.datetime, deadline: datetime.timedelta, free_only: bool
 ) -> Iterator[_Decision]:
     """Each committed paper, and what a pass started at `now` asks for it: `sweep` asks, `survey` counts."""
-    name = sweep_pass(now)
+    name = _sweep_pass(now)
     for doc_id, paper in _papers(bucket):
         if isinstance(paper, str):
             _LOG.error('passing over %s: %s', doc_id, paper)
@@ -213,7 +213,7 @@ def sweep(
             Any other request that cannot be created is counted instead.
     """
     report = SweepReport()
-    name = sweep_pass(now)
+    name = _sweep_pass(now)
     for decision in _decisions(bucket, now=now, deadline=deadline, free_only=free_only):
         report.papers += 1
         if decision.paper is None:
@@ -292,11 +292,15 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 def main(
     argv: Sequence[str] | None = None,
     clock: Callable[[], datetime.datetime] = lambda: datetime.datetime.now(datetime.UTC),
+    *,
+    bucket_factory: Callable[[str], gcs.Bucket] | None = None,
+    tasks_client_factory: Callable[[], tasks_v2.CloudTasksClient] = tasks_v2.CloudTasksClient,
 ) -> int:
     """Run one pass over the store the environment names; return the exit status."""
     args = _parse_args(argv)
     logging.basicConfig(level=logging.INFO)
-    bucket = gcs.Client().bucket(_require('THEMIS_FULLTEXT_BUCKET'))
+    bucket_name = _require('THEMIS_FULLTEXT_BUCKET')
+    bucket = gcs.Client().bucket(bucket_name) if bucket_factory is None else bucket_factory(bucket_name)
     if args.dry_run:
         result = survey(bucket, now=clock(), free_only=args.free_only)
         _LOG.info('sweep, dry run: %s', result)
@@ -306,7 +310,7 @@ def main(
         worker_url=_require('THEMIS_WORK_WORKER_URL'),
         invoker_service_account_email=_require('THEMIS_WORK_INVOKER_SA_EMAIL'),
     )
-    report = sweep(bucket, enqueue.Enqueuer(tasks_v2.CloudTasksClient(), target), now=clock(), free_only=args.free_only)
+    report = sweep(bucket, enqueue.Enqueuer(tasks_client_factory(), target), now=clock(), free_only=args.free_only)
     _LOG.info('sweep: %s', report)
     # A request that could not be created waits for the next pass, and an unreadable paper for a person; failing the
     # job surfaces either.

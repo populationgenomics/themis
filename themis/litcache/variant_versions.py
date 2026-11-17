@@ -59,7 +59,7 @@ def _projection(variant: weaver.Variant, references: variant_reference.Reference
         return None
 
 
-def equivalent(old: str, new: str, change: str, references: variant_reference.References) -> bool:
+def _equivalent(old: str, new: str, change: str, references: variant_reference.References) -> bool:
     """Whether a change names the same thing on two versions of an accession.
 
     Args:
@@ -136,7 +136,7 @@ def update(mention_set: variants_pb2.MentionSet, references: variant_reference.R
             if kind not in ('c', 'p') or '.' not in accession or not held or held[-1] == accession:
                 continue
             newest = f'{held[-1]}:{change}'
-            if any(c.hgvs == newest for c in [*mention.candidates, *updated]) or not equivalent(
+            if any(c.hgvs == newest for c in [*mention.candidates, *updated]) or not _equivalent(
                 accession, held[-1], change, references
             ):
                 continue

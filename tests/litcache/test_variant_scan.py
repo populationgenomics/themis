@@ -82,20 +82,6 @@ def test_a_page_reference_is_not_hgvs_like() -> None:
     assert _texts('as on p.23, and c.1990') == []
 
 
-def test_a_short_hit_is_covered_only_where_it_is_printed() -> None:
-    (hit,) = [h for h in variant_scan.scan('a 418 G\u2192A change') if h.text == '418 G\u2192A']
-    assert variant_scan.covers('418 G\u2192A', hit)
-    (short,) = variant_scan.scan('splicing, +1G>A, here')
-    assert variant_scan.covers('c.123+1G>A', short)
-    assert not variant_scan.covers('c.11G>A', short)
-
-
-def test_a_short_mention_does_not_cover_a_longer_hit() -> None:
-    (hit,) = variant_scan.scan('| 470 | G\u2192A |')
-    assert variant_scan.covers('470 G\u2192A', hit)
-    assert not variant_scan.covers('G\u2192A', hit)
-
-
 def test_a_description_does_not_take_in_the_next_word() -> None:
     assert _texts('the c.100del A novel variant') == ['c.100del']
 
@@ -107,12 +93,6 @@ def test_a_loose_match_inside_an_hgvs_match_is_not_flagged_again() -> None:
 def test_a_hit_counts_its_printings_and_keeps_its_first_line() -> None:
     hits = variant_scan.scan('intro\nR337H here\nand R337H again\nc.5C>T last')
     assert [(h.id, h.text, h.line, h.printings) for h in hits] == [(1, 'R337H', 2, 2), (2, 'c.5C>T', 4, 1)]
-
-
-def test_a_mention_recording_part_of_a_prefixed_hit_covers_it() -> None:
-    (hit,) = variant_scan.scan('NM_000059.4:c.1691G>A')
-    assert variant_scan.covers('c.1691G>A', hit)
-    assert not variant_scan.covers('c.1691G>T', hit)
 
 
 def _entry(verbatim: str, line: int = 1, context: str = 'observed') -> dict[str, Any]:
@@ -140,6 +120,34 @@ def test_hits_are_outstanding_until_recorded_or_dismissed() -> None:
     toolbox.call('dismiss_hits', {'dismissals': [{'hit': 2, 'reason': 'a figure panel label'}]})
     assert toolbox.outstanding() == []
     assert [(d.text, d.line, d.reason) for d in toolbox.mention_set.dismissals] == [('S1D', 1, 'a figure panel label')]
+
+
+@pytest.mark.parametrize(
+    ('text', 'recorded', 'outstanding'),
+    [
+        ('a 9 G\u2192A change', ['9G\u2192A'], []),
+        ('splicing, +1G>A, and c.11G>A here', ['c.11G>A'], ['1G>A']),
+        ('splicing, +1G>A, that is c.123+1G>A', ['c.123+1G>A'], []),
+        ('| 470 | G\u2192A |', ['G\u2192A'], ['470 | G\u2192A']),
+        ('| 470 | G\u2192A |', ['470 G\u2192A'], []),
+        ('NM_000059.4:c.1691G>A and c.1691G>T', ['c.1691G>T'], ['NM_000059.4:c.1691G>A']),
+        ('NM_000059.4:c.1691G>A and c.1691G>T', ['c.1691G>A', 'c.1691G>T'], []),
+    ],
+    ids=[
+        'short-hit-printed-without-space',
+        'short-hit-not-covered-inside-longer-number',
+        'short-hit-covered-at-word-boundary',
+        'short-mention-does-not-cover-longer-hit',
+        'joined-table-cells-cover-table-hit',
+        'different-change-leaves-prefixed-hit',
+        'change-alone-covers-prefixed-hit',
+    ],
+)
+def test_recorded_mentions_cover_matching_scan_hits(text: str, recorded: list[str], outstanding: list[str]) -> None:
+    toolbox = _toolbox(text)
+    toolbox.call('record_mentions', {'mentions': [_entry(verbatim) for verbatim in recorded]})
+
+    assert [h.text for h in toolbox.outstanding()] == outstanding
 
 
 def test_dismissing_an_unknown_hit_is_an_input_error() -> None:

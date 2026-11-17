@@ -789,28 +789,40 @@ def test_a_marker_does_not_stop_a_step_with_work(gcs_bucket: gcs.Bucket) -> None
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.READY
 
 
-def test_pdf_source_picks_the_lineage_with_the_newest_revision() -> None:
-    # Two PDF lineages: the one whose newest revision is most recent wins, regardless of array order
-    # (ingestion order), matching _current_revision's captured_at rule. A revision-less lineage is skipped.
-    def _pdf_lineage(handle: str, captured: datetime.datetime) -> litcache_pb2.Source:
-        ts = timestamp_pb2.Timestamp()
-        ts.FromDatetime(captured)
-        return litcache_pb2.Source(
-            handle=handle,
-            media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF,
-            revisions=[litcache_pb2.Revision(hash=handle, captured_at=ts)],
-        )
+@pytest.mark.parametrize('publisher_first', [False, True])
+def test_produce_transcribes_the_pdf_lineage_with_the_newest_revision(
+    gcs_bucket: gcs.Bucket, publisher_first: bool
+) -> None:
+    # Two PDF lineages on different terms: the one whose newest revision is most recent wins,
+    # regardless of manifest.sources order.
+    publisher_pdf = b'%PDF-1.7 publisher'
+    seed = dataclasses.replace(_pdf_source(), handle='seed', captured_at=_CAPTURED_AT)
+    publisher = dataclasses.replace(
+        _pdf_source(),
+        handle='publisher',
+        data=publisher_pdf,
+        licence='https://creativecommons.org/licenses/by/4.0/',
+        captured_at=_CAPTURED_AT + datetime.timedelta(days=1),
+    )
+    sources = [publisher, seed] if publisher_first else [seed, publisher]
+    _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=sources)
+    captured: dict[str, bytes] = {}
 
-    older = _pdf_lineage('seed', _CAPTURED_AT)
-    newer = _pdf_lineage('publisher', _CAPTURED_AT + datetime.timedelta(days=1))
-    forward = produce._pdf_source(litcache_pb2.Manifest(sources=[older, newer]))
-    reversed_order = produce._pdf_source(litcache_pb2.Manifest(sources=[newer, older]))
-    assert forward is not None
-    assert reversed_order is not None
-    assert forward.handle == 'publisher'
-    assert reversed_order.handle == 'publisher'
-    empty = litcache_pb2.Source(handle='empty', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF, revisions=[])
-    assert produce._pdf_source(litcache_pb2.Manifest(sources=[empty])) is None
+    readiness = asyncio.run(
+        _produce(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            fetch_pdf=_pdf_returning(None),
+            convert_pdf=_ocr_returning('# OCR\n', captured=captured),
+            now=lambda: _CAPTURED_AT,
+        )
+    )
+
+    assert readiness is outcome.Readiness.READY
+    assert captured['pdf'] == publisher_pdf
+    manifest = _load_manifest(gcs_bucket)
+    assert list(_served(manifest).deps) == [hashlib.sha256(publisher_pdf).hexdigest()]
 
 
 def test_produce_raises_when_the_paper_is_not_in_the_corpus(gcs_bucket: gcs.Bucket) -> None:

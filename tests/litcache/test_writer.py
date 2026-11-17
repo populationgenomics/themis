@@ -711,15 +711,19 @@ def test_add_rendering_raises_when_the_rmw_never_converges(
         writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
 
 
-def test_merge_source_rejects_a_media_type_mismatch() -> None:
-    # A handle whose media_type disagrees with the manifest's would dangle the revision blob (its path
-    # extension is media_type-derived), so the merge fails loud rather than committing a bad reference.
-    manifest = litcache_pb2.Manifest(
-        sources=[litcache_pb2.Source(handle='doc', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_PDF)]
-    )
-    incoming = litcache_pb2.Source(handle='doc', media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_XML)
-    with pytest.raises(ValueError, match='in the manifest'):
-        writer._merge_source(manifest, incoming)
+def test_add_source_rejects_a_media_type_mismatch(gcs_bucket: gcs.Bucket) -> None:
+    # Same handle and licence/access terms so _lineage_handle merges into 'pdf' rather than forking 'pdf-2';
+    # a mismatched media_type would dangle the revision blob, so add_source refuses the write.
+    terms = {
+        'licence': 'https://creativecommons.org/licenses/by/4.0/',
+        'licence_basis': litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT,
+        'access': _access(),
+    }
+    pdf_source = dataclasses.replace(_source(handle='pdf'), **terms)
+    xml_on_pdf_handle = dataclasses.replace(_xml_source(handle='pdf'), **terms)
+    writer.write_paper(gcs_bucket, _paper(sources=[pdf_source]))
+    with pytest.raises(writer.ManifestRefusedError, match='in the manifest'):
+        writer.add_source(gcs_bucket, _DOC_ID, xml_on_pdf_handle)
 
 
 def test_a_fetched_file_without_a_capture_time_fails_loud(gcs_bucket: gcs.Bucket) -> None:

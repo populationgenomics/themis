@@ -19,8 +19,10 @@ _SEQUENCES = {
     'NP_1.2': 'M' + 'ACDEFGHIKL' * 2 + 'MNPQRSTVW' + 'A' + 'ACDEFGHIKL' * 3,
     'NM_1.1': 'GGGGGGGGGG' + _CODING,
     'NM_1.2': 'TTTTTGGGGGGGGGG' + _CODING,
+    'NM_2.1': 'TTTTTGGGGGGGGGG' + _CODING,
+    'NM_2.2': 'GGGGGGGGGG' + _CODING,
 }
-_CDS_START = {'NM_1.1': 11, 'NM_1.2': 16}
+_CDS_START = {'NM_1.1': 11, 'NM_1.2': 16, 'NM_2.1': 16, 'NM_2.2': 11}
 
 
 @dataclasses.dataclass
@@ -135,10 +137,16 @@ def test_a_coding_change_on_a_protein_stays() -> None:
     assert _updated(stores, 'NP_1.1:c.4G>A') == ['NP_1.1:c.4G>A']
 
 
-def test_a_utr_position_the_other_version_lacks_is_not_equivalent() -> None:
-    references = cast(variant_reference.References, _Stores())
-    assert variant_versions.equivalent('NM_1.2', 'NM_1.1', 'c.-5G>A', references)
-    assert not variant_versions.equivalent('NM_1.2', 'NM_1.1', 'c.-14T>C', references)
+@pytest.mark.parametrize(
+    ('hgvs', 'expected'),
+    [
+        ('NM_1.1:c.-5G>A', ['NM_1.1:c.-5G>A', 'NM_1.2:c.-5G>A']),
+        ('NM_1.1:c.-14T>C', ['NM_1.1:c.-14T>C']),
+        ('NM_2.1:c.-14T>C', ['NM_2.1:c.-14T>C']),
+    ],
+)
+def test_a_utr_position_moves_only_where_both_versions_hold_it(hgvs: str, expected: list[str]) -> None:
+    assert _updated(_Stores(), hgvs) == expected
 
 
 def test_a_derived_candidate_is_refused() -> None:

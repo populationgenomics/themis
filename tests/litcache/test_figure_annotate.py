@@ -19,7 +19,7 @@ from themis.litcache.models import figures_pb2
 _PDF = (pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache' / 'oa' / 'source.pdf').read_bytes()
 
 
-def _message(stop_reason: str, content: list[Any]) -> anthropic.types.Message:
+def _message(stop_reason: str | None, content: list[Any]) -> anthropic.types.Message:
     return anthropic.types.Message(
         id='msg',
         type='message',
@@ -43,9 +43,10 @@ _EMPTY = _call([])
 class _Stream:
     request_id = 'req'
 
-    def __init__(self, message: anthropic.types.Message) -> None:
+    def __init__(self, message: anthropic.types.Message | None) -> None:
+        # None is a turn whose connection drops after the model began answering.
         self._message = message
-        self.current_message_snapshot = message
+        self.current_message_snapshot = message or _message(None, [])
         self._sent = False
 
     async def __aenter__(self) -> Self:
@@ -59,11 +60,14 @@ class _Stream:
 
     async def __anext__(self) -> types.SimpleNamespace:
         if self._sent:
+            if self._message is None:
+                raise httpx2.ReadError('connection reset')
             raise StopAsyncIteration
         self._sent = True
         return types.SimpleNamespace(type='message_start')
 
     async def get_final_message(self) -> anthropic.types.Message:
+        assert self._message is not None
         return self._message
 
 
@@ -73,7 +77,7 @@ class _Client:
     Pages run one at a time in the tests, so a request opening a conversation opens the next page's.
     """
 
-    def __init__(self, turns: dict[int, Sequence[anthropic.types.Message]] | None = None) -> None:
+    def __init__(self, turns: dict[int, Sequence[anthropic.types.Message | None]] | None = None) -> None:
         self.messages = self
         self._turns = {page: list(script) for page, script in (turns or {}).items()}
         self._page = 0
@@ -488,10 +492,12 @@ def test_a_figure_split_over_one_page_with_its_legend_on_the_page_before_stays_o
 
 
 def test_a_page_that_would_fail_again_decides_the_paper_over_one_whose_turn_broke_off() -> None:
-    refused = figure_annotate.AnnotationError('page 2: refused')
-    broke_off = ocr.SpentError('page 7: the stream broke off')
+    client = _Client({1: [None], 2: [_message('refusal', [])]})
 
-    assert figure_annotate._worst([broke_off, refused]) is refused  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(figure_annotate.AnnotationError, match='page 2: the annotation stopped with refusal'):
+        _annotate(client)
+
+    assert [r['page'] for r in client.requests] == [1, 2, 3]
 
 
 def test_supplementary_figures_match_their_legends_however_each_is_spelled() -> None:

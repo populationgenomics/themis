@@ -63,23 +63,6 @@ class IngestReport:
     dead_lettered: int
 
 
-def flagged_no_text_layer(bucket: gcs.Bucket, *, papers_prefix: str = 'papers/') -> list[FlaggedPaper]:
-    """Scan the manifests for pdf sources flagged `no_text_layer`.
-
-    A source is flagged only when `has_text_layer` is present and `False` — an
-    unset value means the probe was skipped (XML is the source of truth), not a
-    problem paper.
-
-    Args:
-        bucket: The cache bucket.
-        papers_prefix: The key prefix the paper directories live under.
-
-    Returns:
-        The flagged papers, in `doc_id` order.
-    """
-    return [f for manifest in _scan_manifests(bucket, papers_prefix) if (f := _flagged(manifest)) is not None]
-
-
 def _flagged(manifest: litcache_pb2.Manifest) -> FlaggedPaper | None:
     """The `FlaggedPaper` for a manifest with a `no_text_layer` pdf source, else None."""
     source_handles = [

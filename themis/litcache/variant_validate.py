@@ -242,7 +242,7 @@ def _reverses_printed(hgvs: str, verbatim: str) -> str | None:
     return f'the mention prints {alt}{position}{ref}; the candidate states {ref}{position}{alt}'
 
 
-def protein_change(variant: weaver.Variant) -> str:
+def _protein_change(variant: weaver.Variant) -> str:
     """A protein change in one spelling: three-letter residues, Ter for a stop, no brackets, no frameshift tail."""
     change = variant.format().partition(':')[2].replace('(', '').replace(')', '')
     change = re.sub(r'[A-Z*](?![a-z])', lambda m: _THREE_LETTER.get(m[0], m[0]), change)
@@ -292,7 +292,7 @@ def _protein_identity(
         return mapper.vrs_id(variant), None
     except weaver.HGVSError:
         digest = references.digest(variant.ac)
-        return None, f'{digest}:{protein_change(variant)}' if digest is not None else None
+        return None, f'{digest}:{_protein_change(variant)}' if digest is not None else None
 
 
 def _on_grch38(variant: weaver.Variant, mapper: weaver.VariantMapper, references: variant_reference.References) -> bool:

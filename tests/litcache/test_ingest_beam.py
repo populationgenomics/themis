@@ -17,10 +17,9 @@ import functools
 import json
 import pathlib
 import threading
-import time
 import typing
 import urllib.parse
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 
 import apache_beam as beam
 import httpx2
@@ -33,10 +32,10 @@ import testcontainers.postgres
 from apache_beam.options import pipeline_options
 from apache_beam.runners import runner
 from apache_beam.testing import test_pipeline
-from apache_beam.utils import shared
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.cloud import tasks_v2
+from litfetch import artifacts, ids
 
 from themis.litcache import crosswalk, enqueue, identity, ingest_beam, openalex, pipeline, records
 from themis.litcache.models import litcache_pb2, work_pb2
@@ -55,6 +54,13 @@ _BUCKETS: dict[str, gcs.Bucket] = {}
 
 def _bucket_for(token: str) -> gcs.Bucket:
     return _BUCKETS[token]
+
+
+_CONNS: dict[str, Callable[[], crosswalk.Connection]] = {}
+
+
+def _conn_for(token: str) -> crosswalk.Connection:
+    return _CONNS[token]()
 
 
 # Every task each test's run tried to create, by the test's token: the DoFn's enqueuer is built in the
@@ -88,6 +94,13 @@ def _enqueuer_for(token: str) -> enqueue.Enqueuer:
 def _no_fetchers() -> list[litfetch.Fetcher]:
     """Close the OA branch so ingestion stays offline (non-OA papers only)."""
     return []
+
+
+_FETCHERS: dict[str, Callable[[], list[litfetch.Fetcher]]] = {}
+
+
+def _fetchers_for(token: str) -> list[litfetch.Fetcher]:
+    return _FETCHERS[token]()
 
 
 # The non-OA fixture pdf's own title, for a pdf-only seed that must read as its paper.
@@ -206,175 +219,69 @@ def test_build_pipeline_rejects_non_positive_limit() -> None:
         )
 
 
-# --- _MintConnection ------------------------------------------------------------
-
-_MINT_RESULT = crosswalk.MintResult(doc_id='doc-1', minted=True, linked_doc_ids=())
+# --- build_pipeline (DirectRunner + Postgres) -----------------------------------
 
 
-class _FakeConn:
-    """A crosswalk connection recording the recovery calls `_MintConnection` makes."""
+class _ObservedConn:
+    """A real Postgres connection recording lifecycle events and optionally injecting one fault."""
 
-    def __init__(self, rollback_error: Exception | None) -> None:
-        self.rollbacks = 0
+    def __init__(
+        self,
+        inner: pg8000.dbapi.Connection,
+        *,
+        on_cursor: Callable[[pg8000.dbapi.Connection], None] | None = None,
+        on_rollback: Callable[[pg8000.dbapi.Connection], None] | None = None,
+        guard: threading.Lock | None = None,
+        overlap: list[int] | None = None,
+    ) -> None:
+        self._inner = inner
+        self._on_cursor = on_cursor
+        self._on_rollback = on_rollback
+        self._guard = guard
+        self._overlap = overlap
         self.closed = False
-        self._rollback_error = rollback_error
+
+    def _enter(self) -> None:
+        if self._guard is not None and self._overlap is not None:
+            with self._guard:
+                self._overlap[0] += 1
+                self._overlap[1] = max(self._overlap[1], self._overlap[0])
+
+    def _leave(self) -> None:
+        if self._guard is not None and self._overlap is not None:
+            with self._guard:
+                self._overlap[0] = max(0, self._overlap[0] - 1)
+
+    def cursor(self) -> pg8000.dbapi.Cursor:
+        self._enter()
+        try:
+            if self._on_cursor is not None:
+                hook, self._on_cursor = self._on_cursor, None
+                hook(self._inner)
+            return self._inner.cursor()
+        except BaseException:
+            self._leave()
+            raise
+
+    def commit(self) -> None:
+        try:
+            self._inner.commit()
+        finally:
+            self._leave()
 
     def rollback(self) -> None:
-        self.rollbacks += 1
-        if self._rollback_error is not None:
-            raise self._rollback_error
+        try:
+            if self._on_rollback is not None:
+                hook, self._on_rollback = self._on_rollback, None
+                hook(self._inner)
+            self._inner.rollback()
+        finally:
+            self._leave()
 
     def close(self) -> None:
         self.closed = True
-
-
-class _Dialer:
-    """A `ConnFactory` recording every connection it hands out."""
-
-    def __init__(self, rollback_error: Exception | None = None) -> None:
-        self.dialed: list[_FakeConn] = []
-        self._rollback_error = rollback_error
-
-    def __call__(self) -> crosswalk.Connection:
-        conn = _FakeConn(self._rollback_error)
-        self.dialed.append(conn)
-        return typing.cast('crosswalk.Connection', conn)
-
-
-def _mints(monkeypatch: pytest.MonkeyPatch, *outcomes: Exception | None) -> None:
-    """Drive `crosswalk.mint` through `outcomes`, raising one or returning the fixed result."""
-    remaining = list(outcomes)
-
-    def _mint(_conn: crosswalk.Connection, _external_ids: object) -> crosswalk.MintResult:
-        outcome = remaining.pop(0)
-        if outcome is not None:
-            raise outcome
-        return _MINT_RESULT
-
-    monkeypatch.setattr(crosswalk, 'mint', _mint)
-
-
-def test_mint_connection_dials_once_and_reuses(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mints(monkeypatch, None, None)
-    dialer = _Dialer()
-    holder = ingest_beam._MintConnection(dialer)
-
-    assert holder.mint(['doi:a']) == _MINT_RESULT
-    assert holder.mint(['doi:b']) == _MINT_RESULT
-    assert len(dialer.dialed) == 1
-
-
-def test_write_paper_instances_share_one_connection_per_process(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Runner v2 runs several `_WritePaperFn` instances per worker; the whole point of the
-    # `Shared` wiring is that they land on one connection. Driving `_MintConnection`
-    # directly cannot see that, so this goes through the DoFn.
-    _mints(monkeypatch, None, None)
-    dialer = _Dialer()
-    token = shared.Shared()
-
-    def _fn() -> ingest_beam._WritePaperFn:
-        return ingest_beam._WritePaperFn(
-            bucket_factory=lambda: typing.cast('gcs.Bucket', None),
-            conn_factory=dialer,
-            shared_conn=token,
-            dead_letter_prefix='diagnostics/dead_letters/test/',
-            licence=_licence(),
-            now=_NOW,
-            fetchers_factory=None,
-            file_sources_factory=None,
-            ask=None,
-        )
-
-    first, second = _fn(), _fn()
-    first.setup()
-    second.setup()
-
-    # Both instances hold the same connection object, so nothing rests on `Shared`'s
-    # single-slot keepalive surviving another stage's acquire.
-    assert first._mint_conn is second._mint_conn
-    assert first._mint(['doi:a']) == _MINT_RESULT
-    assert second._mint(['doi:b']) == _MINT_RESULT
-    assert len(dialer.dialed) == 1
-
-
-def test_mint_connection_rolls_back_a_failed_transaction_and_keeps_the_connection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # A statement-level failure aborts the transaction but not the session: rolling back
-    # leaves the same connection usable for the next paper.
-    _mints(monkeypatch, pg8000.exceptions.DatabaseError('deadlock detected'), None)
-    dialer = _Dialer()
-    holder = ingest_beam._MintConnection(dialer)
-
-    with pytest.raises(pg8000.exceptions.DatabaseError):
-        holder.mint(['doi:a'])
-    assert holder.mint(['doi:b']) == _MINT_RESULT
-
-    assert len(dialer.dialed) == 1
-    assert dialer.dialed[0].rollbacks == 1
-    assert not dialer.dialed[0].closed
-
-
-def test_mint_connection_redials_after_the_session_is_lost(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Cloud SQL restarting mid-run must not poison every remaining paper on the worker.
-    _mints(monkeypatch, pg8000.exceptions.InterfaceError('network error'), None)
-    dialer = _Dialer()
-    holder = ingest_beam._MintConnection(dialer)
-
-    with pytest.raises(pg8000.exceptions.InterfaceError):
-        holder.mint(['doi:a'])
-    assert holder.mint(['doi:b']) == _MINT_RESULT
-
-    assert len(dialer.dialed) == 2
-    assert dialer.dialed[0].closed
-    assert dialer.dialed[0].rollbacks == 0
-
-
-def test_mint_connection_redials_when_the_rollback_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A rollback that cannot be issued means the session is gone, whatever the mint raised.
-    _mints(monkeypatch, pg8000.exceptions.DatabaseError('statement timeout'), None)
-    dialer = _Dialer(rollback_error=pg8000.exceptions.InterfaceError('connection is closed'))
-    holder = ingest_beam._MintConnection(dialer)
-
-    with pytest.raises(pg8000.exceptions.DatabaseError):
-        holder.mint(['doi:a'])
-    assert holder.mint(['doi:b']) == _MINT_RESULT
-
-    assert len(dialer.dialed) == 2
-    assert dialer.dialed[0].closed
-
-
-def test_mint_connection_serializes_concurrent_callers(monkeypatch: pytest.MonkeyPatch) -> None:
-    # pg8000 is not thread-safe, so no two bundle processors may be inside a mint at once.
-    guard = threading.Lock()
-    in_flight = 0
-    peak = 0
-
-    def _mint(_conn: crosswalk.Connection, _external_ids: object) -> crosswalk.MintResult:
-        nonlocal in_flight, peak
-        with guard:
-            in_flight += 1
-            peak = max(peak, in_flight)
-        time.sleep(0.005)
-        with guard:
-            in_flight -= 1
-        return _MINT_RESULT
-
-    monkeypatch.setattr(crosswalk, 'mint', _mint)
-    dialer = _Dialer()
-    holder = ingest_beam._MintConnection(dialer)
-
-    threads = [threading.Thread(target=holder.mint, args=(['doi:a'],)) for _ in range(8)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=10)
-
-    assert peak == 1
-    assert len(dialer.dialed) == 1
-
-
-# --- build_pipeline (DirectRunner + Postgres) -----------------------------------
+        self._leave()
+        self._inner.close()
 
 
 @pytest.fixture
@@ -432,7 +339,7 @@ def _openalex_api_key() -> openalex.ApiKey:
 
 def _run(
     token: str,
-    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    conn_factory: ingest_beam.ConnFactory,
     *,
     limit: int | None = None,
     ask: ingest_beam.WorkAsk | None = None,
@@ -500,6 +407,240 @@ def test_build_pipeline_ingests_both_papers(
         row = cur.fetchone()
     assert row is not None
     assert row[0] == 2
+
+
+class _BarrierFetcher:
+    """A keyless OA rung that holds two concurrent workers together inside `_WritePaperFn.process`."""
+
+    name = 'fixture'
+    requires: frozenset[str] = frozenset()
+
+    def __init__(self, barrier: threading.Barrier, threads: set[int]) -> None:
+        self._barrier = barrier
+        self._threads = threads
+
+    async def fetch(
+        self,
+        article_ids: ids.ArticleIds,
+        *,
+        credentials: Mapping[str, object] | None = None,
+        http: litfetch.Http,
+    ) -> artifacts.Blob | None:
+        del article_ids, credentials, http
+        self._threads.add(threading.get_ident())
+        self._barrier.wait(timeout=5)
+        return None
+
+
+@pytest.mark.usefixtures('conn')
+def test_build_pipeline_shares_one_connection_across_workers(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+) -> None:
+    token, bucket = seeded_bucket
+    dialed: list[_ObservedConn] = []
+    barrier = threading.Barrier(2)
+    threads: set[int] = set()
+
+    def dial() -> crosswalk.Connection:
+        observed = _ObservedConn(conn_factory())
+        dialed.append(observed)
+        return typing.cast('crosswalk.Connection', observed)
+
+    _CONNS[token] = dial
+    _FETCHERS[token] = lambda: [_BarrierFetcher(barrier, threads)]
+    options = pipeline_options.PipelineOptions(
+        ['--runner=FnApiRunner', '--direct_running_mode=multi_threading', '--direct_num_workers=2']
+    )
+    try:
+        with beam.Pipeline(options=options) as root:
+            ingest_beam.build_pipeline(
+                root,
+                ask=None,
+                bucket_factory=functools.partial(_bucket_for, token),
+                conn_factory=functools.partial(_conn_for, token),
+                licence=_licence(),
+                now=_NOW,
+                openalex_api_key_factory=_openalex_api_key,
+                fetchers_factory=functools.partial(_fetchers_for, token),
+                transport_factory=_resolve_transport,
+            )
+
+        assert len(threads) == 2
+        assert len(dialed) == 1
+        assert len(_manifests(bucket)) == 2
+    finally:
+        _CONNS.pop(token, None)
+        _FETCHERS.pop(token, None)
+        for c in dialed:
+            if not c.closed:
+                c.close()
+
+
+@pytest.mark.usefixtures('conn')
+def test_build_pipeline_serializes_concurrent_mints(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+) -> None:
+    token, bucket = seeded_bucket
+    # Five pairs of papers across two workers: each pair meets at `_BarrierFetcher`, so both workers
+    # repeatedly finish a paper together and enter the next `mint` side by side.
+    _drop(
+        bucket,
+        '10.5555%2Fsynthetic.ccc',
+        '10.5555%2Fsynthetic.ddd',
+        '10.5555%2Fsynthetic.eee',
+        '10.5555%2Fsynthetic.fff',
+        '10.5555%2Fsynthetic.ggg',
+        '10.5555%2Fsynthetic.hhh',
+        '10.5555%2Fsynthetic.iii',
+        '10.5555%2Fsynthetic.jjj',
+    )
+    dialed: list[_ObservedConn] = []
+    guard = threading.Lock()
+    overlap = [0, 0]
+    barrier = threading.Barrier(2)
+    threads: set[int] = set()
+
+    def dial() -> crosswalk.Connection:
+        observed = _ObservedConn(conn_factory(), guard=guard, overlap=overlap)
+        dialed.append(observed)
+        return typing.cast('crosswalk.Connection', observed)
+
+    _CONNS[token] = dial
+    _FETCHERS[token] = lambda: [_BarrierFetcher(barrier, threads)]
+    options = pipeline_options.PipelineOptions(
+        ['--runner=FnApiRunner', '--direct_running_mode=multi_threading', '--direct_num_workers=2']
+    )
+    try:
+        with beam.Pipeline(options=options) as root:
+            ingest_beam.build_pipeline(
+                root,
+                ask=None,
+                bucket_factory=functools.partial(_bucket_for, token),
+                conn_factory=functools.partial(_conn_for, token),
+                licence=_licence(),
+                now=_NOW,
+                openalex_api_key_factory=_openalex_api_key,
+                fetchers_factory=functools.partial(_fetchers_for, token),
+                transport_factory=_resolve_transport,
+            )
+
+        assert len(threads) == 2
+        assert len(dialed) == 1
+        assert overlap[1] == 1
+        assert len(_manifests(bucket)) == 10
+    finally:
+        _CONNS.pop(token, None)
+        _FETCHERS.pop(token, None)
+        for c in dialed:
+            if not c.closed:
+                c.close()
+
+
+@pytest.mark.usefixtures('conn')
+def test_build_pipeline_rolls_back_a_failed_mint_and_keeps_the_connection(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+) -> None:
+    token, bucket = seeded_bucket
+    dialed: list[_ObservedConn] = []
+
+    def abort_first_tx(raw: pg8000.dbapi.Connection) -> None:
+        with contextlib.closing(raw.cursor()) as cur:
+            cur.execute('SELECT 1 / 0')
+
+    def dial() -> crosswalk.Connection:
+        hook = abort_first_tx if not dialed else None
+        observed = _ObservedConn(conn_factory(), on_cursor=hook)
+        dialed.append(observed)
+        return typing.cast('crosswalk.Connection', observed)
+
+    _CONNS[token] = dial
+    try:
+        _run(token, functools.partial(_conn_for, token))
+
+        assert len(dialed) == 1
+        assert not dialed[0].closed
+        assert len(_manifests(bucket)) == 1
+        assert len(_dead_letters(bucket)) == 1
+    finally:
+        _CONNS.pop(token, None)
+        for c in dialed:
+            if not c.closed:
+                c.close()
+
+
+@pytest.mark.usefixtures('conn')
+def test_build_pipeline_redials_after_the_crosswalk_session_is_lost(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+) -> None:
+    token, bucket = seeded_bucket
+    dialed: list[_ObservedConn] = []
+
+    def drop_session(raw: pg8000.dbapi.Connection) -> None:
+        raw.close()
+
+    def dial() -> crosswalk.Connection:
+        hook = drop_session if not dialed else None
+        observed = _ObservedConn(conn_factory(), on_cursor=hook)
+        dialed.append(observed)
+        return typing.cast('crosswalk.Connection', observed)
+
+    _CONNS[token] = dial
+    try:
+        _run(token, functools.partial(_conn_for, token))
+
+        assert len(dialed) == 2
+        assert dialed[0].closed
+        assert len(_manifests(bucket)) == 1
+        assert len(_dead_letters(bucket)) == 1
+    finally:
+        _CONNS.pop(token, None)
+        for c in dialed:
+            if not c.closed:
+                c.close()
+
+
+@pytest.mark.usefixtures('conn')
+def test_build_pipeline_redials_when_the_crosswalk_rollback_fails(
+    conn_factory: Callable[[], pg8000.dbapi.Connection],
+    seeded_bucket: tuple[str, gcs.Bucket],
+) -> None:
+    token, bucket = seeded_bucket
+    dialed: list[_ObservedConn] = []
+
+    def abort_tx(raw: pg8000.dbapi.Connection) -> None:
+        with contextlib.closing(raw.cursor()) as cur:
+            cur.execute('SELECT 1 / 0')
+
+    def drop_on_rollback(raw: pg8000.dbapi.Connection) -> None:
+        raw.close()
+
+    def dial() -> crosswalk.Connection:
+        first = not dialed
+        observed = _ObservedConn(
+            conn_factory(),
+            on_cursor=abort_tx if first else None,
+            on_rollback=drop_on_rollback if first else None,
+        )
+        dialed.append(observed)
+        return typing.cast('crosswalk.Connection', observed)
+
+    _CONNS[token] = dial
+    try:
+        _run(token, functools.partial(_conn_for, token))
+
+        assert len(dialed) == 2
+        assert dialed[0].closed
+        assert len(_manifests(bucket)) == 1
+        assert len(_dead_letters(bucket)) == 1
+    finally:
+        _CONNS.pop(token, None)
+        for c in dialed:
+            if not c.closed:
+                c.close()
 
 
 @pytest.mark.usefixtures('conn')  # applies the schema; the run claims via its own connection
@@ -1104,11 +1245,39 @@ def test_paper_failed_totals_both_stages(request: pytest.FixtureRequest, gcs_buc
     gcs_bucket.blob('ingest/10.5555%2Fsynthetic.aaa.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
     _BUCKETS[token] = gcs_bucket
     try:
-        _run(token, _failing_conn)
+        result = _run(token, _failing_conn)
+        rep = ingest_beam.report_run(
+            ingest_beam.IngestionRun.stamped(result, _NOW), functools.partial(_bucket_for, token)
+        )
 
-        # Both papers dead-lettered and neither written: the bucket says so without asking Beam.
-        assert len(list(gcs_bucket.list_blobs(prefix='diagnostics/dead_letters/'))) == 2
+        assert rep.counters['paper_failed'] == 2
         assert _manifests(gcs_bucket) == []
+    finally:
+        del _BUCKETS[token]
+
+
+def test_report_run_consolidates_dead_letters_from_extract_and_write_stages(
+    request: pytest.FixtureRequest, gcs_bucket: gcs.Bucket
+) -> None:
+    token = request.node.name
+    gcs_bucket.blob('ingest/10.5555%2Fbroken.json').upload_from_string(b'{not valid json')
+    gcs_bucket.blob('ingest/10.5555%2Fbroken.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    gcs_bucket.blob('ingest/10.5555%2Fsynthetic.aaa.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
+    gcs_bucket.blob('ingest/10.5555%2Fsynthetic.aaa.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
+    _BUCKETS[token] = gcs_bucket
+    try:
+        result = _run(token, _failing_conn)
+        run = ingest_beam.IngestionRun.stamped(result, _NOW)
+        rep = ingest_beam.report_run(run, functools.partial(_bucket_for, token))
+
+        assert rep.dead_lettered == 2
+        summary = gcs_bucket.blob(run.dead_letter_summary).download_as_bytes().decode('utf-8')
+        by_key = {r['key']: r for r in (json.loads(line) for line in summary.splitlines())}
+        assert set(by_key) == {'10.5555%2Fbroken.json', '10.5555%2Fsynthetic.aaa.json'}
+        assert by_key['10.5555%2Fbroken.json']['claim_key'] is None
+        assert 'not valid JSON' in str(by_key['10.5555%2Fbroken.json']['reason'])
+        assert by_key['10.5555%2Fsynthetic.aaa.json']['claim_key'] == 'doi:10.5555/synthetic.aaa'
+        assert 'simulated crosswalk failure' in str(by_key['10.5555%2Fsynthetic.aaa.json']['reason'])
     finally:
         del _BUCKETS[token]
 

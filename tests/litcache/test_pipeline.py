@@ -431,16 +431,30 @@ def test_a_pdf_only_seed_is_written_with_no_main_text_and_held(
     assert pipeline.why_seed_not_held(gcs_bucket, result.manifest, seed) is None
 
 
-def _text_pdf(*lines: str, embedded_doi: str | None = None) -> bytes:
-    """A one-page pdf whose text layer is `lines`, one to a line, and whose XMP names `embedded_doi`."""
-    shown = ' '.join(f'({line}) Tj 0 -14 Td' for line in lines)
-    stream = f'BT /F1 12 Tf 20 180 Td {shown} ET'.encode('latin-1')
+def _pdf_from_page_streams(streams: list[bytes], *, embedded_doi: str | None = None) -> bytes:
+    cmap = (
+        b'/CIDInit /ProcSet findresource begin 12 dict begin begincmap '
+        b'/CMapName /Custom def /CMapType 2 def '
+        b'1 begincodespacerange <00> <FF> endcodespacerange '
+        b'1 beginbfchar <AD> <00AD> endbfchar '
+        b'endcmap CMapName currentdict /CMap defineresource pop end end'
+    )
+    kids = ' '.join(f'{3 + i} 0 R' for i in range(len(streams)))
+    font_id = 3 + len(streams)
+    cmap_id = font_id + 1
+    pages = [
+        f'<</Type/Page/Parent 2 0 R/MediaBox[0 0 400 200]/Resources<</Font<</F1 {font_id} 0 R>>>>'
+        f'/Contents {cmap_id + 1 + i} 0 R>>'.encode('latin-1')
+        for i in range(len(streams))
+    ]
+    contents = [b'<</Length %d>>\nstream\n' % len(s) + s + b'\nendstream' for s in streams]
     objs = [
         b'<</Type/Catalog/Pages 2 0 R>>',
-        b'<</Type/Pages/Kids[3 0 R]/Count 1>>',
-        b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 400 200]/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>',
-        b'<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>',
-        b'<</Length %d>>\nstream\n' % len(stream) + stream + b'\nendstream',
+        f'<</Type/Pages/Kids[{kids}]/Count {len(streams)}>>'.encode('latin-1'),
+        *pages,
+        f'<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding/ToUnicode {cmap_id} 0 R>>'.encode(),
+        b'<</Length %d>>\nstream\n' % len(cmap) + cmap + b'\nendstream',
+        *contents,
     ]
     out = bytearray(b'%PDF-1.4\n')
     offsets: list[int] = []
@@ -457,28 +471,75 @@ def _text_pdf(*lines: str, embedded_doi: str | None = None) -> bytes:
     return bytes(out)
 
 
-@pytest.mark.parametrize(
-    'pdf',
-    [
-        _text_pdf('https://doi.org/10.9999/synthetic.nonoa', 'Synthetic Non-OA Fixture', embedded_doi='10.9999/other'),
-        _text_pdf('Syn-', 'thetic Non-OA Fixture'),
-    ],
-    ids=['embedded-doi-wrong-but-the-papers-printed', 'title-word-broken-across-lines'],
-)
-def test_a_pdf_only_seed_that_reads_as_its_paper_is_written(
-    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket, pdf: bytes
-) -> None:
-    result = _ingest_via_transport(
-        gcs_bucket, conn, _pdf_only_seed(pdf), _licence(), fetchers=_NO_OA, transport=_transport(_NONOA_CROSSREF)
-    )
+def _text_pdf(*lines: str, embedded_doi: str | None = None) -> bytes:
+    """A one-page pdf whose text layer is `lines`, one to a line, and whose XMP names `embedded_doi`."""
+    shown = ' '.join(f'({line}) Tj 0 -14 Td' for line in lines)
+    return _pdf_from_page_streams([f'BT /F1 12 Tf 20 180 Td {shown} ET'.encode('latin-1')], embedded_doi=embedded_doi)
 
-    assert result.written is True
+
+def _two_page_pdf(page1: str, page2: str) -> bytes:
+    r"""A two-page pdf whose pages `leading_text` joins with `\n`, keeping a trailing hyphen literal."""
+    return _pdf_from_page_streams(
+        [f'BT /F1 12 Tf 20 180 Td ({line}) Tj ET'.encode('latin-1') for line in (page1, page2)]
+    )
 
 
 def _crossref_titled(title: str) -> bytes:
     message = json.loads(_NONOA_CROSSREF)
     message['message']['title'] = [title]
     return json.dumps(message).encode('utf-8')
+
+
+@pytest.mark.parametrize(
+    ('pdf', 'crossref'),
+    [
+        (
+            _text_pdf(
+                'https://doi.org/10.9999/synthetic.nonoa', 'Synthetic Non-OA Fixture', embedded_doi='10.9999/other'
+            ),
+            _NONOA_CROSSREF,
+        ),
+        (
+            _text_pdf('DOI10.9999/SYNTHETIC.NONOA.', 'Synthetic Non-OA Fixture', embedded_doi='10.9999/other'),
+            _NONOA_CROSSREF,
+        ),
+        (
+            _text_pdf(
+                'https://doi.org/10.9999/', 'synthetic.nonoa', 'Synthetic Non-OA Fixture', embedded_doi='10.9999/other'
+            ),
+            _NONOA_CROSSREF,
+        ),
+        (_text_pdf('Syn-', 'thetic Fixture'), _crossref_titled('Synthetic Fixture')),
+        (_two_page_pdf('Syn-', 'thetic Fixture'), _crossref_titled('Synthetic Fixture')),
+        (_two_page_pdf('Syn\u00ad', 'thetic Fixture'), _crossref_titled('Synthetic Fixture')),
+        (
+            _text_pdf('Schrodinger Muller Whole Genome Study'),
+            _crossref_titled('Schrödinger, Müller: Whole-Genome Study'),
+        ),
+        (
+            _text_pdf('Novel mutations gene cause disease variants'),
+            _crossref_titled('Novel Variants Gene Cause Disease'),
+        ),
+    ],
+    ids=[
+        'embedded-doi-wrong-but-the-papers-printed',
+        'printed-doi-case-and-trailing-period',
+        'printed-doi-wrapped-across-lines',
+        'title-word-broken-within-page',
+        'title-word-broken-across-pages',
+        'title-word-broken-at-soft-hyphen',
+        'title-accents-and-punctuation',
+        'title-skips-a-reworded-word',
+    ],
+)
+def test_a_pdf_only_seed_that_reads_as_its_paper_is_written(
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket, pdf: bytes, crossref: bytes
+) -> None:
+    result = _ingest_via_transport(
+        gcs_bucket, conn, _pdf_only_seed(pdf), _licence(), fetchers=_NO_OA, transport=_transport(crossref)
+    )
+
+    assert result.written is True
 
 
 @pytest.mark.parametrize(
@@ -499,6 +560,20 @@ def _crossref_titled(title: str) -> bytes:
             _crossref_titled('Nothing in Study Case A: Fixture Non-OA Synthetic'),
             "of the title's words are in order",
         ),
+        (
+            _text_pdf(
+                'Whole ' + ' '.join(['filler'] * 20),
+                'Genome ' + ' '.join(['filler'] * 20),
+                'Sequencing ' + ' '.join(['filler'] * 20) + ' Quartet',
+            ),
+            _crossref_titled('Whole-Genome Sequencing Quartet'),
+            "25% of the title's words are in order",
+        ),
+        (
+            _text_pdf('580 Cases Naive Muller'),
+            _crossref_titled('460 Cases of Naïve Müller'),
+            "75% of the title's words are in order",
+        ),
         ((_FIXTURES / 'image_only' / 'source.pdf').read_bytes(), _NONOA_CROSSREF, 'no text on its first 2 pages'),
         (
             (_FIXTURES / 'image_only' / 'source.pdf').read_bytes()
@@ -516,14 +591,28 @@ def _crossref_titled(title: str) -> bytes:
             _NONOA_CROSSREF,
             'the pdf metadata names DOI 10.9999/other, and its first pages print it',
         ),
+        (
+            _text_pdf(
+                'https://doi.org/10.9999/synthetic.nonoa2',
+                'https://doi.org/10.9999/synthetic.nonoa.supp',
+                'https://doi.org/10.9999/synthetic.nonoa/figure',
+                'Synthetic Non-OA Fixture',
+                embedded_doi='10.9999/other',
+            ),
+            _NONOA_CROSSREF,
+            'its first pages do not print 10.9999/synthetic.nonoa',
+        ),
     ],
     ids=[
         'another-title',
         'another-doi',
         'title-out-of-order',
+        'title-words-scattered',
+        'title-number-differs',
         'no-text-layer',
         'no-text-layer-another-doi',
         'prints-the-embedded-doi',
+        'prints-only-longer-dois',
     ],
 )
 def test_a_pdf_only_seed_that_does_not_read_as_its_paper_is_not_written(
@@ -549,54 +638,6 @@ def test_a_scanned_pdf_only_seed_is_taken_on_an_embedded_doi_that_is_its_papers(
     )
 
     assert result.written is True
-
-
-@pytest.mark.parametrize(
-    ('text', 'words'),
-    [
-        ('Schrödinger and naïve Müller', ['schrodinger', 'and', 'naive', 'muller']),
-        ('Whole-Genome, p.Ala46Thr', ['whole', 'genome', 'p', 'ala46thr']),
-    ],
-)
-def test_words_drop_accents_and_split_at_punctuation(text: str, words: list[str]) -> None:
-    assert pipeline._words(text) == words
-
-
-def test_title_coverage_counts_the_title_in_order_and_close_together() -> None:
-    title = ['whole', 'genome', 'sequencing', 'quartet']
-    in_order = ['analysis', 'of', 'whole', 'genome', 'sequencing', 'in', 'a', 'family', 'quartet']
-    scattered = ['quartet', *['filler'] * 20, 'sequencing', *['filler'] * 20, 'genome', 'whole']
-
-    assert pipeline._title_coverage(title, in_order) == 1.0
-    assert pipeline._title_coverage(title, scattered) == 0.25
-
-
-@pytest.mark.parametrize('broken', ['Syn-\r\nthetic', 'Syn\u00ad\nthetic', 'Syn\x02thetic'])
-def test_a_word_broken_across_lines_is_rejoined(broken: str) -> None:
-    assert pipeline._LINE_END_HYPHEN.sub('', broken) == 'Synthetic'
-
-
-def test_title_coverage_skips_a_word_the_pdf_words_differently() -> None:
-    # "variants" is printed, but after the rest: matching it first would lose every word after it.
-    title = ['novel', 'variants', 'gene', 'cause', 'disease']
-
-    assert pipeline._title_coverage(title, ['novel', 'mutations', 'gene', 'cause', 'disease', 'variants']) == 0.8
-
-
-@pytest.mark.parametrize(
-    ('text', 'printed'),
-    [
-        ('https://doi.org/10.1000/abc1\r\nRESEARCH', True),
-        ('doi: 10.1000/ABC1.', True),
-        ('https://doi.org/10.1000/abc12', False),
-        ('https://doi.org/10.1000/abc1.supp', False),
-        ('https://doi.org/10.1000/abc1/figure', False),
-        ('https://doi.org/10.1000/\r\nabc1', True),
-        ('DOI10.1000/abc1', True),
-    ],
-)
-def test_prints_doi_finds_the_doi_whole(text: str, printed: bool) -> None:
-    assert pipeline._prints_doi(text, '10.1000/abc1') is printed
 
 
 def test_extract_identity_refuses_a_pdf_only_seed_whose_key_names_no_id() -> None:
