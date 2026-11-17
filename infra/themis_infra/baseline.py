@@ -45,6 +45,10 @@ _REQUIRED_SERVICES = (
 
 # What `_Required` holds admin-activity audit logs for; no reason to keep the rest for less.
 LOG_RETENTION_DAYS = 400
+# Coupled with `tools/image_bake.py` (`CACHE_PACKAGE_PREFIX`).
+BUILD_CACHE_PACKAGE_PREFIX = 'cache-'
+# `<n>s` matches the Artifact Registry API's read normalization, avoiding a preview diff on units like `7d`.
+BUILD_CACHE_RETENTION = '604800s'
 
 
 class Baseline(pulumi.ComponentResource):
@@ -90,6 +94,18 @@ class Baseline(pulumi.ComponentResource):
             repository_id='themis',
             format='DOCKER',
             description='Themis application images.',
+            cleanup_policy_dry_run=False,
+            cleanup_policies=[
+                gcp.artifactregistry.RepositoryCleanupPolicyArgs(
+                    id='expire-untagged-build-cache',
+                    action='DELETE',
+                    condition=gcp.artifactregistry.RepositoryCleanupPolicyConditionArgs(
+                        tag_state='UNTAGGED',
+                        package_name_prefixes=[BUILD_CACHE_PACKAGE_PREFIX],
+                        older_than=BUILD_CACHE_RETENTION,
+                    ),
+                ),
+            ],
             opts=services_ready,
         )
         self.image_prefix = pulumi.Output.format(

@@ -15,6 +15,8 @@ import re
 import subprocess
 import tomllib
 
+from tools import image_bake
+
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 _IMAGES_JSON = _REPO_ROOT / '.github' / 'images.json'
 _INFRA_MAIN = _REPO_ROOT / 'infra' / '__main__.py'
@@ -94,3 +96,10 @@ def test_image_names_are_unique() -> None:
     # services overwriting each other's tag at the same commit.
     names = [entry['name'] for entry in _declared()]
     assert len(names) == len(set(names))
+
+
+def test_declared_entries_satisfy_bake_constraints() -> None:
+    # `parse_manifest` enforces that no service image uses the `cache-` package prefix (which the
+    # registry's cleanup policy sweeps) and that every Dockerfile sits inside its build context.
+    specs = image_bake.parse_manifest(_declared())
+    assert [spec.name for spec in specs] == [entry['name'] for entry in _declared()]

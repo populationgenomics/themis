@@ -12,7 +12,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 FROM base AS deps
 WORKDIR /app
 COPY package.json bun.lock bunfig.toml ./
-RUN bun install --frozen-lockfile
+RUN --mount=type=cache,target=/root/.bun/install/cache \
+    bun install --frozen-lockfile
 
 # build: compile the standalone output.
 FROM base AS build

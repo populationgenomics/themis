@@ -180,19 +180,17 @@ jobs:
       - name: Build and push the service images
         run: |
           gcloud auth configure-docker australia-southeast1-docker.pkg.dev --quiet
-          IMAGES="$(jq -r '.[] | [.name, .context, .file, .env] | @tsv' .github/images.json)"
-          if [[ -z "${IMAGES}" ]]; then
-            echo "::error::.github/images.json declares no images"
-            exit 1
-          fi
-          while IFS=$'\t' read -r name context file env; do
-            echo "::group::$name"
-            IMAGE="${IMAGE_PREFIX}/${name}:${GITHUB_SHA}"
-            docker build -f "$file" -t "$IMAGE" "$context"
-            docker push "$IMAGE"
-            echo "${env}=${IMAGE}" >> "$GITHUB_ENV"
-            echo "::endgroup::"
-          done <<< "${IMAGES}"
+          BAKE_FILE="$(mktemp "${RUNNER_TEMP}/bake.XXXXXX.json")"
+          ENV_FILE="$(mktemp "${RUNNER_TEMP}/images.XXXXXX.env")"
+          uv run --locked --no-sync python -m tools.image_bake \
+            --manifest .github/images.json \
+            --image-prefix "${IMAGE_PREFIX}" \
+            --tag "${GITHUB_SHA}" \
+            --bake-out "${BAKE_FILE}" \
+            --env-out "${ENV_FILE}"
+          # Docker 29's containerd snapshotter backs `cache-to=type=registry` on the runner's stock `docker` driver.
+          docker buildx bake --file "${BAKE_FILE}" --push
+          cat "${ENV_FILE}" >> "${GITHUB_ENV}"
       - uses: pulumi/actions@v7
         id: pulumi
         if: env.IMAGES_ONLY != 'true'
