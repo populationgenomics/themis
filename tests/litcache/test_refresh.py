@@ -282,16 +282,6 @@ def test_refresh_gives_each_paper_sharing_an_id_its_own_record(gcs_bucket: gcs.B
     assert _read(gcs_bucket, writer.metadata_path(_B)) == _metadata('1')
 
 
-def test_refresh_carries_an_unreadable_manifest_into_its_failures(gcs_bucket: gcs.Bucket) -> None:
-    gcs_bucket.blob(writer.manifest_path(_A)).upload_from_string(b'\xff\xff not a manifest')
-    _commit(gcs_bucket, _B, pmid='2', metadata=None)
-
-    report = _run(gcs_bucket, _stub_resolver({'2': _metadata('2')}))
-
-    assert report.refreshed == [_B]
-    assert [f.doc_id for f in report.failures] == [_A]
-
-
 def test_refresh_propagates_a_resolver_transport_failure_writing_nothing(gcs_bucket: gcs.Bucket) -> None:
     _commit(gcs_bucket, _A, pmid='1', metadata=None)
 

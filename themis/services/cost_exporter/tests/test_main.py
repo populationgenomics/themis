@@ -30,8 +30,11 @@ def test_a_complete_environment_reads_as_the_settings() -> None:
 
 
 @pytest.mark.parametrize('missing', sorted(_ENV))
-def test_a_missing_variable_exits_naming_it(missing: str) -> None:
+@pytest.mark.parametrize('absent', [None, ''])
+def test_a_missing_or_empty_variable_exits_naming_it(missing: str, absent: str | None) -> None:
     environ = {name: value for name, value in _ENV.items() if name != missing}
+    if absent is not None:
+        environ[missing] = absent
     with pytest.raises(SystemExit, match=missing):
         main_mod.settings_from(environ)
 

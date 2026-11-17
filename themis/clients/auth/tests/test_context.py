@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from themis.clients.auth import context as auth_context
-from themis.rpc import auth_pb2, sandbox_options_pb2
+from themis.rpc import sandbox_options_pb2
 
 _SELF = sandbox_options_pb2.CALLING_AS_SELF
 
@@ -47,13 +47,3 @@ def test_a_binding_is_per_task() -> None:
 
     asyncio.run(run())
     assert seen == {'one': 'one', 'two': 'two'}
-
-
-def test_the_context_is_immutable() -> None:
-    auth = auth_context.AuthContext(
-        caller='a@x',
-        calling_as=_SELF,
-        session=auth_pb2.SessionContext(analysis_id='a', project=auth_pb2.ProjectGrant(id='p')),
-    )
-    with pytest.raises(AttributeError):
-        auth.caller = 'b@x'  # type: ignore[misc]

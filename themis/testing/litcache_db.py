@@ -1,9 +1,9 @@
 """A throwaway Postgres carrying the litcache crosswalk schema, as a pytest plugin.
 
 Registered from the repo-root `conftest.py`, so the fixtures reach every test tree: the crosswalk and
-ingestion tests under `tests/litcache/` mint against them, and so do the evidence service's literature
-tests, whose backend mints too. A `conftest.py` is visible only below its own directory, which is why
-this is a plugin rather than one.
+ingestion tests under `tests/litcache/`, the deposit CLI tests under `tools/litcache/tests/`, and the
+evidence service's literature tests all mint against them. A `conftest.py` is visible only below its own
+directory, which is why this is a plugin rather than one.
 
 The schema is built by the migrate runner's own discover/render/split — the deploy path runs the same
 statements — so no test hand-writes DDL that could drift from the migration. Only

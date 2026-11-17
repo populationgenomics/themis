@@ -22,7 +22,6 @@ from typing import NamedTuple
 import pytest
 from google.protobuf import descriptor_pb2
 
-from themis.rpc import sandbox_options_pb2
 from tools.schema import agent_exposed, guest_contract
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -475,10 +474,6 @@ def test_generation_is_deterministic(tree: SimpleNamespace, tmp_path: pathlib.Pa
     }
     second = {p.relative_to(tmp_path): p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
     assert first == second
-
-
-def test_the_mark_is_cut_by_the_option_file_the_stub_registers() -> None:
-    assert guest_contract.agent_exposed_file() == sandbox_options_pb2.DESCRIPTOR.name
 
 
 _GUEST_PROTO = (

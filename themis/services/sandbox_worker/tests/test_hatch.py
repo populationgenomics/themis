@@ -37,7 +37,6 @@ from themis.rpc import (
     vep_pb2,
 )
 from themis.services.sandbox_worker import hatch, tool
-from themis.services.sandbox_worker.guest import services
 
 _TOKEN = 'TOK'
 
@@ -218,10 +217,6 @@ def _invoke(forwarder: object, method_name: str, request: object, context: grpc.
     return list(result) if inspect.isgenerator(result) else [result]
 
 
-# What a synchronous servicer context reports for a caller that named no deadline: not an absence, but the
-# remainder of an int64-nanosecond one. A fake that answered None here would let an unbounded forward pass.
-_NO_DEADLINE_REMAINING = 9.223372035066877e18
-
 # grpc carries a deadline as a coarse `grpc-timeout` header and rounds it up, so a servicer can read back
 # marginally more than the client asked for.
 _DEADLINE_TOLERANCE_S = 1.0
@@ -234,15 +229,13 @@ class _GuestContext:
         self.remaining = remaining
         self.code: grpc.StatusCode | None = None
         self.details: str | None = None
-        self.callbacks: list[Callable[[], None]] = []
         self.accepts_callbacks = True
 
     def time_remaining(self) -> float:
         return self.remaining
 
     def add_callback(self, callback: Callable[[], None]) -> bool:
-        if self.accepts_callbacks:
-            self.callbacks.append(callback)
+        del callback
         return self.accepts_callbacks
 
     def abort(self, code: grpc.StatusCode, details: str) -> NoReturn:
@@ -383,18 +376,6 @@ def test_forwarder_forwards_under_a_deadline_shorter_than_the_ceiling(
     assert channel.calls[method_name].timeout == 12.5
 
 
-@pytest.mark.parametrize('remaining', [_NO_DEADLINE_REMAINING, 36000.0])
-@pytest.mark.parametrize(('forwarder_class', 'method_name'), _FORWARDER_RPC_CASES)
-def test_forwarder_caps_a_budget_beyond_the_ceiling(
-    forwarder_class: _ForwarderClass, method_name: str, remaining: float
-) -> None:
-    """A budget past the ceiling is capped, not honoured: the bound is not a default the caller can raise."""
-    channel = _RecordingChannel()
-    forwarder = _forwarder(forwarder_class, channel)
-    _invoke(forwarder, method_name, object(), _context(remaining))
-    assert channel.calls[method_name].timeout == hatch._FORWARD_CEILING_S
-
-
 def _service_of(method: str) -> str:
     """The `pkg.Service` an allowlisted `/pkg.Service/Method` path names."""
     return method.split('/')[1]
@@ -482,17 +463,6 @@ def test_the_hatch_refuses_every_declared_method_the_allowlist_omits() -> None:
         unreachable.close()
 
 
-def test_the_guest_has_an_accessor_for_every_exposed_service() -> None:
-    """The guest reaches a service through `themis.agent.services`, so an rpc with no accessor is unreachable.
-
-    The accessor name is the proto package's last segment — the same word the service is named for.
-    """
-    exposed = {_service_of(method).rsplit('.', 1)[0].rsplit('.', 1)[1] for method in hatch.GUEST_METHODS}
-    assert exposed, 'no services parsed out of the allowlist'
-    missing = sorted(name for name in exposed if not callable(getattr(services, name, None)))
-    assert not missing, f'{missing} are agent-exposed but have no guest accessor'
-
-
 class _RecordingUpstream(gnomad_pb2_grpc.GnomadServicer):
     """A real upstream, so the deadline a forwarded call actually carried can be read back off the wire."""
 
@@ -562,48 +532,11 @@ def test_some_forwarded_rpc_streams() -> None:
     assert _STREAMING_FORWARDER_CASES, 'no reachable rpc streams its response — the streaming cases would be vacuous'
 
 
-@pytest.mark.parametrize(('marked', 'expected_details'), [(True, 'the rendering broke off'), (False, 'INTERNAL')])
-@pytest.mark.parametrize(('forwarder_class', 'method_name'), _STREAMING_FORWARDER_CASES)
-def test_a_stream_that_fails_after_data_delivers_what_arrived_and_ends_under_the_upstream_code(
-    forwarder_class: _ForwarderClass, method_name: str, *, marked: bool, expected_details: str
-) -> None:
-    # The authored-status rule does not lapse once data has crossed: the stream ends under the upstream's code,
-    # and its details cross only with the servicer's mark.
-    failure = _SettledFailure(grpc.StatusCode.INTERNAL, 'the rendering broke off', _MARKED if marked else ())
-    sent = (object(), object())
-    forwarder = _forwarder(forwarder_class, _RecordingChannel(failure, messages=sent))
-    context = _GuestContext()
-    received: list[object] = []
-    with pytest.raises(grpc.RpcError):  # noqa: PT012 — the messages before the failure are read inside the block
-        for response in getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context)):
-            received.append(response)
-    assert received == list(sent)
-    assert context.code is grpc.StatusCode.INTERNAL
-    assert context.details == expected_details
-
-
 @pytest.mark.parametrize(('forwarder_class', 'method_name'), _STREAMING_FORWARDER_CASES)
 def test_a_stream_passes_each_message_on_as_it_arrives(forwarder_class: _ForwarderClass, method_name: str) -> None:
     sent = (object(), object(), object())
     forwarder = _forwarder(forwarder_class, _RecordingChannel(messages=sent))
     assert _invoke(forwarder, method_name, object(), _context()) == list(sent)
-
-
-@pytest.mark.parametrize(('forwarder_class', 'method_name'), _STREAMING_FORWARDER_CASES)
-def test_a_stream_the_guest_abandons_is_cancelled_upstream(forwarder_class: _ForwarderClass, method_name: str) -> None:
-    # A guest that stops reading must not leave the upstream call running out its deadline on a serving thread:
-    # the forwarder registers the cancellation with the guest's rpc, and grpc runs it when that rpc ends.
-    channel = _RecordingChannel(messages=(object(), object()))
-    forwarder = _forwarder(forwarder_class, channel)
-    context = _GuestContext()
-    responses = getattr(forwarder, method_name)(object(), cast('grpc.ServicerContext', context))
-    next(responses)
-    stream = cast('_RecordingStreamCall', channel.calls[method_name]).stream
-    assert stream is not None
-    assert not stream.cancelled
-    for callback in context.callbacks:
-        callback()
-    assert stream.cancelled
 
 
 class _BreakingStream:

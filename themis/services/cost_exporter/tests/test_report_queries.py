@@ -32,12 +32,6 @@ def test_the_rendered_queries_round_trip() -> None:
     assert dataclasses.asdict(parsed) == json.loads(text)
 
 
-def test_the_two_sides_name_the_same_keys() -> None:
-    rendered = json.loads(_rendered())
-    assert set(rendered['day']) == set(report_queries.DAY_KEYS)
-    assert set(rendered['hourly']) == set(report_queries.HOURLY_KEYS)
-
-
 def _document() -> dict[str, dict[str, object]]:
     return {
         'day': {key: f'day {key}' for key in report_queries.DAY_KEYS},

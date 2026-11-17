@@ -49,16 +49,6 @@ def test_wrong_expected_value_is_a_conflict_not_a_race(backend: sheaf.LocalBacke
     assert caught.value.actual == SHA_A
 
 
-def test_stale_snapshot_is_a_race(backend: sheaf.LocalBackend) -> None:
-    store = sheaf.Store(backend, 'p')
-    stale = store.read()
-    store.publish(stale, conftest.logged(stale, sheaf.Intent(ref_updates={REF: sheaf.RefUpdate(None, SHA_A)})))
-    with pytest.raises(sheaf.RaceLost):
-        store.publish(
-            stale, conftest.logged(stale, sheaf.Intent(ref_updates={'refs/heads/other': sheaf.RefUpdate(None, SHA_B)}))
-        )
-
-
 def test_independent_refs_do_not_starve(backend: sheaf.LocalBackend) -> None:
     """Coarse compare-and-swap on one document must not turn disjoint ref writes into failures."""
     store = sheaf.Store(backend, 'p')

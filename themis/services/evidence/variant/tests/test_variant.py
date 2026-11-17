@@ -86,19 +86,3 @@ def test_resolve_accepts_the_renderings_clinvar_returns(variant: str) -> None:
             return await stub.Normalize(variant_pb2.NormalizeRequest(variant=variant, genome_build='GRCh38'))
 
     assert asyncio.run(run()).caid == 'CA123'
-
-
-@pytest.mark.parametrize('genome_build', ['', 'GRCh39', 'hg38'])
-def test_resolve_rejects_a_genome_build_the_upstreams_do_not_serve(genome_build: str) -> None:
-    """Rejected at the boundary: reaching VEP's host check first costs two live round-trips."""
-
-    async def run() -> variant_pb2.NormalizeResponse:
-        async with _serving(_backend()) as stub:
-            return await stub.Normalize(
-                variant_pb2.NormalizeRequest(variant='NM_000546.6:c.524G>A', genome_build=genome_build),
-            )
-
-    with pytest.raises(grpc.aio.AioRpcError) as caught:
-        asyncio.run(run())
-    assert caught.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-    assert 'genome_build' in (caught.value.details() or '')

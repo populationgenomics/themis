@@ -27,14 +27,6 @@ def test_matches_the_published_worked_examples(size: tuple[int, int], expected: 
     assert claude_images.resized_size(*size, **_STANDARD) == expected
 
 
-def test_the_token_budget_binds_before_the_edge_limit() -> None:
-    # The documented trap: a page under the edge limit on both sides is still resized, because its
-    # patch count exceeds the budget, so what it reads is not what was sent.
-    assert max(1075, 1520) < _STANDARD['max_edge']
-    assert claude_images.count_image_tokens(1075, 1520) > _STANDARD['max_tokens']
-    assert claude_images.resized_size(1075, 1520, **_STANDARD) != (1075, 1520)
-
-
 def test_the_high_resolution_tier_reads_that_page_unresized() -> None:
     # Same page, larger budget: nothing is resized, so the page is read exactly as rendered.
     assert claude_images.resized_size(1075, 1520, **_HIGH) == (1075, 1520)

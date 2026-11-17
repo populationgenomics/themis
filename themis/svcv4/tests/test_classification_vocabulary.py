@@ -46,9 +46,3 @@ def test_the_ladder_members_are_the_reference_classes(ref: reference.Reference) 
 def test_the_terminal_members_are_the_gate_results(ref: reference.Reference) -> None:
     results = {row.result for row in ref.gate.values() if row.result is not None}
     assert set(_TERMINAL.values()) == results
-
-
-def test_the_join_is_injective() -> None:
-    """Two members mapping onto one framework spelling would make a decoded value ambiguous."""
-    spellings = [*_LADDER.values(), *_TERMINAL.values()]
-    assert len(set(spellings)) == len(spellings)

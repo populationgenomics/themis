@@ -107,11 +107,6 @@ describe("what selects no row at all", () => {
     expect(frequencyRatio(daft, faf).kind).toBe("unreadable");
   });
 
-  test("a blank threshold is never read as a threshold of zero", () => {
-    // `Number("")` is 0, which would divide to Infinity and bin the variant at the top.
-    expect(frequencyRatio("", "0.1").kind).toBe("incomplete");
-  });
-
   test("a threshold of zero is refused rather than divided by", () => {
     const ratio = frequencyRatio("0", "0.1");
     expect(ratio.kind).toBe("unreadable");

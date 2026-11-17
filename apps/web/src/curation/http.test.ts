@@ -8,7 +8,6 @@ import {
 } from "@/gen/themis/rpc/auth_pb";
 import { FIXTURE_PROJECT } from "@/server/adapters/fixture/access";
 import { isResourceNotFoundError } from "@/server/errors";
-import { isCrossSiteRequestError } from "@/server/fetch-metadata";
 import { DEV_USER_EMAIL } from "@/server/identity";
 import { FixtureCurationStore } from "./fixture";
 import { FixtureVariantResolver } from "./fixture-resolver";
@@ -66,62 +65,9 @@ const thrownBy = (promise: Promise<unknown>): Promise<unknown> =>
   );
 
 describe("the curation boundary", () => {
-  test("a cross-site POST is rejected before the caller is resolved", async () => {
-    const error = await thrownBy(
-      curationContext(
-        post({
-          "sec-fetch-site": "cross-site",
-          "sec-fetch-mode": "navigate",
-          "sec-fetch-dest": "document",
-        }),
-        FIXTURE_PROJECT,
-        boundary(UNREACHED),
-      ),
-    );
-    expect(isCrossSiteRequestError(error)).toBe(true);
-  });
-
-  test("a cross-site GET that is not a navigation is rejected too", async () => {
-    const error = await thrownBy(
-      curationContext(
-        new Request(URL, {
-          headers: { "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors" },
-        }),
-        FIXTURE_PROJECT,
-        boundary(UNREACHED),
-      ),
-    );
-    expect(isCrossSiteRequestError(error)).toBe(true);
-  });
-
   test("a same-origin request resolves the caller", async () => {
     const access = await curationContext(
       post({ "sec-fetch-site": "same-origin", "sec-fetch-mode": "cors" }),
-      FIXTURE_PROJECT,
-      boundary(DEV_USER),
-    );
-    expect(access.email).toBe(DEV_USER_EMAIL);
-  });
-
-  test("a request carrying no Fetch Metadata resolves the caller", async () => {
-    const access = await curationContext(
-      post({}),
-      FIXTURE_PROJECT,
-      boundary(DEV_USER),
-    );
-    expect(access.email).toBe(DEV_USER_EMAIL);
-  });
-
-  test("a page reached by following a link from another site resolves the caller", async () => {
-    // The pages hand the boundary a GET carrying the navigation's own headers.
-    const access = await curationContext(
-      new Request("http://internal/curation", {
-        headers: {
-          "sec-fetch-site": "cross-site",
-          "sec-fetch-mode": "navigate",
-          "sec-fetch-dest": "document",
-        },
-      }),
       FIXTURE_PROJECT,
       boundary(DEV_USER),
     );

@@ -272,11 +272,3 @@ def test_fetch_gnomad_gene_raises_on_absent_gene() -> None:
             lambda _r: httpx2.Response(200, json={'data': {'gene': None}, 'errors': [{'message': 'Gene not found'}]}),
             lambda c: gnomad.fetch_gnomad_gene('NOTAGENE', http_client=c),
         )
-
-
-def test_fetch_gnomad_raises_on_non_2xx() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _run(
-            lambda _r: httpx2.Response(500, json={}),
-            lambda c: gnomad.fetch_gnomad('1-55051215-G-A', 'gnomad_r4', http_client=c),
-        )

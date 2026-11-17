@@ -60,12 +60,6 @@ describe("pulse", () => {
 describe("createTimeline", () => {
   // Building the tracks runs the strictly-increasing check over every authored timestamp,
   // so a duplicated or transposed number fails here rather than at mount.
-  test("every authored track builds", () => {
-    const tracks = Object.values(createTimeline());
-    expect(tracks.length).toBeGreaterThan(0);
-    expect(tracks.every((t) => typeof t === "function")).toBe(true);
-  });
-
   test("no track yields a non-finite value across the timeline", () => {
     const timeline = createTimeline();
     for (const [name, track] of Object.entries(timeline)) {

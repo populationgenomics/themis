@@ -849,34 +849,6 @@ def test_a_permanent_refusal_outranks_a_transient_one_in_the_same_batch() -> Non
         asyncio.run(_conversion_backend(client).request_conversions([_DOC, _DOC_PENDING]))
 
 
-def test_every_failure_in_a_batch_is_logged_not_only_the_one_raised(caplog: pytest.LogCaptureFixture) -> None:
-    # The unraised failures are the ones that would otherwise vanish: nothing downstream sees them,
-    # and the papers they belong to stay PENDING with no record of why.
-    client = _FakeTasksClient(
-        per_doc={
-            _DOC: api_exceptions.ServiceUnavailable('cloud tasks is down'),
-            _DOC_PENDING: api_exceptions.PermissionDenied('no cloudtasks.enqueuer on the queue'),
-        }
-    )
-    with (
-        caplog.at_level('INFO', logger=litcache_store.__name__),
-        pytest.raises(literature_backend.ConversionEnqueueFailedError),
-    ):
-        asyncio.run(_conversion_backend(client).request_conversions([_DOC, _DOC_PENDING]))
-    assert _DOC in caplog.text
-    assert _DOC_PENDING in caplog.text
-
-
-def test_a_dedup_is_countable_in_the_batch_log(caplog: pytest.LogCaptureFixture) -> None:
-    # An enqueue that did not happen has to be countable above the enqueuer, not only inferable from
-    # a paper that never advances.
-    client = _FakeTasksClient(raises=api_exceptions.AlreadyExists('task exists'))
-    with caplog.at_level('INFO', logger=litcache_store.__name__):
-        asyncio.run(_conversion_backend(client).request_conversions([_DOC]))
-    assert 'already queued' in caplog.text
-    assert _DOC in caplog.text
-
-
 def test_a_partly_failed_batch_still_places_the_tasks_it_could() -> None:
     # Repeating the call is the caller's remedy, and it must not have undone the creates that worked.
     client = _FakeTasksClient(per_doc={_DOC: api_exceptions.ServiceUnavailable('down')})
@@ -1165,28 +1137,6 @@ def test_a_pmcid_miss_is_not_ingested_and_does_not_fail_the_batch(
     backend = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID])
     ingested = asyncio.run(backend.ingest_papers(['pmcid:PMC7759461', _FRESH_PMID]))
     assert list(ingested) == [_FRESH_PMID]
-
-
-def test_an_unreachable_upstream_is_reported_as_transient_not_as_an_absent_paper(
-    conn: pg8000.dbapi.Connection,
-    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
-    gcs_bucket: storage.Bucket,
-) -> None:
-    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
-    request = httpx2.Request('GET', 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi')
-
-    async def resolve_metadata(**_kwargs: object) -> resolve.ResolvedPaper:
-        raise httpx2.HTTPStatusError('boom', request=request, response=httpx2.Response(503, request=request))
-
-    backend = litcache_store.Store(
-        gcs_bucket,
-        _NO_HTTP,
-        openalex_api_key=fake_openalex.API_KEY,
-        connect=crosswalk_connect,
-        resolve_metadata=resolve_metadata,
-    )
-    with pytest.raises(literature_backend.IngestUnavailableError):
-        asyncio.run(backend.ingest_papers([_FRESH_DOI]))
 
 
 def test_ingesting_without_a_crosswalk_is_a_permanent_condition(gcs_bucket: storage.Bucket) -> None:

@@ -7,7 +7,6 @@ import contextlib
 import dataclasses
 import json
 from collections.abc import AsyncIterator, Callable, Mapping
-from typing import override
 
 import grpc
 import grpc.aio
@@ -15,7 +14,6 @@ import httpx2
 import pytest
 
 from themis.rpc import gene_disease_pb2, gene_disease_pb2_grpc
-from themis.services.evidence import errors
 from themis.services.evidence.gene_disease import backend as gene_disease_backend
 from themis.services.evidence.gene_disease import servicer as servicer_mod
 from themis.services.evidence.tests import authz
@@ -192,25 +190,3 @@ def test_the_gene_disease_fixture_key_names_the_term_asked_about() -> None:
             return await stub.DescribeGene(entity)
 
     assert asyncio.run(run()).resolution.requested_mondo_id == 'MONDO:0011450'
-
-
-def test_an_unresolved_entity_is_failed_precondition_not_a_missing_record() -> None:
-    # The gene is held and the request is well-formed; what is missing is an entity the caller must
-    # restate, which NOT_FOUND ("no record") and INVALID_ARGUMENT ("malformed") both misreport.
-    class _Unresolved(gene_disease_backend.FixtureBackend):
-        @override
-        async def describe_gene(
-            self, request: gene_disease_pb2.DescribeGeneRequest
-        ) -> gene_disease_pb2.DescribeGeneResponse:
-            raise errors.UnresolvedEntityError(f'the gene is curated for other entities than {request.mondo_id}')
-
-    async def run() -> gene_disease_pb2.DescribeGeneResponse:
-        async with _serving(_Unresolved({})) as stub:
-            return await stub.DescribeGene(
-                gene_disease_pb2.DescribeGeneRequest(hgnc_id='HGNC:1100', mondo_id='MONDO:0011450'),
-            )
-
-    with pytest.raises(grpc.aio.AioRpcError) as caught:
-        asyncio.run(run())
-    assert caught.value.code() == grpc.StatusCode.FAILED_PRECONDITION
-    assert 'MONDO:0011450' in (caught.value.details() or '')

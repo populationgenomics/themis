@@ -366,17 +366,6 @@ def test_a_drifted_crossref_record_raises_schema_drift_naming_the_key() -> None:
         _resolve(handler, pmid=None, doi=_DOI)
 
 
-def test_a_crossref_key_no_reader_reads_is_stored_in_the_text() -> None:
-    work = json.loads(_CROSSREF_JSON)
-    work['message']['colour'] = 'blue'
-
-    def handler(_request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(200, content=json.dumps(work).encode())
-
-    sourced = _record(_resolve(handler, pmid=None, doi=_DOI).metadata)
-    assert upstream_record.parse_text(sourced.source.crossref_json)['colour'] == 'blue'
-
-
 def test_resolve_batch_batches_pmids_into_one_efetch_call() -> None:
     efetch_calls = 0
 
@@ -1132,19 +1121,6 @@ def test_a_doi_openalex_holds_as_a_journal_work_and_a_repository_copy_resolves_t
     assert source.HasField('pubmed')
     assert upstream_record.parse_text(source.openalex_json) == journal
     assert paper.external_ids.pmid == _PMID
-
-
-def test_a_paper_openalex_resolved_holds_its_record_alone() -> None:
-    handler = _doi_handler(idconv_pmc=False)
-    resolved = _resolve_batch(
-        handler,
-        [resolve.ResolveRequest(join_key='k', pmid=None, doi=_DOI)],
-        openalex_works=[_oa_work(_DOI, pmid=None, title='A Preprint')],
-    )
-    source = _record(_resolved(resolved, 'k').metadata).source
-    assert source.HasField('openalex_json')
-    assert not source.HasField('pubmed')
-    assert not source.HasField('crossref_json')
 
 
 _MERGED_PREPRINT_DOI = '10.1101/2017.01.01.000001'

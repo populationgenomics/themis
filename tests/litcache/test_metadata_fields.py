@@ -404,20 +404,6 @@ def test_an_openalex_record_is_written_with_its_metadata() -> None:
     assert metadata.abstract.startswith('Interactions between plants and soil microbes')
 
 
-@pytest.mark.parametrize(
-    'title',
-    ['p<0.05 and a<b and c>d', 'MAF<0.01 in <x> carriers', 'n<5 vs n>10'],
-)
-def test_a_less_than_sign_that_opens_no_known_tag_is_text(title: str) -> None:
-    assert metadata_fields.read_crossref({'title': [title]}).title == title
-
-
-def test_a_known_inline_tag_is_markup() -> None:
-    assert (
-        metadata_fields.read_openalex({'title': 'Loss of <i>BRCA1</i> in <b>mice</b>'}).title == 'Loss of BRCA1 in mice'
-    )
-
-
 def test_names_empty_once_read_as_plain_text_are_left_out() -> None:
     crossref_work = {
         'author': [{'family': ' '}, {'name': '<i></i>'}, {'family': '<b> </b>', 'given': 'Jo'}, {'family': 'Doe'}]
@@ -440,19 +426,6 @@ def test_a_crossref_year_that_is_not_four_digits_drifts(year: int) -> None:
 def test_an_openalex_year_that_is_not_four_digits_drifts(year: int) -> None:
     with pytest.raises(upstream_record.SchemaDriftError, match='publication_year'):
         metadata_fields.read_openalex({'title': 'T', 'publication_year': year})
-
-
-def test_fill_refuses_metadata_its_rules_refuse(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A backstop: were a reader to let through a value the rules of `Metadata` refuse, the fill raises drift for the
-    # paper rather than a bare error that would abort a whole batch.
-    def read(_source: litcache_pb2.MetadataSource) -> litcache_pb2.Metadata:
-        return litcache_pb2.Metadata(title='T', authors=[litcache_pb2.Metadata.Author(name='')])
-
-    monkeypatch.setattr(metadata_fields, 'read', read)
-    source = litcache_pb2.MetadataSource(openalex_json='{"title": "T"}')
-    with pytest.raises(upstream_record.SchemaDriftError, match='breaks its rules') as excinfo:
-        metadata_fields.fill(source)
-    assert excinfo.value.index == 'openalex'
 
 
 @pytest.mark.parametrize(

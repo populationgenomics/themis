@@ -1,8 +1,9 @@
 """The generated accessors: one per service with an agent-exposed rpc, each a stub over the guest's hatch channel.
 
 The accessor set is generated from the option the hatch allowlist is generated from, so the two cannot disagree
-about what is exposed — `test_hatch.py` asserts that correspondence, and the guest contract tree's tests hold the
-stub the guest imports to the marked rpcs. What generation does not settle is whether the emitted module *works*:
+about what is exposed — `test_every_allowlisted_method_is_callable_off_its_accessor` below asserts that
+correspondence, and the guest contract tree's tests hold the stub the guest imports to the marked rpcs. What
+generation does not settle is whether the emitted module *works*:
 an accessor that constructs its stub on some other channel would reach past the hatch, and one naming a stub
 class its module does not define would fail at import — inside a session, where no test runs.
 """

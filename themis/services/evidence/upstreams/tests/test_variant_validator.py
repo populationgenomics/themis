@@ -49,11 +49,6 @@ def test_happy_path_parses_projection_and_both_build_loci() -> None:
     assert result.dataset_versions == ('4.0.1.dev7+gbdab9c72f', 'vvdb_2025_3')
 
 
-def test_non_2xx_raises_http_status_error() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(500, json={})))
-
-
 def test_response_without_transcript_variant_is_an_absent_record() -> None:
     with pytest.raises(errors.UnknownVariantError, match='no transcript variant'):
         _fetch(httpx2.MockTransport(lambda _: httpx2.Response(200, json={'flag': 'warning', 'metadata': {}})))

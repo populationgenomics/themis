@@ -371,12 +371,11 @@ ignore = [
 "tools/litcache/tests/**" = [
     "S101",   # asserts are the standard pytest idiom
     "SLF001", # the deposit tests exercise its private fail-loud helpers directly
-    "S106",   # throwaway test-container credentials are not secrets
 ]
 "tools/svcv4-oracle/test_*.py" = [
     "S101",   # asserts are the standard pytest idiom
 ]
-# A shared fixture module, outside any tests tree because two of them use it.
+# A shared fixture module, outside any tests tree because three of them use it.
 "themis/testing/litcache_db.py" = [
     "S106",   # throwaway test-container credentials are not secrets
 ]

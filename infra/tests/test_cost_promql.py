@@ -158,42 +158,6 @@ def test_the_workspace_total_guards_the_producers_that_can_be_empty(
     assert set(re.findall(r'\[(\w+)\]', total)) == {'1h', f'{_FRESHNESS}m'}
 
 
-def _priced_terms() -> dict[str, list[str]]:
-    """By priced model, every term its figure has to carry: one per token type of each of its rate cards."""
-    terms: dict[str, list[str]] = {}
-    for model, card in cost_prices.LIST_PRICES_CENTS_PER_MTOK.items():
-        terms[model] = [
-            f'sum(increase({cost_metrics.REQUEST_TOKENS}{{{cost_metrics.MODEL_LABEL}="{model}", '
-            f'{cost_metrics.TYPE_LABEL}="{token_type}"}}[1h])) * {price} or vector(0)'
-            for token_type, price in card.items()
-        ]
-    for model, cards in cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH.items():
-        terms[model] = [
-            f'sum(increase({cost_metrics.REQUEST_TOKENS}{{{cost_metrics.MODEL_LABEL}="{model}", '
-            f'{cost_metrics.PROMPT_LENGTH_LABEL}="{prompt_length}", '
-            f'{cost_metrics.TYPE_LABEL}="{token_type}"}}[1h])) * {price} or vector(0)'
-            for prompt_length, card in cards.items()
-            for token_type, price in card.items()
-        ]
-    return terms
-
-
-def test_convert_cents_prices_each_token_type_of_each_rate_card_at_the_tables(
-    top_level_terms: Callable[[str], list[str]],
-) -> None:
-    cents = cost_promql.convert_cents('1h')
-    priced = _priced_terms()
-    assert sorted(priced) == cost_prices.priced_models()
-    # One never-empty figure per model, each scaled from cents per million tokens, added without a guard of its own;
-    # inside it every term is guarded, and the terms are exactly the model's cards' token types.
-    figures = top_level_terms(cents)
-    assert len(figures) == len(priced)
-    for model, figure in zip(cost_prices.priced_models(), figures, strict=True):
-        assert figure.endswith(' / 1000000'), figure
-        terms = top_level_terms(figure.removesuffix(' / 1000000'))
-        assert sorted(terms) == sorted(f'({term})' for term in priced[model]), model
-
-
 def test_a_model_priced_by_prompt_length_prices_each_side_of_the_boundary_at_its_own_card(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

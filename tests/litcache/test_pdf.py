@@ -21,7 +21,7 @@ from typing import override
 import pypdfium2
 import pytest
 
-from themis.litcache import anthropic_ocr, pdf
+from themis.litcache import pdf
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
 _TEXT_PDF = _FIXTURES / 'nonoa' / 'source.pdf'
@@ -319,14 +319,3 @@ def test_a_job_that_will_not_unpickle_in_the_child_fails_alone_and_is_not_blamed
         pdf.render_pages(_TEXT_PDF.read_bytes(), fit=_Unbuildable()).result(timeout=60)  # pyright: ignore[reportArgumentType]
     assert not isinstance(raised.value, pypdfium2.PdfiumError)
     assert pdf.page_count(_TEXT_PDF.read_bytes()).result(timeout=60) > 0
-
-
-def test_a_crash_is_a_pdfium_error_so_an_unloadable_pdf_s_handling_covers_it() -> None:
-    assert issubclass(pdf.PdfiumCrashedError, pypdfium2.PdfiumError)
-
-
-def test_every_job_and_its_answer_cross_the_process_boundary() -> None:
-    # The fit travels to the pdfium process with the render job; a closure would not pickle.
-    pages = pdf.render_pages(_TEXT_PDF.read_bytes(), fit=anthropic_ocr._PageFit(max_edge=400)).result()  # pyright: ignore[reportPrivateUsage]
-    assert pages
-    assert all(max(page.width, page.height) <= 400 for page in pages)

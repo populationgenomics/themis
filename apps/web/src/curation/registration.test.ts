@@ -74,24 +74,6 @@ describe("a register request", () => {
   });
 });
 
-describe("a clinical context's length", () => {
-  test("leaves out the whitespace around the prose", () => {
-    expect(clinicalContextLength("\n  ab c \t")).toBe(4);
-  });
-
-  test("puts the maximum within the bound and one more over it", () => {
-    for (const [extra, over] of [
-      [0, false],
-      [1, true],
-    ] as const) {
-      const raw = ` ${"x".repeat(CLINICAL_CONTEXT_MAX_LENGTH + extra)} `;
-      expect(clinicalContextLength(raw) > CLINICAL_CONTEXT_MAX_LENGTH).toBe(
-        over,
-      );
-    }
-  });
-});
-
 describe("the longest clinical context a registration takes", () => {
   const validator = createValidator();
   const run = (length: number) =>
@@ -110,10 +92,12 @@ describe("the longest clinical context a registration takes", () => {
   });
 
   test("is accepted by the register request", () => {
+    const padded = `\n  ${"x".repeat(CLINICAL_CONTEXT_MAX_LENGTH)} \t `;
+    expect(clinicalContextLength(padded)).toBe(CLINICAL_CONTEXT_MAX_LENGTH);
     expect(
       parseRegistration({
         ...BODY,
-        clinicalContext: "x".repeat(CLINICAL_CONTEXT_MAX_LENGTH),
+        clinicalContext: padded,
       }).clinicalContext,
     ).toHaveLength(CLINICAL_CONTEXT_MAX_LENGTH);
   });

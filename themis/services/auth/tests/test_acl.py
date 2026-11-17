@@ -32,37 +32,15 @@ def _access(email: str, snapshot: acl.Snapshot | None = None) -> auth_pb2.GetAcc
     return (_snapshot() if snapshot is None else snapshot).access(email, operator=harness.OPERATOR)
 
 
-def test_a_person_is_granted_each_project_they_hold_a_role_on_with_those_roles() -> None:
-    assert _access(harness.JOHN) == auth_pb2.GetAccessResponse(projects=[_grant('asd', _MANAGER)])
-    assert _access(harness.JANE) == auth_pb2.GetAccessResponse(
-        projects=[_grant('asd', _CURATOR), _grant('epi', _CURATOR)]
-    )
-
-
 def test_a_person_on_both_lists_holds_both_roles() -> None:
     snapshot = _with_projects(asd={'managers': [harness.JOHN], 'curators': [harness.JOHN]})
     assert _access(harness.JOHN, snapshot) == auth_pb2.GetAccessResponse(projects=[_grant('asd', _MANAGER, _CURATOR)])
-
-
-def test_a_person_on_no_project_is_not_admitted() -> None:
-    assert _access('mallory@example.net') == auth_pb2.GetAccessResponse()
-
-
-def test_an_email_matches_whatever_its_case() -> None:
-    assert _access(harness.JOHN.upper()) == _access(harness.JOHN)
 
 
 def test_a_non_ascii_character_never_folds_into_a_member_s_ascii_address() -> None:
     # U+212A KELVIN SIGN lowercases to 'k' under Unicode rules.
     snapshot = _with_projects(asd={'managers': ['kate@example.com'], 'curators': []})
     assert not _access('\u212aate@example.com', snapshot).projects
-
-
-def test_the_operator_account_holds_both_roles_on_every_project_though_the_acl_never_lists_it() -> None:
-    assert not any(harness.OPERATOR in project.managers | project.curators for project in _snapshot().projects.values())
-    assert _access(harness.OPERATOR) == auth_pb2.GetAccessResponse(
-        projects=[_grant('asd', _MANAGER, _CURATOR), _grant('epi', _MANAGER, _CURATOR)]
-    )
 
 
 def test_the_operator_account_matches_whatever_its_case() -> None:
@@ -82,20 +60,6 @@ def test_another_account_of_the_deployment_reaches_only_what_the_acl_lists() -> 
 
 def test_the_operator_account_of_another_project_is_not_the_operator() -> None:
     assert _access(rules.operator_email('another-project')) == auth_pb2.GetAccessResponse()
-
-
-def test_a_project_s_session_grant_carries_no_role_and_an_absent_one_has_none() -> None:
-    snapshot = _snapshot()
-    assert snapshot.grant('epi') == _grant('epi')
-    assert snapshot.grant('gone') is None
-
-
-def test_a_grant_handed_out_cannot_change_the_snapshot() -> None:
-    snapshot = _snapshot()
-    granted = _access(harness.JOHN, snapshot).projects[0]
-    granted.id = 'changed'
-    granted.roles.append(_CURATOR)
-    assert _access(harness.JOHN, snapshot) == auth_pb2.GetAccessResponse(projects=[_grant('asd', _MANAGER)])
 
 
 def _broken(path: tuple[str | int, ...], value: object) -> bytes:

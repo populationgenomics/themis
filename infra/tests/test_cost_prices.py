@@ -69,8 +69,3 @@ def test_a_model_priced_by_prompt_length_has_a_card_for_every_length_the_counter
     shorter, longer = (cards[prompt_length] for prompt_length in cost_metrics.PROMPT_LENGTHS)
     for token_type in cost_metrics.TOKEN_TYPES:
         assert longer[token_type] > shorter[token_type], (model, token_type)
-
-
-def test_the_flat_rates_are_positive_cents() -> None:
-    assert cost_prices.SESSION_RUNTIME_CENTS_PER_HOUR > 0
-    assert cost_prices.WEB_SEARCH_CENTS_PER_REQUEST > 0

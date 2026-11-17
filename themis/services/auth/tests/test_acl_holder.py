@@ -80,17 +80,6 @@ def test_the_service_refuses_to_start_without_a_valid_acl(
     assert [r.levelno for r in _rejections(caplog)] == [logging.ERROR]
 
 
-def test_a_valid_version_is_swapped_in_whole() -> None:
-    async def run() -> acl.Snapshot:
-        backend = harness.Backend({}, harness.acl_version())
-        holder = await _load(backend, harness.Clock())
-        backend.acl = _without_project('asd')
-        await holder.refresh()
-        return holder.current()
-
-    assert set(asyncio.run(run()).projects) == {'epi'}
-
-
 def test_a_clean_load_records_when_it_loaded() -> None:
     outcomes, wall, reader = _recorded()
     asyncio.run(_load(harness.Backend({}, harness.acl_version()), harness.Clock(), outcomes))

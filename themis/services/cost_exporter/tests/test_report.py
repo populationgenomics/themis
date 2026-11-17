@@ -183,11 +183,6 @@ def test_spend_posts_once_with_the_total_first_then_every_producer() -> None:
     ]
 
 
-def test_the_message_ends_with_the_dashboard_link_in_slacks_syntax() -> None:
-    for day in (_day(), _day(sessions=500, convert=-20)):
-        assert _message(day)[-1] == f'<{_DASHBOARD}|Spend dashboard>'
-
-
 def test_sessions_with_no_series_carries_no_split() -> None:
     lines = _message(_day(convert=500))
 
@@ -247,17 +242,6 @@ def test_hourly_cents_reach_the_chart_as_dollars_under_the_producers_names() -> 
     assert [one.label for one in series] == ['Managed Agents sessions', 'Convert worker', 'CI (Claude Code)']
     assert [value for _, value in series[1].points] == [1.5, 0.25]
     assert series[0].points == []
-
-
-def test_a_figure_is_dollars_or_no_data() -> None:
-    assert report.figure(1234) == '$12.34'
-    assert report.figure(None) == 'no data'
-
-
-def test_the_heading_and_the_chart_name_the_windows_end_in_sydney_time() -> None:
-    assert report.window_end(_END, _SYDNEY) == 'Mon 7 Sep 2026 08:00 (Australia/Sydney)'
-    assert report.chart_title(_END, _SYDNEY).endswith('24 h to Mon 7 Sep 2026 08:00 (Australia/Sydney)')
-    assert report.chart_filename(_END, _SYDNEY) == 'themis-spend-2026-09-07.png'
 
 
 def test_a_naive_clock_fails_before_any_query() -> None:

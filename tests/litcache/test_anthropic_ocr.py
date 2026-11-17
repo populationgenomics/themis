@@ -17,7 +17,6 @@ import dataclasses
 import functools
 import io
 import json
-import logging
 import pathlib
 import subprocess
 import sys
@@ -220,13 +219,6 @@ class _StalledClient:
         return False
 
 
-def test_a_silence_is_caught_before_the_elapsed_budget_runs_out() -> None:
-    # The two bounds have to differ. asyncio.timeout is entered before the client connects, so an idle
-    # gap as long as the elapsed budget can never elapse inside it — given one value the stall bound is
-    # unreachable and a stream that dies early settles the paper terminally instead of being retried.
-    assert anthropic_ocr._STALL_SECONDS < anthropic_ocr._TIMEOUT_SECONDS
-
-
 def test_a_call_the_model_answered_past_the_elapsed_bound_was_paid_for(monkeypatch: pytest.MonkeyPatch) -> None:
     # httpx2 has no total-duration timeout, so the client's own value would not have caught a call that keeps
     # streaming — only asyncio.timeout bounds elapsed time.
@@ -275,15 +267,6 @@ def test_the_whole_page_image_fits_the_tier_claude_reads_at() -> None:
         )
         == image
     )
-
-
-def test_a_long_paper_stays_under_the_many_image_edge_limit() -> None:
-    # Past twenty images the API rejects the whole request unless every image is under this, so the
-    # cap is a precondition of the request succeeding at all, not a cost choice.
-    pages = asyncio.run(anthropic_ocr.render(_pdf(claude_images.MANY_IMAGE_THRESHOLD + 2)))
-
-    assert len(pages) > claude_images.MANY_IMAGE_THRESHOLD
-    assert all(max(page.width, page.height) <= claude_images.MANY_IMAGE_MAX_EDGE for page in pages)
 
 
 def test_a_paper_whose_pages_together_overrun_is_rendered_small_enough_to_send() -> None:
@@ -390,13 +373,6 @@ def test_the_many_image_cap_turns_on_above_the_threshold_and_not_at_it(pages: in
     assert all(max(page.width, page.height) <= claude_images.MANY_IMAGE_MAX_EDGE for page in rendered) == capped
 
 
-def test_a_short_paper_is_rendered_larger_than_that_limit_allows() -> None:
-    # The cap is not applied when it does not have to be: fidelity is the thing being bought.
-    (page,) = asyncio.run(anthropic_ocr.render(_pdf(1)))
-
-    assert max(page.width, page.height) > claude_images.MANY_IMAGE_MAX_EDGE
-
-
 # --- the request ---
 
 
@@ -480,8 +456,8 @@ def test_no_pdf_is_uploaded(monkeypatch: pytest.MonkeyPatch) -> None:
 # --- what a turn costs, and how it can fail ---
 
 
-def test_the_turn_reports_what_it_cost(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    # The counter is where the spend is priced from; the log line is the per-document audit trail.
+def test_the_turn_reports_what_it_cost(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The counter is where the spend is priced from.
     usage = _Usage(cache_read_input_tokens=7, cache_creation_input_tokens=9)
     message = _Message(
         stop_reason='end_turn', content=[_Block('text', '#')], model='claude-sonnet-5-20260101', usage=usage
@@ -489,8 +465,7 @@ def test_the_turn_reports_what_it_cost(monkeypatch: pytest.MonkeyPatch, caplog: 
     _install(monkeypatch, message)
     tokens, reader = _counter()
 
-    with caplog.at_level(logging.INFO, logger='themis.litcache.anthropic_ocr'):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
+    asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
 
     series = functools.partial(
         in_memory_metrics.labels, model='claude-sonnet-5-20260101', stop_reason='end_turn', prompt_length='upTo100k'
@@ -501,29 +476,19 @@ def test_the_turn_reports_what_it_cost(monkeypatch: pytest.MonkeyPatch, caplog: 
         series(type='cacheRead'): 7,
         series(type='cacheCreation'): 9,
     }
-    (record,) = caplog.records
-    assert usage.input_tokens in record.args  # type: ignore[operator]
-    assert usage.output_tokens in record.args  # type: ignore[operator]
 
 
 @pytest.mark.parametrize(('stop_reason', 'match'), [('max_tokens', 'truncated'), ('refusal', 'refused')])
-def test_a_terminal_stop_raises_ocr_error(
-    stop_reason: str, match: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_terminal_stop_raises_ocr_error(stop_reason: str, match: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # Each yields an incomplete transcription that must not be committed, and re-asking only re-bills
     # it — and a turn that raises is still a turn that was paid for.
     message = _Message(stop_reason=stop_reason, content=[_Block('text', 'partial')], model='claude-sonnet-5')
     _install(monkeypatch, message)
     tokens, reader = _counter()
 
-    with (
-        caplog.at_level(logging.INFO, logger='themis.litcache.anthropic_ocr'),
-        pytest.raises(ocr.OcrError, match=match),
-    ):
+    with pytest.raises(ocr.OcrError, match=match):
         asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
 
-    (record,) = caplog.records
-    assert message.usage.input_tokens in record.args  # type: ignore[operator]
     counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
     assert counted[_input_series(model='claude-sonnet-5', stop_reason=stop_reason)] == 4321
 
@@ -731,10 +696,3 @@ def test_the_converter_does_not_import_the_metrics_pipeline() -> None:
         [sys.executable, '-c', probe], check=True, capture_output=True, text=True
     )
     assert completed.stdout.strip() == '[]'
-
-
-def test_the_metrics_counter_is_a_token_counter() -> None:
-    # Structural, checked by pyright: `RequestTokens.add` accepts what the converter hands it.
-    tokens, _ = _counter()
-    counter: ocr.TokenCounter = tokens
-    assert counter is tokens

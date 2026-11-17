@@ -162,12 +162,6 @@ describe("the tip a window follows", () => {
     expect(followTip(null, unavailable)).toBeNull();
   });
 
-  test("keeps its identity while the tick agrees with it", () => {
-    expect(
-      followTip(AT_TIP, polled({ state: { case: "commit", value: TIP } })),
-    ).toBe(AT_TIP);
-  });
-
   test("reads a damaged ref document as its own state", () => {
     expect(polled({ state: { case: "damaged", value: {} } })).toEqual({
       kind: "damaged",

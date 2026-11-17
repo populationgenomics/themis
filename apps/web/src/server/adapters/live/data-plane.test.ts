@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { create } from "@bufbuild/protobuf";
-import { isManagedSession } from "@/lib/harness";
 import { type Analysis, AnalysisSchema } from "@/models/workbench";
 import { isUnmanagedSessionError } from "../../errors";
 import type { AnthropicClient } from "./client";
@@ -101,13 +100,16 @@ describe("a run the platform holds", () => {
       "the platform is unreachable",
     );
   });
-});
 
-describe("which runtime a session id names", () => {
-  test("only a locally-minted prefix reads as unmanaged", () => {
-    expect(isManagedSession("pi_abc")).toBe(false);
-    expect(isManagedSession("sesn_01xyz")).toBe(true);
-    // An id in neither shape is the platform's, so a surprise never silences the conversation.
-    expect(isManagedSession("something-else")).toBe(true);
+  test("routes an unrecognised session prefix to the platform so it fails loud rather than silently returning empty", async () => {
+    const calls: Calls = { listEvents: 0, steers: 0, interrupts: 0 };
+    const unknown = plane(calls, () => {
+      throw new Error("unknown session id");
+    });
+
+    await expect(unknown.pollEvents(analysis("unknown_123"))).rejects.toThrow(
+      "unknown session id",
+    );
+    expect(calls.listEvents).toBe(1);
   });
 });

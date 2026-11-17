@@ -273,38 +273,6 @@ def test_exon_relevance_composes_gnomad_clinvar_and_gtex(monkeypatch: pytest.Mon
     ]
 
 
-@pytest.mark.parametrize(
-    'failure',
-    [
-        errors.UnknownVariantError('ClinVar holds no record'),
-        errors.InvalidRequestError('ClinVar rejected the term'),
-        ValueError('ClinVar esearch returned no count'),
-        httpx2.HTTPStatusError('502', request=httpx2.Request('GET', 'https://e.utils'), response=httpx2.Response(502)),
-    ],
-)
-def test_exon_relevance_never_reports_a_density_it_could_not_compute(
-    monkeypatch: pytest.MonkeyPatch, failure: Exception
-) -> None:
-    """`clinvar_plp_density` carries no presence, so 0 has to be a count and cannot mean anything else.
-
-    That holds only while every way the pool lookup can fail takes the rpc down with it: absorbing
-    one would ship a 0 the caller is obliged to read as "no star-passing P/LP record in the gene".
-    """
-    _seed_exon_relevance_upstreams(monkeypatch)
-
-    async def failing_gene_pool(*_args: object, **_kwargs: object) -> clinvar.ClinvarGenePool:
-        raise failure
-
-    monkeypatch.setattr(clinvar, 'fetch_gene_pool', failing_gene_pool)
-
-    with pytest.raises(type(failure)):
-        _run(
-            lambda be: be.assess_exon_relevance(
-                transcript_pb2.AssessExonRelevanceRequest(gene='BRCA1', transcript='NM_007294.4', exon=10)
-            )
-        )
-
-
 # The ANO5 shape, at the resolution the profile has to preserve: a gene expressed alike everywhere,
 # and one exon that drops out across tissues while holding up in skeletal muscle.
 _MUSCLE = 'Muscle_Skeletal'

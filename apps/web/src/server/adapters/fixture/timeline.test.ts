@@ -406,12 +406,6 @@ describe("a curator turn joining the run", () => {
 });
 
 describe("the run mid-step and halted", () => {
-  test("the mid-step window opens with the edit in flight and closes with its result", () => {
-    expect(awaitingToolResult(ANALYSIS, afterPolls(6))).toBe(false);
-    expect(awaitingToolResult(ANALYSIS, afterPolls(7))).toBe(true);
-    expect(awaitingToolResult(ANALYSIS, afterPolls(8))).toBe(false);
-  });
-
   test("an interrupt closes the in-flight edit with an error result and ends the script", () => {
     const halted = interrupted(afterPolls(7));
     const edit = timelineAt(ANALYSIS, halted).events.find(

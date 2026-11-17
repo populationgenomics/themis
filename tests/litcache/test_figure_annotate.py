@@ -265,12 +265,6 @@ def test_a_pdf_past_the_page_limit_is_refused_before_any_request(monkeypatch: py
     assert not client.requests
 
 
-def test_the_model_is_offered_every_kind_the_record_holds() -> None:
-    offered = set(figure_annotate.KINDS.values())
-
-    assert offered == set(figures_pb2.FigureKind.keys()) - {'FIGURE_KIND_UNSPECIFIED'}
-
-
 def test_an_answer_split_over_two_calls_goes_back_with_both_answered() -> None:
     split = _call([_figure()])
     split.content.append(

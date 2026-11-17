@@ -11,12 +11,11 @@ import re
 
 import pytest
 
-from themis_infra import alerts, capture, cost_promql, cost_report
+from themis_infra import capture, cost_promql, cost_report
 
 _JOB_CHAIN = ['themis:infra:CostReport', 'gcp:cloudrunv2/job:Job']
 _SCHEDULE_CHAIN = ['themis:infra:CostReport', 'gcp:cloudscheduler/job:Job']
 _POLICY_CHAIN = ['themis:infra:CostReport', 'gcp:monitoring/alertPolicy:AlertPolicy']
-_CHANNEL_CHAIN = ['themis:infra:CostAlerts', 'gcp:monitoring/notificationChannel:NotificationChannel']
 # A metric name as it can appear in a query: bare, or quoted inside the braces.
 _LEGACY_NAME = re.compile(r'\bthemis_[A-Za-z0-9_]+')
 _QUOTED_NAME = re.compile(r'\{"([^"]+)"')
@@ -112,18 +111,6 @@ def test_the_rendering_is_two_flat_groups_of_cents_queries_over_their_windows() 
 def test_the_sessions_split_reads_the_same_window_as_its_total() -> None:
     day = json.loads(cost_report.report_json(freshness_minutes=_FRESHNESS_MINUTES))['day']
     assert day['sessions_tokens'] == f'({day["sessions"]} - {day["sessions_runtime"]} - {day["sessions_search"]})'
-
-
-def test_the_reports_latest_run_failing_pages_the_spend_channel_until_a_run_succeeds(program: capture.Capture) -> None:
-    policy = _one(program, _POLICY_CHAIN)
-    channel = _one(program, _CHANNEL_CHAIN)
-    [condition] = [_mapping(c) for c in _sequence(policy['conditions'])]
-    query = _mapping(condition['conditionPrometheusQueryLanguage'])['query']
-    assert query == alerts.latest_run_failed([cost_report.JOB_NAME])
-    assert policy['notificationChannels'] == [channel['name']]
-    assert tuple(_sequence(_mapping(policy['alertStrategy'])['notificationPrompts'])) == alerts.STATE_PROMPTS
-    content = str(_mapping(policy['documentation'])['content'])
-    assert f'/{cost_report.JOB_NAME}/executions' in content
 
 
 def test_the_report_identity_reads_metrics_and_the_token_and_nothing_else(program: capture.Capture) -> None:

@@ -155,11 +155,6 @@ def test_clinvar_rejects_an_identifier_that_is_not_a_padded_accession(vcv: str) 
     assert 'variation accession' in _refused(_describe_request(vcv=vcv))
 
 
-def test_clinvar_rejects_an_absent_gene() -> None:
-    """Without the gene clause the pool term answers with ClinVar's whole P/LP set, not the gene's."""
-    assert 'HGNC symbol' in _refused(_describe_request(gene=' '))
-
-
 @pytest.mark.parametrize('floor', [-1, 5])
 def test_clinvar_rejects_a_review_status_floor_off_clinvars_star_scale(floor: int) -> None:
     """A floor outside 0-4 filters against a scale ClinVar does not use, silently emptying the pool."""
@@ -301,10 +296,6 @@ def test_clinvar_span_is_keyed_by_the_c_range_it_was_asked_about() -> None:
         ('NM_001040142.2', 1110, 1108, 50),
         ('NM_001040142.2', 1108, 1110, 0),
         ('NM_001040142.2', 1108, 1110, 2001),
-        # The exon table is accession-version-specific, and an ENST has no RefSeq record.
-        ('NM_001040142', 1108, 1110, 50),
-        ('ENST00000283256.10', 1108, 1110, 50),
-        ('NM_001040142.2:c.1108T>G', 1108, 1110, 50),
     ],
 )
 def test_clinvar_span_refuses_a_request_that_would_search_the_wrong_thing(

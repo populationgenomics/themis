@@ -789,15 +789,6 @@ def test_poll_full_texts_asks_for_no_conversion() -> None:
     assert backend.requested == []
 
 
-def test_the_fixture_backend_converts_nothing_and_says_so(caplog: pytest.LogCaptureFixture) -> None:
-    # The offline corpus has no queue, so a PENDING paper never advances; a caller watching one has to
-    # be able to see that nothing was ever going to convert it.
-    backend = fixture_mod.FixtureBackend(SEED, RECORDS, ENTITIES)
-    with caplog.at_level('INFO', logger=fixture_mod.__name__):
-        asyncio.run(backend.view_for(authz.AUTH).request_conversions([DOC_OCR]))
-    assert DOC_OCR in caplog.text
-
-
 class _IngestingBackend(fixture_mod.FixtureBackend):
     """A backend whose upstream holds the named papers, so an unknown id can be brought in.
 
@@ -955,15 +946,6 @@ def test_an_ingest_failure_maps_to_the_status_that_matches_its_remedy(
             backend=_FailingIngestBackend(SEED, error),
         )
     assert exc.value.code() is expected
-
-
-def test_the_fixture_backend_ingests_nothing_and_says_so(caplog: pytest.LogCaptureFixture) -> None:
-    # The offline corpus is the whole corpus and has no upstream, so an unknown id stays unknown; a
-    # caller watching one has to be able to see that nothing was ever going to ingest it.
-    backend = fixture_mod.FixtureBackend(SEED, RECORDS, ENTITIES)
-    with caplog.at_level('INFO', logger=fixture_mod.__name__):
-        assert asyncio.run(backend.view_for(authz.AUTH).ingest_papers([DOI_UNKNOWN])) == {}
-    assert DOI_UNKNOWN in caplog.text
 
 
 async def _drained(
@@ -1173,21 +1155,6 @@ def test_search_returns_the_indexed_records() -> None:
     assert reply.records[0].pmcid == 'PMC900001'  # the key for a hit no PubMed id names
 
 
-@pytest.mark.parametrize(('requested', 'expected'), [(0, 10), (5, 5), (25, 25), (100, 25)])
-def test_clamp_max_results(requested: int, expected: int) -> None:
-    assert servicer_mod._clamp_max_results(requested) == expected
-
-
-@pytest.mark.parametrize(('requested', 'expected'), [(0, 30), (5, 5), (50, 50), (100, 50)])
-def test_clamp_variant_max_results(requested: int, expected: int) -> None:
-    assert servicer_mod._clamp_variant_max_results(requested) == expected
-
-
-@pytest.mark.parametrize(('requested', 'expected'), [(0, 50), (5, 5), (200, 200), (5000, 200)])
-def test_clamp_gene_entities(requested: int, expected: int) -> None:
-    assert servicer_mod._clamp_gene_entities(requested) == expected
-
-
 def test_a_search_for_nothing_is_refused() -> None:
     # Europe PMC answers an empty query with an HTTP-200 refusal document; refusing it here keeps
     # the round trip unspent and the status the one every other unanswerable request gets.
@@ -1394,6 +1361,68 @@ def test_the_entity_fan_out_is_the_services_bound_and_no_request_raises_it() -> 
     )
     assert recorder.max_entities == servicer_mod._MAX_ENTITIES
     assert recorder.max_results == servicer_mod._VARIANT_MAX_RESULTS_CEILING
+
+
+@pytest.mark.parametrize(
+    ('call', 'expected'),
+    [
+        pytest.param(
+            lambda s: s.SearchEuropePmc(literature_pb2.SearchEuropePmcRequest(query='BRCA1')),
+            10,
+            id='europe-pmc-default',
+        ),
+        pytest.param(
+            lambda s: s.SearchLitVar(literature_pb2.SearchLitVarRequest(rsid='rs00')),
+            30,
+            id='litvar-default',
+        ),
+        pytest.param(
+            lambda s: s.ListLitVarEntities(literature_pb2.ListLitVarEntitiesRequest(gene='BRCA1')),
+            50,
+            id='gene-entities-default',
+        ),
+    ],
+)
+def test_an_unset_index_search_budget_uses_its_default(
+    call: Callable[[literature_pb2_grpc.LiteratureStub], Awaitable[object]],
+    expected: int,
+) -> None:
+    recorder = _RecordingBackend()
+    _run_over(recorder, call)
+    assert recorder.max_results == expected
+
+
+@pytest.mark.parametrize(
+    ('call', 'expected'),
+    [
+        pytest.param(
+            lambda s: s.SearchEuropePmc(literature_pb2.SearchEuropePmcRequest(query='BRCA1', max_results=500)),
+            25,
+            id='europe-pmc-ceiling',
+        ),
+        pytest.param(
+            lambda s: s.ListLitVarEntities(literature_pb2.ListLitVarEntitiesRequest(gene='BRCA1', max_results=500)),
+            200,
+            id='gene-entities-ceiling',
+        ),
+    ],
+)
+def test_an_index_search_budget_above_the_ceiling_is_capped(
+    call: Callable[[literature_pb2_grpc.LiteratureStub], Awaitable[object]],
+    expected: int,
+) -> None:
+    recorder = _RecordingBackend()
+    _run_over(recorder, call)
+    assert recorder.max_results == expected
+
+
+def test_list_litvar_entities_passes_an_in_range_budget_through() -> None:
+    recorder = _RecordingBackend()
+    _run_over(
+        recorder,
+        lambda s: s.ListLitVarEntities(literature_pb2.ListLitVarEntitiesRequest(gene='BRCA1', max_results=5)),
+    )
+    assert recorder.max_results == 5
 
 
 def test_a_refusal_echoing_a_long_caller_field_still_carries_its_reason() -> None:

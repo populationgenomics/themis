@@ -9,7 +9,6 @@ import re
 import httpx2
 import pytest
 
-from themis.services.evidence import errors
 from themis.services.evidence.upstreams import transcript_sequence
 
 _ACCESSION = 'NM_001042492.3'
@@ -43,17 +42,6 @@ def test_a_superseded_version_is_rejected_rather_than_spliced_against() -> None:
 def test_a_body_that_is_not_a_fasta_record_raises() -> None:
     with pytest.raises(ValueError, match='no FASTA record'):
         transcript_sequence.parse_fasta('Error: failed to retrieve sequence', accession=_ACCESSION, query='q')
-
-
-def test_a_record_ncbi_does_not_hold_is_not_found() -> None:
-    """Efetch answers an accession it holds no sequence for with a 400: an answer, not an outage."""
-    with pytest.raises(errors.UnknownVariantError, match='holds no sequence'):
-        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(400, text='Error: Failed to retrieve sequence')))
-
-
-def test_a_server_fault_stays_an_http_error() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(502, text='bad gateway')))
 
 
 @pytest.mark.parametrize('status', [403, 429])

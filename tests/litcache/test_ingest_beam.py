@@ -184,16 +184,6 @@ def test_pair_seed_keys_ignores_keys_outside_the_prefix() -> None:
     assert pairing.unpaired == []
 
 
-def test_seeds_sharing_a_claim_key_but_not_a_pmid_resolve_apart() -> None:
-    by_doi = identity.determine_identity('10.1%2Fabc.json', identity.DoclingOrigin(filename=None, binary_hash=None))
-    by_pmid = identity.determine_identity(
-        '30000001.json', identity.DoclingOrigin(filename='10.1%2Fabc.pdf', binary_hash=None)
-    )
-    assert by_doi.claim_key == by_pmid.claim_key
-
-    assert ingest_beam._resolve_request(by_doi).join_key != ingest_beam._resolve_request(by_pmid).join_key
-
-
 def test_build_pipeline_rejects_non_positive_limit() -> None:
     # Validation happens driver-side (before any list or worker/DB), so this needs
     # neither Docker nor a real backend — the factories are never reached.

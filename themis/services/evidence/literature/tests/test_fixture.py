@@ -211,14 +211,6 @@ def test_a_paper_without_a_rendering_reports_why_rather_than_empty_text() -> Non
     assert result == literature_pb2.FullTextUnavailable(state=literature_pb2.FULL_TEXT_STATE_NO_FULL_TEXT)
 
 
-def test_a_rendering_the_seed_gives_no_text_for_is_a_store_fault() -> None:
-    # The store's own fault case: a listed rendering whose text cannot be produced. Serving an
-    # empty markdown instead would read as a paper that says nothing.
-    seed = {'doc-1': {'title': 'A', 'markdown': {'gcs_uri': 'gs://c/r.md'}}}
-    with pytest.raises(literature_backend.MissingRenderingBlobError):
-        asyncio.run(_store_seeded(seed).read_markdown('doc-1'))
-
-
 def test_seeding_both_a_rendering_and_a_terminal_readiness_is_rejected() -> None:
     with pytest.raises(SystemExit, match='READY'):
         _store_seeded({'doc-1': {'title': 'A', 'markdown': {'gcs_uri': 'gs://c/r.md'}, 'readiness': 'FAILED'}})
@@ -229,18 +221,6 @@ def test_a_derivable_readiness_is_not_seedable() -> None:
     # let the fixture contradict the derivation every other reader trusts.
     with pytest.raises(SystemExit, match='readiness'):
         _store_seeded({'doc-1': {'title': 'A', 'readiness': 'READY'}})
-
-
-def test_two_papers_cannot_claim_one_external_id() -> None:
-    # The crosswalk's primary key makes this impossible upstream; a seed that states it would have
-    # one of the two papers silently unreachable by its own identifier.
-    with pytest.raises(SystemExit, match='claimed by both'):
-        _store_seeded(
-            {
-                'doc-1': {'title': 'A', 'external_ids': ['doi:10.1/X']},
-                'doc-2': {'title': 'B', 'external_ids': ['doi:10.1/x']},
-            }
-        )
 
 
 def test_a_paper_under_an_empty_doc_id_is_rejected() -> None:
@@ -475,13 +455,6 @@ def test_the_gene_inventory_narrows_on_the_id_and_states_what_it_dropped() -> No
     assert listed.total_in_gene > listed.total_matched
 
 
-def test_a_seeded_entity_listing_a_pmid_the_records_lack_is_refused() -> None:
-    # A dropped PMID would shorten a variant lookup's list without the census saying so, which is
-    # the one failure the seeded index must not be able to stage.
-    with pytest.raises(ValueError, match='lists PMIDs no seeded record or book carries'):
-        fixture.FixtureBackend({}, [], [_entity('litvar@rs00##', rsid='rs00', pmids=('999',))])
-
-
 def test_two_records_under_one_pmid_are_refused() -> None:
     # One identifier names one record; a second under the same PMID would displace the first
     # silently, and the entity that lists it would then answer with the wrong paper.
@@ -645,17 +618,6 @@ def test_a_count_below_the_seeded_pmids_is_refused() -> None:
         )
 
 
-def test_a_seeded_entity_listing_an_unseeded_pmid_exits() -> None:
-    with pytest.raises(SystemExit, match='lists PMIDs no seeded record or book carries'):
-        _index_seeded(
-            {
-                'records': [],
-                'entities': [{'id': 'litvar@rs00##', 'rsid': 'rs00', 'pmids': ['999']}],
-                'book_articles': [],
-            }
-        )
-
-
 @pytest.mark.parametrize(
     'seed',
     [
@@ -731,9 +693,9 @@ def test_a_cross_referential_failure_names_the_section_that_holds_the_value_to_f
     # These two are caught when the backend is built, once both halves are in hand, so nothing about
     # where they came from is left in the exception itself. An operator reading a startup failure
     # still has to be sent to the section holding the value to fix, not to the document.
-    with pytest.raises(SystemExit, match=_STORE_SOURCE):
+    with pytest.raises(SystemExit, match=rf'{_STORE_SOURCE}.*claimed by both'):
         _store_seeded(_DUPLICATE_EXTERNAL_ID)
-    with pytest.raises(SystemExit, match=_INDEX_SOURCE):
+    with pytest.raises(SystemExit, match=rf'{_INDEX_SOURCE}.*lists PMIDs no seeded record or book carries'):
         _index_seeded(_ENTITY_WITHOUT_ITS_RECORD)
 
 

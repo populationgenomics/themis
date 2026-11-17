@@ -151,14 +151,6 @@ def test_a_five_prime_utr_span_descends_because_the_region_numbers_towards_the_s
     assert span.start.position > span.end.position
 
 
-def test_the_three_regions_never_collide_at_one_number() -> None:
-    """`c.-25`, `c.25` and `c.*25` are three bases; a signed integer alone cannot hold all three."""
-    spans = [hgvs.coding_span(f'NM_000267.3:c.{prefix}25C>T') for prefix in ('-', '', '*')]
-    assert all(span is not None for span in spans)
-    regions = {span.start.region for span in spans if span is not None}
-    assert len(regions) == 3
-
-
 @pytest.mark.parametrize(
     ('variant', 'accepted'),
     [

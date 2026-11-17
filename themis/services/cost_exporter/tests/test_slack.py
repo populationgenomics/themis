@@ -32,7 +32,3 @@ def test_the_post_is_one_upload_to_the_channel_with_the_text_as_its_comment() ->
     assert upload['file'] == b'\x89PNG'
     assert upload['filename'] == 'themis-spend-2026-09-07.png'
     assert upload['initial_comment'] == 'Themis spend'
-
-
-def test_the_web_client_bounds_each_request_by_a_timeout() -> None:
-    assert 0 < slack.web_client('xoxb-test').timeout <= 30

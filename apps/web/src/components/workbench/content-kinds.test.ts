@@ -44,10 +44,6 @@ function mockPaper(
 }
 
 describe("paper content kind", () => {
-  test("id is derived deterministically from the doc id", () => {
-    expect(REGISTRY.paper.id({ docId: "doc-1" })).toBe("paper:doc-1");
-  });
-
   test("open builds a closable paper tab whose id matches id(args)", async () => {
     mockPaper({ title: "Structural variants" });
     const args = { docId: "doc-1" };
@@ -104,13 +100,29 @@ describe("paper content kind", () => {
 });
 
 describe("supplementary content kind", () => {
-  test("id is derived from the doc id and file name", () => {
-    expect(
-      REGISTRY.supplementary.id({
-        docId: "doc-1",
-        name: "table_s1.csv",
-        mediaType: "text/csv",
-      }),
-    ).toBe("supp:doc-1:table_s1.csv");
+  test("open builds a closable tab keyed by both paper and filename", async () => {
+    const first = {
+      docId: "doc-1",
+      name: "table_s1.csv",
+      mediaType: "text/csv",
+    };
+    const otherPaper = { ...first, docId: "doc-2" };
+    const otherFile = { ...first, name: "table_s2.csv" };
+    const tab = await REGISTRY.supplementary.open?.(first);
+    expect(tab?.id).toBe(REGISTRY.supplementary.id(first));
+    expect(tab?.id).not.toBe(REGISTRY.supplementary.id(otherPaper));
+    expect(tab?.id).not.toBe(REGISTRY.supplementary.id(otherFile));
+    expect(tab?.kind).toBe("supplementary");
+    expect(tab?.pinned).toBe(false);
+  });
+
+  test("openArgs recovers the open arguments from a supplementary tab's payload", async () => {
+    const args = {
+      docId: "doc-1",
+      name: "table_s1.csv",
+      mediaType: "text/csv",
+    };
+    const tab = await REGISTRY.supplementary.open?.(args);
+    expect(REGISTRY.supplementary.openArgs?.(tab?.payload)).toEqual(args);
   });
 });

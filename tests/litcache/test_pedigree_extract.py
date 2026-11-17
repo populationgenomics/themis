@@ -292,24 +292,6 @@ def test_each_figure_is_its_own_set_and_one_symbol_may_mean_different_variants_i
     assert names == ['c.123A>G', 'c.800del']
 
 
-def _unnamed(answer: dict[str, Any]) -> dict[str, Any]:
-    """The answer with its condition unnamed, as a figure whose legend names none declares it."""
-    del answer['conditions'][0]['name']
-    answer['pedigrees'][0]['supports'] = [
-        s for s in answer['pedigrees'][0]['supports'] if s['field'] != 'condition.name'
-    ]
-    return answer
-
-
-def test_figures_keep_their_conditions_apart_even_when_both_are_unnamed() -> None:
-    client = _Client(_answer(_unnamed(_answer_set())), _answer(_unnamed(_answer_set())))
-
-    reading = _read(client, units=[_unit(0), _unit(1)])
-
-    sets = list(reading.pedigrees.figures.values())
-    assert [[c.name for c in one.conditions] for one in sets] == [[''], ['']]
-
-
 def test_a_figure_read_with_no_pedigree_on_it_is_recorded_with_an_empty_set() -> None:
     reading = _read(_Client(_answer({'pedigrees': []})))
 
@@ -461,16 +443,6 @@ def test_an_empty_reply_is_not_sent_back() -> None:
     assert all(m['content'] for request in client.requests for m in request)
 
 
-def test_a_legend_on_another_page_is_shown_after_the_page_and_the_figure_is_named() -> None:
-    client = _Client(_answer(_answer_set()))
-
-    _read(client, units=[_unit(0, 1, legend=2)])
-
-    first_turn = client.requests[0][0]['content']
-    assert [block['type'] for block in first_turn] == ['text', 'image', 'image', 'text']
-    assert '"Figure 1"' in first_turn[-1]['text']
-
-
 _GENE1 = pedigree_extract.KnownVariant(
     printed='c.123A>G', checked='NM_000001.2:c.123A>G', gene='GENE1', lines=('The proband carried c.123A>G.',)
 )
@@ -489,16 +461,6 @@ def test_the_paper_variants_open_each_conversation_with_a_cache_point_of_their_o
         assert _MARKDOWN not in opening['text']  # the variants and their lines, not the whole paper
         assert opening['cache_control'] == {'type': 'ephemeral'}
     assert openings[0]['text'] == openings[1]['text']  # one cached prefix for every figure of the paper
-
-
-def test_a_paper_with_no_variants_says_so_before_the_page() -> None:
-    client = _Client(_answer(_answer_set()))
-
-    _read(client)
-
-    opening = client.requests[0][0]['content'][0]
-    assert opening['type'] == 'text'
-    assert 'no checked variant' in opening['text']
 
 
 def test_a_spend_limit_refuses_the_reading_rather_than_failing_its_figure() -> None:

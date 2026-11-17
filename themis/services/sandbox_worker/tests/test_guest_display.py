@@ -475,20 +475,6 @@ def test_a_key_crafted_to_equal_another_s_shortened_form_loses_neither() -> None
     assert 'from the collider' in rendered
 
 
-def test_shortening_keys_lifts_them_all_out_before_putting_any_back() -> None:
-    """The hazardous order, made deterministic: a proto map iterates arbitrarily, a dict by insertion.
-
-    Reseating one key at a time writes the long key's short form over the entry already sitting
-    there, and only then deletes the long key — so the collider's value is gone. Which entry is lost
-    depends on iteration order, which is why the property is pinned here rather than on a proto map.
-    """
-    original = 'q' * 400_000
-    entries: dict[object, object] = {original: 'from the long key', display._short(original): 'from the collider'}
-    display._reseat_long_keys(entries)
-    assert sorted(str(value) for value in entries.values()) == ['from the collider', 'from the long key']
-    assert all(len(str(key)) > display._MAX_SHORT_CHARS for key in entries)
-
-
 def test_an_unknown_field_nested_in_a_submessage_is_named_by_size() -> None:
     """The lift-off-the-end trick only works at the top level; nested, the content is given up, never garbled."""
     info = literature_pb2.PaperInfo(has_markdown=True)

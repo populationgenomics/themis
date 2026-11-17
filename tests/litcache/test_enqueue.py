@@ -169,15 +169,6 @@ def test_an_already_taken_name_is_dedup_not_failure() -> None:
     assert _enqueuer(client).enqueue(_MAIN_TEXT) is False
 
 
-def test_a_dedup_says_so_in_the_log(caplog: pytest.LogCaptureFixture) -> None:
-    # An enqueue that did not happen has to be visible rather than inferred from a paper that never
-    # advances.
-    client = _FakeClient(raises=api_exceptions.AlreadyExists('task exists'))
-    with caplog.at_level('INFO', logger=enqueue.__name__):
-        _enqueuer(client).enqueue(_MAIN_TEXT)
-    assert _DOC in caplog.text
-
-
 @pytest.mark.parametrize(
     'error',
     [

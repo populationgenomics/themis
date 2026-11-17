@@ -8,7 +8,7 @@ test that wants neither container pays for neither.
 `recorded_spans` is the other shared fixture: OpenTelemetry's tracer provider is process-global and
 can be installed once, so the one in-memory recorder every span test reads is installed here.
 
-The litcache Postgres fixtures are a plugin rather than fixtures here: two test trees use them, and a
+The litcache Postgres fixtures are a plugin rather than fixtures here: three test trees use them, and a
 `conftest.py` is visible only below its own directory. Registering the plugin has to happen in the root
 `conftest.py` — pytest rejects `pytest_plugins` anywhere else — and that import is eager, so every
 session pays for `testcontainers.postgres` whether or not it starts one.

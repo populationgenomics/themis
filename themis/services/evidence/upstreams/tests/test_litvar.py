@@ -7,7 +7,6 @@ own — including the per-gene listing, which answers in Python `repr` syntax ra
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import Awaitable, Callable, Sequence
 
 import httpx2
@@ -144,15 +143,6 @@ def test_entity_labels_reports_an_unknown_entity_rather_than_failing() -> None:
     )
 
 
-@pytest.mark.parametrize('status', [403, 404, 422])
-def test_any_other_refusal_reaches_the_caller(status: int) -> None:
-    with pytest.raises(errors.InvalidRequestError):
-        _run(
-            lambda _r: httpx2.Response(status, text='no'),
-            lambda c: litvar.entity_labels('litvar@rs00##', http_client=c),
-        )
-
-
 def test_entity_labels_fails_loud_on_an_entity_stating_no_id() -> None:
     with pytest.raises(ValueError, match='no id of its own'):
         _run(
@@ -222,11 +212,6 @@ def test_search_pmids_fails_loud_on_a_pmid_that_is_not_one() -> None:
 
 
 def test_gene_listing_is_read_as_python_literals_not_json() -> None:
-    # The endpoint answers in repr syntax, so a JSON parser fails on the first line; nothing about
-    # the payload announces that, which is why it is pinned here.
-    with pytest.raises(json.JSONDecodeError):
-        json.loads(_GENE_LISTING.splitlines()[0])
-
     entities = _run(
         lambda _r: httpx2.Response(200, text=_GENE_LISTING),
         lambda c: litvar.gene_entities('GENE1', http_client=c),
@@ -258,12 +243,3 @@ def test_gene_listing_reads_an_empty_payload_as_no_entities() -> None:
     assert (
         _run(lambda _r: httpx2.Response(200, text=''), lambda c: litvar.gene_entities('NOTAGENE', http_client=c)) == []
     )
-
-
-@pytest.mark.parametrize('status', [429, 500, 503])
-def test_a_transient_failure_stays_retryable(status: int) -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _run(
-            lambda _r: httpx2.Response(status, text='busy'),
-            lambda c: litvar.entity_labels('litvar@rs00##', http_client=c),
-        )

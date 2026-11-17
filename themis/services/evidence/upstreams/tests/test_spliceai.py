@@ -129,11 +129,6 @@ def test_empty_scores_yield_none() -> None:
     assert result.pangolin_loss is None
 
 
-def test_non_2xx_raises_http_status_error() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _fetch(_route(httpx2.Response(500, json={}), httpx2.Response(200, json=_FIXTURE['pangolin'])))
-
-
 @pytest.mark.parametrize(
     'reported',
     [

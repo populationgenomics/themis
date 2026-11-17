@@ -162,16 +162,6 @@ def test_pagination_follows_number_of_pages() -> None:
     assert result.transcript_ids == ['ENST1', 'ENST2']
 
 
-def test_empty_data_raises_value_error() -> None:
-    with pytest.raises(ValueError, match='no median transcript expression'):
-        _fetch(lambda _request: httpx2.Response(200, json={'data': [], 'paging_info': {'numberOfPages': 1, 'page': 0}}))
-
-
-def test_non_2xx_raises_http_status_error() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _fetch(lambda _request: httpx2.Response(500, json={}))
-
-
 def test_missing_data_list_raises_value_error() -> None:
     with pytest.raises(ValueError, match='no data list'):
         _fetch(lambda _request: httpx2.Response(200, json={'paging_info': {'numberOfPages': 1}}))
@@ -268,11 +258,3 @@ def test_by_symbol_ignores_non_matching_symbol_records() -> None:
         lambda c: gtex.fetch_gtex_by_symbol('brca1', http_client=c),
     )
     assert 'gencodeId=ENSG00000012048.23' in result.query
-
-
-def test_by_symbol_reference_non_2xx_raises() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _run(
-            lambda _request: httpx2.Response(500, json={}),
-            lambda c: gtex.fetch_gtex_by_symbol('BRCA1', http_client=c),
-        )

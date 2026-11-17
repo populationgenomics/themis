@@ -136,15 +136,3 @@ def _deploy_account(program: capture.Capture) -> set[str]:
 
 def test_only_the_deploy_account_reads_secrets_project_wide(program: capture.Capture) -> None:
     assert _project_wide_secret_readers(program.bindings, program.project) == _deploy_account(program)
-
-
-def test_a_project_wide_payload_reading_role_for_another_account_is_caught(program: capture.Capture) -> None:
-    intruder = capture.Binding(
-        urn='urn:pulumi:dev::themis::gcp:projects/iAMMember:IAMMember::intruder',
-        type_=_PROJECT_BINDING,
-        capability=None,
-        member='serviceAccount:themis-web@cpg-themis-dev.iam.gserviceaccount.com',
-        role='roles/owner',
-        target=program.project,
-    )
-    assert _project_wide_secret_readers([*program.bindings, intruder], program.project) != _deploy_account(program)

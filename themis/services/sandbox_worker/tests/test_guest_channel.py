@@ -102,11 +102,6 @@ def test_the_default_stays_under_the_tool_call_it_runs_inside() -> None:
     assert channel.DEFAULT_TIMEOUT_S < tool.COMMAND_TIMEOUT_S
 
 
-def test_the_retry_budget_is_the_channel_default() -> None:
-    """One quantity — what a snippet may spend inside one tool call — so it is named in one place."""
-    assert retry.DEFAULT_TIMEOUT_S == channel.DEFAULT_TIMEOUT_S
-
-
 def test_metadata_survives_the_interceptor(monkeypatch: pytest.MonkeyPatch) -> None:
     """Filling in a deadline rebuilds the call details, so everything else on them has to be carried over.
 

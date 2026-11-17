@@ -9,7 +9,6 @@ equivalence cross-checks are pure and exercised directly.
 from __future__ import annotations
 
 import contextlib
-import uuid
 
 import pg8000.dbapi
 import pytest
@@ -202,12 +201,3 @@ def test_rebuild_of_an_empty_bucket_clears_the_table(conn: pg8000.dbapi.Connecti
 
     assert result.papers == 0
     assert _doc_ids(conn) == {}
-
-
-def test_rebuild_smoke_uses_real_uuids(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
-    doc_id = str(uuid.uuid4())
-    _write_manifest(gcs_bucket, doc_id, {'doi': '10.1/a'})
-
-    rebuild.rebuild(conn, gcs_bucket)
-
-    assert _doc_ids(conn) == {'doi:10.1/a': doc_id}

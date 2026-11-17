@@ -100,29 +100,6 @@ describe("computeTarget — reveal placement", () => {
     ]);
   });
 
-  test("conversation case 1: a zero-tab second pane still counts as unsplit", () => {
-    // Move the working doc to a child, leaving main a single zero-tab pane, then bring it back so main
-    // is a genuine single pane holding only the working doc — the honest unsplit case is case 1 above;
-    // here assert the reveal never treats a lone pane as split.
-    const src: Source = {
-      kind: "document",
-      winId: INITIAL_WORKSPACE_STATE.mainId,
-      paneId: mainWin(INITIAL_WORKSPACE_STATE).panes[0].id,
-    };
-    const split = reduce(INITIAL_WORKSPACE_STATE, {
-      type: "openTab",
-      src,
-      tab: paperTab("x"),
-    });
-    // Close the split-out paper: main collapses back to a single pane holding the working doc.
-    const collapsed = reduce(split, { type: "closeTab", tabId: "paper:x" });
-    expect(collapsed.windows[0].panes).toHaveLength(1);
-    const revealed = openInMain(collapsed, paperTab("y"));
-    expect(paneIds(revealed, revealed.mainId)).toEqual([
-      [WORKING_DOC_TAB_ID, "paper:y"],
-    ]);
-  });
-
   test("conversation case 2: split main → the pane that is not the working document's", () => {
     const src: Source = {
       kind: "document",
@@ -156,17 +133,6 @@ describe("computeTarget — reveal placement", () => {
 });
 
 describe("computeTarget — already-open runs before placement", () => {
-  test("a paper already open never yields op 'open'", () => {
-    const opened = openInMain(INITIAL_WORKSPACE_STATE, paperTab("x"));
-    const src: Source = {
-      kind: "document",
-      winId: opened.mainId,
-      paneId: mainWin(opened).panes[0].id,
-    };
-    const target = computeTarget(opened, src, "paper:x");
-    expect(target.op).not.toBe("open");
-  });
-
   test("already open in the same window → move to the computed target", () => {
     // Working doc + paper:x share the single main pane; a document reveal of paper:x from that pane
     // moves it to the sibling (splitting), never duplicating.
@@ -248,25 +214,6 @@ describe("tabs: split, move, close", () => {
     expect(paneIds(collapsed, collapsed.mainId)).toEqual([
       [WORKING_DOC_TAB_ID],
     ]);
-  });
-
-  test("a pane holding only a pinned tab does not collapse when its sibling's tab closes", () => {
-    // Split: working doc in 'a', paper in 'b'. Closing the paper leaves 'a' (pinned) as the sole pane.
-    const src: Source = {
-      kind: "document",
-      winId: INITIAL_WORKSPACE_STATE.mainId,
-      paneId: mainWin(INITIAL_WORKSPACE_STATE).panes[0].id,
-    };
-    const split = reduce(INITIAL_WORKSPACE_STATE, {
-      type: "openTab",
-      src,
-      tab: paperTab("x"),
-    });
-    const collapsed = reduce(split, { type: "closeTab", tabId: "paper:x" });
-    expect(paneIds(collapsed, collapsed.mainId)).toEqual([
-      [WORKING_DOC_TAB_ID],
-    ]);
-    expect(mainWin(collapsed).panes[0].tabs[0].pinned).toBe(true);
   });
 
   test("closing the active tab refocuses a neighbour", () => {

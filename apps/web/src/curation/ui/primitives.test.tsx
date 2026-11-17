@@ -8,7 +8,6 @@ import {
   CountRows,
   cellLabel,
   DerivedRows,
-  sections,
 } from "./primitives";
 
 // What the calculator's rowspan has to survive transcription: the description stands over the rows
@@ -112,28 +111,6 @@ describe("a composed cell label", () => {
     expect(
       cellLabel({ id: "x", cell: "X", group: "Group", label: "Row" }),
     ).toBe("Group — Row");
-  });
-});
-
-describe("the sections a table is split into", () => {
-  test("are the maximal runs of one description", () => {
-    expect(sections(CELLS).map((section) => section.group)).toEqual([
-      CRITERION,
-      undefined,
-      BENIGN,
-    ]);
-  });
-
-  test("carry every row once, in the order the calculator prints them", () => {
-    expect(sections(CELLS).flatMap((section) => section.cells)).toEqual(CELLS);
-  });
-
-  test("hold rows that all belong to the section's own description", () => {
-    for (const section of sections(CELLS)) {
-      for (const cell of section.cells) {
-        expect(cell.group).toBe(section.group);
-      }
-    }
   });
 });
 

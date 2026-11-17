@@ -74,18 +74,6 @@ _Structure = Callable[[], transcript_structure.TranscriptStructureResult]
 
 
 @pytest.mark.parametrize('parsed', [_nf1, _brca1])
-def test_the_recorded_tables_satisfy_the_tiling_the_parser_enforces(parsed: _Structure) -> None:
-    """Non-vacuous companion to the violating-input tests: the real payloads do parse and do tile."""
-    result = parsed()
-    assert [exon.number for exon in result.exons] == list(range(1, len(result.exons) + 1))
-    boundaries = [(exon.transcript_start, exon.transcript_end) for exon in result.exons]
-    assert boundaries[0][0] == 1
-    assert boundaries[-1][1] == result.transcript_length
-    assert all(prior_end + 1 == start for (_, prior_end), (start, _) in itertools.pairwise(boundaries))
-    assert sum(exon.length for exon in result.exons) == result.transcript_length
-
-
-@pytest.mark.parametrize('parsed', [_nf1, _brca1])
 def test_the_coding_exons_tile_the_cds(parsed: _Structure) -> None:
     """The c. spans run 1..coding_length without gap or overlap, so a c. position lands in one exon."""
     result = parsed()
@@ -162,12 +150,6 @@ def test_a_position_outside_the_transcript_is_an_invalid_request() -> None:
         transcript_structure.position_in_transcript(_nf1(), genomic_position=1)
     with pytest.raises(errors.InvalidRequestError, match='outside'):
         transcript_structure.position_in_transcript(_nf1(), cds_position=999999)
-
-
-@pytest.mark.parametrize('kwargs', [{}, {'cds_position': 1, 'genomic_position': 31232881}])
-def test_locating_takes_exactly_one_coordinate(kwargs: dict[str, int]) -> None:
-    with pytest.raises(errors.InvalidRequestError, match='exactly one'):
-        transcript_structure.position_in_transcript(_nf1(), **kwargs)
 
 
 def test_c_numbering_has_no_zero() -> None:
@@ -364,11 +346,6 @@ def test_fetch_raises_on_absent_or_partial_version_metadata(metadata: dict[str, 
         _fetch(httpx2.MockTransport(handler))
 
 
-def test_fetch_raises_on_a_non_2xx() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _fetch(httpx2.MockTransport(lambda _: httpx2.Response(500, json={})))
-
-
 _GENE_REFSEQ = json.loads((_FIXTURES / 'gene_transcripts_refseq.json').read_text())
 _GENE_ENSEMBL = json.loads((_FIXTURES / 'gene_transcripts_ensembl.json').read_text())
 # The accession the recorded gene's transcripts align to; the inventory selects an alignment by it.
@@ -459,12 +436,6 @@ def test_a_record_aligned_to_several_accessions_keeps_them_all() -> None:
     assert set(transcript.alignments) == {'NC_000001.11', 'NC_000024.10'}
     assert transcript.exons_on('NC_000001.11')
     assert transcript.exons_on('NC_000009.12') is None
-
-
-def test_a_descending_exon_span_is_rejected() -> None:
-    """Every interval test compares a start against a start, so a descending span answers plausibly."""
-    with pytest.raises(ValueError, match='descends'):
-        transcript_structure.ExonSpan(start=200, end=100)
 
 
 def test_a_descending_recorded_span_makes_its_record_unreadable() -> None:

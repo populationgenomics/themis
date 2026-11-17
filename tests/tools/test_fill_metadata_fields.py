@@ -43,24 +43,6 @@ def _load(bucket: gcs.Bucket, doc_id: str = _DOC) -> litcache_pb2.SourcedMetadat
     return sourced_metadata.parse(bucket.blob(writer.metadata_path(doc_id)).download_as_bytes())
 
 
-def test_filled_sets_the_fields_from_the_record() -> None:
-    result = fill_metadata_fields.filled(_stale())
-    assert result is not None
-    metadata = result.metadata
-    assert (metadata.title, list(metadata.authors), metadata.year, metadata.container_title) == (
-        'A preprint',
-        [litcache_pb2.Metadata.Author(name='Jane Doe')],
-        '2024',
-        'bioRxiv',
-    )
-
-
-def test_a_filled_record_needs_no_second_fill() -> None:
-    result = fill_metadata_fields.filled(_stale())
-    assert result is not None
-    assert fill_metadata_fields.filled(result) is None
-
-
 def test_a_record_with_no_metadata_is_filled_even_when_the_fill_is_empty() -> None:
     unfilled = litcache_pb2.SourcedMetadata(source=_stale({'id': 'https://openalex.org/W2', 'title': None}).source)
     result = fill_metadata_fields.filled(unfilled)

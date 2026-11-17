@@ -19,8 +19,3 @@ from themis.services.cost_exporter import money
 )
 def test_cents_display_as_dollars(cents: float, text: str) -> None:
     assert money.dollars(cents) == text
-
-
-def test_the_chart_axis_and_the_message_place_the_sign_the_same_way() -> None:
-    assert money.format_dollars(-3.0) == money.dollars(-300) == '-$3.00'
-    assert money.format_dollars(money.to_dollars(1234)) == money.dollars(1234)

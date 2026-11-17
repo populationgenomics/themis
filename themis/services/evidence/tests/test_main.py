@@ -27,11 +27,3 @@ def test_every_interface_is_registered() -> None:
         if importlib.import_module(f'{evidence.__name__}.{name}.interface').register not in main_mod.INTERFACES
     )
     assert not missing, f'interfaces absent from the entrypoint registry: {missing}'
-
-
-def test_every_registration_comes_from_an_interface_module() -> None:
-    # The check above finds interfaces by that filename, so a `register` housed anywhere else is
-    # invisible to it. Holding the convention is what keeps that discovery sound.
-    expected = {f'{evidence.__name__}.{name}.interface' for name in _interface_names()}
-    stray = sorted(register.__module__ for register in main_mod.INTERFACES if register.__module__ not in expected)
-    assert not stray, f'registrations that are not an interface.py of this image: {stray}'

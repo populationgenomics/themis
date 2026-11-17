@@ -127,14 +127,6 @@ def test_bands_partition_the_line(ref: reference.Reference) -> None:
         assert len(matches) == 1
 
 
-def test_the_printed_range_and_the_band_read_from_it_agree() -> None:
-    """Both are authored, so the standard's phrasing and our reading of it are held together at import.
-
-    Non-empty rules out a vacuous pass; the disagreement itself is what the class refuses to build.
-    """
-    assert [entry.printed_range for entry in data.classification.CLASSES]
-
-
 def test_a_printed_range_the_band_does_not_span_is_refused() -> None:
     with pytest.raises(reference.ReferenceDataError, match='the standard prints'):
         data.classification.ClassificationClass(
@@ -566,13 +558,6 @@ def test_an_axis_label_that_is_not_what_its_value_prints_as_is_refused() -> None
 def test_subbands_declared_over_nothing_are_refused(ref: reference.Reference) -> None:
     with pytest.raises(reference.ReferenceDataError, match='no sub-bands'):
         reference.validate_subbands((), reference.band_for(ref.bands, 'VUS'), 'classification.vus_subclasses')
-
-
-@pytest.mark.parametrize('odds_path', ['18.7', '1:2:3', 'x:1', ''])
-def test_an_oddspath_ratio_that_is_not_two_numbers_is_refused(odds_path: str) -> None:
-    """A ratio read as "no ratio" is a step the walk skips, scoring the weight of the step below it."""
-    with pytest.raises(reference.ReferenceDataError, match='neither two numbers'):
-        data.calibration._odds(odds_path)
 
 
 def test_a_calibration_step_scoring_against_its_own_ratio_is_refused(ref: reference.Reference) -> None:

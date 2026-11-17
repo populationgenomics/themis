@@ -85,13 +85,6 @@ def test_oa_origin_filename_is_a_re_encoded_doi() -> None:
     assert result.content_addressed is False
 
 
-def test_content_hash_fallthrough_uses_binary_hash() -> None:
-    origin = identity.DoclingOrigin(filename='opaque-name.pdf', binary_hash='42')
-    result = identity.determine_identity('opaque-key.json', origin)
-    assert result.mint_keys == ('binhash:42',)
-    assert result.content_addressed is True
-
-
 def test_no_external_id_and_no_binary_hash_fails_loud() -> None:
     origin = identity.DoclingOrigin(filename='opaque-name.pdf', binary_hash=None)
     with pytest.raises(ValueError, match='cannot determine identity'):

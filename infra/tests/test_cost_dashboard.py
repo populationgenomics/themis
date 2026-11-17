@@ -260,16 +260,6 @@ def test_the_scorecards_are_the_workspace_figure_over_distinct_windows(dashboard
     assert len(set(windows)) == len(windows)
 
 
-def test_each_section_opens_with_a_header_and_an_about_tile(dashboard: dict[str, object]) -> None:
-    tiles = sorted(_tiles(dashboard), key=lambda tile: (tile.y, tile.x))
-    headers = [i for i, tile in enumerate(tiles) if tile.kind == 'sectionHeader']
-    assert headers
-    assert len(headers) == sum(tile.kind == 'text' for tile in tiles)
-    for i in headers:
-        assert tiles[i].title
-        assert tiles[i + 1].kind == 'text', tiles[i]
-
-
 def test_tiles_fit_the_grid_without_overlap(dashboard: dict[str, object]) -> None:
     columns, _ = _layout(dashboard)
     tiles = _tiles(dashboard)

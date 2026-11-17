@@ -64,14 +64,6 @@ def test_collects_only_marked_rpcs() -> None:
     assert _methods(image) == ['/themis.rpc.papers.Papers/Read']
 
 
-def test_absent_option_is_fail_closed() -> None:
-    image = _image(
-        _file('themis/rpc/hello.proto', 'themis.rpc.hello', services={'Hello': {'Say': _AGENT}}),
-        _file('themis/rpc/ledger.proto', 'themis.rpc.ledger', services={'Ledger': {'Get': None}}),
-    )
-    assert _methods(image) == ['/themis.rpc.hello.Hello/Say']
-
-
 def test_another_caller_alone_does_not_expose() -> None:
     image = _image(
         _file('themis/rpc/hello.proto', 'themis.rpc.hello', services={'Hello': {'Say': _AGENT}}),

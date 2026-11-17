@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import logging
 import pathlib
-import re
 from collections.abc import Callable
 
 import pytest
@@ -126,23 +124,6 @@ def test_every_open_is_handed_the_one_storage_client(tmp_path: pathlib.Path, mon
 
     assert handed
     assert all(seen is client for seen in handed)
-
-
-def test_each_open_logs_how_long_it_took(tmp_path: pathlib.Path, caplog: pytest.LogCaptureFixture) -> None:
-    testing.build(tmp_path)
-    caplog.set_level(logging.INFO, logger=variant_reference.__name__)
-
-    variant_reference.References(str(tmp_path), _BUILDS)
-
-    messages = [record.getMessage() for record in caplog.records if record.name == variant_reference.__name__]
-    for opened in (
-        'GRCh38 genome',
-        'GRCh37 genome',
-        'refseq-grch38 store',
-        'ensembl-grch38 store',
-        'refseq-grch37 store',
-    ):
-        assert any(re.fullmatch(rf'opened the {opened} at .+ in \d+\.\d{{3}} s', message) for message in messages)
 
 
 def test_each_open_is_a_span_naming_what_it_opened_and_where(

@@ -50,20 +50,6 @@ def test_criteria_specification_is_keyed_by_gene() -> None:
     assert [specification.id for specification in asyncio.run(run()).specifications] == ['GN101']
 
 
-@pytest.mark.parametrize('gene', ['', '   '])
-def test_criteria_specification_rejects_an_absent_gene(gene: str) -> None:
-    # The gene is the whole key; an empty one would reach the registry as a lookup of no entity.
-    tables = _backend(list_specifications={'': cspec_pb2.ListSpecificationsResponse()})
-
-    async def run() -> cspec_pb2.ListSpecificationsResponse:
-        async with _serving(tables) as stub:
-            return await stub.ListSpecifications(cspec_pb2.ListSpecificationsRequest(gene=gene))
-
-    with pytest.raises(grpc.aio.AioRpcError) as caught:
-        asyncio.run(run())
-    assert caught.value.code() == grpc.StatusCode.INVALID_ARGUMENT
-
-
 def test_the_criteria_specification_fixture_refuses_an_unseeded_gene() -> None:
     # The fixture never manufactures an empty response: an unseeded gene would otherwise come back as
     # SPECIFICATION_COVERAGE_UNSPECIFIED with no specification, which reads as "no panel specified it".

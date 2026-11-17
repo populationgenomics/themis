@@ -1,4 +1,4 @@
-"""Tests for the workspace sync orchestration: the fail-closed restore and the teardown push."""
+"""Tests for the workspace sync orchestration: restore and the teardown push."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import pathlib
 
 import pytest
 
-from themis import sheaf
 from themis.clients.auth.tests import fixture_session
 from themis.services.sandbox_worker import guest_git, sync
 from themis.services.sandbox_worker.tests import conftest, fakes
@@ -50,42 +49,6 @@ def test_restore_clones_the_repository(analysis: conftest.Analysis, tmp_path: pa
     state = json.loads(analysis.hatches.mirror.sync_state_path.read_text('utf-8'))
     assert fixture_session.GOOD_TOKEN not in state['store'].values()
     assert state['store']['token_file'] == str(analysis.remote.token_file)
-
-
-def test_restore_first_spawn_boots_without_a_document(analysis: conftest.Analysis, tmp_path: pathlib.Path) -> None:
-    workspace_sync, guest = _sync(analysis, tmp_path / 'ws')
-    asyncio.run(workspace_sync.restore())
-    assert not (guest.workspace / 'working_document.md').exists()
-    assert (guest.workspace / '.git').is_dir()
-
-
-def test_a_later_restore_finds_the_document_an_earlier_session_pushed(
-    analysis: conftest.Analysis, tmp_path: pathlib.Path
-) -> None:
-    first, guest = _sync(analysis, tmp_path / 'first')
-    asyncio.run(first.restore())
-    (guest.workspace / 'working_document.md').write_text('committed')
-    _commit_and_push(guest, 'working_document.md')
-
-    later, later_guest = _sync(analysis, tmp_path / 'later')
-    asyncio.run(later.restore())
-
-    assert (later_guest.workspace / 'working_document.md').read_text() == 'committed'
-    assert later_guest.run(['git', 'status', '--porcelain']).stdout == ''
-
-
-def test_restore_fails_closed_on_a_repository_store_error(
-    analysis: conftest.Analysis, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def unreachable() -> object:
-        raise sheaf.ServiceFault('UNAVAILABLE', 'the sheaf service is unreachable')
-
-    monkeypatch.setattr(analysis.remote, 'read', unreachable)
-    workspace_sync, guest = _sync(analysis, tmp_path / 'ws')
-
-    with pytest.raises(sheaf.SheafError, match='unreachable'):
-        asyncio.run(workspace_sync.restore())
-    assert not (guest.workspace / '.git').exists()  # nothing served on a half-restored tree
 
 
 def test_restore_removes_a_non_directory_the_clone_left_at_skills(

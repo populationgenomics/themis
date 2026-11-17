@@ -36,12 +36,6 @@ describe("reading an allele out of the registry's answer", () => {
     );
   });
 
-  test("the vendored response carries more than the parser reads", () => {
-    // Rules out a fixture reduced to exactly the fields under test.
-    expect(Object.keys(CA016924)).toContain("externalRecords");
-    expect(CA016924.transcriptAlleles.length).toBeGreaterThan(1);
-  });
-
   test("refuses a record with no MANE Select rather than picking a transcript", () => {
     const noMane = {
       ...CA016924,

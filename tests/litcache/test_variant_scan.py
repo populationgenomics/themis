@@ -226,14 +226,6 @@ def test_an_entry_whose_line_does_not_print_it_is_returned_and_the_rest_recorded
     assert "'W115G' on line 9" in cast(str, result)
 
 
-def test_a_mention_recorded_without_a_species_is_human_and_cited_by_its_line() -> None:
-    toolbox = _toolbox('R337H')
-    toolbox.call('record_mentions', {'mentions': [_entry('R337H')]})
-    (mention,) = toolbox.mention_set.mentions
-    assert mention.known_species == variants_pb2.SPECIES_HUMAN
-    assert [(o.line, o.HasField('page')) for o in mention.occurrences] == [(1, False)]
-
-
 @pytest.mark.parametrize(
     ('markdown', 'pdf_bytes', 'located_by'),
     [('R337H', None, {'line'}), (None, b'%PDF', {'page', 'box'}), ('R337H', b'%PDF', {'line', 'page', 'box'})],

@@ -111,6 +111,13 @@ def test_the_recorded_payload_carries_what_those_options_produce() -> None:
     assert {field for fields in _OPTION_FIELDS.values() for field in fields} <= returned
 
 
+def test_the_recorded_transcript_ids_are_versioned() -> None:
+    """`transcript_version` is what versions them: unversioned, an Ensembl accession matches by base only."""
+    ids = [consequence['transcript_id'] for consequence in _FIXTURE[0]['transcript_consequences']]
+    assert ids
+    assert all(re.fullmatch(r'ENST\d+\.\d+', transcript_id) for transcript_id in ids)
+
+
 def test_the_recorded_payload_carries_every_accepted_predictors_score() -> None:
     """Recorded against the wire forms the adapter builds for the whole accepted set.
 
@@ -275,12 +282,6 @@ def test_a_genomic_reference_keeps_its_transcript_qualifier() -> None:
     assert _requested_expression(qualified) == qualified
 
 
-def test_a_variant_ensembl_refuses_is_not_a_fault_to_retry() -> None:
-    """Ensembl 400s an expression it cannot parse; reissuing it four times cannot change that."""
-    with pytest.raises(errors.InvalidRequestError, match='rejected'):
-        _fetch(lambda _: httpx2.Response(400, text='Unable to parse HGVS notation'))
-
-
 def test_empty_list_raises_value_error() -> None:
     with pytest.raises(ValueError, match='no annotation'):
         _fetch(lambda _: httpx2.Response(200, json=[]))
@@ -379,13 +380,6 @@ def test_every_annotated_transcript_is_stated_with_its_mane_pairs() -> None:
     pairs = {t.transcript_id: (t.mane_select, t.mane_plus_clinical) for t in result.transcripts}
     assert pairs[_MANE_TRANSCRIPT] == ('NM_001042492.3', '')
     assert pairs['ENST00000356175.8'] == ('', 'NM_000267.4')
-
-
-def test_the_recorded_transcript_ids_are_versioned() -> None:
-    """`transcript_version` is what versions them: unversioned, an Ensembl accession matches by base only."""
-    ids = [consequence['transcript_id'] for consequence in _FIXTURE[0]['transcript_consequences']]
-    assert ids
-    assert all(re.fullmatch(r'ENST\d+\.\d+', transcript_id) for transcript_id in ids)
 
 
 def test_a_predictor_the_request_did_not_name_is_not_stated() -> None:

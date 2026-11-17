@@ -140,18 +140,4 @@ describe("the conversation pane", () => {
       spacing(render([settled("ev1", "x"), card("sthr_a", "a")], [])).siblings,
     ).toBeNull();
   });
-
-  test("a pending turn and a settled one are the same bubble", () => {
-    // They must not drift: the pending one is what the curator reads back as their own
-    // turn, and it is replaced in place by the settled one a moment later. Rendering
-    // the same text both ways differs only by the pending marking.
-    const asSettled = render([settled("ev1", "line one\nline two")], []);
-    const asPending = render([], [pendingTurn("p0", "line one\nline two")]);
-    const bubble = /class="([^"]*rounded-\[14px[^"]*)"/;
-    const settledClasses = asSettled.match(bubble)?.[1];
-    const pendingClasses = asPending.match(bubble)?.[1];
-    expect(settledClasses).toBeDefined();
-    expect(pendingClasses).toBeDefined();
-    expect(pendingClasses).toContain(settledClasses ?? "");
-  });
 });

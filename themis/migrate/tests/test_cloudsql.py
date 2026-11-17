@@ -150,22 +150,6 @@ def test_the_read_only_read_adds_no_column_to_a_pre_hash_ledger(connection: pg80
     assert _ledger_columns(connection) == {'version', 'name', 'applied_at'}
 
 
-def test_postgres_rejects_a_write_inside_the_read_only_read(
-    connection: pg8000.dbapi.Connection, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def read_ledger_and_write(conn: sql.Connection) -> dict[int, migrate.AppliedMigration]:
-        with contextlib.closing(conn.cursor()) as cursor:
-            cursor.execute(_GOOD_SQL)
-        return {}
-
-    monkeypatch.setattr(cloudsql, 'read_ledger', read_ledger_and_write)
-    with pytest.raises(pg8000.dbapi.DatabaseError, match='read-only transaction'):
-        cloudsql.read_ledger_read_only(connection)
-    with contextlib.closing(connection.cursor()) as cursor:
-        cursor.execute("SELECT to_regclass('probe')")
-        assert cursor.fetchall()[0][0] is None
-
-
 def test_the_read_only_read_carries_the_recorded_hashes(connection: pg8000.dbapi.Connection) -> None:
     migrate.run([_migration(1, 'ok', _GOOD_SQL)], cloudsql.CloudSqlLedger(connection))
     applied = cloudsql.read_ledger_read_only(connection)

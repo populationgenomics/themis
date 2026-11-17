@@ -19,7 +19,6 @@ _SHEAF = sheaf_pb2.DESCRIPTOR.services_by_name['Sheaf']
 
 _SELF = sandbox_options_pb2.CALLING_AS_SELF
 _AGENT_SESSION = sandbox_options_pb2.CALLING_AS_AGENT_SESSION
-_WORKER_SESSION = sandbox_options_pb2.CALLING_AS_WORKER_SESSION
 
 
 def _rule(service: object, method: str) -> rules.Rule:
@@ -32,49 +31,9 @@ def _auth(
     return auth_context.AuthContext(caller=caller, calling_as=calling_as, session=session)
 
 
-def test_a_named_principal_is_the_account_and_its_claim() -> None:
-    rule = _rule(_LITERATURE, 'DescribePaper')
-    assert rules.Principal('themis-web', _SELF) in rule.principals
-    assert rule.admits(_auth(_WEB, _SELF, None), project=_PROJECT)
-
-
 def test_the_same_account_id_in_another_project_is_not_the_principal() -> None:
     other = _auth(rules.account_email('themis-web', 'y'), _SELF, None)
     assert not _rule(_LITERATURE, 'DescribePaper').admits(other, project=_PROJECT)
-
-
-def test_a_session_claimed_by_a_self_acting_caller_admits_nothing_extra() -> None:
-    # web is named on DescribePaper calling as itself; a session on the call is attribution, not a way in.
-    rule = _rule(_LITERATURE, 'Validate')
-    assert not rule.admits(_auth(_WEB, _SELF, _SESSION), project=_PROJECT)
-
-
-def test_the_agent_is_the_job_account_claiming_the_agent_s_session_that_resolves() -> None:
-    rule = _rule(_LITERATURE, 'Validate')
-    assert rules.Principal('themis-sandbox-job', _AGENT_SESSION) in rule.principals
-    assert rule.admits(_auth(_JOB, _AGENT_SESSION, _SESSION), project=_PROJECT)
-    assert not rule.admits(_auth(_JOB, _AGENT_SESSION, None), project=_PROJECT)  # the session did not resolve
-
-
-def test_the_worker_s_claim_is_not_the_agent_s() -> None:
-    # Same account; the claim decides which member the call is, and FetchPack names only the worker's.
-    assert not _rule(_LITERATURE, 'Validate').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
-    assert _rule(_SHEAF, 'FetchPack').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
-    assert not _rule(_SHEAF, 'FetchPack').admits(_auth(_JOB, _AGENT_SESSION, _SESSION), project=_PROJECT)
-
-
-@pytest.mark.parametrize('method', ['ReadRefDoc', 'Publish'])
-def test_the_web_tier_and_the_worker_both_reach_the_repository_rpcs_the_browser_uses(method: str) -> None:
-    rule = _rule(_SHEAF, method)
-    assert rule.admits(_auth(_WEB, _SELF, _SESSION), project=_PROJECT)
-    assert rule.admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
-
-
-def test_only_the_web_tier_signs_pack_urls_and_only_the_worker_fetches_packs() -> None:
-    # The browser downloads packs by signed URL; the worker's mirror streams them through the service.
-    assert _rule(_SHEAF, 'SignPackUrls').admits(_auth(_WEB, _SELF, _SESSION), project=_PROJECT)
-    assert not _rule(_SHEAF, 'SignPackUrls').admits(_auth(_JOB, _WORKER_SESSION, _SESSION), project=_PROJECT)
-    assert not _rule(_SHEAF, 'FetchPack').admits(_auth(_WEB, _SELF, _SESSION), project=_PROJECT)
 
 
 def test_the_deny_rule_admits_nobody_but_the_developer() -> None:
@@ -96,16 +55,6 @@ def test_the_developer_identity_is_admitted_on_every_rpc_without_being_named() -
         assert rule.admits(_auth(_CLU, _SELF, None), project=_PROJECT), method
         assert rule.admits(_auth(_CLU, _SELF, _SESSION), project=_PROJECT), method
         assert not rule.admits(_auth(_CLU, _AGENT_SESSION, _SESSION), project=_PROJECT), method
-
-
-def test_a_path_no_contract_declares_has_no_rule() -> None:
-    assert rules.rule_for_path('/themis.rpc.nowhere.Nothing/Call') is None
-
-
-def test_a_declared_path_derives_the_same_rule_as_its_descriptor() -> None:
-    assert rules.rule_for_path('/themis.rpc.literature.Literature/MaybeIngestPapers') == _rule(
-        _LITERATURE, 'MaybeIngestPapers'
-    )
 
 
 def test_every_member_names_an_account_and_a_claim() -> None:

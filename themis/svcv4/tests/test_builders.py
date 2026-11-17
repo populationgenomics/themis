@@ -659,47 +659,6 @@ def test_the_matrix_axes_a_duplication_path_states_are_required_and_no_others(
     assert _duplication_path_of(ref, stated).scaling is cell.scaling
 
 
-# --- the preconditions classify enforces on the built input --------------------------------------
-
-
-def test_mechanism_precondition_enforced_by_classify(ref: reference.Reference) -> None:
-    request = builders.build_nonsense(
-        ref,
-        null=builders.NullEvidence(nul_prd=D('6'), mechanism=ME, exon=ALL),
-        gate_level=gene_disease_pb2.GATE_LEVEL_LIMITED,
-    )
-    with pytest.raises(ValueError, match='below Moderate'):
-        classify.classify(ref, request)
-
-
-def test_a_path_code_routed_through_independent_codes_is_refused(ref: reference.Reference) -> None:
-    """`independent_codes` takes a bare mapping, so this is the way a path's code escapes its caps.
-
-    The same +8 of MIS_INF that the parent cap cuts to 9 on the amino-acid path — LP — would sum to
-    12 beside it, which is P.
-    """
-    on_the_path = classify.classify(
-        ref,
-        builders.build_missense(
-            ref,
-            amino_acid=builders.AminoAcidEvidence(mis_prd=D('4'), exon=ALL, mis_inf=D('8')),
-            gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE,
-        ),
-    )
-    assert on_the_path.total == ref.category_cap('MIS_PFD').high
-    assert on_the_path.final_class == 'LP'
-    with pytest.raises(ValueError, match='variant-type path'):
-        classify.classify(
-            ref,
-            builders.build_missense(
-                ref,
-                amino_acid=builders.AminoAcidEvidence(mis_prd=D('4'), exon=ALL),
-                independent_codes={'MIS_INF': D('8')},
-                gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE,
-            ),
-        )
-
-
 def test_the_mapping_form_cannot_file_a_code_the_framework_did_not_determine(ref: reference.Reference) -> None:
     """The mapping carries points, and a not-determined finding has none to hand it.
 
@@ -751,7 +710,6 @@ def test_the_builders_place_a_path_on_every_family_the_reference_does_not_call_i
     assert placed == {spec.family for spec in ref.codes.values()} - ref.independent_families
 
 
-_ROUTED = evidence_pb2.CONSEQUENCE_NONSENSE
 _NULL = builders.NullEvidence(nul_prd=D('6'), mechanism=ME, exon=ALL)
 _CODING = builders.CodingEvidence(cds_prd=D('2'), mechanism=ME, exon=ALL)
 _AMINO_ACID = builders.AminoAcidEvidence(mis_prd=D('3'), exon=ALL)

@@ -73,22 +73,6 @@ def test_a_table_missing_a_version_is_refused(tmp_path: pathlib.Path) -> None:
         status.check_complete(records, table)
 
 
-def test_nothing_is_stored_when_entrez_leaves_a_version_unanswered(
-    monkeypatch: pytest.MonkeyPatch,
-    gcs_bucket: storage.Bucket,
-    pinned: manifest.Manifest,
-    historical: manifest.Assembly,
-) -> None:
-    def fetch(records: pathlib.Path, out: pathlib.Path) -> None:
-        _write_table(out, [('NM_000059.3', 'replaced', 'NM_000059.4')])
-        status.check_complete(records, out)
-
-    monkeypatch.setattr(status, '_fetch', fetch)
-    with pytest.raises(status.StatusError, match='answered nothing'):
-        status.mirror_status(historical, dataset=pinned.dataset, bucket=gcs_bucket, today=_TODAY, dry_run=False)
-    assert not list(gcs_bucket.list_blobs(prefix=f'{pinned.dataset}/ncbi/GCF_1.40-RS_2024_08_historical/status/'))
-
-
 def test_a_table_without_provenance_stops_the_run(
     gcs_bucket: storage.Bucket, pinned: manifest.Manifest, historical: manifest.Assembly
 ) -> None:
@@ -131,6 +115,7 @@ def test_a_table_the_command_reports_whole_is_still_refused_when_it_misses_a_ver
     monkeypatch.setattr(subprocess, 'run', run)
     with pytest.raises(status.StatusError, match='answered nothing'):
         status.mirror_status(historical, dataset=pinned.dataset, bucket=gcs_bucket, today=_TODAY, dry_run=False)
+    assert not list(gcs_bucket.list_blobs(prefix=f'{pinned.dataset}/ncbi/GCF_1.40-RS_2024_08_historical/status/'))
 
 
 @pytest.mark.usefixtures('entrez_answers_everything')

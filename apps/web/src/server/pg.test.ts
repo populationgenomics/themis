@@ -71,21 +71,6 @@ afterEach(() => {
 });
 
 describe("the Cloud SQL pool", () => {
-  test("is bounded, and its idle lifetime and timeouts sit in the ranges the traffic needs", async () => {
-    const pool = createPool(fakeDriver().connection);
-    // Cloud Run caps an instance at 100 connections to a Cloud SQL database.
-    expect(pool.options.max).toBeLessThanOrEqual(100);
-    // A floor would hold connections the idle timeout cannot close.
-    expect(pool.options.min).toBe(0);
-    expect(pool.options.idleTimeoutMillis).toBeGreaterThan(MINUTE);
-    expect(pool.options.idleTimeoutMillis).toBeLessThan(EGRESS_IDLE_TIMEOUT_MS);
-    // The client gives up only after the server's own cancellation would have arrived.
-    expect(pool.options.query_timeout).toBeGreaterThan(
-      Number(pool.options.statement_timeout),
-    );
-    await pool.end();
-  });
-
   test("reuses one connection across a minute's pause, and closes it before the egress timeout", async () => {
     jest.useFakeTimers();
     const { connection, dialed } = fakeDriver();

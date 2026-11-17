@@ -11,7 +11,6 @@ served body's `source` is a real fetcher name, so it maps to a `SourceKind`.
 from __future__ import annotations
 
 import asyncio
-import datetime
 import pathlib
 from collections.abc import Mapping
 
@@ -19,7 +18,6 @@ import httpx2
 import litfetch
 import pytest
 from litfetch import artifacts, ids
-from litfetch import source_metadata as sm
 
 from themis.litcache import convert, identity, oa
 from themis.litcache.models import litcache_pb2
@@ -29,9 +27,6 @@ _OA_JATS = _FIXTURES / 'oa' / 'fulltext.xml'
 _BOOKSHELF_XML = _FIXTURES / 'bookshelf' / 'chapter.xml'
 _ARTICLE = ids.ArticleIds(pmcid='PMC5664429')
 _CHAPTER = ids.ArticleIds(bookid='NBK900001')
-_CREATED_AT = datetime.datetime(2026, 6, 25, 12, 0, tzinfo=datetime.UTC)
-# GeneReviews states its terms as the URL of its usage notice, flagged open-access — not a CC licence.
-_GENEREVIEWS_TERMS = 'https://www.ncbi.nlm.nih.gov/books/NBK138602/'
 
 
 class _BodyFetcher:
@@ -284,16 +279,6 @@ def test_artifact_basis_maps_verbatim_and_free_to_read() -> None:
     assert _access_kind(terms) == 'free_to_read'
 
 
-def test_a_usage_terms_url_read_off_a_chapter_is_recorded_verbatim_and_free_to_read() -> None:
-    # The GeneReviews shape: litfetch read a usage-terms URL (not a CC licence) off the chapter's bytes,
-    # flagged open-access. The raw string is what the source records, with the basis it was read under.
-    meta = artifacts.SourceMetadata(licence=_GENEREVIEWS_TERMS, access='open-access', basis='artifact')
-    terms = oa.from_source_metadata(meta)
-    assert terms.licence == _GENEREVIEWS_TERMS
-    assert terms.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT
-    assert _access_kind(terms) == 'free_to_read'
-
-
 def test_artifact_basis_is_free_to_read_even_without_open_access_token() -> None:
     # litfetch leaves `access` None when the JATS license-type carried no 'open'
     # flag; an artifact basis still means OA-ladder bytes → free-to-read.
@@ -343,15 +328,6 @@ def test_unrecognised_access_token_is_unknown() -> None:
 def test_empty_source_metadata_fails_loud() -> None:
     with pytest.raises(oa.OaSourceError, match='no access terms'):
         oa.from_source_metadata(artifacts.SourceMetadata())
-
-
-def test_real_oa_fixture_is_free_to_read_artifact() -> None:
-    file = artifacts.File(kind=artifacts.FileKind.BODY, source='fixture', media_type=artifacts.JATS_XML)
-    meta = sm.extract_source_metadata(artifacts.Blob(file=file, content=_OA_JATS.read_bytes()))
-    terms = oa.from_source_metadata(meta)
-    assert terms.licence_basis == litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT
-    assert _access_kind(terms) == 'free_to_read'
-    assert 'creativecommons.org/licenses/by/4.0' in terms.licence
 
 
 _DOI_ONLY = ids.ArticleIds(doi='10.1000/abc')

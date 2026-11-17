@@ -25,7 +25,7 @@ export function edgeToOrientation(edge: Edge): Orientation {
 }
 
 /** True when the conversation renders as the first panel (docked left or top). */
-export function conversationFirst(edge: Edge): boolean {
+function conversationFirst(edge: Edge): boolean {
   return edge === "left" || edge === "top";
 }
 

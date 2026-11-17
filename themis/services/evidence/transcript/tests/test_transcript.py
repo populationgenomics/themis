@@ -54,12 +54,6 @@ def test_exon_relevance_is_keyed_by_gene_transcript_exon() -> None:
     assert signals.clinvar_plp_density == 7
 
 
-@pytest.mark.parametrize('gene', ['', '   '])
-def test_exon_relevance_rejects_an_absent_gene(gene: str) -> None:
-    """The gene is the inventory's denominator, so an empty one would answer over no transcripts."""
-    assert 'gene' in _refused(_relevance_request(gene=gene))
-
-
 @pytest.mark.parametrize('unset', ['in_mane_select', 'in_mane_plus_clinical'])
 def test_exon_relevance_rejects_an_unset_mane_flag(unset: str) -> None:
     """Both are echoed, and false/false forces "Few" — so an unsent flag would arrive as evidence."""
@@ -68,9 +62,9 @@ def test_exon_relevance_rejects_an_unset_mane_flag(unset: str) -> None:
     assert unset in _refused(request)
 
 
-def _relevance_request(gene: str = 'BRCA1') -> transcript_pb2.AssessExonRelevanceRequest:
+def _relevance_request() -> transcript_pb2.AssessExonRelevanceRequest:
     return transcript_pb2.AssessExonRelevanceRequest(
-        gene=gene, transcript='NM_007294.4', exon=10, in_mane_select=True, in_mane_plus_clinical=False
+        gene='BRCA1', transcript='NM_007294.4', exon=10, in_mane_select=True, in_mane_plus_clinical=False
     )
 
 

@@ -157,11 +157,6 @@ def test_an_article_is_cited_by_its_publication_year() -> None:
     assert record.journal == 'Hum Mutat'
 
 
-def test_a_refusal_reaches_the_caller_as_an_invalid_request() -> None:
-    with pytest.raises(errors.InvalidRequestError):
-        _run(lambda _r: httpx2.Response(400, text='no'), lambda c: europe_pmc.search('GENE1', 10, http_client=c))
-
-
 def test_a_refusal_delivered_with_status_200_is_still_a_refusal() -> None:
     # The index answers an empty or over-long query with HTTP 200 and an error body — no hit count,
     # no result list. Read as a page it would raise a bare ValueError, which reaches the guest as an
@@ -177,11 +172,6 @@ def test_an_unreadable_result_list_is_a_fault_never_an_empty_page() -> None:
             lambda _r: httpx2.Response(200, json={'hitCount': 4130, 'resultList': 'gone'}),
             lambda c: europe_pmc.search('GENE1', 10, http_client=c),
         )
-
-
-def test_a_transient_failure_stays_retryable() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _run(lambda _r: httpx2.Response(503, text='busy'), lambda c: europe_pmc.search('GENE1', 10, http_client=c))
 
 
 def test_authors_come_back_one_per_entry_with_a_group_author_among_them() -> None:

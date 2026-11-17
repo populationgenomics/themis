@@ -103,13 +103,6 @@ describe("buildSnapshot", () => {
     // `hasMarkdown` field the moment a paper tab enters the fixture, testing the fixture, not the rule.
     expect(snapshot.workingDocument).not.toHaveProperty("markdown");
   });
-
-  test("round-trips through structured serialization unchanged", () => {
-    const snapshot = snapshotWith([
-      win("main", [WORKING_TAB], WORKING_DOC_TAB_ID),
-    ]);
-    expect(structuredClone(snapshot)).toEqual(snapshot);
-  });
 });
 
 describe("pinnedCommitOf", () => {

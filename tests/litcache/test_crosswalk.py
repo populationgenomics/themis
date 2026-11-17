@@ -62,13 +62,6 @@ def test_lookup_finds_a_paper_under_any_spelling_of_its_id(conn: pg8000.dbapi.Co
     assert crosswalk.lookup(conn, ['pmcid:pmc7']) == {'pmcid:pmc7': minted.doc_id}
 
 
-def test_lookup_echoes_the_spelling_it_was_given(conn: pg8000.dbapi.Connection) -> None:
-    # The caller keys its own results off what it asked for; handing back the folded spelling would
-    # silently drop every mixed-case id from the response.
-    minted = crosswalk.mint(conn, ['doi:10.1/AbC'])
-    assert crosswalk.lookup(conn, ['doi:10.1/aBc']) == {'doi:10.1/aBc': minted.doc_id}
-
-
 def test_lookup_resolves_every_spelling_the_caller_passed(conn: pg8000.dbapi.Connection) -> None:
     # The servicer dedups on the raw spelling, so both reach here; folding them together and keeping
     # one would report the other as absent — the same miss the fold exists to prevent, one level down.

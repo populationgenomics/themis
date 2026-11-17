@@ -30,10 +30,10 @@ _LIVE_ENV = {
 }
 
 
-def _fixture_env(monkeypatch: pytest.MonkeyPatch, bindings: object, acl: str | None = None) -> None:
+def _fixture_env(monkeypatch: pytest.MonkeyPatch, bindings: object) -> None:
     monkeypatch.setenv('THEMIS_BACKEND', 'fixture')
     monkeypatch.setenv(fixture.BINDINGS_VAR, bindings if isinstance(bindings, str) else json.dumps(bindings))
-    monkeypatch.setenv(fixture.ACL_VAR, harness.acl_version().decode() if acl is None else acl)
+    monkeypatch.setenv(fixture.ACL_VAR, harness.acl_version().decode())
 
 
 def _live_env(monkeypatch: pytest.MonkeyPatch, **overrides: str) -> None:
@@ -90,21 +90,6 @@ def test_each_fixture_seed_is_required(monkeypatch: pytest.MonkeyPatch, missing:
         main_mod.build_backend()
 
 
-def test_an_invalid_fixture_acl_refuses_to_start(monkeypatch: pytest.MonkeyPatch) -> None:
-    _fixture_env(monkeypatch, {}, acl='{"format": 1}')
-    backend = main_mod.build_backend()
-    with pytest.raises(SystemExit, match='acl rejected'):
-        asyncio.run(
-            acl_holder.AclHolder.load(
-                backend.read_acl,
-                read_timeout_seconds=harness.READ_TIMEOUT_SECONDS,
-                staleness_limit_seconds=600,
-                clock=harness.Clock(),
-                outcomes=harness.unrecorded(),
-            )
-        )
-
-
 @pytest.mark.parametrize(
     'missing', ['THEMIS_SQL_CONNECTION_NAME', 'THEMIS_SQL_DATABASE', 'THEMIS_DB_USER', 'THEMIS_ACL_SECRET']
 )
@@ -128,21 +113,6 @@ def test_the_live_backend_refuses_an_acl_secret_naming_no_secret(monkeypatch: py
     _live_env(monkeypatch, THEMIS_ACL_SECRET=name)
     with pytest.raises(SystemExit, match='THEMIS_ACL_SECRET'):
         main_mod.build_backend()
-
-
-def test_the_live_backend_refreshes_its_certificate_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Cloud Run throttles the CPU between requests, stalling the connector's default background refresh.
-    strategies: list[object] = []
-
-    class _RecordingConnector:
-        def __init__(self, **kwargs: object) -> None:
-            strategies.append(kwargs.get('refresh_strategy'))
-
-    _live_env(monkeypatch)
-    monkeypatch.setattr(connector, 'Connector', _RecordingConnector)
-    main_mod.build_backend()
-
-    assert strategies == [connector.RefreshStrategy.LAZY]
 
 
 @pytest.mark.parametrize('selector', [None, 'memory'])

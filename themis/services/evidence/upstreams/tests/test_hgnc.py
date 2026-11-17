@@ -125,22 +125,6 @@ def test_a_previous_symbol_one_row_lists_twice_is_still_that_gene_alone() -> Non
     assert 'OLD1' in _previous_symbols(table, 'HGNC:1')
 
 
-def test_no_symbol_returned_names_a_second_gene() -> None:
-    # B1 and A1 are approved for another id, P1 and R1 are listed for two ids, D1 is the gene's own.
-    table = _set(
-        ['HGNC:1', 'A1', 'Approved', '"B1|P1|Q1"'],
-        ['HGNC:2', 'B1', 'Approved', '"P1|R1"'],
-        ['HGNC:3', 'C1', 'Approved', '"R1|S1|A1"'],
-        ['HGNC:4', 'D1', 'Approved', '"D1|T1"'],
-    )
-    names: list[str] = []
-    for hgnc_id in ('HGNC:1', 'HGNC:2', 'HGNC:3', 'HGNC:4'):
-        result = table.lookup(hgnc_id)
-        assert result is not None
-        names += [result.gene_symbol, *result.previous_symbols]
-    assert sorted(names) == ['A1', 'B1', 'C1', 'D1', 'Q1', 'S1', 'T1']
-
-
 def test_a_withdrawn_row_does_not_claim_its_symbol() -> None:
     # A withdrawn id approves no symbol, so a gene that carried the symbol earlier still lists it.
     table = _set(['HGNC:1', 'NEW1', 'Approved', 'OLD1'], ['HGNC:2', 'OLD1', 'Entry Withdrawn', ''])

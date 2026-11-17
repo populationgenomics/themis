@@ -3,31 +3,11 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { GroupImperativeHandle } from "@/components/ui/resizable";
 import { REGISTRY } from "./content-kinds";
-import {
-  ConversationSplit,
-  conversationFirst,
-  edgeToOrientation,
-} from "./workbench-layout";
+import { ConversationSplit } from "./workbench-layout";
 import type { Edge } from "./workspace-model";
 
-// Interactive drag-resize and the ratio-apply effect are DOM-bound (screenshots + F6c/d cover them);
-// here the pure edge→orientation/side mapping and the outer split's static structure are tested.
-
-describe("edge → orientation + side", () => {
-  test("left/right dock side by side; top/bottom stack", () => {
-    expect(edgeToOrientation("left")).toBe("horizontal");
-    expect(edgeToOrientation("right")).toBe("horizontal");
-    expect(edgeToOrientation("top")).toBe("vertical");
-    expect(edgeToOrientation("bottom")).toBe("vertical");
-  });
-
-  test("the conversation is the first panel only when docked left or top", () => {
-    expect(conversationFirst("left")).toBe(true);
-    expect(conversationFirst("top")).toBe(true);
-    expect(conversationFirst("right")).toBe(false);
-    expect(conversationFirst("bottom")).toBe(false);
-  });
-});
+// Interactive drag-resize and the ratio-apply effect are DOM-bound; here the outer split's
+// rendered panel order and orientation across dock edges are tested.
 
 function renderSplit(edge: Edge): string {
   return renderToStaticMarkup(

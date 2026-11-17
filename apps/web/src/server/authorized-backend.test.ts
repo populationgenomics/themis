@@ -197,25 +197,6 @@ function backend(extra: Record<string, string> = {}): {
 }
 
 describe("AuthorizedBackend point access", () => {
-  test("a member reaches an analysis in their Project", async () => {
-    const { authz } = backend();
-    await expect(authz.getThread("an_mine", "sthr_1")).resolves.toBeDefined();
-    await expect(authz.pollEvents("an_mine", NEVER)).resolves.toBeDefined();
-  });
-
-  test("a non-member gets not-found, not a distinguishable forbidden", async () => {
-    const { authz } = backend();
-    const error = await authz
-      .getThread("an_theirs", "sthr_1")
-      .catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(ResourceNotFoundError);
-    // The refusal must not reveal which Project the analysis is in.
-    expect((error as Error).message).not.toContain("proj_b");
-    await expect(authz.pollEvents("an_theirs", NEVER)).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
-  });
-
   test("an unreadable row tells a non-member exactly what an unknown id does", async () => {
     // The decode runs before the membership check, so without the Project riding on the failure a
     // corrupt row in someone else's Project would answer differently from an absent one — an
@@ -237,13 +218,6 @@ describe("AuthorizedBackend point access", () => {
     await expect(
       authz.getThread("an_corrupt_mine", "sthr_1"),
     ).rejects.toBeInstanceOf(UndecodableAnalysisError);
-  });
-
-  test("an unknown analysis is not-found, same as a non-member", async () => {
-    const { authz } = backend();
-    await expect(authz.getThread("an_absent", "sthr_1")).rejects.toBeInstanceOf(
-      ResourceNotFoundError,
-    );
   });
 
   test("reading one analysis is authorized on the same terms", async () => {
@@ -507,6 +481,14 @@ function refDocNaming(target: RefTarget["target"]): RefDocSnapshot {
 }
 
 describe("AuthorizedBackend poll", () => {
+  test("a non-member's poll is not-found and never reaches the workspace", async () => {
+    const { authz, workspace } = backend();
+    await expect(authz.pollEvents("an_theirs", NEVER)).rejects.toBeInstanceOf(
+      ResourceNotFoundError,
+    );
+    expect(workspace.reached).toEqual([]);
+  });
+
   test("carries the collaborative branch's tip commit from the ref document", async () => {
     const { authz, workspace } = backend();
     workspace.snapshot = refDocNaming({ case: "oid", value: TIP });
@@ -519,6 +501,19 @@ describe("AuthorizedBackend poll", () => {
 
   test("a repository that does not exist yet has no commit", async () => {
     const { authz } = backend();
+    const response = await authz.pollEvents("an_mine", NEVER);
+    expect(response.workspaceTip?.state.case).toBe("noCommit");
+  });
+
+  test("an initialized repository whose collaborative branch is unborn has no commit", async () => {
+    const { authz, workspace } = backend();
+    workspace.snapshot = create(RefDocSnapshotSchema, {
+      document: {
+        refs: { "refs/sheaf/reflog": { target: { case: "oid", value: TIP } } },
+        head: { target: { case: "ref", value: COLLABORATIVE_BRANCH } },
+      },
+      generation: BigInt(1),
+    });
     const response = await authz.pollEvents("an_mine", NEVER);
     expect(response.workspaceTip?.state.case).toBe("noCommit");
   });

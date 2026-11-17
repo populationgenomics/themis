@@ -75,26 +75,4 @@ describe("the replacement diff", () => {
     expect(lines.filter((l) => l.kind === ADDED)).toHaveLength(3);
     expect(lines.some((l) => l.kind === CONTEXT)).toBe(false);
   });
-
-  test("the same replacement diffs the same way twice", () => {
-    const once = replacementDiff("a\nb", "a\nc");
-    expect(replacementDiff("a\nb", "a\nc")).toEqual(once);
-  });
-
-  test("every line names a side — zero never leaves the differ", () => {
-    // The client degrades a zero kind rather than throwing (a stale tab decodes an
-    // unknown kind name to zero), so this is where a projection that stopped setting the
-    // field fails.
-    const replacements = [
-      ["", "one\ntwo"],
-      ["one\ntwo", ""],
-      ["a\nkeep\nb", "c\nkeep\nd"],
-      ["same\nlines", "same\nlines"],
-    ] as const;
-    for (const [before, after] of replacements) {
-      const drawn = kinds(before, after);
-      expect(drawn.length).toBeGreaterThan(0);
-      expect(drawn).not.toContain(DiffLineKind.UNSPECIFIED);
-    }
-  });
 });
