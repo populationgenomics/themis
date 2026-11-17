@@ -72,13 +72,20 @@ def _docker_is_responsive() -> bool:
 
 @pytest.fixture(scope='session')
 def docker_daemon() -> None:
-    """Skip a Docker-backed test unless a daemon is reachable. The single gate for all of themis.
+    """Gate a Docker-backed test on a reachable daemon: skipped locally, an error under CI.
 
-    Session-scoped so wider container fixtures can depend on it; a function-scoped test can
-    still request it (narrower may depend on wider).
+    A skip in CI is indistinguishable from a pass, and the hosted runner is the one place these
+    are guaranteed to run. GitHub Actions sets ``CI``, so one fixture serves both. The single
+    gate for all of themis; session-scoped so wider container fixtures can depend on it.
+
+    Raises:
+        RuntimeError: If no daemon answers under CI.
     """
-    if not _docker_is_responsive():
-        pytest.skip('needs a reachable Docker daemon')
+    if _docker_is_responsive():
+        return
+    if os.environ.get('CI'):
+        raise RuntimeError('no Docker daemon answered: the container-backed tests cannot run')
+    pytest.skip('needs a reachable Docker daemon')
 
 
 def _set_external_url(endpoint: str) -> None:

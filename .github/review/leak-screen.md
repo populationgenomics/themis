@@ -8,10 +8,10 @@ here is cheap, a miss is not.
 catches well-formed CPG / XPG IDs (`[CX]PG\d+`) on its own; flag here:
 
 - IDs in formats the regex doesn't know about (legacy cohort IDs, study codes, family or pedigree IDs).
-- Real-looking participant identifiers in places that look like test fixtures. Convention in this repo: test fixtures
-  must not contain strings shaped like CPG / XPG identifiers at all — use a different prefix (e.g. `TST123`) and
-  monkeypatch the regex if an end-to-end test really needs to exercise the screen pattern. Flag any fixture that
-  violates this convention.
+- Real-looking participant identifiers in places that look like test fixtures. Test data must not contain strings shaped
+  like CPG / XPG identifiers at all
+  ([`docs/style/writing-tests.md`](../../docs/style/writing-tests.md#test-data-reaches-the-public-mirror)); flag any
+  fixture that violates this.
 
 **Phenotype and clinical content.** Anything that reads like it could have come from a real case file, even if it's
 "anonymised":

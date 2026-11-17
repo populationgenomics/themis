@@ -65,3 +65,18 @@ Shared definitions so we use terms consistently (and so tooling has one source o
 - **Self-hosted sandbox** — the Anthropic mechanism that keeps tool execution inside our network (orchestration stays on
   Anthropic's side). **Code mode** — the agent reaches our internal services by writing code against their generated
   stubs, rather than through chains of discrete tool calls.
+
+## Testing
+
+- **Test double** — anything standing in for a production dependency in a test. The kinds below differ in fidelity and
+  in what a test can do with them
+  ([`docs/style/writing-tests.md`](docs/style/writing-tests.md#test-doubles-in-order-of-fidelity)).
+- **Fake** — a working, lightweight implementation of an interface (such as an in-memory store or local-directory
+  backend), unsuitable for production and held to the real implementation's contract suite. A service's **fixture
+  backend** is a fake.
+- **Stub** — returns canned values to put the code under test in a state; makes no claim about being called.
+- **Mock** — carries expectations about how it is called and fails the test when they are not met; the only double a
+  test verifies interactions on.
+- **Change detector** — a test that pins the code's current shape rather than an invariant, so it fails on every
+  legitimate change and catches no defect.
+- **Flaky test** — one that passes and fails on the same code; a defect to root-cause, never a reason to rerun.

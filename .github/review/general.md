@@ -25,11 +25,22 @@ patterns when there's no reason for the deviation. Don't nitpick style that the 
 excessive allocations on hot paths; loading more data than is used. Flag only where the cost is plausibly material — not
 micro-optimisations.
 
-**Tests.** Logic added without corresponding tests; tests that don't actually exercise the new behaviour; tests whose
-assertion is too weak to catch the regression they're nominally guarding against; tests that duplicate existing coverage
-without adding signal; change-detector tests that assert the code's current shape — a hardcoded list of today's files, a
-whole serialized payload — where an invariant is what matters. Suggest the invariant instead of the pinned value. Cite:
-`[Style: assert invariants, not the current shape](docs/style/python.md#pytest)`
+**Tests.** Held to [`docs/style/writing-tests.md`](docs/style/writing-tests.md): a test that catches no regression
+(logic without a test, a test that does not exercise the new behaviour, an assertion too weak to fail, coverage that
+duplicates an existing test); a change detector pinning the code's current shape where an invariant is what matters —
+suggest the invariant; a test that reaches cloud or network; a fixture derived from the code under test; a suite of
+helper tests in which nothing invokes the tool, or a test of a single-caller helper; a sleep standing in for
+synchronisation, or a test that assumes state another test left; a mock scripting a collaborator the repo has a fake
+for, or verifying a query call; a test computing its own expectation, or asserting on a value set in a fixture far from
+the assertion. Cite the section:
+`[Style: a test earns its place](docs/style/writing-tests.md#a-test-earns-its-place-by-the-regression-it-catches)`,
+`[Style: assert invariants, not the current shape](docs/style/writing-tests.md#assert-invariants-not-the-current-shape)`,
+`[Style: tests run with no cloud](docs/style/writing-tests.md#tests-run-with-no-cloud-and-no-network)`,
+`[Style: a fixture is an independent oracle](docs/style/writing-tests.md#a-fixture-is-an-independent-oracle)`,
+`[Style: test at the surface a caller uses](docs/style/writing-tests.md#test-at-the-surface-a-caller-uses)`,
+`[Style: deterministic by construction](docs/style/writing-tests.md#deterministic-by-construction)`,
+`[Style: test doubles, in order of fidelity](docs/style/writing-tests.md#test-doubles-in-order-of-fidelity)`,
+`[Style: a test reads without its reader leaving it](docs/style/writing-tests.md#a-test-reads-without-its-reader-leaving-it)`
 
 **Documentation.** Public APIs or behaviour changed without a docstring update; comments that describe what code did
 before, not what it does now; misleading or stale comments in the surrounding context that the PR touches.

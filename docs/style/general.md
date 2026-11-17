@@ -1,8 +1,10 @@
 # Code style — language-agnostic
 
-Principles independent of language; the language layers build on it ([`python.md`](python.md), and `typescript.md` to
-come). On conflict, the language doc wins for its language. Code properties only — behavioral directives (push back,
-resist the minimal fix) live in [`../../CLAUDE.md`](../../CLAUDE.md).
+Principles independent of language. The language layers build on this doc ([`python.md`](python.md), with
+`typescript.md` to come); on conflict, the language doc wins for its language. Before writing or reviewing tests, read
+[`docs/style/writing-tests.md`](writing-tests.md) for what a test asserts, what it may depend on, how it reads, and what
+its data may contain. Code properties only — behavioral directives (push back, resist the minimal fix) live in
+[`../../CLAUDE.md`](../../CLAUDE.md).
 
 ## Fail loud; never silently degrade
 
@@ -11,6 +13,20 @@ case — that turns a missing input into a silent wrong answer. Validate and fai
 
 "Unknown" is a valid analysis *result* ([`../PRODUCT.md`](../PRODUCT.md) §6), not a license for code to swallow missing
 inputs: the agent may conclude "unknown"; the code feeding it must not manufacture that from absent data.
+
+## Make the invalid state unrepresentable
+
+Before writing a validation rule, ask why the value it rejects can be expressed at all. A field derived from another
+cannot disagree with it. A type that admits only valid values needs no check, and a record nested inside its owner
+cannot dangle. Reshaping the type removes the validation rule, the failure it guarded against, and the test that rule
+would have needed, for every caller at once rather than only the paths a test reaches. Take a child record that repeats
+its parent's identifier and joins to it by reference. That layout admits three errors (the pair disagreeing, the
+reference naming nothing, and the repeated name drifting), so it needs three rules and three tests. Nested under the
+parent and declaring only what it adds, it admits none.
+
+Fail loud ([above](#fail-loud-never-silently-degrade)) governs the invalid input that can still arrive from a file, a
+wire, or a caller outside the type system. Prefer the shape that cannot hold the error; validate what remains, and test
+that validation ([`writing-tests.md`](writing-tests.md)).
 
 ## Comments
 
