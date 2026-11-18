@@ -106,10 +106,15 @@ def test_every_session_figure_is_one_exact_rise_per_gauge_with_its_fallback() ->
 
 
 def test_only_a_gauge_has_a_current_value_read_within_the_freshness_window() -> None:
-    latest = cost_promql.latest(cost_metrics.SESSION_LIST_COST_CENTS, 'agent="a"', freshness_minutes=_FRESHNESS)
-    assert latest == f'last_over_time({cost_metrics.SESSION_LIST_COST_CENTS}{{agent="a"}}[{_FRESHNESS}m])'
+    metric = cost_metrics.SESSION_LIST_COST_CENTS
+    latest = cost_promql.latest(metric, 'agent="a"', freshness_minutes=_FRESHNESS)
+    assert latest == f'last_over_time({metric}{{agent="a"}}[{_FRESHNESS}m])'
+    current = cost_promql.current_total(metric, 'agent="a"', by=['agent'], freshness_minutes=_FRESHNESS)
+    assert current == f'sum by (agent) (last_over_time({metric}{{agent="a"}}[{_FRESHNESS}m]))'
     with pytest.raises(ValueError, match='not a gauge'):
         cost_promql.latest(cost_metrics.REQUEST_TOKENS, freshness_minutes=_FRESHNESS)
+    with pytest.raises(ValueError, match='not a gauge'):
+        cost_promql.current_total(cost_metrics.REQUEST_TOKENS, freshness_minutes=_FRESHNESS)
 
 
 def test_silence_is_absence_over_the_whole_metric() -> None:
@@ -149,9 +154,10 @@ def test_the_workspace_total_guards_the_producers_that_can_be_empty(
 ) -> None:
     total = cost_promql.workspace_cents('1h', freshness_minutes=_FRESHNESS)
     sessions, convert, ci = top_level_terms(total)
+    session_rise = cost_promql.rise(cost_metrics.SESSION_LIST_COST_CENTS, '1h', freshness_minutes=_FRESHNESS)
     # Sessions and CI read one series set each and can be empty; the convert figure is a sum of guarded terms.
-    assert sessions == cost_promql.guarded(cost_promql.session_cents('1h', freshness_minutes=_FRESHNESS))
-    assert ci == cost_promql.guarded(cost_promql.ci_cents('1h'))
+    assert sessions == f'({session_rise} or vector(0))'
+    assert ci == f'(sum(increase({{"{claude_code_metrics.COST_USAGE}"}}[1h])) * 100 or vector(0))'
     assert convert == cost_promql.convert_cents('1h')
     assert not convert.endswith(' or vector(0))')
     # The window, and the tolerance each end of a rise reads within; nothing else.
@@ -285,13 +291,31 @@ def test_the_unpriced_parts_compare_as_one(monkeypatch: pytest.MonkeyPatch) -> N
     assert one.startswith('sum by (')
 
 
-def test_the_session_components_price_at_the_flat_rates_and_tokens_are_the_remainder() -> None:
-    runtime = cost_promql.session_runtime_cents('1h', freshness_minutes=_FRESHNESS)
-    search = cost_promql.session_search_cents('1h', freshness_minutes=_FRESHNESS)
-    assert runtime.endswith(f'/ 3600 * {cost_prices.SESSION_RUNTIME_CENTS_PER_HOUR}')
-    assert search.endswith(f'* {cost_prices.WEB_SEARCH_CENTS_PER_REQUEST}')
-    tokens = cost_promql.session_token_cents('1h', freshness_minutes=_FRESHNESS)
-    sessions = cost_promql.session_cents('1h', freshness_minutes=_FRESHNESS)
+def test_the_session_components_price_at_the_flat_rates_and_tokens_are_the_remainder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cost_prices, 'SESSION_RUNTIME_CENTS_PER_HOUR', 12)
+    monkeypatch.setattr(cost_prices, 'WEB_SEARCH_CENTS_PER_REQUEST', decimal.Decimal('1.5'))
+    matcher = 'agent="a"'
+    by = ['agent']
+    runtime = cost_promql.session_runtime_cents('1h', matcher, by=by, freshness_minutes=_FRESHNESS)
+    search = cost_promql.session_search_cents('1h', matcher, by=by, freshness_minutes=_FRESHNESS)
+    sessions = cost_promql.session_cents('1h', matcher, by=by, freshness_minutes=_FRESHNESS)
+    tokens = cost_promql.session_token_cents('1h', matcher, by=by, freshness_minutes=_FRESHNESS)
+    active_rise = cost_promql.rise(
+        cost_metrics.SESSION_ACTIVE_SECONDS, '1h', matcher, by=by, freshness_minutes=_FRESHNESS
+    )
+    search_rise = cost_promql.rise(
+        cost_metrics.SESSION_WEB_SEARCH_REQUESTS, '1h', matcher, by=by, freshness_minutes=_FRESHNESS
+    )
+    session_rise = cost_promql.rise(
+        cost_metrics.SESSION_LIST_COST_CENTS, '1h', matcher, by=by, freshness_minutes=_FRESHNESS
+    )
+    for rise in (active_rise, search_rise, session_rise):
+        assert rise.startswith('sum by (agent) (')
+    assert runtime == f'{active_rise} / 3600 * 12'
+    assert search == f'{search_rise} * 1.5'
+    assert sessions == session_rise
     assert tokens == f'({sessions} - {runtime} - {search})'
 
 

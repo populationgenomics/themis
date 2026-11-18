@@ -14,6 +14,7 @@ from themis.svcv4.models import svcv4_pb2
 from themis.svcv4.tests import responses
 
 D = decimal.Decimal
+_UNSPECIFIED = svcv4_pb2.MODE_OF_INHERITANCE_UNSPECIFIED
 _AD = svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT
 _AR = svcv4_pb2.MODE_OF_INHERITANCE_AUTOSOMAL_RECESSIVE
 _SD = svcv4_pb2.MODE_OF_INHERITANCE_SEMIDOMINANT
@@ -53,17 +54,30 @@ def test_daft_allelic_heterogeneity_scales_numerator() -> None:
     assert tenth.value == full.value * D('0.10')
 
 
-def test_daft_biallelic_uses_hardy_weinberg_sqrt() -> None:
+@pytest.mark.parametrize(
+    ('prevalence_denominator', 'genetic_heterogeneity', 'allelic_heterogeneity', 'penetrance', 'expected'),
+    [
+        # Exact squares: 0.20 * sqrt((1/10,000) * 0.36 / 0.64) = 0.20 * 0.0075 = 0.0015.
+        (10_000, '0.36', '0.20', '0.64', '0.0015'),
+        # Non-terminating root: 0.10 * sqrt((1/40,000) * 1.0 / 0.90) ~= 0.0005270463.
+        (40_000, '1.0', '0.10', '0.90', '0.0005270463'),
+    ],
+)
+def test_daft_biallelic_uses_hardy_weinberg_sqrt(
+    prevalence_denominator: int,
+    genetic_heterogeneity: str,
+    allelic_heterogeneity: str,
+    penetrance: str,
+    expected: str,
+) -> None:
     daft = frequency.daft_calculator(
         frequency.Inheritance.BIALLELIC,
-        prevalence_denominator=40000,
-        genetic_heterogeneity=D('1.0'),
-        allelic_heterogeneity=D('0.10'),
-        penetrance=D('0.90'),
+        prevalence_denominator=prevalence_denominator,
+        genetic_heterogeneity=D(genetic_heterogeneity),
+        allelic_heterogeneity=D(allelic_heterogeneity),
+        penetrance=D(penetrance),
     )
-    prevalence = D('1') / D('40000')
-    expected = D('0.10') * (prevalence * D('1.0') / D('0.90')).sqrt()
-    assert daft.value == expected
+    assert daft.value == pytest.approx(D(expected), abs=D('1e-10'))
 
 
 def test_daft_xlinked_rejected() -> None:
@@ -506,29 +520,67 @@ def test_a_cell_sm3_marks_says_so_in_the_basis(ref: reference.Reference) -> None
     [
         (
             _XLD,
-            {
+            (
                 frequency.BinningTable.X_LINKED_MALE,
                 frequency.BinningTable.X_LINKED_DOMINANT_FEMALE,
                 frequency.BinningTable.X_LINKED_DOMINANT_COMBINED,
-            },
+            ),
         ),
-        (_XLR, {frequency.BinningTable.X_LINKED_MALE, frequency.BinningTable.X_LINKED_RECESSIVE_FEMALE}),
+        (_XLR, (frequency.BinningTable.X_LINKED_MALE, frequency.BinningTable.X_LINKED_RECESSIVE_FEMALE)),
     ],
 )
 def test_an_x_linked_entity_s_tables_are_chosen_by_its_kind(
-    mode: svcv4_pb2.ModeOfInheritance, tables: set[frequency.BinningTable]
+    mode: svcv4_pb2.ModeOfInheritance, tables: tuple[frequency.BinningTable, ...]
 ) -> None:
     # SM3 prints the female tables per kind and the combined-sex one for the dominant kind only.
-    assert set(frequency.binning_tables_for(mode)) == tables
+    assert frequency.binning_tables_for(mode) == tables
 
 
-def test_a_table_the_entity_s_mode_rules_out_is_refused(ref: reference.Reference) -> None:
+@pytest.mark.parametrize(
+    ('mode', 'tables'),
+    [
+        (_AD, (frequency.BinningTable.AUTOSOMAL_DOMINANT,)),
+        (_AR, (frequency.BinningTable.AUTOSOMAL_RECESSIVE,)),
+        (_SD, (frequency.BinningTable.AUTOSOMAL_DOMINANT, frequency.BinningTable.AUTOSOMAL_RECESSIVE)),
+    ],
+)
+def test_an_autosomal_or_semidominant_entity_s_tables_are_chosen_by_its_mode(
+    mode: svcv4_pb2.ModeOfInheritance, tables: tuple[frequency.BinningTable, ...]
+) -> None:
+    assert frequency.binning_tables_for(mode) == tables
+
+
+@pytest.mark.parametrize(
+    ('mode', 'admitted'),
+    [
+        (_AD, (frequency.BinningTable.AUTOSOMAL_DOMINANT,)),
+        (_AR, (frequency.BinningTable.AUTOSOMAL_RECESSIVE,)),
+        (_SD, (frequency.BinningTable.AUTOSOMAL_DOMINANT, frequency.BinningTable.AUTOSOMAL_RECESSIVE)),
+        (
+            _XLD,
+            (
+                frequency.BinningTable.X_LINKED_MALE,
+                frequency.BinningTable.X_LINKED_DOMINANT_FEMALE,
+                frequency.BinningTable.X_LINKED_DOMINANT_COMBINED,
+            ),
+        ),
+        (
+            _XLR,
+            (
+                frequency.BinningTable.X_LINKED_MALE,
+                frequency.BinningTable.X_LINKED_RECESSIVE_FEMALE,
+            ),
+        ),
+    ],
+)
+def test_a_table_the_entity_s_mode_rules_out_is_refused(
+    ref: reference.Reference, mode: svcv4_pb2.ModeOfInheritance, admitted: tuple[frequency.BinningTable, ...]
+) -> None:
     # A worked example in the pilot names the combined-sex table for an X-linked recessive disease;
     # the rule wins, because that table is the dominant kind's threshold.
-    for mode in frequency._BINNING_TABLES:
-        for table in set(frequency.BinningTable) - set(frequency.binning_tables_for(mode)):
-            with pytest.raises(ValueError, match='for another mode of inheritance'):
-                frequency.binned_daft(ref, table, mode=mode, prevalence_denominator=10_000, penetrance=D('0.80'))
+    for table in set(frequency.BinningTable) - set(admitted):
+        with pytest.raises(ValueError, match='for another mode of inheritance'):
+            frequency.binned_daft(ref, table, mode=mode, prevalence_denominator=10_000, penetrance=D('0.80'))
 
 
 # --- the DAFT methods are distinguishable in the result -------------------------------------------
@@ -679,7 +731,7 @@ def test_a_pop_frq_whose_points_are_not_a_benign_score_is_refused(points: decima
         frequency.PopFrq(points=points, faf=_PASSING_FAF, daft=_threshold('0.0001'), multiple=D('13.1'))
 
 
-def _gated_hmz(ref: reference.Reference, inheritance, observations: int) -> frequency.PopHmz:  # noqa: ANN001
+def _gated_hmz(ref: reference.Reference, inheritance: frequency.HmzInheritance, observations: int) -> frequency.PopHmz:
     """`pop_hmz` with SM3 Table 7's penetrance/severity gate answered yes on both limbs."""
     return frequency.pop_hmz(
         ref, inheritance, observations, penetrance_near_100pct=True, affected_not_expected_in_databases=True
@@ -695,7 +747,9 @@ def _gated_hmz(ref: reference.Reference, inheritance, observations: int) -> freq
         (frequency.HmzInheritance.XLINKED, 5, '-2.0'),  # (5-1) x -0.5
     ],
 )
-def test_pop_hmz(ref: reference.Reference, inheritance, observations: int, expected: str) -> None:  # noqa: ANN001
+def test_pop_hmz(
+    ref: reference.Reference, inheritance: frequency.HmzInheritance, observations: int, expected: str
+) -> None:
     scored = _gated_hmz(ref, inheritance, observations)
     assert scored.support is frequency.HmzSupport.SCORED
     assert scored.points == D(expected)
@@ -956,44 +1010,70 @@ def test_a_mode_composed_as_something_other_than_the_enum_is_refused(
 
 def test_every_binning_table_the_reference_carries_is_reachable_from_some_mode(ref: reference.Reference) -> None:
     """A table no mode admits is one no caller can reach, and SM3 prints six for a reason."""
-    reachable = {table for mode in frequency._BINNING_TABLES for table in frequency.binning_tables_for(mode)}
+    stated_modes = [
+        typing.cast('svcv4_pb2.ModeOfInheritance', value)
+        for value in svcv4_pb2.ModeOfInheritance.values()
+        if value != _UNSPECIFIED
+    ]
+    reachable: set[frequency.BinningTable] = set()
+    for mode in stated_modes:
+        for table in frequency.binning_tables_for(mode):
+            daft = frequency.binned_daft(ref, table, mode=mode, prevalence_denominator=10_000, penetrance=D('0.80'))
+            assert daft.value > 0
+            reachable.add(table)
     assert {table.value for table in reachable} == set(ref.binning_grids)
 
 
-def test_the_hmz_rows_the_reference_weighs_are_the_ones_a_mode_reaches(ref: reference.Reference) -> None:
-    """Every mode `hmz_inheritance` resolves has a weight, so a resolution cannot fail at score time."""
-    for mode in frequency._HMZ_INHERITANCE:
-        scored = frequency.pop_hmz(
-            ref,
-            frequency.hmz_inheritance(mode),
-            2,
-            penetrance_near_100pct=True,
-            affected_not_expected_in_databases=True,
-        )
-        assert scored.points is not None
-        assert scored.points < 0
-
-
-def _refusal(mapping: Callable[[svcv4_pb2.ModeOfInheritance], object], mode: svcv4_pb2.ModeOfInheritance) -> str:
-    """The message the mapping refused `mode` with, or the empty string where it routed it."""
-    try:
-        mapping(mode)
-    except ValueError as refused:
-        return str(refused)
-    return ''
+@pytest.mark.parametrize(
+    ('mode', 'expected_inheritance', 'expected_points'),
+    [
+        (_AD, frequency.HmzInheritance.AD, D('-1.0')),
+        (_AR, frequency.HmzInheritance.AR, D('-0.5')),
+        (_SD, frequency.HmzInheritance.SEMIDOMINANT, D('-0.5')),
+        (_XLD, frequency.HmzInheritance.XLINKED, D('-0.5')),
+        (_XLR, frequency.HmzInheritance.XLINKED, D('-0.5')),
+    ],
+)
+def test_the_hmz_rows_the_reference_weighs_are_the_ones_a_mode_reaches(
+    ref: reference.Reference,
+    mode: svcv4_pb2.ModeOfInheritance,
+    expected_inheritance: frequency.HmzInheritance,
+    expected_points: decimal.Decimal,
+) -> None:
+    """Every mode `hmz_inheritance` resolves has its SM3 Table 7 weight at score time."""
+    resolved = frequency.hmz_inheritance(mode)
+    assert resolved is expected_inheritance
+    scored = frequency.pop_hmz(
+        ref,
+        resolved,
+        2,
+        penetrance_near_100pct=True,
+        affected_not_expected_in_databases=True,
+    )
+    assert scored.points == expected_points
 
 
 @pytest.mark.parametrize(
-    'mapping', [frequency.daft_inheritance, frequency.hmz_inheritance, frequency.binning_tables_for]
+    ('mapping', 'accepted', 'refused'),
+    [
+        (frequency.daft_inheritance, {_AD, _AR, _XLD, _XLR}, {_UNSPECIFIED, _SD}),
+        (frequency.hmz_inheritance, {_AD, _AR, _SD, _XLD, _XLR}, {_UNSPECIFIED}),
+        (frequency.binning_tables_for, {_AD, _AR, _SD, _XLD, _XLR}, {_UNSPECIFIED}),
+    ],
 )
 def test_every_mode_is_mapped_or_named_as_unroutable(
     mapping: Callable[[svcv4_pb2.ModeOfInheritance], object],
+    accepted: set[svcv4_pb2.ModeOfInheritance],
+    refused: set[svcv4_pb2.ModeOfInheritance],
 ) -> None:
     """No mode falls through: a member added to the enum reaches a route or a refusal naming it."""
-    for value in svcv4_pb2.ModeOfInheritance.values():
-        mode = typing.cast('svcv4_pb2.ModeOfInheritance', value)
-        refusal = _refusal(mapping, mode)
-        assert not refusal or svcv4_pb2.ModeOfInheritance.Name(value) in refusal
+    assert set(svcv4_pb2.ModeOfInheritance.values()) == accepted | refused
+    assert accepted.isdisjoint(refused)
+    for mode in accepted:
+        assert mapping(mode), svcv4_pb2.ModeOfInheritance.Name(mode)
+    for mode in refused:
+        with pytest.raises(ValueError, match=svcv4_pb2.ModeOfInheritance.Name(mode)):
+            mapping(mode)
 
 
 def _pool_faf(value: str) -> frequency.Faf:

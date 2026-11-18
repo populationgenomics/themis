@@ -106,12 +106,9 @@ def test_a_path_code_is_not_addressable_here(ref: reference.Reference) -> None:
 
 
 def test_a_total_multiplies_each_row_by_its_observation_count(ref: reference.Reference) -> None:
-    # Two probands on SM4 Table 1's specific/full row and one on its consistent/full row.
-    counts = {'CLN_AFF.ad.specific_full': 2, 'CLN_AFF.ad.consistent_full': 1}
-    expected = observations.points_for(ref, 'CLN_AFF.ad.specific_full') * 2 + observations.points_for(
-        ref, 'CLN_AFF.ad.consistent_full'
-    )
-    assert observations.total(ref, counts) == expected
+    # Two probands on SM4 Table 1's specific/full row (1.0) and three on its consistent/full row (0.5).
+    counts = {'CLN_AFF.ad.specific_full': 2, 'CLN_AFF.ad.consistent_full': 3}
+    assert observations.total(ref, counts) == decimal.Decimal('3.5')
 
 
 def test_a_zero_count_contributes_nothing(ref: reference.Reference) -> None:
@@ -139,9 +136,9 @@ def test_a_total_over_two_codes_is_refused(ref: reference.Reference) -> None:
 def test_every_cell_addresses_a_code_the_reference_names(ref: reference.Reference) -> None:
     # A total reads its code off the cell ids, so an id opening with anything but a code would be
     # summed into a line the tally files under a name that bounds nothing.
-    cells = observations.cell_points(ref)
+    cells = observations.cell_points(ref).keys() | observations.unvalued_cells(ref)
     assert cells
-    assert [cell_id for cell_id in cells if observations._code_of(cell_id) not in ref.codes] == []
+    assert [cell_id for cell_id in cells if '.' not in cell_id or cell_id.partition('.')[0] not in ref.codes] == []
 
 
 _MONOALLELIC = observations.AffectedTable.MONOALLELIC

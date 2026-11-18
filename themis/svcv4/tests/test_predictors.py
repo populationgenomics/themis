@@ -150,33 +150,64 @@ def test_predictor_points_refuses_a_predictor_with_no_table(predictor: predictor
 
 
 @pytest.mark.parametrize(
-    ('row', 'bound', 'expected'),
+    ('predictor', 'bound', 'expected'),
     [
-        pytest.param(row, bound, points, id=f'{row.score}-{bound}')
-        for row in (predictors._ALPHAMISSENSE, predictors._BAYESDEL)
-        for bound, points in row.thresholds
+        (predictors.Predictor.ALPHAMISSENSE, 0.070, '-3.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.071, '-2.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.099, '-2.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.100, '-1.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.169, '-1.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.170, '0.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.791, '0.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.792, '1.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.905, '1.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.906, '2.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.971, '2.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.972, '3.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.989, '3.0'),
+        (predictors.Predictor.ALPHAMISSENSE, 0.990, '4.0'),
+        (predictors.Predictor.BAYESDEL, -0.520, '-3.0'),
+        (predictors.Predictor.BAYESDEL, -0.519, '-2.0'),
+        (predictors.Predictor.BAYESDEL, -0.360, '-2.0'),
+        (predictors.Predictor.BAYESDEL, -0.359, '-1.0'),
+        (predictors.Predictor.BAYESDEL, -0.180, '-1.0'),
+        (predictors.Predictor.BAYESDEL, -0.179, '0.0'),
+        (predictors.Predictor.BAYESDEL, 0.129, '0.0'),
+        (predictors.Predictor.BAYESDEL, 0.130, '1.0'),
+        (predictors.Predictor.BAYESDEL, 0.269, '1.0'),
+        (predictors.Predictor.BAYESDEL, 0.270, '2.0'),
+        (predictors.Predictor.BAYESDEL, 0.409, '2.0'),
+        (predictors.Predictor.BAYESDEL, 0.410, '3.0'),
+        (predictors.Predictor.BAYESDEL, 0.499, '3.0'),
+        (predictors.Predictor.BAYESDEL, 0.50, '4.0'),
     ],
 )
 def test_a_bin_bound_supplied_as_a_float_bins_where_the_table_says(
-    row: predictors._Row, bound: decimal.Decimal, expected: decimal.Decimal
+    predictor: predictors.Predictor, bound: float, expected: str
 ) -> None:
     """A float is the caller's normal case: the upstreams serve JSON numbers.
 
     A bound is where it can go wrong and nothing raises — the bin is inclusive of its upper bound, so
     a float carrying the binary expansion of that bound lands in the next bin up, toward pathogenic.
     """
-    assert row.points(float(bound)) == expected
+    assert predictors.predictor_points(predictor, bound) == D(expected)
 
 
-@pytest.mark.parametrize('row', [predictors._ALPHAMISSENSE, predictors._BAYESDEL])
-def test_the_range_endpoints_as_floats_are_in_range(row: predictors._Row) -> None:
+@pytest.mark.parametrize(
+    ('predictor', 'low', 'high'),
+    [
+        (predictors.Predictor.ALPHAMISSENSE, 0.0, 1.0),
+        (predictors.Predictor.BAYESDEL, -1.29334, 0.75731),
+    ],
+)
+def test_the_range_endpoints_as_floats_are_in_range(predictor: predictors.Predictor, low: float, high: float) -> None:
     """A published endpoint is a score the predictor can return, so the guard must admit it.
 
-    `decimal.Decimal(0.75731)` exceeds BayesDel's published high, so converting directly rejected a
+    `decimal.Decimal(0.75731)` exceeds BayesDel's published high, so converting directly would reject a
     top-of-range score outright rather than binning it.
     """
-    assert row.points(float(row.low)) == row.thresholds[0][1]
-    assert row.points(float(row.high)) == row.top
+    assert predictors.predictor_points(predictor, low) == D('-3.0')
+    assert predictors.predictor_points(predictor, high) == D('4.0')
 
 
 @pytest.mark.parametrize('score', [float('nan'), float('inf'), 'not-a-score'])

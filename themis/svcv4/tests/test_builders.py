@@ -139,7 +139,7 @@ def test_the_sm18_waiver_defeats_the_reduction_the_tier_would_have_applied(
     """End to end on MIS_PRD: the tier that would have cut the tier does not, and the trail says why.
 
     Parametrised over the reducing tiers, since a waiver that only matched `All`'s arithmetic would
-    be indistinguishable from the tier the workaround it replaces used to assert.
+    be indistinguishable from leaving the exon axis at `All`.
     """
     waiver = scoring.ExonRelevanceWaiver(
         variants=(
@@ -453,8 +453,8 @@ def test_a_protein_assay_outside_the_cells_fxn_range_fails_loud(
 
 
 def test_the_second_combine_layer_binds(ref: reference.Reference) -> None:
-    # The (PRD+SPA)+FXN ceiling is the layer #250 added; with SPA at its own ceiling and a strong
-    # protein assay the subtotal exceeds it, so the cap has to clamp rather than ride through.
+    # With SPA at its own ceiling and a strong protein assay the subtotal exceeds the (PRD+SPA)+FXN
+    # ceiling, so the second combine cap clamps rather than riding through.
     flow, colour = splice_tree.SpliceFlow.PREDICTED, splice_tree.SpliceColour.YELLOW
     cell = splice_tree.cell_for(flow, colour)
     path = _splice_path_of(
@@ -710,22 +710,67 @@ def test_the_builders_place_a_path_on_every_family_the_reference_does_not_call_i
     assert placed == {spec.family for spec in ref.codes.values()} - ref.independent_families
 
 
-_NULL = builders.NullEvidence(nul_prd=D('6'), mechanism=ME, exon=ALL)
-_CODING = builders.CodingEvidence(cds_prd=D('2'), mechanism=ME, exon=ALL)
+_RELEASE = provenance.Release('Ensembl VEP REST', 'Ensembl 113')
+_NULL = builders.NullEvidence(
+    nul_prd=D('6'), mechanism=ME, exon=ALL, nul_fxn=D('2'), nul_inf=D('1'), releases=(_RELEASE,)
+)
+_CODING = builders.CodingEvidence(
+    cds_prd=D('4'), mechanism=ME, exon=ALL, cds_fxn=D('2'), cds_inf=D('1'), releases=(_RELEASE,)
+)
 _AMINO_ACID = builders.AminoAcidEvidence(mis_prd=D('3'), exon=ALL)
-_DUPLICATION = _duplication_evidence(duplication_tree.DuplicationPath.YELLOW)
+_SPLICE_ORANGE = builders.SpliceEvidence(
+    colour=splice_tree.SpliceColour.ORANGE,
+    spl_prd=D('2'),
+    mechanism=ME,
+    exon=ALL,
+    spl_spa=splice_tree.Proportion.SUBSTANTIAL,
+    spl_fxn=D('2'),
+    spl_inf=D('1'),
+    releases=(_RELEASE,),
+)
+_DUPLICATION = dataclasses.replace(
+    _duplication_evidence(duplication_tree.DuplicationPath.YELLOW, fxn=D('2'), inf=D('1')),
+    releases=(_RELEASE,),
+)
 
 
 def _routed(
-    ref: reference.Reference, consequence: evidence_pb2.Consequence, evidence: builders.VariantEvidence
+    ref: reference.Reference,
+    consequence: evidence_pb2.Consequence,
+    evidence: builders.VariantEvidence,
+    *,
+    independent_codes: builders.IndependentCodes | None = None,
 ) -> classify.ClassificationInput:
-    return builders.for_consequence(ref, consequence, evidence, gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE)
+    return builders.for_consequence(
+        ref,
+        consequence,
+        evidence,
+        independent_codes=independent_codes,
+        gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE,
+    )
 
 
 def test_the_consequence_selects_the_workflow_its_supplement_states(ref: reference.Reference) -> None:
-    routed = _routed(ref, evidence_pb2.CONSEQUENCE_MISSENSE, builders.MissensePaths(amino_acid=_AMINO_ACID))
-    built = builders.build_missense(ref, amino_acid=_AMINO_ACID, gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE)
+    aa_release = provenance.Release('dbNSFP', '4.9a')
+    amino_acid = builders.AminoAcidEvidence(
+        mis_prd=D('3'), exon=ALL, mis_fxn=D('2'), mis_inf=D('1'), critical_residue=D('1'), releases=(aa_release,)
+    )
+    codes = {'POP_FRQ': D('-1')}
+    routed = _routed(
+        ref,
+        evidence_pb2.CONSEQUENCE_MISSENSE,
+        builders.MissensePaths(amino_acid=amino_acid, splice=_SPLICE_ORANGE),
+        independent_codes=codes,
+    )
+    built = builders.build_missense(
+        ref,
+        amino_acid=amino_acid,
+        splice=_SPLICE_ORANGE,
+        independent_codes=codes,
+        gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE,
+    )
     assert routed == built
+    assert set(routed.releases) == {aa_release, _RELEASE}
 
 
 @pytest.mark.parametrize(
@@ -752,8 +797,9 @@ def test_a_canonical_splice_variant_takes_the_flow_whose_tier_starts_at_six(ref:
     # onto the wrong flow is refused rather than scored two bands high.
     yellow = builders.SpliceEvidence(colour=splice_tree.SpliceColour.YELLOW, spl_prd=D('6'), mechanism=ME, exon=ALL)
     assert _only_path(_routed(ref, evidence_pb2.CONSEQUENCE_CANONICAL_SPLICE, yellow)).prd_initial == D('6')
-    with pytest.raises(ValueError, match='predicted yellow path'):
-        _routed(ref, evidence_pb2.CONSEQUENCE_INTRONIC, yellow)
+    for predicted in (evidence_pb2.CONSEQUENCE_INTRONIC, evidence_pb2.CONSEQUENCE_SYNONYMOUS):
+        with pytest.raises(ValueError, match='predicted yellow path'):
+            _routed(ref, predicted, yellow)
 
 
 @pytest.mark.parametrize(
@@ -789,32 +835,49 @@ def test_a_consequence_composed_as_something_other_than_the_enum_is_refused(ref:
         _routed(ref, True, _NULL)  # type: ignore[arg-type] — the code-mode case
 
 
+_ROUTED_CONSEQUENCES: dict[evidence_pb2.Consequence, frozenset[type[builders.VariantEvidence]]] = {
+    evidence_pb2.CONSEQUENCE_MISSENSE: frozenset({builders.MissensePaths}),
+    evidence_pb2.CONSEQUENCE_NONSENSE: frozenset({builders.NullEvidence, builders.CodingEvidence}),
+    evidence_pb2.CONSEQUENCE_FRAMESHIFT: frozenset({builders.NullEvidence, builders.CodingEvidence}),
+    evidence_pb2.CONSEQUENCE_CANONICAL_SPLICE: frozenset({builders.SpliceEvidence}),
+    evidence_pb2.CONSEQUENCE_INTRONIC: frozenset({builders.SpliceEvidence}),
+    evidence_pb2.CONSEQUENCE_SYNONYMOUS: frozenset({builders.SpliceEvidence}),
+    evidence_pb2.CONSEQUENCE_INFRAME_INDEL: frozenset({builders.CodingEvidence}),
+    evidence_pb2.CONSEQUENCE_START_LOST: frozenset({builders.NullEvidence, builders.CodingEvidence}),
+    evidence_pb2.CONSEQUENCE_STOP_LOST: frozenset({builders.NullEvidence, builders.CodingEvidence}),
+    evidence_pb2.CONSEQUENCE_EXON_DELETION: frozenset({builders.NullEvidence, builders.CodingEvidence}),
+    evidence_pb2.CONSEQUENCE_EXON_DUPLICATION: frozenset({builders.DuplicationEvidence}),
+}
+_REFUSED_CONSEQUENCES: dict[evidence_pb2.Consequence, str] = {
+    evidence_pb2.CONSEQUENCE_UNSPECIFIED: r'Variant\.Normalize',
+    evidence_pb2.CONSEQUENCE_NON_CODING: 'SM17',
+}
+
+
 def test_every_consequence_the_contract_carries_routes_or_names_why_not(ref: reference.Reference) -> None:
-    """No consequence falls through: a member added to the contract reaches a tree or a refusal."""
-    families = (
+    """No consequence falls through: each contract member admits its workflow's families or states why not."""
+    families: tuple[builders.VariantEvidence, ...] = (
         builders.MissensePaths(amino_acid=_AMINO_ACID),
         _NULL,
         _CODING,
-        builders.SpliceEvidence(colour=splice_tree.SpliceColour.BLUE, spl_prd=_ZERO),
+        _SPLICE_ORANGE,
         _DUPLICATION,
     )
-    for value in evidence_pb2.Consequence.values():
-        consequence = typing.cast('evidence_pb2.Consequence', value)
-        routed = [family for family in families if _routes(ref, consequence, family)]
-        if consequence in builders._ADMITTED:
-            assert routed, evidence_pb2.Consequence.Name(value)
-        else:
-            assert not routed, evidence_pb2.Consequence.Name(value)
-
-
-def _routes(
-    ref: reference.Reference, consequence: evidence_pb2.Consequence, evidence: builders.VariantEvidence
-) -> bool:
-    try:
-        _routed(ref, consequence, evidence)
-    except ValueError:
-        return False
-    return True
+    assert {type(family) for family in families} == set(typing.get_args(builders.VariantEvidence))
+    assert set(evidence_pb2.Consequence.values()) == _ROUTED_CONSEQUENCES.keys() | _REFUSED_CONSEQUENCES.keys()
+    assert _ROUTED_CONSEQUENCES.keys().isdisjoint(_REFUSED_CONSEQUENCES.keys())
+    for consequence, admitted in _ROUTED_CONSEQUENCES.items():
+        name = evidence_pb2.Consequence.Name(consequence)
+        for family in (f for f in families if type(f) in admitted):
+            assert _routed(ref, consequence, family).variant_type_paths, (name, type(family).__name__)
+        for family in (f for f in families if type(f) not in admitted):
+            with pytest.raises(ValueError, match=name) as refused:
+                _routed(ref, consequence, family)
+            assert type(family).__name__ in str(refused.value)
+    for consequence, reason in _REFUSED_CONSEQUENCES.items():
+        for family in families:
+            with pytest.raises(ValueError, match=reason):
+                _routed(ref, consequence, family)
 
 
 def test_the_routed_call_scores_the_variant_and_carries_its_releases(ref: reference.Reference) -> None:
@@ -822,7 +885,9 @@ def test_the_routed_call_scores_the_variant_and_carries_its_releases(ref: refere
     result = builders.classify_variant(
         ref,
         consequence=evidence_pb2.CONSEQUENCE_MISSENSE,
-        evidence=builders.MissensePaths(amino_acid=dataclasses.replace(_AMINO_ACID, releases=(release,))),
+        evidence=builders.MissensePaths(
+            amino_acid=builders.AminoAcidEvidence(mis_prd=D('3'), exon=ALL, releases=(release,))
+        ),
         independent_codes={'POP_FRQ': _ZERO},
         gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE,
     )
@@ -831,23 +896,30 @@ def test_the_routed_call_scores_the_variant_and_carries_its_releases(ref: refere
 
 
 @pytest.mark.parametrize(
-    ('consequence', 'evidence', 'build'),
+    ('consequence', 'evidence', 'keyword', 'build'),
     [
-        (evidence_pb2.CONSEQUENCE_NONSENSE, _NULL, builders.build_nonsense),
-        (evidence_pb2.CONSEQUENCE_FRAMESHIFT, _NULL, builders.build_frameshift),
-        (evidence_pb2.CONSEQUENCE_EXON_DELETION, _NULL, builders.build_exon_deletion),
-        (evidence_pb2.CONSEQUENCE_INFRAME_INDEL, _CODING, builders.build_inframe_indel),
-        (evidence_pb2.CONSEQUENCE_START_LOST, _CODING, builders.build_start_lost),
-        (evidence_pb2.CONSEQUENCE_STOP_LOST, _CODING, builders.build_stop_lost),
+        (evidence_pb2.CONSEQUENCE_NONSENSE, _NULL, 'null', builders.build_nonsense),
+        (evidence_pb2.CONSEQUENCE_FRAMESHIFT, _NULL, 'null', builders.build_frameshift),
+        (evidence_pb2.CONSEQUENCE_EXON_DELETION, _NULL, 'null', builders.build_exon_deletion),
+        (evidence_pb2.CONSEQUENCE_INFRAME_INDEL, _CODING, 'coding', builders.build_inframe_indel),
+        (evidence_pb2.CONSEQUENCE_START_LOST, _CODING, 'coding', builders.build_start_lost),
+        (evidence_pb2.CONSEQUENCE_STOP_LOST, _CODING, 'coding', builders.build_stop_lost),
+        (evidence_pb2.CONSEQUENCE_CANONICAL_SPLICE, _SPLICE_ORANGE, 'splice', builders.build_canonical_splice),
+        (evidence_pb2.CONSEQUENCE_INTRONIC, _SPLICE_ORANGE, 'splice', builders.build_intronic_synonymous),
+        (evidence_pb2.CONSEQUENCE_SYNONYMOUS, _SPLICE_ORANGE, 'splice', builders.build_intronic_synonymous),
+        (evidence_pb2.CONSEQUENCE_EXON_DUPLICATION, _DUPLICATION, 'duplication', builders.build_exon_duplication),
     ],
 )
 def test_a_routed_path_is_the_one_its_named_builder_assembles(
     ref: reference.Reference,
     consequence: evidence_pb2.Consequence,
     evidence: builders.VariantEvidence,
+    keyword: str,
     build: _Builder,
 ) -> None:
     """The routing and the named builders are one assembly, so neither can drift from the other."""
-    keyword = 'null' if isinstance(evidence, builders.NullEvidence) else 'coding'
-    named = build(ref, gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE, **{keyword: evidence})
-    assert _routed(ref, consequence, evidence) == named
+    codes = {'POP_FRQ': D('-1')}
+    named = build(
+        ref, independent_codes=codes, gate_level=gene_disease_pb2.GATE_LEVEL_DEFINITIVE, **{keyword: evidence}
+    )
+    assert _routed(ref, consequence, evidence, independent_codes=codes) == named

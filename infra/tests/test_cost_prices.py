@@ -35,6 +35,7 @@ def test_every_card_prices_exactly_the_four_token_types(model: str, card: cost_p
     for token_type, cents in card.items():
         # Not a float, which holds few decimal prices exactly: the derivations below are checked exactly.
         assert isinstance(cents, int | decimal.Decimal), (model, token_type)
+        assert not isinstance(cents, bool), (model, token_type)
         assert cents > 0, (model, token_type)
 
 
@@ -50,6 +51,13 @@ def test_every_cards_cache_rates_derive_from_its_input_rate(model: str, card: co
 def test_the_committed_tables_price_each_model_once() -> None:
     # `priced_models` raises on a model in both tables; non-empty rules out a vacuous pass.
     assert cost_prices.priced_models()
+
+
+def test_the_flat_session_rates_are_positive_exact_numbers() -> None:
+    for rate in (cost_prices.SESSION_RUNTIME_CENTS_PER_HOUR, cost_prices.WEB_SEARCH_CENTS_PER_REQUEST):
+        assert isinstance(rate, int | decimal.Decimal)
+        assert not isinstance(rate, bool)
+        assert rate > 0
 
 
 def test_a_model_in_both_tables_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:

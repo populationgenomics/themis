@@ -14,15 +14,49 @@ from themis.svcv4.tests import responses
 D = decimal.Decimal
 
 
-def test_matrix_anchors() -> None:
-    assert grantham.distance('C', 'W') == 215  # published maximum
-    assert grantham.distance('L', 'I') == 5  # published minimum
-    assert grantham.distance('S', 'R') == 110
-    assert grantham.distance('D', 'E') == 45
+_AMINO_ACIDS: tuple[tuple[str, str], ...] = (
+    ('A', 'Ala'),
+    ('C', 'Cys'),
+    ('D', 'Asp'),
+    ('E', 'Glu'),
+    ('F', 'Phe'),
+    ('G', 'Gly'),
+    ('H', 'His'),
+    ('I', 'Ile'),
+    ('K', 'Lys'),
+    ('L', 'Leu'),
+    ('M', 'Met'),
+    ('N', 'Asn'),
+    ('P', 'Pro'),
+    ('Q', 'Gln'),
+    ('R', 'Arg'),
+    ('S', 'Ser'),
+    ('T', 'Thr'),
+    ('V', 'Val'),
+    ('W', 'Trp'),
+    ('Y', 'Tyr'),
+)
+
+
+@pytest.mark.parametrize(
+    ('aa1', 'aa2', 'expected'),
+    [
+        ('C', 'W', 215),  # published maximum
+        ('L', 'I', 5),  # published minimum
+        ('S', 'R', 110),
+        ('D', 'E', 45),
+        ('G', 'R', 125),
+        ('A', 'V', 64),
+        ('H', 'Q', 24),
+        ('M', 'W', 67),
+    ],
+)
+def test_matrix_anchors(aa1: str, aa2: str, expected: int) -> None:
+    assert grantham.distance(aa1, aa2) == expected
 
 
 def test_matrix_is_symmetric_with_zero_diagonal() -> None:
-    codes = grantham._ORDER
+    codes = [one for one, _ in _AMINO_ACIDS]
     for a in codes:
         assert grantham.distance(a, a) == 0
     for a, b in itertools.combinations(codes, 2):
@@ -30,8 +64,9 @@ def test_matrix_is_symmetric_with_zero_diagonal() -> None:
 
 
 def test_matrix_covers_all_190_pairs() -> None:
-    assert len(grantham._MATRIX) == 190
-    distances = [grantham.distance(a, b) for a, b in itertools.combinations(grantham._ORDER, 2)]
+    pairs = list(itertools.combinations([one for one, _ in _AMINO_ACIDS], 2))
+    assert len(pairs) == 190
+    distances = [grantham.distance(a, b) for a, b in pairs]
     assert min(distances) == 5
     assert max(distances) == 215
 
@@ -42,17 +77,22 @@ def test_matrix_rejects_anything_but_a_standard_residue(rejected: str) -> None:
     # against the order *string* would let all three reach the matrix and raise KeyError instead.
     with pytest.raises(ValueError, match='amino-acid'):
         grantham.distance(rejected, 'A')
+    with pytest.raises(ValueError, match='amino-acid'):
+        grantham.distance('A', rejected)
 
 
 @pytest.mark.parametrize('spelling', [('Gly', 'Arg'), ('GLY', 'ARG'), ('gly', 'arg'), ('G', 'Arg'), ('g', 'R')])
 def test_one_and_three_letter_codes_name_the_same_pair(spelling: tuple[str, str]) -> None:
     # Protein HGVS renders residues three-letter (`p.(Gly1166Arg)`), so both spellings reach here.
-    assert grantham.distance(*spelling) == grantham.distance('G', 'R')
+    assert grantham.distance(*spelling) == 125
 
 
-def test_three_letter_table_covers_every_residue_exactly_once() -> None:
-    # A gap or a duplicate would leave a residue unreachable through its three-letter spelling.
-    assert sorted(grantham._THREE_LETTER.values()) == sorted(grantham._ORDER)
+@pytest.mark.parametrize(('one', 'three'), _AMINO_ACIDS)
+def test_three_letter_table_covers_every_residue_exactly_once(one: str, three: str) -> None:
+    # Every off-diagonal pair has distance >= 5, so distance 0 proves `three` resolves to `one` alone.
+    assert grantham.distance(three, one) == 0
+    other = 'W' if one != 'W' else 'C'
+    assert grantham.distance(three, other) == grantham.distance(one, other) > 0
 
 
 def test_rejection_names_the_accepted_forms() -> None:
@@ -126,7 +166,7 @@ def test_a_substitution_is_read_in_either_form(expression: str, predicted: bool)
     parsed = grantham.substitution(expression)
     assert (parsed.reference_aa, parsed.codon, parsed.variant_aa) == ('G', 1166, 'R')
     assert parsed.predicted is predicted
-    assert parsed.distance == grantham.distance('Gly', 'Arg')
+    assert parsed.distance == 125
 
 
 @pytest.mark.parametrize(
@@ -163,7 +203,7 @@ def test_an_informative_variant_at_the_same_codon_derives_its_own_comparison() -
     )
     assert informative.classification == 'LP'
     assert informative.same_amino_acid is False
-    assert informative.grantham_distance == grantham.distance('Gly', 'Ala')
+    assert informative.grantham_distance == 60
 
 
 def test_the_same_residue_reached_by_another_nucleotide_is_the_same_amino_acid() -> None:

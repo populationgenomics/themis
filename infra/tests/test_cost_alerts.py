@@ -6,11 +6,12 @@ it first: a PromQL condition's evaluation interval is a multiple of 30 seconds.
 
 from __future__ import annotations
 
+import datetime
 import re
 
 import pytest
 
-from themis_infra import capture, cost, cost_alerts, cost_metrics, cost_prices, cost_promql, promql
+from themis_infra import capture, cost, cost_alerts, cost_metrics, cost_promql, promql
 
 _CHANNEL_TYPE = 'gcp:monitoring/notificationChannel:NotificationChannel'
 _POLICY_TYPE = 'gcp:monitoring/alertPolicy:AlertPolicy'
@@ -142,11 +143,11 @@ def test_no_policy_renotifies_more_than_daily(policies: dict[str, dict[str, obje
 def test_every_promql_condition_evaluates_at_its_metrics_cadence_with_no_metric_validation(
     policies: dict[str, dict[str, object]], tick_seconds: int
 ) -> None:
-    promql = [
+    promql_names = [
         name for name, policy in policies.items() if 'conditionPrometheusQueryLanguage' in _only_condition(policy)
     ]
-    assert promql
-    for name in promql:
+    assert promql_names
+    for name in promql_names:
         condition = _promql_condition(policies[name])
         interval = _seconds(str(condition['evaluationInterval']))
         # The spend gauges change at the exporter's tick, so a query over them has nothing newer to read between.
@@ -198,21 +199,18 @@ def test_the_freshness_condition_is_the_heartbeat_silent_for_the_configured_wind
 
 def test_the_unpriced_condition_is_usage_no_rate_card_prices(policies: dict[str, dict[str, object]]) -> None:
     unpriced = policies['themis-cost-unpriced-usage']
-    query = str(_promql_condition(unpriced)['query'])
-    # Every part of the unpriced figure is compared, not the last alone.
-    assert query == f'{cost_promql.unpriced_request_tokens("7d")} > 0'
-    assert cost_metrics.REQUEST_TOKENS in query
-    # The tables' models, and only those, are what the model matcher excludes.
-    assert promql.not_among(cost_metrics.MODEL_LABEL, cost_prices.priced_models()) in query
-    # A model priced by prompt length is unpriced where its tokens name no length it has a card for.
-    for model, cards in cost_prices.LIST_PRICES_CENTS_PER_MTOK_BY_PROMPT_LENGTH.items():
-        assert (
-            f'{promql.equals(cost_metrics.MODEL_LABEL, model)}, '
-            f'{promql.not_among(cost_metrics.PROMPT_LENGTH_LABEL, cards)}'
-        ) in query
-    assert query.endswith(') > 0'), query
-    assert _promql_condition(unpriced)['duration'] == '0s'
-    assert 'infra/themis_infra/cost_prices.py' in str(_mapping(unpriced['documentation'])['content'])
+    condition = _promql_condition(unpriced)
+    query = str(condition['query'])
+    [window] = set(re.findall(r'\[(\w+)\]', query))
+    lookback = promql.duration(window)
+    # Multi-day so the incident stays open across idle stretches until a deploy adds the rate card.
+    assert lookback >= datetime.timedelta(days=2)
+    assert _seconds(str(condition['evaluationInterval'])) >= promql.evaluation_floor(lookback).total_seconds()
+    assert query == f'{cost_promql.unpriced_request_tokens(window)} > 0'
+    assert condition['duration'] == '0s'
+    content = str(_mapping(unpriced['documentation'])['content'])
+    assert 'infra/themis_infra/cost_prices.py' in content
+    assert f'{lookback / datetime.timedelta(days=1):g} days' in content
 
 
 @pytest.mark.parametrize(
