@@ -217,15 +217,15 @@ boundary stays exact.
 
 ### Derived artifacts are content-addressed records
 
-Markdown renderings are only the first kind of derived artifact in the extraction chain: next come **variant sets**
-(extracted from a rendering and a supplementary spreadsheet), **pedigrees** (built from variant sets), and **case
-reports** (written from a pedigree and a rendering—depending on two artifacts of different kinds). Putting a dedicated
-map on the manifest for each kind (`renderings`, `variant_sets`, `pedigrees`, and so on) breaks at the second level:
-artifacts depend on each other across kinds, and a reader following a case report back to its text would have to learn
-every kind's scheme. Ranking candidates at read time also breaks at the second level: which rendering a variant set was
-extracted from is part of the variant set, so the choice must be made *before* extraction runs and stored in `refs`
-(`markdown` for the primary rendering, `markdown/table-s2.docx` for a supplementary rendering, `variants` for the
-current variant set).
+Markdown renderings are only the first kind of derived artifact in the extraction chain: next come **mention sets** and
+their **verdicts** (the variants a rendering prints, and the allele each names), **figure sets** (where each figure of
+the pdf is), **pedigrees** (read from the figure set's pedigree figures), and **case reports** (written from a pedigree
+and a rendering—depending on two artifacts of different kinds). Putting a dedicated map on the manifest for each kind
+(`renderings`, `variant_sets`, `pedigrees`, and so on) breaks at the second level: artifacts depend on each other across
+kinds, and a reader following a case report back to its text would have to learn every kind's scheme. Ranking candidates
+at read time also breaks at the second level: which rendering a variant set was extracted from is part of the variant
+set, so the choice must be made *before* extraction runs and stored in `refs` (`markdown` for the primary rendering,
+`markdown/table-s2.docx` for a supplementary rendering, `variants` for the current variant set).
 
 Instead, all derived artifacts are stored in `Manifest.records`, a map from the SHA-256 hex digest of the artifact's
 output bytes to a `Record` message. Each `Record` states when it was produced (`created_at`), which inputs it was
@@ -253,6 +253,37 @@ The trade-off of keying by output bytes is that two runs producing identical byt
 retains only the `deps` and `construction` of the run that finished most recently—so a rendering re-made by a newer
 converter version that outputs the same markdown records the newer version and loses the older (which is harmless to
 readers because a quote cites bytes, and identical bytes are the same text).
+
+The key covers the bytes but not their kind, so two records of different kinds that serialize identically would need one
+key, and the manifest holds one record per key. In practice that happens only for empty bytes, in two kinds. A **figure
+set** says where each figure in a paper's pdf is ([figure-annotation.md](figure-annotation.md)). A **mention set** lists
+the variants a paper prints, and the strings it set aside as no variant (its *dismissals*); the **verdicts** say which
+candidate allele each mention names ([variant-extraction.md](variant-extraction.md)). A paper with no figures has an
+empty figure set, a mention set holding only dismissals has empty verdicts, and both serialize to nothing. The first of
+the two to be written takes the key, and the second is refused. So a record's bytes are never empty, and `put_record`
+refuses the key of empty bytes.
+
+A kind keeps that rule in one of two ways, depending on whether its ref can tell when it is out of date. A figure set is
+made from the pdf alone. If a new figure harness finds no figures on the same pdf where the old one found a pedigree,
+nothing upstream of the `figures` ref has changed, so the ref can only move off the old set by moving to a new one.
+Finding nothing is therefore a record: a figure set counts the pages the model was shown, so a paper with no figures
+still has a figure set with bytes.
+
+Verdicts are made from the mention set the `variants` ref names, and that ref moves when a new mention set is written. A
+mention set with no mention gets no verdicts record: the step settles in the job log as having found nothing, and the
+`verdicts` ref stays where it was, on the verdicts of an earlier mention set. Take a paper whose first mention set `m1`
+held a variant, with verdicts `v1`; a new extraction writes `m2`, which dismisses it. The refs now read `variants → m2`
+and `verdicts → v1`, and `v1` depends on `m1`. So a reader of the `verdicts` ref checks the chain: the verdicts are
+current only when they depend on the record the `variants` ref names, and that one on the record the `markdown` ref
+names. Otherwise the paper has no current verdicts. The pedigree step and the ranking of pedigree records both read
+verdicts this way, so a pedigree record made from `v1` loses its place to one made from no verdicts. A variant scan with
+no hits, which leaves both refs where they were, and a paper with no pedigree figure settle the same way.
+
+Verdicts could instead carry a count, as the figure set does, and always be written. The count would be of mentions
+checked, and for a mention set with no mention it is 0, which protobuf does not serialize: the verdicts would be empty
+bytes again. The figure set's count works because a pdf always has a page. And a reader of the `verdicts` ref has to
+check the chain regardless, since a variant scan with no hits on a newer rendering writes neither a mention set nor
+verdicts, leaving both refs on records made from the older rendering.
 
 When a paper is converted by `CONVERTER_DOCLING`, the writer also stores `{hash}.docling.json` beside `{hash}.md` under
 `renderings/` so the structured layout tree is preserved alongside the markdown text.
@@ -290,7 +321,9 @@ example, `refs["variants"]` points at `v1` (extracted from rendering `m1`) after
 visible directly from the graph: **a record is current when each of its `deps` is the record its kind's ref names**.
 Non-current records form the extraction lane's work queue, read off the store rather than tracked in a separate table; a
 reader needing a consistent chain follows `deps` down from the record it starts at, rather than reading current refs at
-each level.
+each level. A ref can itself name a record that is no longer current, as the `verdicts` ref does after a mention set
+with no mention ([above](#derived-artifacts-are-content-addressed-records)), so a reader that needs current records
+checks each ref's deps against the ref above it.
 
 ### A change to the manifest's shape pauses the writers instead of carrying both forms
 
@@ -670,7 +703,9 @@ message OffsetsCacheEntry {
   names it could no longer happen in one write (so a ref could briefly name a record the manifest does not hold), nor
   could a single `buf validate` check confirm that every ref resolves.
 - **A record keyed by its bytes, its deps, and its construction together.** Lost because no reader would answer
-  differently: a quote cites bytes, and two routes to identical text yield the same text.
+  differently: a quote cites bytes, and two routes to identical text yield the same text. Records of two kinds can share
+  bytes only when both are empty, and no record is (above). Adding the kind to the key would have changed every key and
+  every record's path.
 - **Using an external identifier (DOI or PMID) as the GCS directory name.** Rejected because no single identifier scheme
   covers every paper (preprints lack PMIDs; older clinical reports and Bookshelf chapters often lack DOIs), and
   discovering a higher-precedence identifier later would require moving every object under `papers/{id}/` and updating

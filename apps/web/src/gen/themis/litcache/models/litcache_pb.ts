@@ -316,7 +316,8 @@ export const RenderingConstructionSchema: GenMessage<RenderingConstruction> = /*
  * One derived artifact of the paper: what it was made from and how. Keyed in Manifest.records by
  * the sha256 hex of its bytes, which are content-addressed in the paper's directory at a path its
  * construction kind determines. Bytes that are produced again keep their key; the record then
- * holds the deps and construction of the run that most recently produced them.
+ * holds the deps and construction of the run that most recently produced them. The bytes are never
+ * empty: empty bytes of two kinds would share a key.
  *
  * @generated from message themis.litcache.models.litcache.Record
  */

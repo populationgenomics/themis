@@ -48,10 +48,12 @@ class FigureAnnotationConstruction(_message.Message):
     def __init__(self, model: _Optional[str] = ..., harness_version: _Optional[str] = ...) -> None: ...
 
 class FigureSet(_message.Message):
-    __slots__ = ("figures",)
+    __slots__ = ("figures", "pages_annotated")
     FIGURES_FIELD_NUMBER: _ClassVar[int]
+    PAGES_ANNOTATED_FIELD_NUMBER: _ClassVar[int]
     figures: _containers.RepeatedCompositeFieldContainer[Figure]
-    def __init__(self, figures: _Optional[_Iterable[_Union[Figure, _Mapping]]] = ...) -> None: ...
+    pages_annotated: int
+    def __init__(self, figures: _Optional[_Iterable[_Union[Figure, _Mapping]]] = ..., pages_annotated: _Optional[int] = ...) -> None: ...
 
 class Figure(_message.Message):
     __slots__ = ("label", "legend", "panels")

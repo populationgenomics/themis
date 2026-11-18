@@ -27,9 +27,13 @@ message FigureAnnotationConstruction {
   string harness_version = 2 [(buf.validate.field).string.min_len = 1];
 }
 
-// Every figure the model found in the paper's pdf, in the order it reported them. Empty for a paper with none.
+// Every figure the model found in the paper's pdf, in the order it reported them.
 message FigureSet {
-  repeated Figure figures = 1;  // a figure's index here is how other records name it
+  // Empty for a paper with none. A figure's index here is how other records name it.
+  repeated Figure figures = 1;
+  // The pdf's pages the model was shown, from page 1. Never 0 on a set written now, so a set with no figures still has
+  // bytes (a record's bytes are never empty); 0 on a set written before this field.
+  uint32 pages_annotated = 2;
 }
 
 // One figure: its printed label, its legend, and its panels on every page it is drawn on.
