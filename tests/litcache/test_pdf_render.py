@@ -67,13 +67,14 @@ def test_the_fit_is_given_the_page_size_in_points() -> None:
 def test_the_raster_is_a_png() -> None:
     (page,) = pdf.render_pages(_pdf([(612, 792)]), fit=_Fixed(100, 100)).result()
 
-    assert page.png.startswith(b'\x89PNG\r\n\x1a\n')
+    with PIL.Image.open(io.BytesIO(page.png)) as image:
+        assert image.format == 'PNG'
 
 
 def test_page_count_matches_what_is_rendered() -> None:
     document = _pdf([(612, 792), (612, 792)])
 
-    assert pdf.page_count(document).result() == len(pdf.render_pages(document, fit=_Fixed(50, 50)).result())
+    assert pdf.page_count(document).result() == len(pdf.render_pages(document, fit=_Fixed(50, 50)).result()) == 2
 
 
 def test_a_fit_that_returns_no_pixels_fails_loudly() -> None:
@@ -87,6 +88,7 @@ def test_the_image_is_the_page_and_nothing_else() -> None:
     # precedes it in the request, so the image is exactly the pixels the fit asked for.
     (page,) = pdf.render_pages(_pdf([(612, 792)]), fit=_Fixed(600, 800)).result()
 
-    image = PIL.Image.open(io.BytesIO(page.png)).convert('RGB')
+    with PIL.Image.open(io.BytesIO(page.png)) as raw:
+        image = raw.convert('RGB')
     assert image.size == (page.width, page.height) == (600, 800)
     assert image.getcolors() == [(600 * 800, (255, 255, 255))]

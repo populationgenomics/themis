@@ -26,7 +26,7 @@ from themis.litcache.models import variants_pb2
 
 _LOG = logging.getLogger(__name__)
 
-# A change to what the agent does that `_harness_version` does not digest, such as how a tool words its result or how
+# A change to what the agent does that `harness_version` does not digest, such as how a tool words its result or how
 # the harness builds the first message, bumps this.
 _REVISION = '19'
 MODEL = 'claude-sonnet-5-5'
@@ -157,26 +157,36 @@ where it is on the page (box, fractions of the page from its top-left corner); f
 _INSTRUCTION = 'Extract and check the variants in this paper.'
 
 
-def _harness_version() -> str:
+def harness_version(
+    *,
+    model: str = MODEL,
+    tool_surface: Sequence[object] | None = None,
+    scan_surface: Sequence[object] | None = None,
+) -> str:
     """The revision, and a digest of what the agent is given as data: model, settings, prompts, tools and the scan.
 
     A mention set made under any other version gives the extraction step work for a funded run that names it, so a
     change to any of these cannot be shipped without one.
+
+    Args:
+        model: Model identifier included in the digest.
+        tool_surface: Tool definitions included in the digest; `None` reads `variant_tools.surface()`.
+        scan_surface: Scan patterns included in the digest; `None` reads `variant_scan.surface()`.
     """
     given = {
-        'model': MODEL,
+        'model': model,
         'effort': _EFFORT,
         'max_tokens': _MAX_TOKENS,
         'max_turns': _MAX_TURNS,
         'prompts': [_SYSTEM, _SCAN, _LINES, _PAGES, _INSTRUCTION],
-        'tools': variant_tools.surface(),
-        'scan': variant_scan.surface(),
+        'tools': variant_tools.surface() if tool_surface is None else list(tool_surface),
+        'scan': variant_scan.surface() if scan_surface is None else list(scan_surface),
     }
     digest = hashlib.sha256(json.dumps(given, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return f'{_REVISION}.{digest[:12]}'
 
 
-HARNESS_VERSION = _harness_version()
+HARNESS_VERSION = harness_version()
 
 
 class ExtractionError(Exception):

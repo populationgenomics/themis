@@ -1,10 +1,10 @@
 """Tests for the PDF LLM-OCR converter (`themis.litcache.anthropic_ocr`).
 
-The Anthropic client is faked so the transcription path runs offline: the streaming context manager
-yields a canned final `Message`, exercising the `stop_reason` guards, the multi-block text join, and
-the model read-back (the recorded model is the response's, not the requested one) without touching
-the network. Pages are rasterized for real, because the size a page is rendered at is the size Claude
-reads it at, and a fake that skipped it would let a sizing bug through.
+The Anthropic HTTP boundary is driven through `themis.testing.anthropic_sse` (`httpx2.MockTransport`),
+exercising the real `anthropic.AsyncAnthropic` streaming parser, error mapping, `stop_reason` guards,
+multi-block text join, and model read-back offline. Pages are rasterized for real, because the size a
+page is rendered at is the size Claude reads it at, and a fake that skipped it would let a sizing bug
+through.
 """
 
 from __future__ import annotations
@@ -13,15 +13,12 @@ import asyncio
 import base64
 import concurrent.futures
 import contextlib
-import dataclasses
 import functools
 import io
-import json
 import pathlib
 import subprocess
 import sys
-import typing
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 
 import anthropic
 import httpx2
@@ -33,7 +30,7 @@ from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.litcache import anthropic_ocr, claude_images, ocr, pdf
 from themis.telemetry import names, request_tokens
-from themis.testing import in_memory_metrics
+from themis.testing import anthropic_sse, in_memory_metrics
 
 # A real paper, whose pages carry figures and dense two-column type: a blank page encodes to almost
 # nothing, so only this says anything about what a request actually weighs.
@@ -41,6 +38,8 @@ _PAPER = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache' /
 
 # The request body the API accepts, which the base64-encoded page images have to fit inside.
 _MAX_REQUEST_BYTES = 32 * 1024 * 1024
+
+_USAGE = anthropic_sse.Usage(input_tokens=4321, output_tokens=8765)
 
 
 def _pdf(pages: int = 2) -> bytes:
@@ -64,95 +63,6 @@ def _paper_of(pages: int) -> bytes:
     return buffer.getvalue()
 
 
-@dataclasses.dataclass(frozen=True)
-class _Block:
-    type: str
-    text: str = ''
-
-
-@dataclasses.dataclass(frozen=True)
-class _Usage:
-    input_tokens: int = 4321
-    output_tokens: int = 8765
-    cache_read_input_tokens: int | None = None
-    cache_creation_input_tokens: int | None = None
-
-
-@dataclasses.dataclass(frozen=True)
-class _Message:
-    stop_reason: str
-    content: list[_Block]
-    model: str
-    usage: _Usage = dataclasses.field(default_factory=_Usage)
-
-
-@dataclasses.dataclass(frozen=True)
-class _Event:
-    type: str
-
-
-class _FakeStream:
-    """A stream that opens, or fails to; emits `message_start`, or fails first; then fails, or finishes."""
-
-    def __init__(
-        self,
-        message: _Message,
-        *,
-        on_open: BaseException | None = None,
-        before_start: BaseException | None = None,
-        after_start: BaseException | None = None,
-    ) -> None:
-        self._message = message
-        self._on_open = on_open
-        self._before_start = before_start
-        self._after_start = after_start
-
-    async def __aenter__(self) -> typing.Self:
-        if self._on_open is not None:
-            raise self._on_open
-        return self
-
-    async def __aexit__(self, *_exc: object) -> bool:
-        return False
-
-    async def __aiter__(self) -> AsyncIterator[_Event]:
-        if self._before_start is not None:
-            raise self._before_start
-        yield _Event('message_start')
-        if self._after_start is not None:
-            raise self._after_start
-        yield _Event('message_stop')
-
-    async def get_final_message(self) -> _Message:
-        return self._message
-
-    @property
-    def current_message_snapshot(self) -> _Message:
-        return self._message
-
-
-class _FakeMessages:
-    def __init__(self, message: _Message, captured: dict[str, object], failures: dict[str, BaseException]) -> None:
-        self._message = message
-        self._captured = captured
-        self._failures = failures
-
-    def stream(self, **kwargs: object) -> _FakeStream:
-        self._captured.update(kwargs)
-        return _FakeStream(self._message, **self._failures)
-
-
-class _FakeClient:
-    def __init__(self, message: _Message, captured: dict[str, object], failures: dict[str, BaseException]) -> None:
-        self.messages = _FakeMessages(message, captured, failures)
-
-    async def __aenter__(self) -> typing.Self:
-        return self
-
-    async def __aexit__(self, *_exc: object) -> bool:
-        return False
-
-
 def _counter() -> tuple[request_tokens.RequestTokens, metrics_export.InMemoryMetricReader]:
     """A request-token counter and the reader its series are read back off."""
     reader = metrics_export.InMemoryMetricReader()
@@ -170,76 +80,48 @@ def _tokens() -> request_tokens.RequestTokens:
     return _counter()[0]
 
 
-def _install(monkeypatch: pytest.MonkeyPatch, message: _Message) -> dict[str, object]:
-    """Fake the client; the returned dict collects both its constructor and its stream kwargs."""
-    captured: dict[str, object] = {}
+def _convert(
+    harness: anthropic_sse.Harness,
+    pdf_bytes: bytes | None = None,
+    *,
+    tokens: ocr.TokenCounter | None = None,
+    credentials: anthropic_ocr.CredentialsFactory | None = anthropic_sse.credentials,
+    timeout: float | None = None,
+) -> ocr.OcrRendering:
+    async def run() -> ocr.OcrRendering:
+        async with harness.http_client() as http_client:
+            return await anthropic_ocr.convert_pdf(
+                _pdf() if pdf_bytes is None else pdf_bytes,
+                tokens=_tokens() if tokens is None else tokens,
+                credentials=credentials,
+                timeout=timeout,
+                http_client=http_client,
+            )
 
-    def client(**kwargs: object) -> _FakeClient:
-        captured.update(kwargs)
-        return _FakeClient(message, captured, {})
-
-    monkeypatch.setattr(anthropic, 'AsyncAnthropic', client)
-    return captured
-
-
-class _StalledMessages:
-    """A stream that stops yielding, before or after `message_start`, and outlives its elapsed budget."""
-
-    def __init__(self, *, answered: bool) -> None:
-        self._answered = answered
-
-    def stream(self, **_kw: object) -> typing.Self:
-        return self
-
-    @property
-    def current_message_snapshot(self) -> _Message:
-        return _Message(stop_reason='', content=[], model='claude-sonnet-5')
-
-    async def __aenter__(self) -> typing.Self:
-        return self
-
-    async def __aexit__(self, *_exc: object) -> bool:
-        return False
-
-    async def __aiter__(self) -> AsyncIterator[_Event]:
-        if self._answered:
-            yield _Event('message_start')
-        await asyncio.sleep(3600)
-        raise AssertionError('unreachable: the elapsed bound should have fired')
+    return asyncio.run(run())
 
 
-class _StalledClient:
-    def __init__(self, *, answered: bool) -> None:
-        self.messages = _StalledMessages(answered=answered)
-
-    async def __aenter__(self) -> typing.Self:
-        return self
-
-    async def __aexit__(self, *_exc: object) -> bool:
-        return False
-
-
-def test_a_call_the_model_answered_past_the_elapsed_bound_was_paid_for(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_call_the_model_answered_past_the_elapsed_bound_was_paid_for() -> None:
     # httpx2 has no total-duration timeout, so the client's own value would not have caught a call that keeps
     # streaming — only asyncio.timeout bounds elapsed time.
-    monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _StalledClient(answered=True))
-    monkeypatch.setattr(anthropic_ocr, '_TIMEOUT_SECONDS', 0.5)  # long enough to open the stream under load
+    harness = anthropic_sse.Harness([anthropic_sse.StalledStream(after_start=True, model='m', usage=_USAGE)])
+    tokens, reader = _counter()
 
     with pytest.raises(ocr.SpentError, match='exceeded'):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens()))
+        _convert(harness, _pdf(1), tokens=tokens, timeout=0.5)
+
+    counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
+    assert counted[_input_series(model='m', stop_reason='unfinished')] == 4321
 
 
-def test_a_call_past_the_elapsed_bound_before_the_model_answered_was_not(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _StalledClient(answered=False))
-    monkeypatch.setattr(anthropic_ocr, '_TIMEOUT_SECONDS', 0.5)  # long enough to open the stream under load
+def test_a_call_past_the_elapsed_bound_before_the_model_answered_was_not() -> None:
+    harness = anthropic_sse.Harness([anthropic_sse.StalledStream(after_start=False)])
+    tokens, reader = _counter()
 
     with pytest.raises(TimeoutError):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens()))
+        _convert(harness, _pdf(1), tokens=tokens, timeout=0.1)
 
-
-def _sent_blocks(captured: dict[str, object]) -> list[dict[str, typing.Any]]:
-    """The content blocks of the one user turn the converter sent."""
-    return json.loads(json.dumps(captured['messages']))[0]['content']
+    assert names.REQUEST_TOKENS not in in_memory_metrics.collected(reader)
 
 
 @contextlib.contextmanager
@@ -379,307 +261,308 @@ def test_the_many_image_cap_turns_on_above_the_threshold_and_not_at_it(pages: in
 def test_the_supplied_credential_is_the_one_the_client_authenticates_with(monkeypatch: pytest.MonkeyPatch) -> None:
     # The credential has to reach the client, and be built per call: an explicit one is total (the
     # client then reads no credential env var), and the client closes the provider it is handed.
-    built: list[anthropic_credentials.AccessTokenProvider] = []
-
-    def token(*, force_refresh: bool = False) -> anthropic_credentials.AccessToken:
-        del force_refresh
-        raise AssertionError('unreachable: the faked client never authenticates')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'ignored-env-key')
+    built: list[int] = []
 
     def credentials() -> anthropic_credentials.AccessTokenProvider:
-        built.append(token)
-        return token
+        index = len(built) + 1
+        built.append(index)
+        return lambda *, force_refresh=False: anthropic_credentials.AccessToken(  # noqa: ARG005
+            token=f'supplied-token-{index}'
+        )
 
-    captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
+    ok = anthropic_sse.MessageTurn(content=[anthropic_sse.Text('#')], model='m')
+    harness = anthropic_sse.Harness([ok, ok])
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens(), credentials=credentials))
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens(), credentials=credentials))
+    _convert(harness, _pdf(1), credentials=credentials)
+    _convert(harness, _pdf(1), credentials=credentials)
 
-    assert captured['credentials'] is token
-    assert len(built) == 2  # built per call, not shared
+    assert len(built) == 2
+    assert [r.headers.get('authorization') for r in harness.requests] == [
+        'Bearer supplied-token-1',
+        'Bearer supplied-token-2',
+    ]
+    assert all('x-api-key' not in r.headers for r in harness.requests)
 
 
 def test_no_factory_leaves_the_client_without_an_explicit_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     # No explicit credential is what makes the SDK consult the environment; anything else would pin
     # the call to a provider the caller never chose.
-    captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'env-api-key')
+    harness = anthropic_sse.Harness([anthropic_sse.MessageTurn(content=[anthropic_sse.Text('#')], model='m')])
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(1), tokens=_tokens()))
+    _convert(harness, _pdf(1), credentials=None)
 
-    assert captured['credentials'] is None
+    assert harness.requests[0].headers['x-api-key'] == 'env-api-key'
 
 
-def test_convert_pdf_joins_text_blocks_and_reads_back_the_response_model(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_convert_pdf_joins_text_blocks_and_reads_back_the_response_model() -> None:
     # A non-text block is skipped; the response's own model id is recorded, not the requested one.
-    message = _Message(
+    turn = anthropic_sse.MessageTurn(
         stop_reason='end_turn',
-        content=[_Block('text', '# Title\n'), _Block('thinking', 'ignored'), _Block('text', 'Body.')],
+        content=[anthropic_sse.Text('# Title\n'), anthropic_sse.Thinking('ignored'), anthropic_sse.Text('Body.')],
         model='claude-sonnet-5-20260101',
     )
-    captured = _install(monkeypatch, message)
+    harness = anthropic_sse.Harness([turn])
 
-    result = asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+    result = _convert(harness)
 
     assert result.markdown == '# Title\nBody.'
     assert result.model == 'claude-sonnet-5-20260101'
     # The shared prompt version leads, this provider's own request shape follows — a prompt change
     # supersedes every provider's renderings, a request-shape change only this one's.
-    assert result.converter_version == f'{ocr.PROMPT_VERSION}.{anthropic_ocr.HARNESS_VERSION}'
+    assert result.converter_version == '1.1'
     # Against the shared instruction, not one of its own: holding the prompt fixed across providers is
     # what makes a transcription difference attributable to the model.
-    blocks = _sent_blocks(captured)
-    assert blocks[-1] == {'type': 'text', 'text': ocr.INSTRUCTION}
+    assert harness.requests[0].content_blocks()[-1] == {'type': 'text', 'text': ocr.INSTRUCTION}
 
 
-def test_the_pages_go_up_as_labelled_images(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
+def test_the_pages_go_up_as_labelled_images() -> None:
+    harness = anthropic_sse.Harness([anthropic_sse.MessageTurn(content=[anthropic_sse.Text('#')], model='m')])
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(3), tokens=_tokens()))
+    _convert(harness, _pdf(3))
 
-    blocks = _sent_blocks(captured)
+    blocks = harness.requests[0].content_blocks()
     images = [block for block in blocks if block['type'] == 'image']
     labels = [block['text'] for block in blocks if block['type'] == 'text']
     assert len(images) == 3
     # The label is how a reply names a page; unlabelled, the pages are only an order.
     assert labels[:3] == ['Page 1:', 'Page 2:', 'Page 3:']
-    assert all(base64.standard_b64decode(image['source']['data']).startswith(b'\x89PNG\r\n\x1a\n') for image in images)
+    assert all(
+        isinstance(image['source'], dict)
+        and isinstance(image['source']['data'], str)
+        and base64.standard_b64decode(image['source']['data']).startswith(b'\x89PNG\r\n\x1a\n')
+        for image in images
+    )
 
 
-def test_no_pdf_is_uploaded(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_pdf_is_uploaded() -> None:
     # The text layer a `document` block carries is the channel this converter exists to avoid.
-    captured = _install(monkeypatch, _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m'))
+    harness = anthropic_sse.Harness([anthropic_sse.MessageTurn(content=[anthropic_sse.Text('#')], model='m')])
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+    _convert(harness)
 
-    assert all(block['type'] != 'document' for block in _sent_blocks(captured))
+    assert all(block['type'] != 'document' for block in harness.requests[0].content_blocks())
 
 
 # --- what a turn costs, and how it can fail ---
 
 
-def test_the_turn_reports_what_it_cost(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_turn_reports_what_it_cost() -> None:
     # The counter is where the spend is priced from.
-    usage = _Usage(cache_read_input_tokens=7, cache_creation_input_tokens=9)
-    message = _Message(
-        stop_reason='end_turn', content=[_Block('text', '#')], model='claude-sonnet-5-20260101', usage=usage
+    usage = anthropic_sse.Usage(
+        input_tokens=4321,
+        output_tokens=8765,
+        cache_read_input_tokens=7,
+        cache_creation_input_tokens=9,
     )
-    _install(monkeypatch, message)
+    turn = anthropic_sse.MessageTurn(
+        stop_reason='end_turn',
+        content=[anthropic_sse.Text('#')],
+        model='claude-sonnet-5-20260101',
+        usage=usage,
+    )
+    harness = anthropic_sse.Harness([turn])
     tokens, reader = _counter()
 
-    asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
+    _convert(harness, tokens=tokens)
 
     series = functools.partial(
         in_memory_metrics.labels, model='claude-sonnet-5-20260101', stop_reason='end_turn', prompt_length='upTo100k'
     )
     assert in_memory_metrics.collected(reader)[names.REQUEST_TOKENS] == {
-        series(type='input'): usage.input_tokens,
-        series(type='output'): usage.output_tokens,
+        series(type='input'): 4321,
+        series(type='output'): 8765,
         series(type='cacheRead'): 7,
         series(type='cacheCreation'): 9,
     }
 
 
 @pytest.mark.parametrize(('stop_reason', 'match'), [('max_tokens', 'truncated'), ('refusal', 'refused')])
-def test_a_terminal_stop_raises_ocr_error(stop_reason: str, match: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_terminal_stop_raises_ocr_error(stop_reason: str, match: str) -> None:
     # Each yields an incomplete transcription that must not be committed, and re-asking only re-bills
     # it — and a turn that raises is still a turn that was paid for.
-    message = _Message(stop_reason=stop_reason, content=[_Block('text', 'partial')], model='claude-sonnet-5')
-    _install(monkeypatch, message)
+    turn = anthropic_sse.MessageTurn(
+        stop_reason=stop_reason,
+        content=[anthropic_sse.Text('partial')],
+        model='claude-sonnet-5',
+        usage=_USAGE,
+    )
+    harness = anthropic_sse.Harness([turn])
     tokens, reader = _counter()
 
     with pytest.raises(ocr.OcrError, match=match):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
+        _convert(harness, tokens=tokens)
 
     counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
     assert counted[_input_series(model='claude-sonnet-5', stop_reason=stop_reason)] == 4321
 
 
-def test_a_final_message_without_a_stop_reason_is_a_precondition_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_final_message_without_a_stop_reason_is_a_precondition_failure() -> None:
     # The API sets one on every complete turn; without it neither the counter's label nor the terminal
     # checks have anything to read, so the turn is refused rather than committed as a success.
-    _install(monkeypatch, _Message(stop_reason=None, content=[_Block('text', '#')], model='m'))  # type: ignore[arg-type]
+    harness = anthropic_sse.Harness(
+        [anthropic_sse.MessageTurn(stop_reason=None, content=[anthropic_sse.Text('#')], model='m')]
+    )
 
     with pytest.raises(ocr.SpentError, match='stop_reason'):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+        _convert(harness)
 
 
-_REQUEST = httpx2.Request('POST', 'https://api.anthropic.com/v1/messages')
-
-
-def _status_error(
-    cls: type[anthropic.APIStatusError], status: int, error: dict[str, object]
-) -> anthropic.APIStatusError:
-    body = {'type': 'error', 'error': error}
-    return cls(str(error.get('message', '')), response=httpx2.Response(status, request=_REQUEST), body=body)
-
-
-def _install_failing(monkeypatch: pytest.MonkeyPatch, **failures: BaseException) -> None:
-    message = _Message(stop_reason='end_turn', content=[_Block('text', '#')], model='m')
-    monkeypatch.setattr(anthropic, 'AsyncAnthropic', lambda **_kw: _FakeClient(message, {}, failures))
-
-
-_WORKSPACE_LIMIT = _status_error(
-    anthropic.BadRequestError,
-    400,
-    {
-        'type': 'invalid_request_error',
-        'message': 'You have reached your specified workspace API usage limits. You will regain access on 2026-11-01.',
-    },
+_WORKSPACE_LIMIT = anthropic_sse.StatusError(
+    status_code=400,
+    error_type='invalid_request_error',
+    message='You have reached your specified workspace API usage limits. You will regain access on 2026-11-01.',
 )
-_ORGANIZATION_LIMIT = _status_error(
-    anthropic.BadRequestError,
-    400,
-    {'type': 'invalid_request_error', 'message': 'You have reached your specified API usage limits.'},
+_ORGANIZATION_LIMIT = anthropic_sse.StatusError(
+    status_code=400,
+    error_type='invalid_request_error',
+    message='You have reached your specified API usage limits.',
 )
-_SPEND_CAP = _status_error(
-    anthropic.RateLimitError,
-    429,
-    {
-        'type': 'rate_limit_error',
-        'message': 'You have reached your API usage limits.',
-        'details': {'error_code': 'enforced_spend_limit_reached'},
-    },
+_SPEND_CAP = anthropic_sse.StatusError(
+    status_code=429,
+    error_type='rate_limit_error',
+    message='You have reached your API usage limits.',
+    details={'error_code': 'enforced_spend_limit_reached'},
 )
-_BILLING = _status_error(
-    anthropic.APIStatusError, 402, {'type': 'billing_error', 'message': 'Your credit balance is too low.'}
+_BILLING = anthropic_sse.StatusError(
+    status_code=402,
+    error_type='billing_error',
+    message='Your credit balance is too low.',
 )
-_RATE_LIMIT = _status_error(
-    anthropic.RateLimitError, 429, {'type': 'rate_limit_error', 'message': 'Number of request tokens has exceeded.'}
+_RATE_LIMIT = anthropic_sse.StatusError(
+    status_code=429,
+    error_type='rate_limit_error',
+    message='Number of request tokens has exceeded.',
 )
-_TOO_MANY_IMAGES = _status_error(
-    anthropic.BadRequestError, 400, {'type': 'invalid_request_error', 'message': 'too many images'}
-)
-_OVERLOADED = _status_error(anthropic.APIStatusError, 200, {'type': 'overloaded_error', 'message': 'Overloaded'})
-_BLOCKED = _status_error(
-    anthropic.APIStatusError,
-    200,
-    {'type': 'invalid_request_error', 'message': 'Output blocked by content filtering policy', 'details': None},
+_TOO_MANY_IMAGES = anthropic_sse.StatusError(
+    status_code=400,
+    error_type='invalid_request_error',
+    message='too many images',
 )
 
 
 @pytest.mark.parametrize(
-    'error',
+    ('turn', 'cause_cls'),
     [
-        pytest.param(_WORKSPACE_LIMIT, id='workspace limit'),
-        pytest.param(_ORGANIZATION_LIMIT, id='organization limit'),
-        pytest.param(_SPEND_CAP, id='monthly spend cap'),
-        pytest.param(_BILLING, id='billing'),
+        pytest.param(_WORKSPACE_LIMIT, anthropic.BadRequestError, id='workspace limit'),
+        pytest.param(_ORGANIZATION_LIMIT, anthropic.BadRequestError, id='organization limit'),
+        pytest.param(_SPEND_CAP, anthropic.RateLimitError, id='monthly spend cap'),
+        pytest.param(_BILLING, anthropic.APIStatusError, id='billing'),
     ],
 )
 def test_a_call_refused_at_a_spend_limit_is_refused_not_failed(
-    error: anthropic.APIStatusError, monkeypatch: pytest.MonkeyPatch
+    turn: anthropic_sse.StatusError, cause_cls: type[anthropic.APIStatusError]
 ) -> None:
-    _install_failing(monkeypatch, on_open=error)
+    harness = anthropic_sse.Harness([turn])
 
     with pytest.raises(ocr.SpendRefusedError) as raised:
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
-    assert raised.value.__cause__ is error
+        _convert(harness)
+    assert isinstance(raised.value.__cause__, cause_cls)
 
 
 @pytest.mark.parametrize(
-    'error',
+    ('turn', 'expected_cls'),
     [
-        pytest.param(_RATE_LIMIT, id='a rate limit'),
-        pytest.param(_TOO_MANY_IMAGES, id='a request the API refuses'),
-        pytest.param(anthropic.APIConnectionError(request=_REQUEST), id='no connection'),
+        pytest.param(_RATE_LIMIT, anthropic.RateLimitError, id='a rate limit'),
+        pytest.param(_TOO_MANY_IMAGES, anthropic.BadRequestError, id='a request the API refuses'),
+        pytest.param(anthropic_sse.ConnectFailure(), anthropic.APIConnectionError, id='no connection'),
     ],
 )
 def test_a_call_failing_before_the_model_answered_propagates_as_itself(
-    error: anthropic.APIError, monkeypatch: pytest.MonkeyPatch
+    turn: anthropic_sse.Turn, expected_cls: type[anthropic.APIError]
 ) -> None:
-    _install_failing(monkeypatch, on_open=error)
+    harness = anthropic_sse.Harness([turn])
 
-    with pytest.raises(type(error)) as raised:
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
-    assert raised.value is error
+    with pytest.raises(expected_cls):
+        _convert(harness)
 
 
-def test_a_stream_failing_before_message_start_was_not_paid_for(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_failing(monkeypatch, before_start=_OVERLOADED)
+def test_a_stream_failing_before_message_start_was_not_paid_for() -> None:
+    turn = anthropic_sse.StreamError(error_type='overloaded_error', message='Overloaded', after_start=False)
+    harness = anthropic_sse.Harness([turn])
+    tokens, reader = _counter()
 
     with pytest.raises(anthropic.APIStatusError) as raised:
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
-    assert raised.value is _OVERLOADED
+        _convert(harness, tokens=tokens)
+    assert raised.value.type == 'overloaded_error'
+    assert names.REQUEST_TOKENS not in in_memory_metrics.collected(reader)
 
 
 @pytest.mark.parametrize(
-    'error',
+    ('turn', 'cause_cls'),
     [
-        pytest.param(_OVERLOADED, id='an error event'),
-        pytest.param(_BILLING, id='a billing error event'),
-        pytest.param(httpx2.RemoteProtocolError('peer closed connection'), id='a dropped connection'),
-        pytest.param(httpx2.ReadTimeout('timed out'), id='a silence'),
+        pytest.param(
+            anthropic_sse.StreamError(error_type='overloaded_error', message='Overloaded', model='m', usage=_USAGE),
+            anthropic.APIStatusError,
+            id='an error event',
+        ),
+        pytest.param(
+            anthropic_sse.StreamError(
+                error_type='billing_error', message='Your credit balance is too low.', model='m', usage=_USAGE
+            ),
+            anthropic.APIStatusError,
+            id='a billing error event',
+        ),
+        pytest.param(
+            anthropic_sse.DroppedStream(
+                error=httpx2.RemoteProtocolError('peer closed connection'), model='m', usage=_USAGE
+            ),
+            httpx2.RemoteProtocolError,
+            id='a dropped connection',
+        ),
+        pytest.param(
+            anthropic_sse.DroppedStream(error=httpx2.ReadTimeout('timed out'), model='m', usage=_USAGE),
+            httpx2.ReadTimeout,
+            id='a silence',
+        ),
     ],
 )
-def test_a_stream_failing_after_message_start_was_paid_for(error: Exception, monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_failing(monkeypatch, after_start=error)
+def test_a_stream_failing_after_message_start_was_paid_for(
+    turn: anthropic_sse.Turn, cause_cls: type[Exception]
+) -> None:
+    harness = anthropic_sse.Harness([turn])
     tokens, reader = _counter()
 
     with pytest.raises(ocr.SpentError) as raised:
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
-    assert raised.value.__cause__ is error
+        _convert(harness, tokens=tokens)
+    assert isinstance(raised.value.__cause__, cause_cls)
     # Paid for, so counted, as far as the stream got.
     counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
     assert counted[_input_series(model='m', stop_reason='unfinished')] == 4321
 
 
-def test_a_stream_blocked_after_message_start_settles_and_was_paid_for(monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_failing(monkeypatch, after_start=_BLOCKED)
+def test_a_stream_blocked_after_message_start_settles_and_was_paid_for() -> None:
+    blocked = anthropic_sse.StreamError(
+        error_type='invalid_request_error',
+        message='Output blocked by content filtering policy',
+        model='m',
+        usage=_USAGE,
+    )
+    harness = anthropic_sse.Harness([blocked])
     tokens, reader = _counter()
 
     # Terminal, not spent: the same pages are blocked again, so a retry only re-bills them.
     with pytest.raises(ocr.OcrError, match='rejected mid-stream') as raised:
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=tokens))
-    assert raised.value.__cause__ is _BLOCKED
+        _convert(harness, tokens=tokens)
+    assert isinstance(raised.value.__cause__, anthropic.APIStatusError)
     counted = in_memory_metrics.collected(reader)[names.REQUEST_TOKENS]
     assert counted[_input_series(model='m', stop_reason='unfinished')] == 4321
 
 
-def test_an_sse_error_event_after_message_start_is_read_as_a_block(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Through the real client, so the SDK's own parsing of an `event: error` is what sets the type matched on.
-    events = [
-        (
-            'message_start',
-            {
-                'type': 'message_start',
-                'message': {
-                    'id': 'msg_1',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'model': 'm',
-                    'content': [],
-                    'stop_reason': None,
-                    'stop_sequence': None,
-                    'usage': {'input_tokens': 4321, 'output_tokens': 1},
-                },
-            },
-        ),
-        (
-            'error',
-            {
-                'type': 'error',
-                'error': {
-                    'type': 'invalid_request_error',
-                    'message': 'Output blocked by content filtering policy',
-                    'details': None,
-                },
-            },
-        ),
-    ]
-    body = ''.join(f'event: {name}\ndata: {json.dumps(data)}\n\n' for name, data in events).encode()
-    transport = httpx2.MockTransport(
-        lambda _request: httpx2.Response(
-            200, headers={'content-type': 'text/event-stream', 'request-id': 'req_blocked'}, content=body
-        )
+def test_an_sse_error_event_after_message_start_is_read_as_a_block() -> None:
+    # The request-id header from the blocked SSE turn surfaces in the permanent OcrError message.
+    blocked = anthropic_sse.StreamError(
+        error_type='invalid_request_error',
+        message='Output blocked by content filtering policy',
+        model='m',
+        usage=_USAGE,
+        request_id='req_blocked',
     )
-    client = anthropic.AsyncAnthropic
-    monkeypatch.setattr(
-        anthropic,
-        'AsyncAnthropic',
-        lambda **kw: client(**kw, api_key='test', http_client=httpx2.AsyncClient(transport=transport)),
-    )
+    harness = anthropic_sse.Harness([blocked])
 
     with pytest.raises(ocr.OcrError, match='req_blocked'):
-        asyncio.run(anthropic_ocr.convert_pdf(_pdf(), tokens=_tokens()))
+        _convert(harness)
 
 
 # --- what the converter depends on ---

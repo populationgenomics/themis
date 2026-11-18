@@ -22,6 +22,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import anthropic
+import httpx2
 
 from themis.litcache import anthropic_ocr, claude_images, claude_turns, ocr, page_render, pdf
 from themis.litcache.models import figures_pb2
@@ -955,6 +956,7 @@ async def annotate_paper(
     *,
     tokens: ocr.TokenCounter,
     credentials: anthropic_ocr.CredentialsFactory | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> Annotation:
     """The worker's annotation: every page, on a client of its own, within `_TIMEOUT_SECONDS`.
 
@@ -964,6 +966,8 @@ async def annotate_paper(
         tokens: Where each turn's usage is counted.
         credentials: Builds the access-token provider for the call; None leaves the SDK to resolve credentials from
             the environment.
+        http_client: Custom HTTP client for the SDK (closed when `AsyncAnthropic` exits); None lets the
+            SDK open its own.
 
     Returns:
         The paper's figure set, and how it was made.
@@ -983,7 +987,9 @@ async def annotate_paper(
     try:
         async with (
             anthropic.AsyncAnthropic(
-                credentials=credentials() if credentials is not None else None, timeout=_STALL_SECONDS
+                credentials=credentials() if credentials is not None else None,
+                timeout=_STALL_SECONDS,
+                http_client=http_client,
             ) as client,
             asyncio.timeout(_TIMEOUT_SECONDS),
         ):

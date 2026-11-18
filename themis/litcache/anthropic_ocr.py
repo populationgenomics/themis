@@ -26,6 +26,7 @@ from collections.abc import Callable, Sequence
 
 import anthropic
 import anthropic.types
+import httpx2
 import pypdfium2
 from anthropic.lib import credentials as anthropic_credentials
 
@@ -235,6 +236,7 @@ async def convert_pdf(
     tokens: ocr.TokenCounter,
     credentials: CredentialsFactory | None = None,
     timeout: float | None = None,
+    http_client: httpx2.AsyncClient | None = None,
 ) -> ocr.OcrRendering:
     """Transcribe a research-paper PDF to markdown via an Anthropic vision model.
 
@@ -247,6 +249,8 @@ async def convert_pdf(
         credentials: Builds the access-token provider for this call. `None` leaves the SDK to
             resolve credentials from the environment its own way.
         timeout: The seconds the caller has for the call, when fewer than `_TIMEOUT_SECONDS`.
+        http_client: Custom HTTP client for the SDK (closed when `AsyncAnthropic` exits); `None` lets
+            the SDK open its own.
 
     Returns:
         The transcription and the model id that produced it.
@@ -286,6 +290,7 @@ async def convert_pdf(
                 credentials=credentials() if credentials is not None else None,
                 timeout=_STALL_SECONDS,
                 max_retries=0,
+                http_client=http_client,
             ) as client,
             asyncio.timeout(limit),
             client.messages.stream(

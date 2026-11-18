@@ -8,15 +8,19 @@ production path uses.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime
 import hashlib
 import posixpath
+from collections.abc import Callable, Iterator
 
 import pytest
+import requests
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 
+from tests.litcache import gcs_http
 from themis.litcache import metadata_fields, records, writer
 from themis.litcache.models import litcache_pb2
 
@@ -156,32 +160,26 @@ def test_committed_manifest_parses_and_records_revisions_and_hashes(gcs_bucket: 
     assert manifest.refs['markdown'] == _MARKDOWN_HASH
 
 
-def test_a_crash_on_the_commit_leaves_no_manifest_and_no_record(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_crash_on_the_commit_leaves_no_manifest_and_no_record(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     # A crash on the manifest write leaves the content-addressed bodies but neither the
     # manifest nor the record, so a re-run treats the paper as uncached.
-    real_blob = gcs_bucket.blob
+    def crash_on_manifest(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        if gcs_http.is_upload_for(request, 'manifest.pb'):
+            raise OSError('simulated crash before commit')
+        return forward()
 
-    def failing_blob(name: str) -> gcs.Blob:
-        blob = real_blob(name)
-        if name.endswith('manifest.pb'):
-
-            def boom(*_args: object, **_kwargs: object) -> None:
-                raise OSError('simulated crash before commit')
-
-            monkeypatch.setattr(blob, 'upload_from_string', boom)
-        return blob
-
-    monkeypatch.setattr(gcs_bucket, 'blob', failing_blob)
-
-    with pytest.raises(OSError, match='simulated crash'):
-        writer.write_paper(gcs_bucket, _paper())
+    with (
+        gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, crash_on_manifest) as bucket,
+        pytest.raises(OSError, match='simulated crash'),
+    ):
+        writer.write_paper(bucket, _paper())
 
     paper_dir = posixpath.join('papers', _DOC_ID)
-    assert not real_blob(posixpath.join(paper_dir, 'manifest.pb')).exists()
-    assert not real_blob(posixpath.join(paper_dir, 'metadata.pb')).exists()
-    assert real_blob(posixpath.join(paper_dir, _pdf_path())).exists()
+    assert not gcs_bucket.blob(posixpath.join(paper_dir, 'manifest.pb')).exists()
+    assert not gcs_bucket.blob(posixpath.join(paper_dir, 'metadata.pb')).exists()
+    assert gcs_bucket.blob(posixpath.join(paper_dir, _pdf_path())).exists()
 
 
 def test_re_completes_after_a_partial_write_reusing_the_doc_id(gcs_bucket: gcs.Bucket) -> None:
@@ -228,28 +226,39 @@ def test_a_writer_finding_its_paper_committed_adds_its_work(gcs_bucket: gcs.Buck
     assert second.manifest == manifest
 
 
-def _miss_the_skip_check(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Force the manifest skip-check to miss, as a writer racing inside the exists()-then-write window does."""
-    real_blob = gcs_bucket.blob
+@contextlib.contextmanager
+def _missing_skip_check(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> Iterator[gcs.Bucket]:
+    """Yield a bucket whose `manifest.pb` `exists()` check answers 404, entering the create-if-absent race window."""
+    missed_exists = False
+    conflicted_upload = False
 
-    def skip_check_misses(name: str) -> gcs.Blob:
-        blob = real_blob(name)
-        if name.endswith('manifest.pb'):
-            monkeypatch.setattr(blob, 'exists', lambda: False)
-        return blob
+    def miss_manifest_exists(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        nonlocal missed_exists, conflicted_upload
+        if gcs_http.is_metadata_get_for(request, 'manifest.pb') and 'fields=name' in (request.url or ''):
+            missed_exists = True
+            return gcs_http.not_found(request)
+        response = forward()
+        if gcs_http.is_upload_for(request, 'manifest.pb') and response.status_code == 412:
+            conflicted_upload = True
+        return response
 
-    monkeypatch.setattr(gcs_bucket, 'blob', skip_check_misses)
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, miss_manifest_exists) as bucket:
+        yield bucket
+    assert missed_exists
+    assert conflicted_upload
 
 
 def test_a_writer_losing_the_commit_to_an_id_only_manifest_names_its_work(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+    gcs_bucket: gcs.Bucket, gcs_endpoint: str
 ) -> None:
     # An on-demand ingest commits an id-only manifest while a bulk writer converts the same paper; the bulk writer's
     # PDF and rendering would otherwise sit in the bucket with no manifest naming them.
     writer.write_paper(gcs_bucket, _paper(sources=[], renderings=[]))
-    _miss_the_skip_check(gcs_bucket, monkeypatch)
 
-    result = writer.write_paper(gcs_bucket, _paper())
+    with _missing_skip_check(gcs_bucket, gcs_endpoint) as bucket:
+        result = writer.write_paper(bucket, _paper())
 
     assert result.written is False
     manifest = _committed(gcs_bucket)
@@ -258,16 +267,14 @@ def test_a_writer_losing_the_commit_to_an_id_only_manifest_names_its_work(
     assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()  # the winner's record, kept
 
 
-def test_a_writer_claiming_fewer_ids_than_the_manifest_adds_its_work(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_writer_claiming_fewer_ids_than_the_manifest_adds_its_work(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     writer.write_paper(
         gcs_bucket,
         _paper(external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='30000001'), sources=[], renderings=[]),
     )
-    _miss_the_skip_check(gcs_bucket, monkeypatch)
 
-    writer.write_paper(gcs_bucket, _paper())
+    with _missing_skip_check(gcs_bucket, gcs_endpoint) as bucket:
+        writer.write_paper(bucket, _paper())
 
     manifest = _committed(gcs_bucket)
     assert [s.handle for s in manifest.sources] == ['pdf']
@@ -306,67 +313,62 @@ def test_a_joining_source_on_other_terms_starts_a_lineage_of_its_own(gcs_bucket:
 
 
 def test_a_join_that_loses_its_generation_race_keeps_both_writers_work(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+    gcs_bucket: gcs.Bucket, gcs_endpoint: str
 ) -> None:
     # A conversion lands between the join's read and its write; the retry re-reads and keeps that rendering too.
     writer.write_paper(gcs_bucket, _paper(renderings=[]))
-    real_merge = writer._merge_work
     raced: list[bool] = []
 
-    def merge_after_a_concurrent_rendering(*args: object, **kwargs: object) -> None:
-        if not raced:
+    def hook(request: requests.PreparedRequest, forward: Callable[[], requests.Response]) -> requests.Response:
+        if gcs_http.is_upload_for(request, 'manifest.pb') and not raced:
             raced.append(True)
             writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown='# Converted meanwhile\n'))
-        real_merge(*args, **kwargs)  # type: ignore[arg-type]
+        return forward()
 
-    monkeypatch.setattr(writer, '_merge_work', merge_after_a_concurrent_rendering)
-    writer.write_paper(gcs_bucket, _paper())
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, hook) as bucket:
+        writer.write_paper(bucket, _paper())
 
     assert len(_committed(gcs_bucket).records) == 2
 
 
-def test_a_writer_claiming_an_id_the_manifest_lacks_adds_nothing(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_writer_claiming_an_id_the_manifest_lacks_adds_nothing(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     # It may be another paper's seed that names this paper's DOI by mistake: its work is not this paper's.
     writer.write_paper(gcs_bucket, _paper(sources=[], renderings=[]))
     committed = _read(gcs_bucket, writer.manifest_path(_DOC_ID))
-    _miss_the_skip_check(gcs_bucket, monkeypatch)
 
     other = _paper(external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='30000001'))
-    result = writer.write_paper(gcs_bucket, other)
+    with _missing_skip_check(gcs_bucket, gcs_endpoint) as bucket:
+        result = writer.write_paper(bucket, other)
 
     assert result.written is False
     assert _read(gcs_bucket, writer.manifest_path(_DOC_ID)) == committed
 
 
-def test_a_lost_commit_race_writes_no_record(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_lost_commit_race_writes_no_record(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     # Two seeds sharing an identifier claim one doc_id; the loser resolved another paper's
     # record, and it must not land beside the winner's manifest.
     writer.write_paper(gcs_bucket, _paper())
     gcs_bucket.blob(writer.metadata_path(_DOC_ID)).delete()  # the winner, between its commit and its record
-    _miss_the_skip_check(gcs_bucket, monkeypatch)
 
     loser = _paper(
         external_ids=litcache_pb2.ExternalIds(doi='10.1/abc', pmid='30000001'), metadata=_metadata('30000001')
     )
-    result = writer.write_paper(gcs_bucket, loser)
+    with _missing_skip_check(gcs_bucket, gcs_endpoint) as bucket:
+        result = writer.write_paper(bucket, loser)
 
     assert result.written is False
     assert not gcs_bucket.blob(writer.metadata_path(_DOC_ID)).exists()
 
 
-def test_a_commit_whose_response_was_lost_still_writes_the_record(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_commit_whose_response_was_lost_still_writes_the_record(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     # The client retries a commit whose response was lost; the retry fails the precondition
     # against the writer's own manifest, so the writer sees a lost race.
     writer.write_paper(gcs_bucket, _paper())
     gcs_bucket.blob(writer.metadata_path(_DOC_ID)).delete()
-    _miss_the_skip_check(gcs_bucket, monkeypatch)
 
     generation = _generation(gcs_bucket)
-    result = writer.write_paper(gcs_bucket, _paper())
+    with _missing_skip_check(gcs_bucket, gcs_endpoint) as bucket:
+        result = writer.write_paper(bucket, _paper())
 
     assert result.written is False
     assert _read(gcs_bucket, writer.metadata_path(_DOC_ID)) == _metadata()
@@ -647,68 +649,71 @@ def test_add_source_and_rendering_with_a_mismatched_revision_fails_loud(gcs_buck
         )
 
 
-def test_add_rendering_retries_and_keeps_a_concurrent_rendering(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The load-bearing CAS claim: a rendering a concurrent writer commits between this RMW's read and
-    # write is not clobbered. Fire one competing add_rendering during the first reload so the ensuing
-    # generation-matched read then conflicts; the loop must re-read and both renderings must survive.
+def test_add_rendering_retries_and_keeps_a_concurrent_rendering(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
+    # The load-bearing CAS claim: a rendering a concurrent writer commits between this RMW's reload and
+    # generation-matched read is not clobbered. Fire one competing add_rendering right after the first reload so the
+    # ensuing generation-matched read conflicts; the loop must re-read and both renderings must survive.
     writer.write_paper(gcs_bucket, _paper(renderings=[]))
-    original_reload = gcs.Blob.reload
     fired: list[int] = []
 
-    def racing_reload(self: gcs.Blob) -> None:
-        original_reload(self)
-        if self.name and self.name.endswith('manifest.pb') and not fired:
+    def race_after_reload(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        response = forward()
+        if (
+            gcs_http.is_metadata_get_for(request, 'manifest.pb')
+            and 'fields=name' not in (request.url or '')
+            and not fired
+        ):
             fired.append(1)
             writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
+        return response
 
-    monkeypatch.setattr(gcs.Blob, 'reload', racing_reload)
-    result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MARKDOWN))
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, race_after_reload) as bucket:
+        result = writer.add_rendering(bucket, _DOC_ID, _rendering(markdown=_MARKDOWN))
 
+    assert fired == [1]
     assert result.added is True
     assert {_MARKDOWN_HASH, _MD2_HASH} <= set(_load_manifest(gcs_bucket).records)  # neither is lost
 
 
 def test_add_rendering_keeps_a_rendering_committed_between_its_read_and_its_write(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+    gcs_bucket: gcs.Bucket, gcs_endpoint: str
 ) -> None:
     # The write loses the generation race, so the retry has to read the manifest's current generation, not the one
     # its first attempt read.
     writer.write_paper(gcs_bucket, _paper(renderings=[]))
-    real_put = writer._put_rendering_record
     fired: list[int] = []
 
-    def put_after_a_concurrent_rendering(
-        manifest: litcache_pb2.Manifest, key: str, rendering: writer.RenderingInput
-    ) -> bool:
-        if not fired:
+    def hook(request: requests.PreparedRequest, forward: Callable[[], requests.Response]) -> requests.Response:
+        if gcs_http.is_upload_for(request, 'manifest.pb') and not fired:
             fired.append(1)
             writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
-        return real_put(manifest, key, rendering)
+        return forward()
 
-    monkeypatch.setattr(writer, '_put_rendering_record', put_after_a_concurrent_rendering)
-    writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MARKDOWN))
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, hook) as bucket:
+        writer.add_rendering(bucket, _DOC_ID, _rendering(markdown=_MARKDOWN))
 
     assert {_MARKDOWN_HASH, _MD2_HASH} <= set(_load_manifest(gcs_bucket).records)
 
 
-def test_add_rendering_raises_when_the_rmw_never_converges(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_add_rendering_raises_when_the_rmw_never_converges(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     # Every generation-matched read conflicts → the RMW exhausts its budget and fails loud rather than
     # silently dropping the rendering (exercises the retry-guarded read for the reload/read race).
     writer.write_paper(gcs_bucket, _paper(renderings=[]))
-    original_download = gcs.Blob.download_as_bytes
 
-    def always_conflict(self: gcs.Blob, **kwargs: object) -> bytes:
-        if 'if_generation_match' in kwargs:  # the RMW's generation-matched read — the only one here
-            raise api_exceptions.PreconditionFailed('a concurrent writer keeps winning')
-        return original_download(self)
+    def always_conflict(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        if gcs_http.is_download_for(request, 'manifest.pb') and 'ifGenerationMatch=' in (request.url or ''):
+            return gcs_http.precondition_failed(request)
+        return forward()
 
-    monkeypatch.setattr(gcs.Blob, 'download_as_bytes', always_conflict)
-    with pytest.raises(writer.ConcurrentWriteError, match='did not converge'):
-        writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
+    with (
+        gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, always_conflict) as bucket,
+        pytest.raises(writer.ConcurrentWriteError, match='did not converge'),
+    ):
+        writer.add_rendering(bucket, _DOC_ID, _rendering(markdown=_MD2))
 
 
 def test_add_source_rejects_a_media_type_mismatch(gcs_bucket: gcs.Bucket) -> None:
@@ -808,26 +813,26 @@ def test_each_commit_reports_the_generation_it_leaves_the_manifest_at(gcs_bucket
 
 
 def test_a_commit_whose_response_was_lost_reports_the_generation_it_wrote(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+    gcs_bucket: gcs.Bucket, gcs_endpoint: str
 ) -> None:
     # The write lands but its response is lost, so the client's retry meets its own generation and answers 412; the
     # re-read finds the change already made.
     writer.write_paper(gcs_bucket, _paper(renderings=[]))
-    real_upload = gcs.Blob.upload_from_string
     lost: list[int] = []
 
-    def upload_losing_the_response(self: gcs.Blob, data: bytes, *, if_generation_match: int | None = None) -> None:
-        if not self.name or not self.name.endswith('manifest.pb') or lost:
-            real_upload(self, data, if_generation_match=if_generation_match)
-            return
-        # Through another handle: a real 412 leaves this one holding the generation it read.
-        real_upload(gcs_bucket.blob(self.name), data, if_generation_match=if_generation_match)
-        lost.append(1)
-        raise api_exceptions.PreconditionFailed('the retry of a write that landed')
+    def lose_first_manifest_response(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        response = forward()
+        if gcs_http.is_upload_for(request, 'manifest.pb') and not lost:
+            lost.append(1)
+            return gcs_http.precondition_failed(request)
+        return response
 
-    monkeypatch.setattr(gcs.Blob, 'upload_from_string', upload_losing_the_response)
-    result = writer.add_rendering(gcs_bucket, _DOC_ID, _rendering(markdown=_MD2))
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, lose_first_manifest_response) as bucket:
+        result = writer.add_rendering(bucket, _DOC_ID, _rendering(markdown=_MD2))
 
+    assert lost == [1]
     assert result.generation == _generation(gcs_bucket)
     assert _MD2_HASH in _load_manifest(gcs_bucket).records
 

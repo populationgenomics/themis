@@ -11,7 +11,6 @@ the shared `gcs_bucket` and `conn` fixtures: an absent daemon skips rather than 
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import contextlib
 import dataclasses
 import datetime
@@ -26,9 +25,11 @@ import httpx2
 import litfetch
 import pg8000.dbapi
 import pytest
+import requests
 from google.cloud import storage as gcs
 from litfetch import artifacts, ids
 
+from tests.litcache import gcs_http
 from themis.litcache import crosswalk, metadata_fields, pipeline, rebuild, records, resolve, writer
 from themis.litcache.models import litcache_pb2
 from themis.testing import openalex as fake_openalex
@@ -648,39 +649,33 @@ def test_extract_identity_refuses_a_pdf_only_seed_whose_key_names_no_id() -> Non
 
 
 def test_resumes_after_a_crash_reusing_the_claimed_doc_id(
-    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+    conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket, gcs_endpoint: str
 ) -> None:
-    real_blob = gcs_bucket.blob
-    failing = {'on': True}
-
-    def guarded_blob(name: str) -> gcs.Blob:
-        blob = real_blob(name)
-        if name.endswith('manifest.pb') and failing['on']:
-
-            def boom(*_args: object, **_kwargs: object) -> None:
-                raise OSError('simulated crash before commit')
-
-            monkeypatch.setattr(blob, 'upload_from_string', boom)
-        return blob
-
-    monkeypatch.setattr(gcs_bucket, 'blob', guarded_blob)
+    def crash_on_manifest(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        if gcs_http.is_upload_for(request, 'manifest.pb'):
+            raise OSError('simulated crash before commit')
+        return forward()
 
     transport = _transport(_NONOA_CROSSREF)
-    with pytest.raises(OSError, match='simulated crash'):
-        _ingest_via_transport(gcs_bucket, conn, _seed(), _licence(), fetchers=_NO_OA, transport=transport)
+    with (
+        gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, crash_on_manifest) as crashing_bucket,
+        pytest.raises(OSError, match='simulated crash'),
+    ):
+        _ingest_via_transport(crashing_bucket, conn, _seed(), _licence(), fetchers=_NO_OA, transport=transport)
 
     # The mint claimed a doc_id; the manifest never committed.
     claimed = _doc_id_for(conn, 'doi:10.9999/synthetic.nonoa')
     assert claimed is not None
-    assert not real_blob(writer.manifest_path(claimed)).exists()
+    assert not gcs_bucket.blob(writer.manifest_path(claimed)).exists()
 
     # The re-run reuses the claimed doc_id and completes the commit.
-    failing['on'] = False
     result = _ingest_via_transport(gcs_bucket, conn, _seed(), _licence(), fetchers=_NO_OA, transport=transport)
 
     assert result.doc_id == claimed
     assert result.written is True
-    assert real_blob(writer.manifest_path(claimed)).exists()
+    assert gcs_bucket.blob(writer.manifest_path(claimed)).exists()
 
 
 def test_ingests_an_oa_paper_via_the_xml_branch(conn: pg8000.dbapi.Connection, gcs_bucket: gcs.Bucket) -> None:
@@ -901,33 +896,49 @@ def _doi_seed(doi_key: str) -> pipeline.SeedObject:
     )
 
 
-def test_extract_identity_ignores_pdf_doi_when_key_names_an_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    # An explicit key DOI is authoritative; the pdf's embedded DOI is not even consulted
-    # (publisher metadata must never override what the deposit explicitly declares).
-    def _must_not_be_called(_pdf: bytes) -> str | None:
-        raise AssertionError('pdf DOI consulted despite an explicit id')
+def _pdf_with_doi(doi: str) -> bytes:
+    """A minimal one-page PDF carrying `doi` in its document-info `Subject` field."""
+    objs = [
+        b'<</Type/Catalog/Pages 2 0 R>>',
+        b'<</Type/Pages/Kids[3 0 R]/Count 1>>',
+        b'<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>',
+        f'<</Subject(doi:{doi})>>'.encode('latin-1'),
+    ]
+    out = bytearray(b'%PDF-1.4\n')
+    offsets: list[int] = []
+    for i, body in enumerate(objs, start=1):
+        offsets.append(len(out))
+        out += f'{i} 0 obj\n'.encode() + body + b'\nendobj\n'
+    xref = len(out)
+    size = len(objs) + 1
+    out += f'xref\n0 {size}\n'.encode() + b'0000000000 65535 f \n'
+    for offset in offsets:
+        out += f'{offset:010d} 00000 n \n'.encode()
+    out += f'trailer\n<</Size {size}/Root 1 0 R/Info 4 0 R>>\nstartxref\n{xref}\n%%EOF'.encode()
+    return bytes(out)
 
-    monkeypatch.setattr(pipeline.pdf, 'doi_from_metadata', _must_not_be_called)
+
+def test_extract_identity_ignores_pdf_doi_when_key_names_an_id() -> None:
+    # An explicit key DOI is authoritative; a publisher-embedded DOI in the PDF must never
+    # override or join what the deposit explicitly declares.
     seed = pipeline.SeedObject(
         bucket_key='10.5555%2Fexplicit.aaa.json',
         docling_json=json.dumps({'origin': {'filename': 'source.pdf', 'binary_hash': 1}}).encode(),
-        pdf=b'',
+        pdf=_pdf_with_doi('10.9999/from-pdf'),
     )
     ident = pipeline.extract_identity(seed)
     assert ident.claim_key == 'doi:10.5555/explicit.aaa'
+    assert 'doi:10.9999/from-pdf' not in ident.mint_keys
     assert not ident.content_addressed
 
 
-def test_extract_identity_falls_back_to_pdf_doi_when_id_poor(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extract_identity_falls_back_to_pdf_doi_when_id_poor() -> None:
     # No id in key or origin: the pdf's embedded DOI rescues the deposit from a
     # binhash-only identity (the empirically useful fallback).
-    found: concurrent.futures.Future[str | None] = concurrent.futures.Future()
-    found.set_result('10.9999/from-pdf')
-    monkeypatch.setattr(pipeline.pdf, 'doi_from_metadata', lambda _pdf: found)
     seed = pipeline.SeedObject(
         bucket_key='opaque-deposit.pdf',
         docling_json=json.dumps({'origin': {'filename': 'opaque-deposit.pdf', 'binary_hash': 7}}).encode(),
-        pdf=b'',
+        pdf=_pdf_with_doi('10.9999/from-pdf'),
     )
     ident = pipeline.extract_identity(seed)
     assert ident.claim_key == 'doi:10.9999/from-pdf'

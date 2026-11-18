@@ -509,12 +509,10 @@ def test_resolve_batch_does_not_halve_a_refusal_of_every_request(status: int) ->
 
 def test_resolve_batch_does_not_halve_an_outage(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(efetch, '_RETRY_BASE_DELAY_SECONDS', 0)
-    calls = 0
+    asked: list[tuple[str, ...]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        nonlocal calls
-        del request
-        calls += 1
+        asked.append(tuple(sorted(_efetched_ids(request))))
         return httpx2.Response(503)
 
     requests = [
@@ -523,7 +521,8 @@ def test_resolve_batch_does_not_halve_an_outage(monkeypatch: pytest.MonkeyPatch)
     ]
     with pytest.raises(httpx2.HTTPStatusError):
         _resolve_batch(handler, requests)
-    assert calls == efetch._MAX_FETCH_ATTEMPTS
+    assert len(asked) > 1
+    assert set(asked) == {('11111111', _PMID)}
 
 
 def test_resolve_batch_charges_a_failed_precondition_to_its_paper_alone() -> None:

@@ -305,16 +305,45 @@ def test_a_crossref_year_that_is_not_an_integer_drifts() -> None:
         metadata_fields.read_crossref({'issued': {'date-parts': [['2017']]}})
 
 
-@pytest.mark.parametrize('path', ['oa/openalex.json', 'preprint/openalex.json'])
-def test_an_openalex_work_reads_its_fields(path: str) -> None:
-    work = _openalex_work(path)
-    fields = metadata_fields.read_openalex(work)
-    assert fields.title == work['title']
-    assert fields.year == str(work['publication_year'])
-    assert len(fields.authors) == len(work['authorships'])  # type: ignore[arg-type]
-    assert fields.container_title
-    assert fields.abstract
-    assert not fields.abstract.startswith('Abstract ')
+@pytest.mark.parametrize(
+    ('path', 'title_prefix', 'year', 'author_count', 'first_author', 'container_title', 'abstract_prefix'),
+    [
+        (
+            'oa/openalex.json',
+            'Whole exome sequencing in 342 congenital',
+            '2017',
+            23,
+            'Alexander H. Li',
+            'Genome Medicine',
+            'BACKGROUND: Left-sided lesions (LSL',
+        ),
+        (
+            'preprint/openalex.json',
+            'Opportunistic partner choice among arcti',
+            '2024',
+            12,
+            'Bastien Parisy',
+            'bioRxiv (Cold Spring Harbor Laboratory)',
+            'Interactions between plants and soil microbes',
+        ),
+    ],
+)
+def test_an_openalex_work_reads_its_fields(
+    path: str,
+    title_prefix: str,
+    year: str,
+    author_count: int,
+    first_author: str,
+    container_title: str,
+    abstract_prefix: str,
+) -> None:
+    fields = metadata_fields.read_openalex(_openalex_work(path))
+    assert fields.title.startswith(title_prefix)
+    assert fields.year == year
+    assert len(fields.authors) == author_count
+    assert fields.authors[0].name == first_author
+    assert fields.container_title == container_title
+    assert fields.abstract.startswith(abstract_prefix)
 
 
 def test_an_openalex_abstract_is_plain_text_and_never_read_as_markup() -> None:
@@ -532,20 +561,24 @@ def test_an_orcid_of_the_wrong_json_type_drifts(index: str, work: dict[str, obje
 
 
 def test_every_orcid_the_preprint_fixtures_state_reaches_its_author() -> None:
-    crossref_work = _crossref_work('preprint/crossref.json')
-    openalex_work = _openalex_work('preprint/openalex.json')
-    cases = [
-        (metadata_fields.read_crossref(crossref_work), [entry.get('ORCID') for entry in crossref_work['author']]),  # type: ignore[union-attr, attr-defined]
-        (
-            metadata_fields.read_openalex(openalex_work),
-            [entry['author'].get('orcid') for entry in openalex_work['authorships']],  # type: ignore[union-attr, index]
-        ),
+    expected = [
+        '0000-0001-6785-8544',
+        '0000-0002-4166-6218',
+        '0000-0002-1772-3868',
+        '0000-0002-2783-7877',
+        '0000-0002-9361-0777',
+        '0000-0002-2680-0597',
+        '0000-0001-8238-2484',
+        '0000-0002-6352-1781',
+        '0000-0002-2110-3709',
+        '0000-0003-3665-5802',
+        '0000-0002-4667-2166',
+        '0000-0002-2957-4791',
     ]
-    for metadata, stated in cases:
-        assert any(stated)  # rules out a vacuous pass
-        assert [a.orcid for a in metadata.authors] == [
-            s.removeprefix('https://orcid.org/') if s else '' for s in stated
-        ]
+    crossref = metadata_fields.read_crossref(_crossref_work('preprint/crossref.json'))
+    openalex_fields = metadata_fields.read_openalex(_openalex_work('preprint/openalex.json'))
+    assert [a.orcid for a in crossref.authors] == expected
+    assert [a.orcid for a in openalex_fields.authors] == expected
 
 
 _OPENALEX_WORK = 'preprint/openalex.json'
@@ -634,11 +667,16 @@ def test_a_pubmed_article_reads_its_mesh_headings_in_record_order() -> None:
 
 
 def test_the_pubmed_fixture_keeps_every_heading_it_states() -> None:
-    record = _pubmed_article()
-    stated = record.article.medline_citation.mesh_heading_list
-    assert stated  # rules out a vacuous pass
-    metadata = metadata_fields.fill(litcache_pb2.MetadataSource(pubmed=record))
-    assert [h.descriptor.ui for h in metadata.mesh_headings] == [h.descriptor_name.ui for h in stated]
+    metadata = metadata_fields.fill(litcache_pb2.MetadataSource(pubmed=_pubmed_article()))
+    assert [h.descriptor.ui for h in metadata.mesh_headings] == [
+        'D005260',
+        'D018740',
+        'D006330',
+        'D006801',
+        'D040582',
+        'D008297',
+        'D000073359',
+    ]
 
 
 def _mesh_row(descriptor: str, qualifier: str | None = None, *, major: bool = False) -> dict[str, object]:
@@ -670,11 +708,16 @@ def test_openalex_mesh_rows_are_grouped_back_into_headings() -> None:
 
 def test_the_openalex_fixture_regroups_without_losing_a_descriptor() -> None:
     work = _openalex_work('oa/openalex.json')
-    rows = work['mesh']
-    assert rows  # rules out a vacuous pass
-    stated = list(dict.fromkeys(row['descriptor_ui'] for row in rows))  # type: ignore[union-attr, index]
     metadata = metadata_fields.fill(litcache_pb2.MetadataSource(openalex_json=upstream_record.to_text(work)))
-    assert [h.descriptor.ui for h in metadata.mesh_headings] == stated
+    assert [h.descriptor.ui for h in metadata.mesh_headings] == [
+        'D000073359',
+        'D005260',
+        'D006330',
+        'D006801',
+        'D008297',
+        'D018740',
+        'D040582',
+    ]
 
 
 @pytest.mark.parametrize('work', [{'title': 'T'}, {'title': 'T', 'mesh': None}, {'title': 'T', 'mesh': []}])
@@ -725,10 +768,11 @@ def test_a_pubmed_book_reads_its_publication_types(whole_book: bool) -> None:
 
 
 def test_the_pubmed_fixture_keeps_every_publication_type_it_states() -> None:
-    record = _pubmed_article()
-    stated = [t.value for t in record.article.medline_citation.article.publication_type_list]
-    assert stated  # rules out a vacuous pass
-    assert list(metadata_fields.read_pubmed(record).publication_types) == stated
+    assert list(metadata_fields.read_pubmed(_pubmed_article()).publication_types) == [
+        'Journal Article',
+        "Research Support, Non-U.S. Gov't",
+        'Research Support, N.I.H., Extramural',
+    ]
 
 
 @pytest.mark.parametrize(

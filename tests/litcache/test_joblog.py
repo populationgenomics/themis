@@ -7,10 +7,13 @@ preconditions are the ones production meets.
 from __future__ import annotations
 
 import datetime
+from collections.abc import Callable
 
 import pytest
+import requests
 from google.cloud import storage as gcs
 
+from tests.litcache import gcs_http
 from themis.litcache import joblog
 from themis.litcache.models import work_pb2
 
@@ -198,33 +201,32 @@ def test_an_append_refuses_a_malformed_entry_and_writes_nothing(gcs_bucket: gcs.
     assert not gcs_bucket.blob(joblog.job_log_path(_DOC_ID)).exists()
 
 
-def test_an_append_losing_its_race_keeps_the_winners_entry(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    real_write = joblog._write
+def test_an_append_losing_its_race_keeps_the_winners_entry(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     raced: list[int] = []
 
-    def write_after_another(blob: gcs.Blob, data: bytes, generation: int) -> bool:
-        if not raced:
+    def hook(request: requests.PreparedRequest, forward: Callable[[], requests.Response]) -> requests.Response:
+        if gcs_http.is_upload_for(request) and not raced:
             raced.append(1)
-            real_write(
-                gcs_bucket.blob(blob.name),
-                work_pb2.JobLog(entries=[_settled(_attempt(2))]).SerializeToString(),
-                generation,
-            )
-        return real_write(blob, data, generation)
+            joblog.append(gcs_bucket, _DOC_ID, [_settled(_attempt(2))])
+        return forward()
 
-    monkeypatch.setattr(joblog, '_write', write_after_another)
-    joblog.append(gcs_bucket, _DOC_ID, [_settled(_attempt(1))])
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, hook) as bucket:
+        joblog.append(bucket, _DOC_ID, [_settled(_attempt(1))])
 
     assert list(joblog.read(gcs_bucket, _DOC_ID).entries) == [_settled(_attempt(2)), _settled(_attempt(1))]
 
 
-def test_an_append_that_never_wins_fails_loud(gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(joblog, '_write', lambda _blob, _data, _generation: False)
+def test_an_append_that_never_wins_fails_loud(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
+    def hook(request: requests.PreparedRequest, forward: Callable[[], requests.Response]) -> requests.Response:
+        if gcs_http.is_upload_for(request):
+            joblog.append(gcs_bucket, _DOC_ID, [_settled(_attempt(2))])
+        return forward()
 
-    with pytest.raises(joblog.LogContentionError, match='did not converge'):
-        joblog.append(gcs_bucket, _DOC_ID, [_settled(_attempt(1))])
+    with (
+        gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, hook) as bucket,
+        pytest.raises(joblog.LogContentionError, match='did not converge'),
+    ):
+        joblog.append(bucket, _DOC_ID, [_settled(_attempt(1))])
 
 
 def test_the_first_attempt_to_begin_holds_the_step(gcs_bucket: gcs.Bucket) -> None:
@@ -234,44 +236,37 @@ def test_the_first_attempt_to_begin_holds_the_step(gcs_bucket: gcs.Bucket) -> No
     assert len(joblog.read(gcs_bucket, _DOC_ID).entries) == 1
 
 
-def test_of_two_attempts_beginning_at_once_the_second_backs_off(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_of_two_attempts_beginning_at_once_the_second_backs_off(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     # The other attempt appends its begun entry between this one's read and its write, so this one's write fails and
     # its reread finds the other running.
-    real_write = joblog._write
     raced: list[int] = []
 
-    def write_after_another_begins(blob: gcs.Blob, data: bytes, generation: int) -> bool:
-        if not raced:
+    def hook(request: requests.PreparedRequest, forward: Callable[[], requests.Response]) -> requests.Response:
+        if gcs_http.is_upload_for(request) and not raced:
             raced.append(1)
             assert _begin(gcs_bucket, _attempt(2, task='7c1e--main_text')) == joblog.Verdict.BEGUN
-        return real_write(blob, data, generation)
+        return forward()
 
-    monkeypatch.setattr(joblog, '_write', write_after_another_begins)
-
-    assert _begin(gcs_bucket, _attempt(1)) == joblog.Verdict.RUNNING
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, hook) as bucket:
+        assert _begin(bucket, _attempt(1)) == joblog.Verdict.RUNNING
     assert [e.attempt for e in joblog.read(gcs_bucket, _DOC_ID).entries] == [_attempt(2).id]
 
 
-def test_a_begin_whose_response_was_lost_holds_the_step(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The append lands but its response is lost, so the client's retry answers 412; the reread finds this attempt's
-    # own entry.
-    real_write = joblog._write
+def test_a_begin_whose_response_was_lost_holds_the_step(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
+    # The append lands in storage, then a lost response makes the client's retry answer 412; the reread finds this
+    # attempt's own entry.
     lost: list[int] = []
 
-    def write_losing_the_response(blob: gcs.Blob, data: bytes, generation: int) -> bool:
-        written = real_write(blob, data, generation)
-        if not lost:
+    def hook(request: requests.PreparedRequest, forward: Callable[[], requests.Response]) -> requests.Response:
+        response = forward()
+        if gcs_http.is_upload_for(request) and not lost:
             lost.append(1)
-            return False
-        return written
+            return gcs_http.precondition_failed(request)
+        return response
 
-    monkeypatch.setattr(joblog, '_write', write_losing_the_response)
-
-    assert _begin(gcs_bucket, _attempt(1)) == joblog.Verdict.BEGUN
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, hook) as bucket:
+        assert _begin(bucket, _attempt(1)) == joblog.Verdict.BEGUN
+    assert lost == [1]
     assert len(joblog.read(gcs_bucket, _DOC_ID).entries) == 1
 
 

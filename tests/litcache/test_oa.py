@@ -535,13 +535,14 @@ async def _unused_resolver(article_ids: ids.ArticleIds, _http: litfetch.Http) ->
     raise AssertionError(f'{article_ids} carries a pmcid, so nothing is resolved')
 
 
-def test_a_revised_packages_files_are_taken_from_its_latest_version(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_revised_packages_files_are_taken_from_its_latest_version() -> None:
     source = _SuppSource(
         [(_versioned(2, 's1.csv'), b'second'), (_versioned(1, 's1.csv'), b'first'), (_versioned(1, 's2.csv'), b'only')]
     )
-    monkeypatch.setattr(litfetch, 'PmcOaFetcher', lambda: source)
 
-    out = asyncio.run(oa.fetch_supplementary_resolving(ids.ArticleIds(pmcid='PMC9'), resolver=_unused_resolver))
+    out = asyncio.run(
+        oa.fetch_supplementary_resolving(ids.ArticleIds(pmcid='PMC9'), sources=[source], resolver=_unused_resolver)
+    )
 
     assert sorted((s.filename, s.content) for s in out) == [('s1.csv', b'second'), ('s2.csv', b'only')]
 

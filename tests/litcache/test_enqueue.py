@@ -20,9 +20,9 @@ from themis.litcache import enqueue, work
 from themis.litcache.models import work_pb2
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_QUEUE = 'projects/cpg-themis-dev/locations/australia-southeast1/queues/themis-convert'
+_QUEUE = 'projects/example-project/locations/australia-southeast1/queues/themis-convert'
 _WORKER = 'https://themis-convert-worker-abc123-ts.a.run.app'
-_INVOKER = 'themis-convert-invoker@cpg-themis-dev.iam.gserviceaccount.com'
+_INVOKER = 'themis-convert-invoker@example-project.iam.gserviceaccount.com'
 _DOC = '000006fa-e679-4f46-a052-8fb0e69f280c'
 
 _TARGET = enqueue.ConversionTarget(queue_path=_QUEUE, worker_url=_WORKER, invoker_service_account_email=_INVOKER)

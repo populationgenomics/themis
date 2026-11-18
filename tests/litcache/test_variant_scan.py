@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
-from typing import Any, cast
+import typing
 
 import pytest
 
 from themis.litcache import variant_reference, variant_scan, variant_tools
 from themis.litcache.models import variants_pb2
+from themis.testing import litcache_variants
+
+
+@pytest.fixture(scope='module')
+def references(tmp_path_factory: pytest.TempPathFactory) -> variant_reference.References:
+    return litcache_variants.build_references(tmp_path_factory.mktemp('variant-scan-refs'))
 
 
 def _texts(text: str) -> list[str]:
@@ -95,7 +101,7 @@ def test_a_hit_counts_its_printings_and_keeps_its_first_line() -> None:
     assert [(h.id, h.text, h.line, h.printings) for h in hits] == [(1, 'R337H', 2, 2), (2, 'c.5C>T', 4, 1)]
 
 
-def _entry(verbatim: str, line: int = 1, context: str = 'observed') -> dict[str, Any]:
+def _entry(verbatim: str, line: int = 1, context: str = 'observed') -> dict[str, object]:
     return {
         'verbatim': verbatim,
         'gene': 'ABC1',
@@ -107,14 +113,12 @@ def _entry(verbatim: str, line: int = 1, context: str = 'observed') -> dict[str,
     }
 
 
-def _toolbox(text: str) -> variant_tools.Toolbox:
-    # Recording and dismissing never read the reference stores.
-    references = cast(variant_reference.References, object())
+def _toolbox(references: variant_reference.References, text: str) -> variant_tools.Toolbox:
     return variant_tools.Toolbox(references, markdown=text, pdf_bytes=None, hits=variant_scan.scan(text))
 
 
-def test_hits_are_outstanding_until_recorded_or_dismissed() -> None:
-    toolbox = _toolbox('R337H in P3; see Figure S1D')
+def test_hits_are_outstanding_until_recorded_or_dismissed(references: variant_reference.References) -> None:
+    toolbox = _toolbox(references, 'R337H in P3; see Figure S1D')
     assert [h.text for h in toolbox.outstanding()] == ['R337H', 'S1D']
     toolbox.call('record_mentions', {'mentions': [_entry('R337H')]})
     toolbox.call('dismiss_hits', {'dismissals': [{'hit': 2, 'reason': 'a figure panel label'}]})
@@ -143,43 +147,45 @@ def test_hits_are_outstanding_until_recorded_or_dismissed() -> None:
         'change-alone-covers-prefixed-hit',
     ],
 )
-def test_recorded_mentions_cover_matching_scan_hits(text: str, recorded: list[str], outstanding: list[str]) -> None:
-    toolbox = _toolbox(text)
+def test_recorded_mentions_cover_matching_scan_hits(
+    references: variant_reference.References, text: str, recorded: list[str], outstanding: list[str]
+) -> None:
+    toolbox = _toolbox(references, text)
     toolbox.call('record_mentions', {'mentions': [_entry(verbatim) for verbatim in recorded]})
 
     assert [h.text for h in toolbox.outstanding()] == outstanding
 
 
-def test_dismissing_an_unknown_hit_is_an_input_error() -> None:
-    toolbox = _toolbox('R337H')
+def test_dismissing_an_unknown_hit_is_an_input_error(references: variant_reference.References) -> None:
+    toolbox = _toolbox(references, 'R337H')
     with pytest.raises(variant_tools.ToolInputError, match='numbered 9'):
         toolbox.call('dismiss_hits', {'dismissals': [{'hit': 9, 'reason': 'no such hit'}]})
 
 
-def test_without_a_scan_there_is_no_dismiss_tool_and_nothing_outstanding() -> None:
-    toolbox = variant_tools.Toolbox(
-        cast(variant_reference.References, object()), markdown=None, pdf_bytes=None, hits=None
-    )
+def test_without_a_scan_there_is_no_dismiss_tool_and_nothing_outstanding(
+    references: variant_reference.References,
+) -> None:
+    toolbox = variant_tools.Toolbox(references, markdown=None, pdf_bytes=None, hits=None)
     assert 'dismiss_hits' not in {tool['name'] for tool in toolbox.definitions}
     assert toolbox.outstanding() == []
 
 
-def test_each_occurrence_keeps_its_own_context() -> None:
-    toolbox = _toolbox('R337H was reported [4]\nP3 carried R337H')
+def test_each_occurrence_keeps_its_own_context(references: variant_reference.References) -> None:
+    toolbox = _toolbox(references, 'R337H was reported [4]\nP3 carried R337H')
     toolbox.call('record_mentions', {'mentions': [_entry('R337H', 1, 'cited'), _entry('R337H', 2, 'observed')]})
     (mention,) = toolbox.mention_set.mentions
     assert [o.context for o in mention.occurrences] == [variants_pb2.CONTEXT_CITED, variants_pb2.CONTEXT_OBSERVED]
 
 
-def test_a_string_without_a_position_is_a_mention_per_row() -> None:
-    toolbox = _toolbox('| 98 | Arg\u2192His | homozygous |\n| 157 | Arg\u2192His | heterozygous |')
+def test_a_string_without_a_position_is_a_mention_per_row(references: variant_reference.References) -> None:
+    toolbox = _toolbox(references, '| 98 | Arg\u2192His | homozygous |\n| 157 | Arg\u2192His | heterozygous |')
     first, second, again = _entry('Arg\u2192His', 1), _entry('Arg\u2192His', 2), _entry('Arg\u2192His', 1)
     toolbox.call('record_mentions', {'mentions': [first, second, again]})
     assert [len(m.occurrences) for m in toolbox.mention_set.mentions] == [2, 1]
 
 
-def test_a_string_that_parses_as_hgvs_cannot_be_marked_not_writable() -> None:
-    toolbox = _toolbox('| p.M358fs |\na deletion of exon 3')
+def test_a_string_that_parses_as_hgvs_cannot_be_marked_not_writable(references: variant_reference.References) -> None:
+    toolbox = _toolbox(references, '| p.M358fs |\na deletion of exon 3')
     entry = _entry('p.M358fs') | {'disposition': 'not_writable', 'reason': 'garbled table text'}
     with pytest.raises(variant_tools.ToolInputError, match='writable'):
         toolbox.call('record_mentions', {'mentions': [entry]})
@@ -198,40 +204,40 @@ def test_printed_accessions_gather_versions_and_printings() -> None:
     assert (brca2.versions, brca2.unversioned, brca2.line, brca2.printings) == (('4',), True, 1, 2)
 
 
-class _Unparseable:
-    def check(self, expression: str) -> variant_reference.Check:  # noqa: ARG002 — every expression is unparseable here
-        return variant_reference.Check(variants_pb2.OUTCOME_UNPARSEABLE, 'ParseError')
-
-
 @pytest.mark.parametrize(
-    ('expression', 'advice'),
+    ('expression', 'advice', 'error_name'),
     [
-        ('NM_1.1:c.[104-5C>G];[787delG]', 'alleles in trans'),
-        ('NM_1.1:c.841C>T(p.Arg281Trp)', 'one expression per candidate'),
+        ('NM_000101.1:c.[104-5C>G];[787delG]', 'alleles in trans', 'UnsupportedOperationError'),
+        ('NM_000101.1:c.841C>T(p.Arg281Trp)', 'one expression per candidate', 'ParseError'),
     ],
 )
-def test_check_says_what_to_do_with_an_unparseable_shape(expression: str, advice: str) -> None:
-    toolbox = variant_tools.Toolbox(
-        cast(variant_reference.References, _Unparseable()), markdown=None, pdf_bytes=None, hits=None
-    )
-    (result,) = json.loads(cast(str, toolbox.call('check', {'expressions': [expression]})))
+def test_check_says_what_to_do_with_an_unparseable_shape(
+    references: variant_reference.References, expression: str, advice: str, error_name: str
+) -> None:
+    toolbox = variant_tools.Toolbox(references, markdown=None, pdf_bytes=None, hits=None)
+    (result,) = json.loads(typing.cast('str', toolbox.call('check', {'expressions': [expression]})))
+    assert result['result'] == 'unparseable'
     assert advice in result['detail']
-    assert result['detail'].endswith('ParseError')
+    assert error_name in result['detail']
 
 
-def test_a_mention_recorded_with_candidates_promised_and_none_written_is_unwritten() -> None:
-    toolbox = _toolbox('W115G')
+def test_a_mention_recorded_with_candidates_promised_and_none_written_is_unwritten(
+    references: variant_reference.References,
+) -> None:
+    toolbox = _toolbox(references, 'W115G')
     toolbox.call('record_mentions', {'mentions': [_entry('W115G')]})
     assert [m.verbatim for m in toolbox.unwritten()] == ['W115G']
 
 
-def test_an_entry_whose_line_does_not_print_it_is_returned_and_the_rest_recorded() -> None:
-    toolbox = _toolbox('P3 carried R337H\nand P4 carried\nc.1691G>A')
+def test_an_entry_whose_line_does_not_print_it_is_returned_and_the_rest_recorded(
+    references: variant_reference.References,
+) -> None:
+    toolbox = _toolbox(references, 'P3 carried R337H\nand P4 carried\nc.1691G>A')
     result = toolbox.call(
         'record_mentions', {'mentions': [_entry('R337H'), _entry('c.1691G>A', 2), _entry('W115G', 9)]}
     )
     assert [m.verbatim for m in toolbox.mention_set.mentions] == ['R337H', 'c.1691G>A']
-    assert "'W115G' on line 9" in cast(str, result)
+    assert "'W115G' on line 9" in typing.cast('str', result)
 
 
 @pytest.mark.parametrize(
@@ -239,12 +245,11 @@ def test_an_entry_whose_line_does_not_print_it_is_returned_and_the_rest_recorded
     [('R337H', None, {'line'}), (None, b'%PDF', {'page', 'box'}), ('R337H', b'%PDF', {'line', 'page', 'box'})],
 )
 def test_an_entry_is_located_by_what_the_reading_holds(
-    markdown: str | None, pdf_bytes: bytes | None, located_by: set[str]
+    references: variant_reference.References, markdown: str | None, pdf_bytes: bytes | None, located_by: set[str]
 ) -> None:
-    toolbox = variant_tools.Toolbox(
-        cast(variant_reference.References, object()), markdown=markdown, pdf_bytes=pdf_bytes, hits=None
-    )
+    toolbox = variant_tools.Toolbox(references, markdown=markdown, pdf_bytes=pdf_bytes, hits=None)
     (tool,) = [t for t in toolbox.definitions if t['name'] == 'record_mentions']
-    entry = cast(dict[str, Any], tool['input_schema'])['properties']['mentions']['items']
+    schema = typing.cast('dict[str, dict[str, dict[str, dict[str, dict[str, object]]]]]', tool['input_schema'])
+    entry = schema['properties']['mentions']['items']
     assert {'line', 'page', 'box'} & set(entry['properties']) == located_by
-    assert 'species' not in entry['required']
+    assert 'species' not in typing.cast('list[str]', entry['required'])

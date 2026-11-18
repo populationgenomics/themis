@@ -3,92 +3,46 @@
 from __future__ import annotations
 
 import asyncio
-import copy
+import collections
+import functools
 import pathlib
-import types
-from collections.abc import Sequence
-from typing import Any, Self, cast
+from collections.abc import Mapping, Sequence
 
 import anthropic
-import httpx2
 import pytest
 
-from themis.litcache import figure_annotate, ocr, pdf
+from themis.litcache import claude_images, figure_annotate, page_render, pdf
 from themis.litcache.models import figures_pb2
+from themis.testing import anthropic_sse
 
 _PDF = (pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache' / 'oa' / 'source.pdf').read_bytes()
 
 
-def _message(stop_reason: str | None, content: list[Any]) -> anthropic.types.Message:
-    return anthropic.types.Message(
-        id='msg',
-        type='message',
-        role='assistant',
-        model=figure_annotate.MODEL,
+def _turn(
+    stop_reason: str | None,
+    content: Sequence[anthropic_sse.Block] = (),
+    *,
+    request_id: str = 'req',
+    refusal: anthropic_sse.Refusal | None = None,
+) -> anthropic_sse.MessageTurn:
+    return anthropic_sse.MessageTurn(
+        stop_reason=stop_reason,
         content=content,
-        stop_reason=stop_reason,  # pyright: ignore[reportArgumentType]
-        stop_sequence=None,
-        usage=anthropic.types.Usage(input_tokens=1000, output_tokens=10),
+        model=figure_annotate.MODEL,
+        request_id=request_id,
+        refusal=refusal,
     )
 
 
-def _call(figures: list[Any], legends: list[Any] | None = None) -> anthropic.types.Message:
-    answer: dict[str, object] = {'figures': figures, 'legends': legends or []}
-    return _message('tool_use', [anthropic.types.ToolUseBlock(type='tool_use', id='f1', name='figures', input=answer)])
+def _call(
+    figures: Sequence[object],
+    legends: Sequence[object] | None = None,
+) -> anthropic_sse.MessageTurn:
+    answer: dict[str, object] = {'figures': list(figures), 'legends': [] if legends is None else list(legends)}
+    return _turn('tool_use', [anthropic_sse.ToolUse(id='f1', name='figures', input=answer)])
 
 
 _EMPTY = _call([])
-
-
-class _Stream:
-    request_id = 'req'
-
-    def __init__(self, message: anthropic.types.Message | None) -> None:
-        # None is a turn whose connection drops after the model began answering.
-        self._message = message
-        self.current_message_snapshot = message or _message(None, [])
-        self._sent = False
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_: object) -> None:
-        return None
-
-    def __aiter__(self) -> Self:
-        return self
-
-    async def __anext__(self) -> types.SimpleNamespace:
-        if self._sent:
-            if self._message is None:
-                raise httpx2.ReadError('connection reset')
-            raise StopAsyncIteration
-        self._sent = True
-        return types.SimpleNamespace(type='message_start')
-
-    async def get_final_message(self) -> anthropic.types.Message:
-        assert self._message is not None
-        return self._message
-
-
-class _Client:
-    """Answers each page's turns from a script, a page with none scripted finding nothing; keeps each request.
-
-    Pages run one at a time in the tests, so a request opening a conversation opens the next page's.
-    """
-
-    def __init__(self, turns: dict[int, Sequence[anthropic.types.Message | None]] | None = None) -> None:
-        self.messages = self
-        self._turns = {page: list(script) for page, script in (turns or {}).items()}
-        self._page = 0
-        self.requests: list[dict[str, Any]] = []
-
-    def stream(self, **request: Any) -> _Stream:  # noqa: ANN401 — the SDK's keyword surface
-        if len(request['messages']) == 1:
-            self._page += 1
-        self.requests.append(copy.deepcopy(request | {'page': self._page}))
-        script = self._turns.get(self._page)
-        return _Stream(script.pop(0) if script else _EMPTY)
 
 
 class _Tokens:
@@ -96,29 +50,81 @@ class _Tokens:
         del usage, model, stop_reason
 
 
-@pytest.fixture(autouse=True)
-def _one_page_at_a_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(figure_annotate, '_CONCURRENCY', 1)
+@functools.cache
+def _layouts_all() -> tuple[pdf.PageLayout, ...]:
+    return tuple(pdf.page_layouts(_PDF).result()[:3])
 
 
 def _layouts(pages: int = 3) -> list[pdf.PageLayout]:
-    return pdf.page_layouts(_PDF).result()[:pages]
+    all_layouts = _layouts_all()
+    if pages > len(all_layouts):
+        raise ValueError(f'fixture holds {len(all_layouts)} pages, asked for {pages}')
+    return list(all_layouts[:pages])
 
 
-def _annotate(client: _Client, pages: int = 3) -> figure_annotate.Annotation:
-    return asyncio.run(
-        figure_annotate.annotate(
-            _PDF,
-            _layouts(pages),
-            client=cast(anthropic.AsyncAnthropic, client),
-            tokens=cast(ocr.TokenCounter, _Tokens()),
-        )
-    )
+@functools.cache
+def _page_by_image() -> dict[str, int]:
+    """Map each fixture page's base64 PNG to its 1-based page number so concurrent page requests route cleanly."""
+
+    async def render_all() -> dict[str, int]:
+        mapping: dict[str, int] = {}
+        for layout in _layouts_all():
+            image = await page_render.render(_PDF, layout, (0.0, 0.0, 1.0, 1.0), tier=claude_images.HIGH_RESOLUTION)
+            source = image.block()['source']
+            assert source['type'] == 'base64'
+            data = source['data']
+            assert isinstance(data, str)
+            mapping[data] = layout.number
+        assert len(mapping) == len(_layouts_all())
+        return mapping
+
+    return asyncio.run(render_all())
 
 
-def _image_size(client: _Client, page: int) -> tuple[int, int]:
-    (request,) = [r for r in client.requests if r['page'] == page and len(r['messages']) == 1]
-    header = request['messages'][0]['content'][0]['text']
+def _page_of(request: anthropic_sse.RecordedRequest) -> int:
+    image_block = request.content_blocks(0)[1]
+    source = image_block['source']
+    assert isinstance(source, dict)
+    data = source['data']
+    assert isinstance(data, str)
+    return _page_by_image()[data]
+
+
+def _page_harness(
+    turns: Mapping[int, Sequence[anthropic_sse.Turn]] | None = None,
+) -> anthropic_sse.Harness:
+    _page_by_image()
+    queues = {page: collections.deque(script) for page, script in (turns or {}).items()}
+
+    def respond(request: anthropic_sse.RecordedRequest) -> anthropic_sse.Turn:
+        page = _page_of(request)
+        queue = queues.get(page)
+        if queue is None:
+            return _EMPTY
+        if not queue:
+            raise AssertionError(f'no scripted turn left for page {page}')
+        return queue.popleft()
+
+    return anthropic_sse.Harness(responder=respond)
+
+
+def _annotate(harness: anthropic_sse.Harness, pages: int = 3) -> figure_annotate.Annotation:
+    async def run() -> figure_annotate.Annotation:
+        async with harness.client() as client:
+            return await figure_annotate.annotate(
+                _PDF,
+                _layouts(pages),
+                client=client,
+                tokens=_Tokens(),
+            )
+
+    return asyncio.run(run())
+
+
+def _image_size(harness: anthropic_sse.Harness, page: int) -> tuple[int, int]:
+    (request,) = [r for r in harness.requests if _page_of(r) == page and len(r.messages) == 1]
+    header = request.content_blocks(0)[0]['text']
+    assert isinstance(header, str)
     width, _, height = header.partition(', ')[2].removesuffix(' px').partition(' x ')
     return int(width), int(height)
 
@@ -129,22 +135,30 @@ def _figure(
     box: list[float] | None = None,
     kinds: list[str] | None = None,
     legend: list[float] | None = None,
-) -> dict[str, Any]:
-    panel = {'label': 'A', 'kinds': ['pedigree'] if kinds is None else kinds, 'box': box or [100, 200, 600, 700]}
+) -> dict[str, object]:
+    panel: dict[str, object] = {
+        'label': 'A',
+        'kinds': ['pedigree'] if kinds is None else kinds,
+        'box': box or [100, 200, 600, 700],
+    }
     return {'label': label, 'legend': None if legend is None else {'box': legend}, 'panels': [panel]}
 
 
 def test_each_page_is_its_own_request_and_each_box_is_placed_on_that_page() -> None:
-    client = _Client({2: [_call([_figure(legend=[50, 800, 900, 860], kinds=['pedigree', 'sequence_chromatogram'])])]})
+    harness = _page_harness(
+        {2: [_call([_figure(legend=[50, 800, 900, 860], kinds=['pedigree', 'sequence_chromatogram'])])]}
+    )
 
-    annotation = _annotate(client)
+    annotation = _annotate(harness)
 
-    assert [r['page'] for r in client.requests] == [1, 2, 3]
-    for request in client.requests:
-        assert [b['type'] for b in request['messages'][0]['content']].count('image') == 1
-        assert request['tool_choice']['name'] == 'figures'
-        assert request['tool_choice']['disable_parallel_tool_use'] is True
-    width, height = _image_size(client, 2)
+    assert sorted(_page_of(r) for r in harness.requests) == [1, 2, 3]
+    for request in harness.requests:
+        assert [b['type'] for b in request.content_blocks(0)].count('image') == 1
+        tool_choice = request.body['tool_choice']
+        assert isinstance(tool_choice, dict)
+        assert tool_choice['name'] == 'figures'
+        assert tool_choice['disable_parallel_tool_use'] is True
+    width, height = _image_size(harness, 2)
     (figure,) = annotation.figure_set.figures
     (panel,) = figure.panels
     assert list(panel.kinds) == [figures_pb2.FIGURE_KIND_PEDIGREE, figures_pb2.FIGURE_KIND_SEQUENCE_CHROMATOGRAM]
@@ -156,23 +170,26 @@ def test_each_page_is_its_own_request_and_each_box_is_placed_on_that_page() -> N
 
 
 def test_the_instructions_are_cached_and_the_page_is_not() -> None:
-    client = _Client()
+    harness = _page_harness()
 
-    _annotate(client, pages=1)
+    _annotate(harness, pages=1)
 
-    (request,) = client.requests
-    assert not isinstance(request.get('cache_control'), dict)
-    (block,) = request['system']
+    (request,) = harness.requests
+    assert not isinstance(request.body.get('cache_control'), dict)
+    system = request.body['system']
+    assert isinstance(system, list)
+    (block,) = system
+    assert isinstance(block, dict)
     assert block['cache_control'] == {'type': 'ephemeral'}
 
 
 def test_a_box_a_little_past_the_edge_is_brought_back_to_it() -> None:
-    probe = _Client()
+    probe = _page_harness()
     _annotate(probe, pages=1)
     width, height = _image_size(probe, 1)
-    client = _Client({1: [_call([_figure(box=[-3, 10, width + 5, height + 4])])]})
+    harness = _page_harness({1: [_call([_figure(box=[-3, 10, width + 5, height + 4])])]})
 
-    (figure,) = _annotate(client, pages=1).figure_set.figures
+    (figure,) = _annotate(harness, pages=1).figure_set.figures
 
     box = figure.panels[0].place.box
     assert (box.left, box.right, box.bottom) == (0, 1, 1)
@@ -192,124 +209,128 @@ def test_a_box_a_little_past_the_edge_is_brought_back_to_it() -> None:
         _call([], legends=[{'label': 'Figure 1', 'panels': [1], 'box': [50, 100, 900, 300]}]),  # a tag not a string
     ],
 )
-def test_an_answer_no_reader_could_place_goes_back_and_its_fix_is_kept(bad: anthropic.types.Message) -> None:
-    client = _Client({1: [bad, _call([_figure()])]})
+def test_an_answer_no_reader_could_place_goes_back_and_its_fix_is_kept(bad: anthropic_sse.MessageTurn) -> None:
+    harness = _page_harness({1: [bad, _call([_figure()])]})
 
-    annotation = _annotate(client, pages=1)
+    annotation = _annotate(harness, pages=1)
 
-    reply = client.requests[1]['messages'][-1]['content'][0]
+    reply = harness.requests[1].content_blocks(-1)[0]
     assert reply['type'] == 'tool_result'
     assert reply['is_error'] is True
     assert len(annotation.figure_set.figures) == 1
 
 
 def test_a_page_with_no_legends_may_leave_the_list_out() -> None:
-    no_list = _message(
+    no_list = _turn(
         'tool_use',
-        [anthropic.types.ToolUseBlock(type='tool_use', id='f1', name='figures', input={'figures': [_figure()]})],
+        [anthropic_sse.ToolUse(id='f1', name='figures', input={'figures': [_figure()]})],
     )
-    client = _Client({1: [no_list]})
+    harness = _page_harness({1: [no_list]})
 
-    (figure,) = _annotate(client, pages=1).figure_set.figures
+    (figure,) = _annotate(harness, pages=1).figure_set.figures
 
-    assert len(client.requests) == 1
+    assert len(harness.requests) == 1
     assert len(figure.panels) == 1
 
 
 def test_a_figure_reported_with_only_its_legend_is_a_legend_on_the_page() -> None:
     legend_only = {'label': 'Figure 1', 'legend': {'box': [50, 100, 900, 300]}, 'panels': []}
-    client = _Client({1: [_call([_figure()])], 2: [_call([legend_only])]})
+    harness = _page_harness({1: [_call([_figure()])], 2: [_call([legend_only])]})
 
-    (figure,) = _annotate(client).figure_set.figures
+    (figure,) = _annotate(harness).figure_set.figures
 
     assert [p.place.pdf_page for p in figure.panels] == [1]
     assert figure.legend.pdf_page == 2
-    assert len([r for r in client.requests if r['page'] == 2]) == 1  # taken, not sent back
+    assert len([r for r in harness.requests if _page_of(r) == 2]) == 1  # taken, not sent back
 
 
 def test_a_figure_with_neither_a_panel_nor_a_legend_goes_back() -> None:
-    client = _Client({1: [_call([{'label': 'Figure 1', 'legend': None, 'panels': []}]), _call([])]})
+    harness = _page_harness({1: [_call([{'label': 'Figure 1', 'legend': None, 'panels': []}]), _call([])]})
 
-    _annotate(client, pages=1)
+    _annotate(harness, pages=1)
 
-    assert len(client.requests) == 2
+    assert len(harness.requests) == 2
 
 
 def test_a_kind_named_twice_is_kept_once() -> None:
-    client = _Client({1: [_call([_figure(kinds=['pedigree', 'pedigree'])])]})
+    harness = _page_harness({1: [_call([_figure(kinds=['pedigree', 'pedigree'])])]})
 
-    (figure,) = _annotate(client, pages=1).figure_set.figures
+    (figure,) = _annotate(harness, pages=1).figure_set.figures
 
     assert list(figure.panels[0].kinds) == [figures_pb2.FIGURE_KIND_PEDIGREE]
 
 
 def test_an_answer_still_rejected_after_its_repairs_ends_the_annotation() -> None:
-    rejected = [_call([_figure(kinds=['cartoon'])])] * (figure_annotate._REPAIRS + 1)  # pyright: ignore[reportPrivateUsage]
+    rejected = [_call([_figure(kinds=['cartoon'])])] * 3
 
     with pytest.raises(figure_annotate.AnnotationError, match='page 2: an answer was still rejected'):
-        _annotate(_Client({2: rejected}))
+        _annotate(_page_harness({2: rejected}))
 
 
 def test_a_refused_page_ends_the_annotation_and_says_what_the_api_said() -> None:
-    client = _Client({1: [_message('refusal', [])]})
+    refusal = anthropic_sse.Refusal(category='bio', explanation='policy')
+    harness = _page_harness({1: [_turn('refusal', request_id='req', refusal=refusal)]})
 
     with pytest.raises(figure_annotate.AnnotationError) as raised:
-        _annotate(client)
+        _annotate(harness)
 
-    assert raised.value.refusal is not None
-    assert raised.value.refusal['request_id'] == 'req'
-    assert [r['page'] for r in client.requests] == [1, 2, 3]  # every page's request still ran, so its usage counts
+    assert raised.value.refusal == {
+        'category': 'bio',
+        'explanation': 'policy',
+        'request_id': 'req',
+        'message_id': 'msg',
+    }
+    assert sorted(_page_of(r) for r in harness.requests) == [1, 2, 3]  # every page's request still ran
 
 
 def test_a_pdf_past_the_page_limit_is_refused_before_any_request(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(figure_annotate, 'MAX_PAGES', 1)
-    client = _Client()
+    harness = _page_harness()
 
     with pytest.raises(figure_annotate.AnnotationError, match='pages'):
-        _annotate(client)
+        _annotate(harness)
 
-    assert not client.requests
+    assert not harness.requests
 
 
 def test_an_answer_split_over_two_calls_goes_back_with_both_answered() -> None:
-    split = _call([_figure()])
-    split.content.append(
-        anthropic.types.ToolUseBlock(
-            type='tool_use', id='f2', name='figures', input={'figures': [_figure('Figure 2')], 'legends': []}
-        )
+    split = _turn(
+        'tool_use',
+        [
+            anthropic_sse.ToolUse(id='f1', name='figures', input={'figures': [_figure()], 'legends': []}),
+            anthropic_sse.ToolUse(id='f2', name='figures', input={'figures': [_figure('Figure 2')], 'legends': []}),
+        ],
     )
     both = _call([_figure(legend=[50, 800, 400, 860]), _figure('Figure 2', legend=[500, 800, 900, 860])])
-    client = _Client({1: [split, both]})
+    harness = _page_harness({1: [split, both]})
 
-    annotation = _annotate(client, pages=1)
+    annotation = _annotate(harness, pages=1)
 
-    reply = client.requests[1]['messages'][-1]['content']
+    reply = harness.requests[1].content_blocks(-1)
     assert [r['tool_use_id'] for r in reply] == ['f1', 'f2']
     assert len(annotation.figure_set.figures) == 2
 
 
-class _Refusing:
-    """A client whose every request the API refuses as malformed."""
+def test_a_request_the_api_refuses_as_malformed_ends_the_annotation() -> None:
+    malformed = anthropic_sse.StatusError(
+        status_code=400,
+        error_type='invalid_request_error',
+        message='image too large',
+    )
+    harness = anthropic_sse.Harness(responder=lambda _request: malformed)
 
-    def __init__(self) -> None:
-        self.messages = self
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_: object) -> None:
-        return None
-
-    def stream(self, **_request: object) -> _Stream:
-        response = httpx2.Response(400, request=httpx2.Request('POST', 'https://api.anthropic.com/v1/messages'))
-        raise anthropic.BadRequestError('invalid_request_error: image too large', response=response, body=None)
-
-
-def test_a_request_the_api_refuses_as_malformed_ends_the_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(figure_annotate.anthropic, 'AsyncAnthropic', lambda **_: _Refusing())
+    async def run() -> figure_annotate.Annotation:
+        async with harness.http_client() as http_client:
+            return await figure_annotate.annotate_paper(
+                _PDF,
+                _layouts(),
+                tokens=_Tokens(),
+                credentials=anthropic_sse.credentials,
+                http_client=http_client,
+            )
 
     with pytest.raises(figure_annotate.AnnotationError, match='refused the request'):
-        asyncio.run(figure_annotate.annotate_paper(_PDF, _layouts(), tokens=cast(ocr.TokenCounter, _Tokens())))
+        asyncio.run(run())
 
 
 # --- joining pages into figures
@@ -492,12 +513,12 @@ def test_a_figure_split_over_one_page_with_its_legend_on_the_page_before_stays_o
 
 
 def test_a_page_that_would_fail_again_decides_the_paper_over_one_whose_turn_broke_off() -> None:
-    client = _Client({1: [None], 2: [_message('refusal', [])]})
+    harness = _page_harness({1: [anthropic_sse.DroppedStream(model=figure_annotate.MODEL)], 2: [_turn('refusal')]})
 
     with pytest.raises(figure_annotate.AnnotationError, match='page 2: the annotation stopped with refusal'):
-        _annotate(client)
+        _annotate(harness)
 
-    assert [r['page'] for r in client.requests] == [1, 2, 3]
+    assert sorted(_page_of(r) for r in harness.requests) == [1, 2, 3]
 
 
 def test_supplementary_figures_match_their_legends_however_each_is_spelled() -> None:
@@ -587,11 +608,15 @@ def test_the_tags_a_legend_names_reach_the_join_from_the_answer() -> None:
             for i, tag in enumerate('AB')
         ],
     }
-    panel_c = {'label': 'Figure 2', 'legend': None, 'panels': [{**_figure()['panels'][0], 'label': 'C'}]}
+    base_panels = _figure()['panels']
+    assert isinstance(base_panels, list)
+    base_panel = base_panels[0]
+    assert isinstance(base_panel, dict)
+    panel_c = {'label': 'Figure 2', 'legend': None, 'panels': [{**base_panel, 'label': 'C'}]}
     legend = {'label': 'Figure 2', 'panels': ['A', 'B', 'C'], 'box': [50, 1200, 900, 1300]}
-    client = _Client({1: [_call([_figure()])], 2: [_call([photographs])], 3: [_call([panel_c], [legend])]})
+    harness = _page_harness({1: [_call([_figure()])], 2: [_call([photographs])], 3: [_call([panel_c], [legend])]})
 
-    figures = _annotate(client).figure_set.figures
+    figures = _annotate(harness).figure_set.figures
 
     assert [(f.label, [p.place.pdf_page for p in f.panels]) for f in figures] == [
         ('Figure 1', [1]),

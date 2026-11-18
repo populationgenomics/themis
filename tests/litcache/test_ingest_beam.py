@@ -19,7 +19,7 @@ import pathlib
 import threading
 import typing
 import urllib.parse
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 
 import apache_beam as beam
 import httpx2
@@ -37,7 +37,7 @@ from google.cloud import storage as gcs
 from google.cloud import tasks_v2
 from litfetch import artifacts, ids
 
-from themis.litcache import crosswalk, enqueue, identity, ingest_beam, openalex, pipeline, records
+from themis.litcache import crosswalk, enqueue, ingest_beam, openalex, pipeline, records
 from themis.litcache.models import litcache_pb2, work_pb2
 from themis.testing import openalex as fake_openalex
 
@@ -106,27 +106,29 @@ def _fetchers_for(token: str) -> list[litfetch.Fetcher]:
 # The non-OA fixture pdf's own title, for a pdf-only seed that must read as its paper.
 _LONE_DOI = '10.5555/synthetic.lone'
 _TITLES = {_LONE_DOI: 'Synthetic Non-OA Fixture: A Case Study in Nothing'}
+_RESOLVED_DOIS = (
+    *(f'10.5555/synthetic.{c * 3}' for c in 'abcdefghij'),
+    _LONE_DOI,
+    '10.5555/synthetic.other',
+)
+_RESOLVED_WORKS = [
+    fake_openalex.work(
+        work_id=f'W{n}',
+        doi=doi,
+        title=_TITLES.get(doi, f'Synthetic {doi}'),
+        display_name=_TITLES.get(doi, f'Synthetic {doi}'),
+        publication_date='2020-01-01',
+        type='article',
+        primary_location={'source': {'display_name': 'Synthetic Journal'}},
+    )
+    for n, doi in enumerate(_RESOLVED_DOIS, start=1)
+]
 
 
 def _resolve_handler(request: httpx2.Request) -> httpx2.Response:
-    """Resolve the batch: idconv maps nothing (OA closed), OpenAlex echoes each DOI."""
-    if 'openalex' in request.url.host:
-        flt = request.url.params.get('filter', '')
-        dois = flt.removeprefix('doi:').split('|') if flt.startswith('doi:') else []
-        results = [
-            {
-                'id': f'https://openalex.org/{doi}',
-                'doi': f'https://doi.org/{doi}',
-                'title': _TITLES.get(doi, f'Synthetic {doi}'),
-                'display_name': _TITLES.get(doi, f'Synthetic {doi}'),
-                'publication_date': '2020-01-01',
-                'ids': {},  # no pmid → resolves via OpenAlex's own record
-                'type': 'article',
-                'primary_location': {'source': {'display_name': 'Synthetic Journal'}},
-            }
-            for doi in dois
-        ]
-        return httpx2.Response(200, content=json.dumps({'meta': {'count': len(results)}, 'results': results}).encode())
+    """Resolve the batch: idconv maps nothing (OA closed), OpenAlex answers from the synthetic works."""
+    if request.url.host == fake_openalex.HOST:
+        return fake_openalex.answer(_RESOLVED_WORKS, request)
     if 'idconv' in request.url.path:
         return httpx2.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode('utf-8'))
     raise AssertionError(f'unexpected resolve request (Crossref/efetch not expected here): {request.url}')
@@ -761,8 +763,8 @@ def _unresolvable_transport() -> httpx2.MockTransport:
     """A transport where neither idconv nor OpenAlex resolves any DOI."""
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        if 'openalex' in request.url.host:
-            return httpx2.Response(200, content=json.dumps({'meta': {'count': 0}, 'results': []}).encode())
+        if request.url.host == fake_openalex.HOST:
+            return fake_openalex.answer([], request)
         if 'idconv' in request.url.path:
             return httpx2.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode())
         raise AssertionError(f'unexpected resolve request: {request.url}')
@@ -902,25 +904,19 @@ def _precondition_failing_efetch_transport() -> httpx2.MockTransport:
 
 
 def _drifting_openalex_transport() -> httpx2.MockTransport:
-    """A transport where OpenAlex answers each DOI with a work whose declared key holds a value of another shape."""
+    """A transport where OpenAlex answers the drift DOI with a work holding an invalid field shape."""
+    works = [
+        fake_openalex.work(
+            work_id='Wdrift',
+            doi='10.5555/synthetic.drift',
+            title='Drifted',
+            publication_year='soon',
+        )
+    ]
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        if 'openalex' in request.url.host:
-            flt = request.url.params.get('filter', '')
-            dois = flt.removeprefix('doi:').split('|') if flt.startswith('doi:') else []
-            results = [
-                {
-                    'id': f'https://openalex.org/{doi}',
-                    'doi': f'https://doi.org/{doi}',
-                    'title': 'Drifted',
-                    'ids': {},
-                    'publication_year': 'soon',
-                }
-                for doi in dois
-            ]
-            return httpx2.Response(
-                200, content=json.dumps({'meta': {'count': len(results)}, 'results': results}).encode()
-            )
+        if request.url.host == fake_openalex.HOST:
+            return fake_openalex.answer(works, request)
         if 'idconv' in request.url.path:
             return httpx2.Response(200, content=json.dumps({'status': 'ok', 'records': []}).encode())
         raise AssertionError(f'unexpected resolve request: {request.url}')
@@ -1250,6 +1246,7 @@ def test_paper_failed_totals_both_stages(request: pytest.FixtureRequest, gcs_buc
             ingest_beam.IngestionRun.stamped(result, _NOW), functools.partial(_bucket_for, token)
         )
 
+        assert ingest_beam.read_counter(result, 'paper_failed') == 2
         assert rep.counters['paper_failed'] == 2
         assert _manifests(gcs_bucket) == []
     finally:
@@ -1335,24 +1332,112 @@ def test_a_pdf_alone_dropped_again_for_its_committed_paper_is_deleted(
     assert ingest_beam.read_counter(result, 'paper_skipped') == 1
 
 
+class _GenerationCheckedBlob:
+    """A real blob whose delete honours `if_generation_match` and fires storage hooks."""
+
+    def __init__(
+        self,
+        bucket: gcs.Bucket,
+        key: str,
+        *,
+        blob: gcs.Blob | None = None,
+        on_download: Callable[[str], None] | None = None,
+        delete_conflicts: list[str] | None = None,
+    ) -> None:
+        self._bucket = bucket
+        self._key = key
+        self._blob = bucket.blob(key) if blob is None else blob
+        self._on_download = on_download
+        self._delete_conflicts = delete_conflicts
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._blob, name)
+
+    def download_as_bytes(self) -> bytes:
+        data = self._blob.download_as_bytes()
+        if self._on_download is not None:
+            self._on_download(self._key)
+        return data
+
+    def delete(self, *, if_generation_match: int | None = None) -> None:
+        if if_generation_match is None:
+            self._blob.delete()
+            return
+        current = self._bucket.get_blob(self._key)
+        if current is None:
+            raise api_exceptions.NotFound(self._key)
+        if current.generation != if_generation_match:
+            if self._delete_conflicts is not None:
+                self._delete_conflicts.append(self._key)
+            raise api_exceptions.PreconditionFailed(f'{self._key} is at {current.generation}')
+        self._blob.delete(if_generation_match=if_generation_match)
+
+
+class _GenerationCheckedBucket:
+    """A real bucket honouring delete preconditions and firing optional storage-boundary hooks."""
+
+    def __init__(
+        self,
+        bucket: gcs.Bucket,
+        *,
+        on_listed: Callable[[str], None] | None = None,
+        on_download: Callable[[str], None] | None = None,
+        on_get_blob: Callable[[str], None] | None = None,
+    ) -> None:
+        self._bucket = bucket
+        self._on_listed = on_listed
+        self._on_download = on_download
+        self._on_get_blob = on_get_blob
+        self.delete_conflicts: list[str] = []
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._bucket, name)
+
+    def _wrap(self, key: str, blob: gcs.Blob | None = None) -> _GenerationCheckedBlob:
+        return _GenerationCheckedBlob(
+            self._bucket,
+            key,
+            blob=blob,
+            on_download=self._on_download,
+            delete_conflicts=self.delete_conflicts,
+        )
+
+    def list_blobs(self, *, prefix: str | None = None) -> list[_GenerationCheckedBlob]:
+        raw_blobs = list(self._bucket.list_blobs(prefix=prefix))
+        if self._on_listed is not None and prefix is not None:
+            self._on_listed(prefix)
+        return [self._wrap(b.name or '', blob=b) for b in raw_blobs]
+
+    def get_blob(self, key: str) -> _GenerationCheckedBlob | None:
+        current = self._bucket.get_blob(key)
+        if self._on_get_blob is not None:
+            self._on_get_blob(key)
+        if current is None:
+            return None
+        return self._wrap(key, blob=current)
+
+    def blob(self, key: str) -> _GenerationCheckedBlob:
+        return self._wrap(key)
+
+
 @pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_pdf_listed_alone_whose_json_arrives_is_kept_for_the_next_run(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # As an uploader drops a pair pdf first, and the run lists the prefix between the two.
     token, bucket = seeded_bucket
     stem = urllib.parse.quote(_LONE_DOI, safe='')
     bucket.blob(f'ingest/{stem}.pdf').upload_from_string((_NONOA / 'source.pdf').read_bytes())
-    pair = ingest_beam.pair_seed_keys
+    listed = False
 
-    def pair_then_drop_the_json(keys: Iterable[str], *, prefix: str = 'ingest/') -> ingest_beam.SeedPairing:
-        pairing = pair(keys, prefix=prefix)
-        bucket.blob(f'ingest/{stem}.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
-        return pairing
+    def drop_json_after_seed_list(prefix: str) -> None:
+        nonlocal listed
+        if prefix == 'ingest/' and not listed:
+            listed = True
+            bucket.blob(f'ingest/{stem}.json').upload_from_string((_NONOA / 'docling.json').read_bytes())
 
-    monkeypatch.setattr(ingest_beam, 'pair_seed_keys', pair_then_drop_the_json)
+    _BUCKETS[token] = typing.cast('gcs.Bucket', _GenerationCheckedBucket(bucket, on_listed=drop_json_after_seed_list))
     result = _run(token, conn_factory)
 
     assert _LONE_DOI not in {m.external_ids.doi for m in _manifests(bucket)}
@@ -1399,60 +1484,29 @@ def test_a_seed_whose_pdf_its_paper_does_not_hold_is_kept_and_dead_lettered(
     assert settled == stored == 1
 
 
-class _GenerationCheckedBlob:
-    """A real blob whose delete honours `if_generation_match`, which fake-gcs-server ignores."""
-
-    def __init__(self, bucket: gcs.Bucket, key: str) -> None:
-        self._bucket = bucket
-        self._blob = bucket.blob(key)
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._blob, name)
-
-    def delete(self, *, if_generation_match: int) -> None:
-        current = self._bucket.get_blob(self._blob.name)
-        if current is None:
-            raise api_exceptions.NotFound(self._blob.name)
-        if current.generation != if_generation_match:
-            raise api_exceptions.PreconditionFailed(f'{self._blob.name} is at {current.generation}')
-        self._blob.delete(if_generation_match=if_generation_match)
-
-
-class _GenerationCheckedBucket:
-    """A real bucket whose blobs' deletes honour their generation precondition; everything else delegates."""
-
-    def __init__(self, bucket: gcs.Bucket) -> None:
-        self._bucket = bucket
-
-    def __getattr__(self, name: str) -> object:
-        return getattr(self._bucket, name)
-
-    def blob(self, key: str) -> object:
-        return _GenerationCheckedBlob(self._bucket, key)
-
-
 @pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 @pytest.mark.parametrize('suffix', ['pdf', 'json'])
 def test_a_seed_dropped_again_while_the_run_read_it_is_kept(
     suffix: str,
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     token, bucket = seeded_bucket
     stem = _SEEDED_STEMS[0]
     dropped_again = b'%dropped again\n'
-    held = pipeline.why_seed_not_held
+    json_reads = 0
 
-    def drop_again_then_check(
-        bucket_: gcs.Bucket, manifest: litcache_pb2.Manifest, seed: pipeline.SeedObject
-    ) -> str | None:
-        if manifest.external_ids.doi == '10.5555/synthetic.aaa':
-            bucket_.blob(f'ingest/{stem}.{suffix}').upload_from_string(dropped_again)
-        return held(bucket_, manifest, seed)
+    def drop_again_after_write_stage_read(key: str) -> None:
+        nonlocal json_reads
+        # Identity reads the json first; the write stage's _read_seed reads it second.
+        if key == f'ingest/{stem}.json':
+            json_reads += 1
+            if json_reads == 2:
+                bucket.blob(f'ingest/{stem}.{suffix}').upload_from_string(dropped_again)
 
-    monkeypatch.setattr(pipeline, 'why_seed_not_held', drop_again_then_check)
-    _BUCKETS[token] = typing.cast('gcs.Bucket', _GenerationCheckedBucket(bucket))
+    _BUCKETS[token] = typing.cast(
+        'gcs.Bucket', _GenerationCheckedBucket(bucket, on_download=drop_again_after_write_stage_read)
+    )
     result = _run(token, conn_factory)
 
     # The pair waits for the next run, whichever of its objects was dropped again; the other paper's seed is deleted.
@@ -1466,20 +1520,21 @@ def test_a_seed_dropped_again_while_the_run_read_it_is_kept(
 def test_a_seed_gone_before_the_write_stage_is_counted_and_the_run_completes(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # As a retried write bundle finds a seed its first attempt deleted: the run completes.
     token, bucket = seeded_bucket
     stem = _SEEDED_STEMS[0]
-    extract = pipeline.extract_identity
+    deleted = False
 
-    def extract_then_delete(seed: pipeline.SeedObject) -> identity.Identity:
-        ident = extract(seed)
-        if seed.bucket_key == f'{stem}.json':
+    def delete_after_identity_pdf_read(key: str) -> None:
+        nonlocal deleted
+        if key == f'ingest/{stem}.pdf' and not deleted:
+            deleted = True
             bucket.blob(f'ingest/{stem}.pdf').delete()
-        return ident
 
-    monkeypatch.setattr(pipeline, 'extract_identity', extract_then_delete)
+    _BUCKETS[token] = typing.cast(
+        'gcs.Bucket', _GenerationCheckedBucket(bucket, on_download=delete_after_identity_pdf_read)
+    )
     result = _run(token, conn_factory)
 
     assert {m.external_ids.doi for m in _manifests(bucket)} == {'10.5555/synthetic.bbb'}
@@ -1491,19 +1546,19 @@ def test_a_seed_gone_before_the_write_stage_is_counted_and_the_run_completes(
 def test_a_seed_gone_after_the_driver_listed_it_is_counted_and_the_run_completes(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # As an overlapping run deletes a seed this one listed.
     token, bucket = seeded_bucket
     stem = _SEEDED_STEMS[0]
-    pair = ingest_beam.pair_seed_keys
+    deleted = False
 
-    def pair_then_delete(keys: Iterable[str], *, prefix: str = 'ingest/') -> ingest_beam.SeedPairing:
-        pairing = pair(keys, prefix=prefix)
-        bucket.blob(f'ingest/{stem}.pdf').delete()
-        return pairing
+    def delete_after_seed_list(prefix: str) -> None:
+        nonlocal deleted
+        if prefix == 'ingest/' and not deleted:
+            deleted = True
+            bucket.blob(f'ingest/{stem}.pdf').delete()
 
-    monkeypatch.setattr(ingest_beam, 'pair_seed_keys', pair_then_delete)
+    _BUCKETS[token] = typing.cast('gcs.Bucket', _GenerationCheckedBucket(bucket, on_listed=delete_after_seed_list))
     result = _run(token, conn_factory)
 
     assert {m.external_ids.doi for m in _manifests(bucket)} == {'10.5555/synthetic.bbb'}
@@ -1515,23 +1570,28 @@ def test_a_seed_gone_after_the_driver_listed_it_is_counted_and_the_run_completes
 def test_a_pdf_dropped_again_after_the_replacement_check_is_kept(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The drop lands between the check and the delete, so the delete's own generation precondition is what keeps it.
     token, bucket = seeded_bucket
     stem = _SEEDED_STEMS[0]
     dropped_again = b'%dropped again\n'
+    dropped = False
 
-    def drop_again_unseen(self: object, key: str, generation: int) -> bool:
-        del self, generation
-        if key == f'ingest/{stem}.pdf':
+    def drop_after_replacement_check(key: str) -> None:
+        nonlocal dropped
+        if (
+            key == f'ingest/{stem}.pdf'
+            and not dropped
+            and any(m.external_ids.doi == '10.5555/synthetic.aaa' for m in _manifests(bucket))
+        ):
+            dropped = True
             bucket.blob(key).upload_from_string(dropped_again)
-        return False
 
-    monkeypatch.setattr(ingest_beam._WritePaperFn, '_replaced', drop_again_unseen)
-    _BUCKETS[token] = typing.cast('gcs.Bucket', _GenerationCheckedBucket(bucket))
+    checked = _GenerationCheckedBucket(bucket, on_get_blob=drop_after_replacement_check)
+    _BUCKETS[token] = typing.cast('gcs.Bucket', checked)
     result = _run(token, conn_factory)
 
+    assert checked.delete_conflicts == [f'ingest/{stem}.pdf']
     assert _seed_keys(bucket) == [f'ingest/{stem}.json', f'ingest/{stem}.pdf']
     assert bucket.blob(f'ingest/{stem}.pdf').download_as_bytes() == dropped_again
     assert ingest_beam.read_counter(result, 'seed_replaced') == 1

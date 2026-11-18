@@ -204,18 +204,19 @@ def test_a_free_only_pass_asks_no_paper_for_its_main_text(gcs_bucket: gcs.Bucket
     assert _task_names(client) == [f'{_doc_id(n)}--sweep-20261021T1500' for n in (1, 2, 5)]
 
 
-@pytest.mark.parametrize('free_only', [False, True])
-def test_a_survey_counts_what_the_same_pass_asks(gcs_bucket: gcs.Bucket, free_only: bool) -> None:
+@pytest.mark.parametrize(('free_only', 'main_text', 'free'), [(False, 2, 2), (True, 0, 3)])
+def test_a_survey_counts_what_the_same_pass_asks(
+    gcs_bucket: gcs.Bucket, free_only: bool, main_text: int, free: int
+) -> None:
     _commit_each_kind_of_paper(gcs_bucket)
     client = _TasksClient()
 
     result = sweep.survey(gcs_bucket, now=_NOW, deadline=_DEADLINE, free_only=free_only)
     report = _sweep(gcs_bucket, client, free_only=free_only)
 
-    assert result.papers == report.papers
-    assert result.unreadable == report.unreadable
-    assert result.main_text + result.free == report.asked
-    assert result.main_text == sum(work.MAIN_TEXT_TARGET in name for name in _task_names(client))
+    assert (result.papers, result.unreadable, result.main_text, result.free) == (6, 1, main_text, free)
+    assert (report.papers, report.unreadable, report.asked) == (6, 1, main_text + free)
+    assert sum(work.MAIN_TEXT_TARGET in name for name in _task_names(client)) == main_text
 
 
 def test_a_survey_counts_a_spending_step_only_on_papers_asked_for_their_main_text(gcs_bucket: gcs.Bucket) -> None:

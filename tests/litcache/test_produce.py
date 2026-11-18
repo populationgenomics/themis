@@ -17,8 +17,8 @@ import pathlib
 import uuid
 from collections.abc import Callable, Coroutine, Sequence
 
-import litdown
 import pytest
+import requests
 from google.api_core import exceptions as api_exceptions
 from google.cloud import storage as gcs
 from google.protobuf import timestamp_pb2
@@ -27,6 +27,7 @@ from litfetch import ids
 from opentelemetry import trace
 from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
+from tests.litcache import gcs_http
 from themis.litcache import (
     figure_annotate,
     joblog,
@@ -372,17 +373,14 @@ def test_produce_ocrs_the_pdf_when_no_fetchable_id(gcs_bucket: gcs.Bucket) -> No
     assert outcome.read_readiness(gcs_bucket, _DOC_ID) is outcome.Readiness.READY
 
 
-def test_produce_ocrs_the_pdf_when_the_oa_conversion_is_empty(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_produce_ocrs_the_pdf_when_the_oa_conversion_is_empty(gcs_bucket: gcs.Bucket) -> None:
     # A served-but-empty XML conversion falls through to the pdf, not straight to NO_FULL_TEXT.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
-    monkeypatch.setattr(litdown, 'convert', lambda _content: '   \n')
     readiness = asyncio.run(
         _produce(
             gcs_bucket,
             _DOC_ID,
-            fetch=_returning(_oa_source()),
+            fetch=_returning(_oa_source(b'<article><body></body></article>')),
             convert_pdf=_ocr_returning('# OCR\n'),
             now=lambda: _CAPTURED_AT,
         )
@@ -709,21 +707,14 @@ def test_produce_records_failed_on_a_permanent_oa_error_without_a_pdf(gcs_bucket
     assert 'unknown source kind' in marker.error
 
 
-def test_produce_records_failed_on_an_unparseable_oa_body(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_produce_records_failed_on_an_unparseable_oa_body(gcs_bucket: gcs.Bucket) -> None:
     # litdown raising ValueError on a body it cannot parse is permanent for that body; with no PDF, FAILED.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'), sources=[])
-
-    def _unparseable(_content: bytes) -> str:
-        raise ValueError('unrecognized root element')
-
-    monkeypatch.setattr(litdown, 'convert', _unparseable)
     readiness = asyncio.run(
         _produce(
             gcs_bucket,
             _DOC_ID,
-            fetch=_returning(_oa_source()),
+            fetch=_returning(_oa_source(b'<unrecognised/>')),
             fetch_pdf=_pdf_returning(None),
             convert_pdf=_ocr_boom,
             now=lambda: _CAPTURED_AT,
@@ -843,19 +834,17 @@ def test_produce_raises_not_found_when_the_manifest_names_an_absent_seed(gcs_buc
         asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_boom, convert_pdf=_ocr_boom, now=lambda: _CAPTURED_AT))
 
 
-def test_produce_settles_failed_when_the_manifest_refuses_the_write(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_produce_settles_failed_when_the_manifest_refuses_the_write(gcs_bucket: gcs.Bucket) -> None:
     # A write the writer refuses is refused on every attempt, so the paid conversion must not be retried.
+    # CONVERTER_LLM_OCR requires a non-empty model string under Manifest's protovalidate rules.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
-
-    def refuse(*_args: object, **_kwargs: object) -> writer.AddRenderingResult:
-        raise writer.ManifestRefusedError('manifest breaks its constraints: manifest.deps_resolve')
-
-    monkeypatch.setattr(writer, 'add_rendering', refuse)
     readiness = asyncio.run(
         _produce(
-            gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=_ocr_returning('# OCR\n'), now=lambda: _CAPTURED_AT
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            convert_pdf=_ocr_returning('# OCR\n', model=''),
+            now=lambda: _CAPTURED_AT,
         )
     )
     assert readiness is outcome.Readiness.FAILED
@@ -883,21 +872,25 @@ def test_produce_settles_a_stored_manifest_that_breaks_its_constraints_before_an
     assert 'breaks its constraints' in marker.error
 
 
-def test_produce_lets_a_transient_write_fault_propagate_for_retry(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_produce_lets_a_transient_write_fault_propagate_for_retry(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     # A garbled storage response surfaces as a plain ValueError (a JSON decode error); it is not the writer's
     # refusal, so the paper is left to be retried rather than settled.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
 
-    def garbled(*_args: object, **_kwargs: object) -> writer.AddRenderingResult:
-        raise ValueError('Expecting value: line 1 column 1 (char 0)')
+    def garble_manifest_upload(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        if gcs_http.is_upload_for(request, 'manifest.pb'):
+            return gcs_http.response(request, 200, b'<html>bad gateway</html>', content_type='text/html')
+        return forward()
 
-    monkeypatch.setattr(writer, 'add_rendering', garbled)
-    with pytest.raises(ValueError, match='Expecting value'):
+    with (
+        gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, garble_manifest_upload) as bucket,
+        pytest.raises(ValueError, match='Expecting value'),
+    ):
         asyncio.run(
             _produce(
-                gcs_bucket,
+                bucket,
                 _DOC_ID,
                 fetch=_returning(None),
                 convert_pdf=_ocr_returning('# OCR\n'),
@@ -998,17 +991,22 @@ def test_a_transcription_interrupted_before_the_model_answered_is_logged_unspent
     assert not failed.model_answered
 
 
-def test_a_transcription_paid_for_and_not_committed_is_logged_spent(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_transcription_paid_for_and_not_committed_is_logged_spent(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
+    manifest_bytes = gcs_bucket.blob(writer.manifest_path(_DOC_ID)).download_as_bytes()
 
-    def contended(*_args: object, **_kwargs: object) -> writer.AddRenderingResult:
-        raise writer.ConcurrentWriteError('did not converge')
+    def bump_manifest_generation(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        if gcs_http.is_upload_for(request, 'manifest.pb'):
+            gcs_bucket.blob(writer.manifest_path(_DOC_ID)).upload_from_string(manifest_bytes)
+        return forward()
 
-    monkeypatch.setattr(writer, 'add_rendering', contended)
-    with pytest.raises(writer.ConcurrentWriteError):
-        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=_ocr_returning('# OCR\n')))
+    with (
+        gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, bump_manifest_generation) as bucket,
+        pytest.raises(writer.ConcurrentWriteError),
+    ):
+        asyncio.run(_produce(bucket, _DOC_ID, fetch=_returning(None), convert_pdf=_ocr_returning('# OCR\n')))
 
     (failed,) = [e for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.event == work_pb2.JOB_EVENT_FAILED]
     assert failed.model_answered
@@ -1083,52 +1081,101 @@ def test_a_paper_with_text_and_a_broken_manifest_stays_ready(gcs_bucket: gcs.Buc
 
 
 def test_a_transcription_another_attempt_gives_up_on_mid_request_is_left_to_its_task(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+    gcs_bucket: gcs.Bucket, gcs_endpoint: str
 ) -> None:
-    # The other attempt is running when this one tries to begin, and closes before this one rereads the log.
+    # After xml settles, _next_step selects transcription; before joblog.begin reads the log, _OTHER begins
+    # transcription, and right after joblog.begin reads it, _OTHER fails — leaving its retry to its own task.
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
-    joblog.append(
-        gcs_bucket,
-        _DOC_ID,
-        [
-            _OTHER.entry(
-                at=_CAPTURED_AT, step=produce.TRANSCRIPTION_STEP, inputs=(_PDF_HASH,), event=work_pb2.JOB_EVENT_BEGUN
-            )
-        ],
-    )
-    real_begin = joblog.begin
+    xml_settled = False
+    reads_after_xml = 0
 
-    def begin_then_the_other_gives_up(*args: object, **kwargs: object) -> joblog.Verdict:
-        verdict = real_begin(*args, **kwargs)  # type: ignore[arg-type]
-        failed = _OTHER.entry(
-            at=_CAPTURED_AT, step=produce.TRANSCRIPTION_STEP, inputs=(_PDF_HASH,), event=work_pb2.JOB_EVENT_FAILED
-        )
-        joblog.append(gcs_bucket, _DOC_ID, [failed])
-        return verdict
+    def interleave_other(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        nonlocal xml_settled, reads_after_xml
+        if gcs_http.is_upload_for(request, 'job_log.pb'):
+            response = forward()
+            xml_settled = True
+            return response
+        if xml_settled and gcs_http.is_download_for(request, 'job_log.pb'):
+            reads_after_xml += 1
+            if reads_after_xml == 2:
+                joblog.append(
+                    gcs_bucket,
+                    _DOC_ID,
+                    [
+                        _OTHER.entry(
+                            at=_CAPTURED_AT,
+                            step=produce.TRANSCRIPTION_STEP,
+                            inputs=(_PDF_HASH,),
+                            event=work_pb2.JOB_EVENT_BEGUN,
+                        )
+                    ],
+                )
+                response = forward()
+                joblog.append(
+                    gcs_bucket,
+                    _DOC_ID,
+                    [
+                        _OTHER.entry(
+                            at=_CAPTURED_AT,
+                            step=produce.TRANSCRIPTION_STEP,
+                            inputs=(_PDF_HASH,),
+                            event=work_pb2.JOB_EVENT_FAILED,
+                        )
+                    ],
+                )
+                return response
+        return forward()
 
-    monkeypatch.setattr(joblog, 'begin', begin_then_the_other_gives_up)
+    with gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, interleave_other) as bucket:
+        readiness = asyncio.run(_produce(bucket, _DOC_ID, fetch=_returning(None), convert_pdf=_ocr_boom))
+    assert readiness is outcome.Readiness.PENDING
+    transcription_entries = [
+        (e.attempt, e.event) for e in joblog.read(gcs_bucket, _DOC_ID).entries if e.step == produce.TRANSCRIPTION_STEP
+    ]
+    assert transcription_entries == [
+        (_OTHER.id, work_pb2.JOB_EVENT_BEGUN),
+        (_OTHER.id, work_pb2.JOB_EVENT_FAILED),
+    ]
 
-    assert asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None))) is outcome.Readiness.PENDING
 
-
-def test_a_failure_the_log_cannot_record_still_surfaces(
-    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_failure_the_log_cannot_record_still_surfaces(gcs_bucket: gcs.Bucket, gcs_endpoint: str) -> None:
     _write_paper(gcs_bucket, external_ids=litcache_pb2.ExternalIds(doi='10.1/abc'))
-    real_append = joblog.append
-
-    def append_all_but_failures(bucket: gcs.Bucket, doc_id: str, entries: list[work_pb2.JobLogEntry]) -> None:
-        if any(e.event == work_pb2.JOB_EVENT_FAILED for e in entries):
-            raise joblog.LogContentionError('lost every race')
-        real_append(bucket, doc_id, entries)
+    failed_in_flight = False
 
     async def overloaded(_pdf_bytes: bytes, *, timeout: float | None) -> ocr.OcrRendering:
+        nonlocal failed_in_flight
         del timeout
+        failed_in_flight = True
         raise RuntimeError('overloaded')
 
-    monkeypatch.setattr(joblog, 'append', append_all_but_failures)
-    with pytest.raises(RuntimeError, match='overloaded'):
-        asyncio.run(_produce(gcs_bucket, _DOC_ID, fetch=_returning(None), convert_pdf=overloaded))
+    def contend_failure_append(
+        request: requests.PreparedRequest, forward: Callable[[], requests.Response]
+    ) -> requests.Response:
+        if failed_in_flight and gcs_http.is_upload_for(request, 'job_log.pb'):
+            joblog.append(
+                gcs_bucket,
+                _DOC_ID,
+                [
+                    _OTHER.entry(
+                        at=_CAPTURED_AT,
+                        step=produce.TRANSCRIPTION_STEP,
+                        inputs=(_PDF_HASH,),
+                        event=work_pb2.JOB_EVENT_REFUSED,
+                    )
+                ],
+            )
+        return forward()
+
+    with (
+        gcs_http.intercepted_bucket(gcs_bucket, gcs_endpoint, contend_failure_append) as bucket,
+        pytest.raises(RuntimeError, match='overloaded'),
+    ):
+        asyncio.run(_produce(bucket, _DOC_ID, fetch=_returning(None), convert_pdf=overloaded))
+    entries = joblog.read(gcs_bucket, _DOC_ID).entries
+    assert not any(e.event == work_pb2.JOB_EVENT_FAILED for e in entries)
+    assert sum(e.event == work_pb2.JOB_EVENT_REFUSED for e in entries) == 5
 
 
 def test_a_transcription_refused_at_the_spend_limit_is_left_undone(gcs_bucket: gcs.Bucket) -> None:

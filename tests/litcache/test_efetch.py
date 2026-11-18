@@ -19,7 +19,7 @@ import httpx2
 import pytest
 from lxml import etree
 
-from themis.litcache import efetch, metadata_fields, sourced_metadata, transient, upstream_record
+from themis.litcache import efetch, sourced_metadata, transient
 from themis.litcache.models import litcache_pb2
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache'
@@ -410,11 +410,11 @@ def test_fetch_gives_up_on_error_responses_after_the_retry_budget(monkeypatch: p
 
     async def run() -> bytes:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-            return await efetch.fetch(['1'], http_client=client)
+            return await efetch.fetch(['1'], http_client=client, attempts=3)
 
     with pytest.raises(transient.FailedBodyError):
         asyncio.run(run())
-    assert len(calls) == efetch._MAX_FETCH_ATTEMPTS
+    assert len(calls) == 3
 
 
 def test_fetch_gives_up_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -423,11 +423,11 @@ def test_fetch_gives_up_after_the_retry_budget(monkeypatch: pytest.MonkeyPatch) 
 
     async def run() -> bytes:
         async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
-            return await efetch.fetch(['1'], http_client=client)
+            return await efetch.fetch(['1'], http_client=client, attempts=3)
 
     with pytest.raises(httpx2.HTTPStatusError):
         asyncio.run(run())
-    assert len(calls) == efetch._MAX_FETCH_ATTEMPTS
+    assert len(calls) == 3
 
 
 def test_fetch_with_one_attempt_raises_on_the_first_transient_failure() -> None:
@@ -464,13 +464,10 @@ def test_fetch_does_not_retry_a_client_error(monkeypatch: pytest.MonkeyPatch) ->
     assert len(calls) == 1
 
 
-def test_a_record_whose_metadata_cannot_be_filled_is_charged_to_its_pmid(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fill(_source: litcache_pb2.MetadataSource) -> litcache_pb2.Metadata:
-        raise upstream_record.SchemaDriftError(upstream_record.Index.PUBMED, 'title is unreadable')
-
-    monkeypatch.setattr(metadata_fields, 'fill', fill)
-    parsed = efetch.parse_response(_EFETCH_XML.read_bytes())
+def test_a_record_whose_metadata_cannot_be_filled_is_charged_to_its_pmid() -> None:
+    # A non-MeSH descriptor UI fails `Metadata`'s protovalidate check inside `metadata_fields.fill`.
+    drifted = _EFETCH_XML.read_bytes().replace(b'UI="D005260"', b'UI="bad"')
+    parsed = efetch.parse_response(drifted)
     assert parsed.resolved == {}
-    assert 'its metadata cannot be filled: title is unreadable' in parsed.precondition_failed['29089047']
+    assert 'its metadata cannot be filled:' in parsed.precondition_failed['29089047']
+    assert 'bad' in parsed.precondition_failed['29089047']

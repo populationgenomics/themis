@@ -361,7 +361,10 @@ async def fetch_supplementary(
 
 
 async def fetch_supplementary_resolving(
-    article_ids: ids.ArticleIds, *, resolver: resolvers.Resolver
+    article_ids: ids.ArticleIds,
+    *,
+    resolver: resolvers.Resolver,
+    sources: Sequence[litfetch.FileSource] | None = None,
 ) -> list[SupplementaryFile]:
     """The paper's supplementary files from its PubMed Central open-access package, one per name.
 
@@ -373,6 +376,7 @@ async def fetch_supplementary_resolving(
     Args:
         article_ids: The paper's ids.
         resolver: Fills a missing `pmcid`.
+        sources: Supplementary file sources; `None` uses `litfetch.PmcOaFetcher`.
 
     Returns:
         The files, one per name; empty when the package lists none, or none could be found to list.
@@ -385,7 +389,10 @@ async def fetch_supplementary_resolving(
         if article_ids.pmcid is None:
             article_ids = await resolver(article_ids, session)
         files = await fetch_supplementary(
-            article_ids, sources=(litfetch.PmcOaFetcher(),), session=session, skip_unfetchable=False
+            article_ids,
+            sources=(litfetch.PmcOaFetcher(),) if sources is None else sources,
+            session=session,
+            skip_unfetchable=False,
         )
     latest: dict[str, tuple[int, SupplementaryFile]] = {}
     for file in files:
