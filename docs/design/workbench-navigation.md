@@ -81,7 +81,7 @@ Each level of the workspace hierarchy maps to its own route under [`apps/web/src
 └── AnalysisCard grid (newest first) ──links to──► /analysis/[analysisId]
 
 /analysis/[analysisId] (AnalysisPage -> Workbench key={analysis.id})
-├── AppBar: [Logo "Themis" | ← Project ID  Scenario · Time / Title] ─── [Dock | user@example.org]
+├── AppBar: [Logo "Themis" | ← Project ID  Scenario · Time / Title  ⋯] ── [Dock | user@example.org]
 └── ConversationSplit: ConversationPane (+ SteerComposer)  |  TabArea (+ /pane mirror windows)
 ```
 
@@ -138,9 +138,13 @@ Project or Analysis.
 
 Its app bar carries a back link to `/project/<projectId>`, the Analysis's scenario-derived identity (the scenario label
 and creation time above the one-line identifying title, with the full clinical context or prompt in a hover tooltip; see
-[`analysis-scenarios.md`](analysis-scenarios.md)), and the conversation-dock control. At the bottom of the conversation
-region, the steer composer ([`conversation-view.md`](conversation-view.md)) provides the page's only two mutations:
-appending a curator turn (`Steer`) and halting the agent's current step (`Interrupt`).
+[`analysis-scenarios.md`](analysis-scenarios.md)), and the conversation-dock control. Beside the title, a menu copies
+the Analysis ID and, for a run whose session the agent platform holds, the session ID. A maintainer debugging a run
+needs the session ID to find the run in the platform's own tooling. Showing it to a Project member is safe because it is
+not a credential: a session's bearer token is a KMS MAC over the ID ([`rpc-authorization.md`](rpc-authorization.md)),
+and the key never leaves KMS. At the bottom of the conversation region, the steer composer
+([`conversation-view.md`](conversation-view.md)) provides the page's only two mutations: appending a curator turn
+(`Steer`) and halting the agent's current step (`Interrupt`).
 
 ### Shared chrome (`AppBar`)
 
@@ -148,17 +152,18 @@ appending a curator turn (`Steer`) and halting the agent's current step (`Interr
 wordmark linking to `/` on the far left, and the verified caller's email on the far right — and exposes `left` and
 `right` slots that each page populates:
 
-| Page                     | `left` slot                                        | `right` slot              |
-| ------------------------ | -------------------------------------------------- | ------------------------- |
-| `/`                      | —                                                  | —                         |
-| `/project/[projectId]`   | Back link to `/`; Project ID                       | —                         |
-| `/analysis/[analysisId]` | Back link to `/project/[projectId]`; Analysis name | Conversation-dock control |
+| Page                     | `left` slot                                                          | `right` slot              |
+| ------------------------ | -------------------------------------------------------------------- | ------------------------- |
+| `/`                      | —                                                                    | —                         |
+| `/project/[projectId]`   | Back link to `/`; Project ID                                         | —                         |
+| `/analysis/[analysisId]` | Back link to `/project/[projectId]`; Analysis name; identifiers menu | Conversation-dock control |
 
 The two slots behave differently under horizontal compression:
 
 - **`left` names where the curator is** (the back link and the title of the current Project or Analysis) and is the only
   flex child allowed to shrink (`min-w-0`), so a long Project ID or variant identifier truncates with an ellipsis rather
-  than pushing the bar wider than the viewport.
+  than pushing the bar wider than the viewport. The Analysis page's identifiers menu sits here too, beside the title
+  whose identifiers it copies. The menu keeps its size, so the title still truncates first.
 - **`right` holds controls that act on the current view** (sitting just inboard of the verified caller) and never
   shrinks (`shrink-0`), ensuring interactive controls are either wholly visible or absent. When a slot is empty, its
   vertical divider is omitted with it.
