@@ -1,42 +1,55 @@
-"""LiveBackend composition: the response `DescribeVariant` builds from a canned gnomAD result.
-
-The upstream client function is replaced with a canned Result, so no test here touches the network.
-"""
+"""Live `Gnomad.DescribeVariant` over in-process gRPC and `httpx2.MockTransport`."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import contextlib
+import functools
+import json
+import pathlib
 
 import httpx2
 import pytest
 
-from themis.rpc import gnomad_pb2
-from themis.services.evidence.gnomad import backend as gnomad_backend
-from themis.services.evidence.upstreams import gnomad
+from themis.rpc import gnomad_pb2, gnomad_pb2_grpc
+from themis.services.evidence import deps as deps_mod
+from themis.services.evidence.gnomad import interface
+from themis.services.evidence.tests import authz
+from themis.services.evidence.upstreams import destinations
 
-
-def _run[T](call: Callable[[gnomad_backend.LiveBackend], Awaitable[T]]) -> T:
-    async def run() -> T:
-        async with httpx2.AsyncClient() as client:
-            return await call(gnomad_backend.LiveBackend(client))
-
-    return asyncio.run(run())
+_VARIANT_FIXTURE = json.loads(
+    (pathlib.Path(__file__).resolve().parents[2] / 'upstreams' / 'tests' / 'fixtures' / 'gnomad.json').read_bytes()
+)['variant']
 
 
 def test_gnomad_passthrough_maps_empty_cooccurrence_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
+    monkeypatch.setenv('THEMIS_GNOMAD_BACKEND', 'live')
+    seen_queries: list[str] = []
 
-    async def fake_gnomad(_gnomad_id: str, dataset: str, **kwargs: object) -> gnomad.GnomadResult:
-        captured['cooccurrence_with'] = kwargs['cooccurrence_with']
-        return gnomad.GnomadResult(
-            raw={'variant': {'af': 0.01}}, source='gnomAD GraphQL', dataset_versions=(dataset,), query='q'
-        )
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        assert body['variables'] == {'id': '1-55051215-G-A', 'ds': 'gnomad_r4'}
+        seen_queries.append(str(body['query']))
+        return httpx2.Response(200, json=_VARIANT_FIXTURE)
 
-    monkeypatch.setattr(gnomad, 'fetch_gnomad', fake_gnomad)
-    resp = _run(
-        lambda be: be.describe_variant(gnomad_pb2.DescribeVariantRequest(gnomad_id='1-100-A-T', dataset='gnomad_r4'))
-    )
-    assert captured['cooccurrence_with'] is None
-    assert resp.raw.fields['variant'].struct_value.fields['af'].number_value == 0.01
-    assert resp.provenance[0].dataset_versions == ['gnomad_r4']
+    async def run() -> gnomad_pb2.DescribeVariantResponse:
+        async with (
+            contextlib.AsyncExitStack() as stack,
+            destinations.admitting_client(
+                timeout=httpx2.Timeout(10.0), transport=httpx2.MockTransport(handler)
+            ) as http_client,
+        ):
+            deps = deps_mod.Deps(authorizer=authz.authorizer(), http_client=http_client, stack=stack)
+            async with authz.gated(functools.partial(interface.register, deps=deps)) as channel:
+                return await gnomad_pb2_grpc.GnomadStub(channel).DescribeVariant(
+                    gnomad_pb2.DescribeVariantRequest(gnomad_id='1-55051215-G-A', dataset='gnomad_r4')
+                )
+
+    resp = asyncio.run(run())
+    assert len(seen_queries) == 1
+    assert 'variant_cooccurrence' not in seen_queries[0]
+    variant = resp.raw.fields['variant'].struct_value
+    assert variant.fields['exome'].struct_value.fields['homozygote_count'].number_value == 1
+    assert [p.source for p in resp.provenance] == ['gnomAD GraphQL']
+    assert list(resp.provenance[0].dataset_versions) == ['gnomad_r4']
+    assert '1-55051215-G-A' in resp.provenance[0].query

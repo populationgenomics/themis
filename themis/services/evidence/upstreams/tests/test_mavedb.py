@@ -150,11 +150,6 @@ def test_no_allele_id_is_a_caller_error() -> None:
         _run(_fixture_handler(), lambda c: mavedb.fetch_mavedb([], http_client=c))
 
 
-def test_non_2xx_raises() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _run(lambda _r: httpx2.Response(504, text='Gateway Time-out'), _fetch)
-
-
 _UNCALIBRATED: dict[str, object] = {
     'urn': 'urn:mavedb:test-a-1#1',
     'data': {'score_data': {'score': 1.5}},

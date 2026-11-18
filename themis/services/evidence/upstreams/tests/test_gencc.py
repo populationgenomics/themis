@@ -16,7 +16,6 @@ from collections.abc import Sequence
 import pytest
 
 from themis.services.evidence.upstreams import gencc
-from themis.svcv4 import gene_disease_validity
 
 _FIXTURE = pathlib.Path(__file__).resolve().parent / 'fixtures' / 'gencc.tsv'
 
@@ -82,9 +81,8 @@ def test_disagreeing_submitters_reduce_to_the_entity_strongest_and_are_all_kept(
     result = _table().lookup('HGNC:1100')
     assert result is not None
     entity = _entity(result, 'MONDO:0011450')  # one submitter says Definitive, another Strong
-    assert len({s.classification for s in entity.submissions}) > 1
-    strongest = max(entity.submissions, key=lambda s: gene_disease_validity.rank(s.classification))
-    assert entity.classification == strongest.classification
+    assert {s.classification for s in entity.submissions} == {'Definitive', 'Strong'}
+    assert entity.classification == 'Definitive'
     assert len({s.submitter for s in entity.submissions}) == len(entity.submissions)
 
 
@@ -149,7 +147,10 @@ def test_absent_gene_is_none() -> None:
 
 
 def test_case_insensitive() -> None:
-    assert _table().lookup('hgnc:1100') is not None
+    result = _table().lookup('hgnc:1100')
+    assert result is not None
+    assert result.gene_symbol == 'BRCA1'
+    assert _entity(result, 'MONDO:0011450').classification == 'Definitive'
 
 
 @pytest.mark.parametrize('dropped', ['gene_symbol', 'classification_title', 'moi_curie', 'moi_title'])

@@ -59,7 +59,10 @@ def test_gene_in_no_panel_is_none() -> None:
 
 
 def test_case_insensitive() -> None:
-    assert _table().lookup('hgnc:1100') is not None
+    result = _table().lookup('hgnc:1100')
+    assert result is not None
+    assert result.gene_symbol == 'BRCA1'
+    assert result.max_confidence == 3
 
 
 @pytest.mark.parametrize('missing', ['dataset_versions', 'panels', 'genes'])

@@ -72,7 +72,10 @@ def test_absent_gene_is_none_distinct_from_score_zero() -> None:
 
 
 def test_case_insensitive() -> None:
-    assert _table().lookup('hgnc:1100') is not None
+    result = _table().lookup('hgnc:1100')
+    assert result is not None
+    assert result.gene_symbol == 'BRCA1'
+    assert result.haploinsufficiency_score == 3
 
 
 def test_missing_header_raises_value_error() -> None:

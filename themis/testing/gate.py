@@ -1,10 +1,9 @@
-"""The properties that keep admission where rpc-authorization.md puts it, asserted over an image's source.
+"""Static checks that keep admission where rpc-authorization.md puts it, over an image's AST.
 
-Three checks, read off the source the way the grants tests read the program: the entrypoint builds its
-server through ``interceptor.gated_server`` and no other way; no module of the image constructs a bare
-server; and a servicer never reads the call's metadata itself, so an identity header has exactly one
-reader, the interceptor. Each image's test module calls them against its own modules, so the next image
-is covered by three lines rather than by copying the tests.
+Two checks over parsed syntax trees: no module of the image constructs a bare ``grpc.aio`` server
+(so admission is exercised behaviourally at the entrypoint without an un-gated server hiding in a
+helper module), and a servicer never reads the call's metadata itself (so an identity header has
+one reader, the interceptor).
 """
 
 from __future__ import annotations
@@ -14,33 +13,70 @@ import inspect
 import pathlib
 import types
 
-from themis.clients.auth import interceptor as interceptor_mod
-
-_BARE_SERVER = 'grpc.aio.server('
-
 
 def _source(module: types.ModuleType) -> str:
     return pathlib.Path(inspect.getfile(module)).read_text('utf-8')
 
 
-def assert_built_only_through_the_gated_factory(entrypoint: types.ModuleType) -> None:
-    """``entrypoint`` calls ``gated_server`` and never ``grpc.aio.server``; the factory is the one bare constructor."""
-    source = _source(entrypoint)
-    if _BARE_SERVER in source:
-        raise AssertionError(f'{entrypoint.__name__} builds a bare server, which the auth interceptor never gates')
-    if 'gated_server(' not in source:
-        raise AssertionError(f'{entrypoint.__name__} does not build its server through gated_server')
-    if _source(interceptor_mod).count(_BARE_SERVER) != 1:
-        raise AssertionError('the gated factory is no longer the one place a bare server is constructed')
+def _server_bindings(tree: ast.AST) -> tuple[set[str], set[str], set[str]]:
+    """Names bound in ``tree`` to ``grpc``, ``grpc.aio``, and ``grpc[.aio].server``."""
+    grpc_names: set[str] = set()
+    aio_names: set[str] = set()
+    server_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == 'grpc':
+                    grpc_names.add(alias.asname or 'grpc')
+                elif alias.name == 'grpc.aio':
+                    if alias.asname:
+                        aio_names.add(alias.asname)
+                    else:
+                        grpc_names.add('grpc')
+        elif isinstance(node, ast.ImportFrom) and node.module == 'grpc':
+            for alias in node.names:
+                if alias.name == 'aio':
+                    aio_names.add(alias.asname or 'aio')
+                elif alias.name == 'server':
+                    server_names.add(alias.asname or 'server')
+        elif isinstance(node, ast.ImportFrom) and node.module == 'grpc.aio':
+            for alias in node.names:
+                if alias.name == 'server':
+                    server_names.add(alias.asname or 'server')
+    return grpc_names, aio_names, server_names
+
+
+def _constructs_a_bare_server(source: str, *, filename: str) -> bool:
+    tree = ast.parse(source, filename=filename)
+    grpc_names, aio_names, server_names = _server_bindings(tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Name) and node.func.id in server_names:
+            return True
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != 'server':
+            continue
+        receiver = node.func.value
+        if isinstance(receiver, ast.Name) and (receiver.id in aio_names or receiver.id in grpc_names):
+            return True
+        if (
+            isinstance(receiver, ast.Attribute)
+            and receiver.attr == 'aio'
+            and isinstance(receiver.value, ast.Name)
+            and receiver.value.id in grpc_names
+        ):
+            return True
+    return False
 
 
 def assert_no_module_constructs_a_server(package: types.ModuleType) -> None:
-    """No module under ``package``, tests aside, constructs a bare ``grpc.aio`` server."""
+    """No module under ``package``, tests aside, constructs a bare ``grpc`` or ``grpc.aio`` server."""
     root = pathlib.Path(inspect.getfile(package)).parent
     offenders = [
         str(path.relative_to(root))
-        for path in root.rglob('*.py')
-        if 'tests' not in path.parts and _BARE_SERVER in path.read_text('utf-8')
+        for path in sorted(root.rglob('*.py'))
+        if 'tests' not in path.relative_to(root).parts
+        and _constructs_a_bare_server(path.read_text('utf-8'), filename=str(path))
     ]
     if offenders:
         raise AssertionError(f'modules constructing a bare server: {offenders}')

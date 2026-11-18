@@ -168,11 +168,16 @@ def test_an_entity_id_the_index_does_not_hold_is_an_empty_answer() -> None:
 
 
 def test_the_live_adapter_asks_upstream_under_the_normalised_identifiers_most_specific_first() -> None:
-    _, asked = _live(
+    found, _ = _live(
         {
             **_UPSTREAM,
-            'autocomplete:CA1000': [],
-            'autocomplete:GENE1 c.1063G>A': [],
+            'autocomplete:CA1000': [{'_id': 'litvar@CA1000##'}],
+            'entity:litvar@CA1000##': {'_id': 'litvar@CA1000##', 'clingen_id': 'CA1000', 'gene': ['GENE1']},
+            'search:litvar@CA1000##': _litvar_page(['100'], count=1),
+            'autocomplete:GENE1 A355T': [{'_id': 'litvar@#77#p.A355T'}],
+            'autocomplete:GENE1 c.1063G>A': [{'_id': 'litvar@#77#c.1063G>A'}],
+            'entity:litvar@#77#c.1063G>A': {'_id': 'litvar@#77#c.1063G>A', 'gene': ['GENE1'], 'hgvs': 'c.1063G>A'},
+            'search:litvar@#77#c.1063G>A': _litvar_page(['555'], count=1),
         },
         lambda d: d.search_litvar(
             _requested(
@@ -186,23 +191,28 @@ def test_the_live_adapter_asks_upstream_under_the_normalised_identifiers_most_sp
             max_entities=8,
         ),
     )
-    assert [key for key in asked if key.startswith('autocomplete:')] == [
-        'autocomplete:CA1000',
-        'autocomplete:rs00',
-        'autocomplete:GENE1 A355T',
-        'autocomplete:GENE1 c.1063G>A',
+    assert [entity.labels.id for entity in found.entities] == [
+        'litvar@CA1000##',
+        'litvar@rs00##',
+        'litvar@#77#p.A355T',
+        'litvar@#77#c.1063G>A',
     ]
+    assert found.total_entities == 4
 
 
 def test_the_live_adapter_skips_change_queries_without_a_gene() -> None:
     # A bare change string matches across every gene the index knows, so it is never sent alone.
-    _, asked = _live(
-        _UPSTREAM,
+    found, _ = _live(
+        {
+            **_UPSTREAM,
+            'autocomplete:A355T': [{'_id': 'litvar@#77#p.A355T'}],
+            'autocomplete:c.1063G>A': [{'_id': 'litvar@#77#p.A355T'}],
+        },
         lambda d: d.search_litvar(
             _requested(hgvs_c='c.1063G>A', protein_change='p.A355T', rsid='rs00'), max_results=10, max_entities=8
         ),
     )
-    assert [key for key in asked if key.startswith('autocomplete:')] == ['autocomplete:rs00']
+    assert [entity.labels.id for entity in found.entities] == ['litvar@rs00##']
 
 
 def test_the_live_gene_listing_narrows_and_ranks() -> None:

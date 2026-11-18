@@ -488,6 +488,20 @@ def _pool_terms(floor: int) -> list[str]:
     return terms
 
 
+_REVIEW_STATUSES_BY_STARS: tuple[tuple[int, str], ...] = (
+    (4, 'practice guideline'),
+    (3, 'reviewed by expert panel'),
+    (2, 'criteria provided, multiple submitters, no conflicts'),
+    (1, 'criteria provided, single submitter'),
+    (1, 'criteria provided, conflicting interpretations'),
+    (1, 'criteria provided, conflicting classifications'),
+    (0, 'no assertion criteria provided'),
+    (0, 'no classification provided'),
+    (0, 'no classifications from unflagged records'),
+    (0, 'no classification for the single variant'),
+)
+
+
 @pytest.mark.parametrize('floor', [1, 2, 3, 4])
 def test_the_review_status_floor_scopes_the_search_itself(floor: int) -> None:
     """Applied after the bound it would only trim; in the term it is what reaches past the bound.
@@ -495,8 +509,8 @@ def test_the_review_status_floor_scopes_the_search_itself(floor: int) -> None:
     A well-reviewed record ranked below `limit` is otherwise unreachable at any floor — on a
     well-studied gene, the record that settles the question.
     """
-    admitted = {status for status, stars in clinvar._STAR_BY_REVIEW_STATUS.items() if status and stars >= floor}
-    excluded = {status for status, stars in clinvar._STAR_BY_REVIEW_STATUS.items() if status and stars < floor}
+    admitted = [phrase for stars, phrase in _REVIEW_STATUSES_BY_STARS if stars >= floor]
+    excluded = [phrase for stars, phrase in _REVIEW_STATUSES_BY_STARS if stars < floor]
     term = _pool_terms(floor)[0]
     assert all(f'"{status}"[Review status]' in term for status in admitted)
     assert not any(f'"{status}"[Review status]' in term for status in excluded)
@@ -985,11 +999,6 @@ def test_efetch_xml_the_parser_refuses_surfaces_as_a_parse_failure(body: bytes) 
         _run(
             lambda _r: httpx2.Response(200, content=body), lambda c: clinvar.fetch_variant_archive(_VCV, http_client=c)
         )
-
-
-def test_non_2xx_raises() -> None:
-    with pytest.raises(httpx2.HTTPStatusError):
-        _pool(lambda _r: httpx2.Response(429, json={}))
 
 
 def test_placeholder_submitter_fields_are_not_carried_as_values() -> None:

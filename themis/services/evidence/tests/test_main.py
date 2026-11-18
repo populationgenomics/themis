@@ -196,6 +196,18 @@ def test_serve_answers_an_admitted_caller(monkeypatch: pytest.MonkeyPatch) -> No
     assert reply.provenance[0].source == 'gnomAD GraphQL'
 
 
+def test_serve_rejects_an_unauthenticated_caller(monkeypatch: pytest.MonkeyPatch) -> None:
+    _seed_entrypoint_env(monkeypatch)
+
+    async def call_unauthenticated(channel: grpc.aio.Channel) -> grpc.StatusCode:
+        request = gnomad_pb2.DescribeVariantRequest(gnomad_id='1-100-A-T', dataset='gnomad_r4')
+        with pytest.raises(grpc.aio.AioRpcError) as denied:
+            await gnomad_pb2_grpc.GnomadStub(channel).DescribeVariant(request)
+        return denied.value.code()
+
+    assert _run_against_server(monkeypatch, call_unauthenticated) is grpc.StatusCode.UNAUTHENTICATED
+
+
 def test_serve_denies_an_unadmitted_caller(monkeypatch: pytest.MonkeyPatch) -> None:
     _seed_entrypoint_env(monkeypatch)
 

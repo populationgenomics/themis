@@ -1,26 +1,39 @@
-"""The literature interface's env contract: which backend the one selector builds, fail-loud."""
+"""The literature interface's env contract and gRPC registration seam."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
+import functools
+import hashlib
 import json
-from typing import Self
+import pathlib
+from collections.abc import AsyncIterator, Callable
+from typing import override
 
+import grpc
+import grpc.aio
 import httpx2
+import pg8000.dbapi
 import pytest
-from google.api_core import exceptions as api_exceptions
-from google.cloud.sql import connector as sql_connector
+from google.cloud import storage, tasks_v2
+from google.cloud.tasks_v2.services.cloud_tasks.transports import grpc as tasks_grpc
+from google.protobuf import timestamp_pb2
 
-from themis.litcache import enqueue
-from themis.rpc import literature_pb2
+from themis.common import authored_status
+from themis.litcache import crosswalk, metadata_fields, sourced_metadata
+from themis.litcache.models import litcache_pb2, work_pb2
+from themis.rpc import literature_pb2, literature_pb2_grpc
 from themis.services.evidence import deps as deps_mod
-from themis.services.evidence.literature import backend as literature_backend
-from themis.services.evidence.literature import config
-from themis.services.evidence.literature import live as live_mod
+from themis.services.evidence.literature import config, interface
 from themis.services.evidence.tests import authz
+from themis.services.evidence.upstreams import destinations
+from themis.testing import in_process_grpc
 
-_BUCKET = 'a-bucket'
+_FIXTURES = pathlib.Path(__file__).resolve().parents[2] / 'upstreams' / 'tests' / 'fixtures'
+_EUROPEPMC_BATCH = json.loads((_FIXTURES / 'europepmc_batch_records.json').read_text('utf-8'))
+
 _OPENALEX_API_KEY_VAR = 'THEMIS_LITERATURE_OPENALEX_API_KEY'
 _OPENALEX_API_KEY = 'an-openalex-key'
 _CROSSWALK_VARS = (
@@ -47,55 +60,136 @@ _CONVERT_ENV = dict(
 )
 
 _EMPTY_SEED = json.dumps({'store': {}, 'discovery': {'records': [], 'entities': [], 'book_articles': []}})
+_CAPTURED = dt.datetime(2026, 6, 29, tzinfo=dt.UTC)
+_MARKDOWN = '# A live paper\n\nBody text.\n'
 
 
-def _deps(stack: contextlib.AsyncExitStack | None = None) -> deps_mod.Deps:
-    return deps_mod.Deps(
-        authorizer=authz.authorizer(),
-        http_client=httpx2.AsyncClient(),
-        stack=stack if stack is not None else contextlib.AsyncExitStack(),
+def _no_network(request: httpx2.Request) -> httpx2.Response:
+    raise AssertionError(f'unexpected network call: {request.url}')
+
+
+def _track_storage_clients(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[storage.Client], list[storage.Client]]:
+    created: list[storage.Client] = []
+    closed: list[storage.Client] = []
+
+    class _TrackedStorageClient(storage.Client):
+        def __init__(self) -> None:
+            super().__init__()
+            created.append(self)
+
+        @override
+        def close(self) -> None:
+            closed.append(self)
+            super().close()
+
+    monkeypatch.setattr(config.storage, 'Client', _TrackedStorageClient)
+    return created, closed
+
+
+@contextlib.asynccontextmanager
+async def _serving(
+    *,
+    handler: Callable[[httpx2.Request], httpx2.Response] = _no_network,
+    stack: contextlib.AsyncExitStack | None = None,
+) -> AsyncIterator[literature_pb2_grpc.LiteratureAsyncStub]:
+    async with contextlib.AsyncExitStack() as owned:
+        active_stack = stack if stack is not None else owned
+        http_client = await owned.enter_async_context(
+            destinations.admitting_client(timeout=httpx2.Timeout(10.0), transport=httpx2.MockTransport(handler))
+        )
+        deps = deps_mod.Deps(authorizer=authz.authorizer(), http_client=http_client, stack=active_stack)
+        async with in_process_grpc.serving(
+            functools.partial(interface.register, deps=deps),
+            interceptors=(authz.InjectMetadata(authz.ADMITTED),),
+            server_interceptors=authz.server_interceptors(),
+        ) as channel:
+            yield literature_pb2_grpc.LiteratureStub(channel)
+
+
+def _start_server(*, stack: contextlib.AsyncExitStack | None = None) -> None:
+    async def run() -> None:
+        async with _serving(stack=stack):
+            pass
+
+    asyncio.run(run())
+
+
+def _seed_paper(bucket: storage.Bucket, doc_id: str, *, ready: bool) -> None:
+    stamp = timestamp_pb2.Timestamp()
+    stamp.FromDatetime(_CAPTURED)
+    xml_source = litcache_pb2.Source(
+        handle='xml',
+        media_type=litcache_pb2.SourceFormat.SOURCE_FORMAT_XML,
+        licence='https://creativecommons.org/licenses/by/4.0/',
+        licence_basis=litcache_pb2.LicenceBasis.LICENCE_BASIS_ARTIFACT,
+        access=litcache_pb2.Access(free_to_read=litcache_pb2.FreeToRead()),
+        revisions=[
+            litcache_pb2.Revision(
+                hash='xmlrev',
+                kind=litcache_pb2.SourceKind.SOURCE_KIND_PMC_OA_S3,
+                captured_at=stamp,
+            )
+        ],
     )
+    manifest = litcache_pb2.Manifest(
+        doc_id=doc_id,
+        external_ids=litcache_pb2.ExternalIds(doi='10.1/x'),
+        sources=[xml_source],
+    )
+    if ready:
+        rendering_hash = hashlib.sha256(_MARKDOWN.encode('utf-8')).hexdigest()
+        manifest.records[rendering_hash].CopyFrom(
+            litcache_pb2.Record(
+                deps=['xmlrev'],
+                created_at=stamp,
+                rendering=litcache_pb2.RenderingConstruction(
+                    converter=litcache_pb2.Converter.CONVERTER_LITDOWN,
+                    converter_version='0.4.0',
+                ),
+            )
+        )
+        manifest.refs['markdown'] = rendering_hash
+        bucket.blob(f'papers/{doc_id}/renderings/{rendering_hash}.md').upload_from_string(_MARKDOWN)
+    source = litcache_pb2.MetadataSource()
+    source.pubmed.article.medline_citation.article.article_title.value = 'A live paper'
+    sourced = litcache_pb2.SourcedMetadata(metadata=metadata_fields.fill(source), source=source)
+    bucket.blob(f'papers/{doc_id}/manifest.pb').upload_from_string(manifest.SerializeToString())
+    bucket.blob(f'papers/{doc_id}/metadata.pb').upload_from_string(sourced_metadata.to_canonical_bytes(sourced))
 
 
-def _from_env(stack: contextlib.AsyncExitStack | None = None) -> literature_backend.LiteratureBackend:
-    """Select the backend as the entrypoint would; the fixture path reaches no client."""
-    return config.backend_from_env(_deps(stack))
-
-
-class _FakeBucket:
-    """A lazy bucket handle: listing a bucket that does not exist is what raises, as in GCS."""
-
-    def __init__(self, name: str, existing: str | None) -> None:
-        self._name = name
-        self._existing = existing
-
-    def list_blobs(self, *, prefix: str, max_results: int) -> list[str]:
-        if self._name != self._existing:
-            raise api_exceptions.NotFound(f'no such bucket: {self._name}')
-        return [f'{prefix}doc-1/rendering.md'][:max_results]
-
-
-class _FakeClient:
-    """A ``storage.Client`` stand-in that records its own close."""
-
-    def __init__(self, closed: list[bool], *, existing_bucket: str | None) -> None:
-        self._closed = closed
-        self._existing_bucket = existing_bucket
-
-    def bucket(self, name: str) -> _FakeBucket:
-        return _FakeBucket(name, self._existing_bucket)
-
-    def close(self) -> None:
-        self._closed.append(True)
-
-
-def _live_env(monkeypatch: pytest.MonkeyPatch, client: _FakeClient) -> None:
+def _live_env(monkeypatch: pytest.MonkeyPatch, *, bucket_name: str, gcs_endpoint: str) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
-    monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', _BUCKET)
+    monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', bucket_name)
     monkeypatch.setenv(_OPENALEX_API_KEY_VAR, _OPENALEX_API_KEY)
+    monkeypatch.setenv('STORAGE_EMULATOR_HOST', gcs_endpoint)
+    monkeypatch.setenv('GOOGLE_CLOUD_PROJECT', 'themis-test')
     for var in (*_CROSSWALK_VARS, *_CONVERT_VARS):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(config.storage, 'Client', lambda: client)
+
+
+def _wire_crosswalk(
+    monkeypatch: pytest.MonkeyPatch,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+) -> tuple[list[tuple[str, str, str]], list[bool]]:
+    dialled: list[tuple[str, str, str]] = []
+    closed: list[bool] = []
+
+    class _Dialer:
+        def close(self) -> None:
+            closed.append(True)
+
+    dialer = _Dialer()
+
+    def dial_sql(pool: object, *, connection_name: str, database: str, db_user: str) -> pg8000.dbapi.Connection:
+        assert pool is dialer
+        dialled.append((connection_name, database, db_user))
+        return crosswalk_connect()
+
+    monkeypatch.setattr(config.sql, 'lazy_connector', lambda: dialer)
+    monkeypatch.setattr(config.sql, 'iam_connect', dial_sql)
+    return dialled, closed
 
 
 def _fixture_env(monkeypatch: pytest.MonkeyPatch, seed: str = _EMPTY_SEED) -> None:
@@ -106,40 +200,36 @@ def _fixture_env(monkeypatch: pytest.MonkeyPatch, seed: str = _EMPTY_SEED) -> No
 def test_backend_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('THEMIS_LITERATURE_BACKEND', raising=False)
     with pytest.raises(SystemExit, match='THEMIS_LITERATURE_BACKEND'):
-        _from_env()
+        _start_server()
 
 
 def test_unknown_backend_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'bogus')
     with pytest.raises(SystemExit, match='bogus'):
-        _from_env()
+        _start_server()
 
 
 def test_live_backend_requires_the_fulltext_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
     monkeypatch.delenv('THEMIS_FULLTEXT_BUCKET', raising=False)
     with pytest.raises(SystemExit, match='THEMIS_FULLTEXT_BUCKET'):
-        _from_env()
+        _start_server()
 
 
 def test_fixture_seed_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The seed var, not the selector, is named — the operator has to know which value is missing.
     monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'fixture')
     monkeypatch.delenv('THEMIS_LITERATURE_FIXTURE', raising=False)
     with pytest.raises(SystemExit, match='THEMIS_LITERATURE_FIXTURE'):
-        _from_env()
+        _start_server()
 
 
 @pytest.mark.parametrize('section', [pytest.param('store', id='store'), pytest.param('discovery', id='discovery')])
 def test_every_section_of_the_seed_is_required(monkeypatch: pytest.MonkeyPatch, section: str) -> None:
-    # An absent section is a seed nobody finished writing. Defaulting it to empty would stand the
-    # interface up answering "nothing here" for one whole half — a fact about the seed that reaches
-    # a run as a fact about the store or the index.
     document = {'store': {}, 'discovery': {'records': [], 'entities': [], 'book_articles': []}}
     del document[section]
     _fixture_env(monkeypatch, json.dumps(document))
     with pytest.raises(SystemExit, match=section):
-        _from_env()
+        _start_server()
 
 
 @pytest.mark.parametrize(
@@ -160,7 +250,7 @@ def test_every_section_of_the_seed_is_required(monkeypatch: pytest.MonkeyPatch, 
 def test_a_seed_the_backend_cannot_stand_up_on_exits(monkeypatch: pytest.MonkeyPatch, seed: str) -> None:
     _fixture_env(monkeypatch, seed)
     with pytest.raises(SystemExit, match='THEMIS_LITERATURE_FIXTURE'):
-        _from_env()
+        _start_server()
 
 
 def test_the_fixture_selector_seeds_both_halves_of_the_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,188 +267,261 @@ def test_the_fixture_selector_seeds_both_halves_of_the_backend(monkeypatch: pyte
             }
         ),
     )
-    backend = _from_env()
-    info = asyncio.run(backend.describe_paper('doc-1'))
+
+    async def run() -> tuple[literature_pb2.PaperInfo, literature_pb2.SearchEuropePmcResponse]:
+        async with _serving() as stub:
+            info = await stub.DescribePaper(literature_pb2.DescribePaperRequest(doc_id='doc-1'))
+            searched = await stub.SearchEuropePmc(
+                literature_pb2.SearchEuropePmcRequest(query='indexed', max_results=10)
+            )
+            return info, searched
+
+    info, searched = asyncio.run(run())
     assert info.title == 'A paper'
     assert info.default_representation == literature_pb2.REPRESENTATION_MARKDOWN
-    assert [record.pmid for record in asyncio.run(backend.search_europe_pmc('indexed', 10)).records] == ['111']
+    assert [record.pmid for record in searched.records] == ['111']
 
 
-def test_the_live_selector_hands_its_client_to_the_stack(monkeypatch: pytest.MonkeyPatch) -> None:
-    closed: list[bool] = []
-    _live_env(monkeypatch, _FakeClient(closed, existing_bucket=_BUCKET))
+def test_the_live_selector_hands_its_client_to_the_stack(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+) -> None:
+    assert gcs_bucket.name is not None
+    doc_id = '000006fa-e679-4f46-a052-8fb0e69f280c'
+    _seed_paper(gcs_bucket, doc_id, ready=True)
+    _live_env(monkeypatch, bucket_name=gcs_bucket.name, gcs_endpoint=gcs_endpoint)
 
-    async def build() -> None:
-        async with contextlib.AsyncExitStack() as stack:
-            # One selector wires both halves: no separate live/fixture choice for the indexes.
-            assert isinstance(_from_env(stack), live_mod.LiveBackend)
-            assert not closed, 'the client is held open for as long as the server runs'
-        assert closed, 'the stack closed the client on unwind'
+    created_clients, closed_clients = _track_storage_clients(monkeypatch)
 
-    asyncio.run(build())
+    def europe_pmc_handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.url.host == 'www.ebi.ac.uk'
+        assert request.url.params.get('query') == 'variant'
+        assert request.url.params.get('pageSize') == '5'
+        return httpx2.Response(200, json=_EUROPEPMC_BATCH)
+
+    async def run() -> tuple[literature_pb2.PaperInfo, literature_pb2.SearchEuropePmcResponse]:
+        async with contextlib.AsyncExitStack() as stack, _serving(handler=europe_pmc_handler, stack=stack) as stub:
+            info = await stub.DescribePaper(literature_pb2.DescribePaperRequest(doc_id=doc_id))
+            searched = await stub.SearchEuropePmc(literature_pb2.SearchEuropePmcRequest(query='variant', max_results=5))
+            assert len(created_clients) == 1
+            assert not closed_clients, 'the client is held open for as long as the server runs'
+        assert closed_clients == created_clients, 'the stack closed the client on unwind'
+        return info, searched
+
+    info, searched = asyncio.run(run())
+    assert info.title == 'A live paper'
+    assert [r.pmid for r in searched.records] == ['24789689', '24789688']
 
 
 def test_live_backend_requires_the_openalex_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
-    monkeypatch.delenv(_OPENALEX_API_KEY_VAR)
+    monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
+    monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', 'a-bucket')
+    monkeypatch.delenv(_OPENALEX_API_KEY_VAR, raising=False)
     with pytest.raises(SystemExit, match=_OPENALEX_API_KEY_VAR):
-        _from_env()
+        _start_server()
 
 
 def test_a_malformed_openalex_api_key_fails_at_startup_without_showing_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+    monkeypatch.setenv('THEMIS_LITERATURE_BACKEND', 'live')
+    monkeypatch.setenv('THEMIS_FULLTEXT_BUCKET', 'a-bucket')
     monkeypatch.setenv(_OPENALEX_API_KEY_VAR, f'{_OPENALEX_API_KEY}\n')
     with pytest.raises(SystemExit, match=_OPENALEX_API_KEY_VAR) as caught:
-        _from_env()
+        _start_server()
     assert _OPENALEX_API_KEY not in str(caught.value)
 
 
-def test_live_selector_fails_loud_on_an_unreadable_bucket(monkeypatch: pytest.MonkeyPatch) -> None:
-    closed: list[bool] = []
-    _live_env(monkeypatch, _FakeClient(closed, existing_bucket=None))
+def test_live_selector_fails_loud_on_an_unreadable_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_endpoint: str,
+) -> None:
+    missing_bucket = 'themis-nonexistent-bucket'
+    _live_env(monkeypatch, bucket_name=missing_bucket, gcs_endpoint=gcs_endpoint)
+    created_clients, closed_clients = _track_storage_clients(monkeypatch)
 
-    async def build() -> None:
+    async def run() -> None:
         async with contextlib.AsyncExitStack() as stack:
-            with pytest.raises(SystemExit, match=_BUCKET):
-                _from_env(stack)
-        assert closed, 'a failed startup probe leaks no client'
+            with pytest.raises(SystemExit, match=missing_bucket):
+                async with _serving(stack=stack):
+                    pass
+        assert len(created_clients) == 1
+        assert closed_clients == created_clients, 'a failed startup probe leaks no client'
 
-    asyncio.run(build())
+    asyncio.run(run())
 
 
-def test_live_selector_without_the_crosswalk_leaves_id_resolution_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Absent config is a legitimate deployment (the doc_id path needs no crosswalk), so it must not
-    # fail startup. The RPC that needs it reports a permanent condition, distinct from an outage:
-    # no number of retries wires a crosswalk.
-    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
-    backend = _from_env()
-    with pytest.raises(literature_backend.CrosswalkNotConfiguredError):
-        asyncio.run(backend.resolve_external_ids(['doi:10.1/x']))
+def test_live_selector_without_the_crosswalk_leaves_id_resolution_off(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+) -> None:
+    assert gcs_bucket.name is not None
+    _live_env(monkeypatch, bucket_name=gcs_bucket.name, gcs_endpoint=gcs_endpoint)
+
+    async def run() -> None:
+        async with _serving() as stub:
+            await stub.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=['doi:10.1/x']))
+
+    with pytest.raises(grpc.aio.AioRpcError) as caught:
+        asyncio.run(run())
+    assert caught.value.code() is grpc.StatusCode.FAILED_PRECONDITION
+    assert authored_status.authored(caught.value)
+    assert 'id resolution is not configured' in (caught.value.details() or '')
 
 
 @pytest.mark.parametrize('omitted', _CROSSWALK_VARS)
-def test_a_partial_crosswalk_config_fails_at_startup(monkeypatch: pytest.MonkeyPatch, omitted: str) -> None:
-    # Half-configured would fail per request instead of at deploy, which is the shape that reaches
-    # production unnoticed.
-    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+def test_a_partial_crosswalk_config_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+    omitted: str,
+) -> None:
+    assert gcs_bucket.name is not None
+    _live_env(monkeypatch, bucket_name=gcs_bucket.name, gcs_endpoint=gcs_endpoint)
     for var, value in _CROSSWALK_ENV.items():
         if var != omitted:
             monkeypatch.setenv(var, value)
     with pytest.raises(SystemExit, match='all be set or all unset'):
-        _from_env()
+        _start_server()
 
 
-def test_a_complete_crosswalk_config_resolves_through_the_named_instance(monkeypatch: pytest.MonkeyPatch) -> None:
-    dialled: list[tuple[str, str, str]] = []
-    closed: list[bool] = []
-    built: list[dict[str, object]] = []
-
-    class _FakeCursor:
-        def execute(self, operation: str, args: object = ()) -> None:
-            del operation, args
-
-        def fetchall(self) -> list[tuple[str, str]]:
-            return [('doi:10.1/x', 'doc-1')]
-
-        def close(self) -> None:
-            pass
-
-    class _FakeConnection:
-        def cursor(self) -> _FakeCursor:
-            return _FakeCursor()
-
-        def close(self) -> None:
-            pass
-
-    class _FakeConnector:
-        def __init__(self, **kwargs: object) -> None:
-            built.append(kwargs)
-
-        def connect(self, connection_name: str, driver: str, **kwargs: object) -> _FakeConnection:
-            del driver
-            dialled.append((connection_name, str(kwargs['db']), str(kwargs['user'])))
-            return _FakeConnection()
-
-        def close(self) -> None:
-            closed.append(True)
-
-    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+def test_a_complete_crosswalk_config_resolves_through_the_named_instance(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+) -> None:
+    assert gcs_bucket.name is not None
+    doc_id = crosswalk.mint(conn, ['doi:10.1/x']).doc_id
+    _seed_paper(gcs_bucket, doc_id, ready=True)
+    _live_env(monkeypatch, bucket_name=gcs_bucket.name, gcs_endpoint=gcs_endpoint)
     for var, value in _CROSSWALK_ENV.items():
         monkeypatch.setenv(var, value)
-    monkeypatch.setattr(sql_connector, 'Connector', _FakeConnector)
+    dialled, closed = _wire_crosswalk(monkeypatch, crosswalk_connect)
 
-    async def build() -> dict[str, str]:
-        async with contextlib.AsyncExitStack() as stack:
-            backend = _from_env(stack)
-            found = await backend.resolve_external_ids(['doi:10.1/x'])
+    async def run() -> literature_pb2.MaybeIngestPapersResponse:
+        async with contextlib.AsyncExitStack() as stack, _serving(stack=stack) as stub:
+            reply = await stub.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=['doi:10.1/x']))
             assert not closed, 'the connector is held for as long as the server runs'
-        assert closed, 'the stack closed the connector on unwind'
-        return found
+        assert closed == [True], 'the stack closed the connector on unwind'
+        return reply
 
-    assert asyncio.run(build()) == {'doi:10.1/x': 'doc-1'}
-    # This service idles its CPU, so a background refresh would not run between requests
-    # (`sql.lazy_connector`). The strategy is settled at the composition root that dials.
-    assert [kwargs.get('refresh_strategy') for kwargs in built] == [sql_connector.RefreshStrategy.LAZY]
+    reply = asyncio.run(run())
+    assert [(r.external_id, r.doc_id, r.state) for r in reply.readiness] == [
+        ('doi:10.1/x', doc_id, literature_pb2.FULL_TEXT_STATE_READY)
+    ]
     instance, database, db_user = _CROSSWALK_ENV.values()
     assert dialled == [(instance, database, db_user)]
 
 
-class _FakeTasksClient:
-    """A ``CloudTasksClient`` stand-in: a context manager that records its own exit and never dials."""
+def test_live_selector_without_the_convert_trio_leaves_conversion_off(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+) -> None:
+    assert gcs_bucket.name is not None
+    doc_id = crosswalk.mint(conn, ['doi:10.1/x']).doc_id
+    _seed_paper(gcs_bucket, doc_id, ready=False)
+    _live_env(monkeypatch, bucket_name=gcs_bucket.name, gcs_endpoint=gcs_endpoint)
+    for var, value in _CROSSWALK_ENV.items():
+        monkeypatch.setenv(var, value)
+    _wire_crosswalk(monkeypatch, crosswalk_connect)
 
-    def __init__(self, closed: list[bool]) -> None:
-        self._closed = closed
+    async def run() -> None:
+        async with _serving() as stub:
+            await stub.MaybeIngestPapers(literature_pb2.MaybeIngestPapersRequest(external_ids=['doi:10.1/x']))
 
-    def __enter__(self) -> Self:
-        return self
-
-    def __exit__(self, *exc: object) -> None:
-        del exc
-        self._closed.append(True)
-
-
-def test_live_selector_without_the_convert_trio_leaves_conversion_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Absent config is a legitimate deployment (every read path works without a queue), so it must not
-    # fail startup. The rpc that would enqueue reports a permanent condition instead, distinct from an
-    # outage: no number of retries provisions a queue.
-    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
-    backend = _from_env()
-    with pytest.raises(literature_backend.ConversionNotConfiguredError):
-        asyncio.run(backend.view_for(authz.AUTH).request_conversions(['doc-1']))
+    with pytest.raises(grpc.aio.AioRpcError) as caught:
+        asyncio.run(run())
+    assert caught.value.code() is grpc.StatusCode.FAILED_PRECONDITION
+    assert authored_status.authored(caught.value)
+    assert 'conversion is not configured' in (caught.value.details() or '')
 
 
 @pytest.mark.parametrize('omitted', _CONVERT_VARS)
-def test_a_partial_convert_config_fails_at_startup(monkeypatch: pytest.MonkeyPatch, omitted: str) -> None:
-    # Half-configured would fail per request instead of at deploy — a queue path with no worker URL
-    # builds tasks that dispatch nowhere.
-    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
+def test_a_partial_convert_config_fails_at_startup(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+    omitted: str,
+) -> None:
+    assert gcs_bucket.name is not None
+    _live_env(monkeypatch, bucket_name=gcs_bucket.name, gcs_endpoint=gcs_endpoint)
     for var, value in _CONVERT_ENV.items():
         if var != omitted:
             monkeypatch.setenv(var, value)
     with pytest.raises(SystemExit, match='all be set or all unset'):
-        _from_env()
+        _start_server()
 
 
-def test_a_complete_convert_config_targets_the_named_queue_and_worker(monkeypatch: pytest.MonkeyPatch) -> None:
-    closed: list[bool] = []
-    _live_env(monkeypatch, _FakeClient([], existing_bucket=_BUCKET))
-    for var, value in _CONVERT_ENV.items():
+def test_a_complete_convert_config_targets_the_named_queue_and_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    gcs_bucket: storage.Bucket,
+    gcs_endpoint: str,
+    conn: pg8000.dbapi.Connection,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
+) -> None:
+    assert gcs_bucket.name is not None
+    doc_id = crosswalk.mint(conn, ['doi:10.1/x']).doc_id
+    _seed_paper(gcs_bucket, doc_id, ready=False)
+    _live_env(monkeypatch, bucket_name=gcs_bucket.name, gcs_endpoint=gcs_endpoint)
+    for var, value in (*_CROSSWALK_ENV.items(), *_CONVERT_ENV.items()):
         monkeypatch.setenv(var, value)
-    monkeypatch.setattr(config.tasks_v2, 'CloudTasksClient', lambda: _FakeTasksClient(closed))
+    _wire_crosswalk(monkeypatch, crosswalk_connect)
 
-    async def build() -> enqueue.ConversionTarget:
-        async with contextlib.AsyncExitStack() as stack:
-            backend = _from_env(stack)
-            assert isinstance(backend, live_mod.LiveBackend)
-            enqueuer = backend._store._enqueuer
-            assert enqueuer is not None
-            assert not closed, 'the client is held open for as long as the server runs'
-            target = enqueuer._target
-        assert closed, 'the stack closed the client on unwind'
-        return target
+    created_requests: list[tasks_v2.CreateTaskRequest] = []
+    built_clients: list[tasks_v2.CloudTasksClient] = []
 
-    queue, worker_url, invoker = _CONVERT_ENV.values()
-    target = asyncio.run(build())
-    assert target == enqueue.ConversionTarget(
-        queue_path=queue, worker_url=worker_url, invoker_service_account_email=invoker
-    )
+    def register_cloud_tasks(server: grpc.aio.Server) -> None:
+        def create_task(request: tasks_v2.CreateTaskRequest, _ctx: object) -> tasks_v2.Task:
+            created_requests.append(request)
+            return request.task
+
+        handler = grpc.method_handlers_generic_handler(
+            'google.cloud.tasks.v2.CloudTasks',
+            {
+                'CreateTask': grpc.unary_unary_rpc_method_handler(
+                    create_task,
+                    request_deserializer=tasks_v2.CreateTaskRequest.deserialize,
+                    response_serializer=tasks_v2.Task.serialize,
+                )
+            },
+        )
+        server.add_generic_rpc_handlers([handler])
+
+    real_tasks_client = config.tasks_v2.CloudTasksClient
+
+    with in_process_grpc.serving_in_thread(register_cloud_tasks) as tasks_target:
+
+        def build_loopback_tasks_client() -> tasks_v2.CloudTasksClient:
+            transport = tasks_grpc.CloudTasksGrpcTransport(channel=grpc.insecure_channel(tasks_target))
+            client = real_tasks_client(transport=transport)
+            built_clients.append(client)
+            return client
+
+        monkeypatch.setattr(config.tasks_v2, 'CloudTasksClient', build_loopback_tasks_client)
+
+        async def run() -> literature_pb2.MaybeIngestPapersResponse:
+            async with contextlib.AsyncExitStack() as stack, _serving(stack=stack) as stub:
+                return await stub.MaybeIngestPapers(
+                    literature_pb2.MaybeIngestPapersRequest(external_ids=['doi:10.1/x'])
+                )
+
+        reply = asyncio.run(run())
+        assert [(r.external_id, r.doc_id, r.state) for r in reply.readiness] == [
+            ('doi:10.1/x', doc_id, literature_pb2.FULL_TEXT_STATE_PENDING)
+        ]
+        assert len(created_requests) == 1
+        queue, worker_url, invoker = _CONVERT_ENV.values()
+        enqueued = created_requests[0]
+        assert enqueued.parent == queue
+        assert enqueued.task.http_request.url == f'{worker_url}/convert'
+        assert enqueued.task.http_request.oidc_token.service_account_email == invoker
+        assert enqueued.task.http_request.oidc_token.audience == worker_url
+        assert work_pb2.WorkRequest.FromString(enqueued.task.http_request.body).doc_id == doc_id
+        # Exiting `deps.stack` exited `CloudTasksClient`, closing its underlying gRPC channel.
+        with pytest.raises(ValueError, match='closed'):
+            built_clients[0].create_task(parent=queue, task=enqueued.task)

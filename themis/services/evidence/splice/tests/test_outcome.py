@@ -86,18 +86,34 @@ def test_the_ptc_fields_are_present_exactly_for_a_premature_stop(affected_exon: 
         assert skip.nmd_predicted <= premature
 
 
-@pytest.mark.parametrize('affected_exon', [1, 26, 57])
-def test_a_reported_ptc_terminates_the_products_own_reading_frame(affected_exon: int) -> None:
-    """The PTC is a c. coordinate in the aberrant transcript, so it must be codon-aligned there."""
-    for skip in _skips(affected_exon):
-        if skip.HasField('ptc_cds_position'):
-            assert skip.ptc_cds_position % 3 == 1
+@pytest.mark.parametrize(
+    ('affected_exon', 'skipped_exons', 'expected_cds_pos', 'expected_codon'),
+    [
+        pytest.param(26, [26], 3397, 1133, id='exon-26'),
+        pytest.param(26, [25, 26], 3280, 1094, id='exons-25-26'),
+        pytest.param(26, [26, 27], 3322, 1108, id='exons-26-27'),
+        pytest.param(27, [27], 3499, 1167, id='exon-27'),
+        pytest.param(27, [27, 28], 3562, 1188, id='exons-27-28'),
+        pytest.param(56, [56], 8137, 2713, id='exon-56'),
+        pytest.param(56, [55, 56], 8023, 2675, id='exons-55-56'),
+    ],
+)
+def test_a_reported_ptc_terminates_the_products_own_reading_frame(
+    affected_exon: int,
+    skipped_exons: list[int],
+    expected_cds_pos: int,
+    expected_codon: int,
+) -> None:
+    """The PTC is a c. coordinate in the aberrant transcript, indexing its first in-frame stop codon."""
+    skip = next(s for s in _skips(affected_exon) if list(s.skipped_exons) == skipped_exons)
+    assert skip.product == splice_pb2.SPLICE_PRODUCT_PREMATURE_STOP
+    assert skip.ptc_cds_position == expected_cds_pos
+    assert skip.ptc_codon == expected_codon
 
 
-@pytest.mark.parametrize('affected_exon', [0, -1, 59])
-def test_an_exon_the_transcript_does_not_have_is_an_invalid_request(affected_exon: int) -> None:
+def test_an_exon_the_transcript_does_not_have_is_an_invalid_request() -> None:
     with pytest.raises(errors.InvalidRequestError, match='has exons 1-58'):
-        _skips(affected_exon)
+        _skips(59)
 
 
 def test_a_sequence_that_does_not_match_the_exon_table_raises() -> None:

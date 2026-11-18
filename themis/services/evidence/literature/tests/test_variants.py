@@ -42,18 +42,24 @@ def test_bare_change(change: str, expected: str) -> None:
 
 
 @pytest.mark.parametrize(
-    'fields',
+    ('fields', 'expected'),
     [
-        pytest.param({'entity_id': 'litvar@rs00##'}, id='entity-id'),
-        pytest.param({'rsid': 'rs00'}, id='rsid'),
-        pytest.param({'caid': 'CA1'}, id='caid'),
-        pytest.param({'caid': 'ca0001'}, id='caid-padded-and-lowercased'),
-        pytest.param({'rsid': '00'}, id='rsid-without-its-prefix'),
-        pytest.param({'gene': 'GENE1', 'hgvs_c': 'c.1A>G'}, id='gene-and-change'),
+        pytest.param({'entity_id': ' litvar@rs00## '}, {'entity_id': 'litvar@rs00##'}, id='entity-id'),
+        pytest.param({'rsid': ' rs00 '}, {'rsid': 'rs00'}, id='rsid'),
+        pytest.param({'caid': ' CA1 '}, {'caid': 'CA1'}, id='caid'),
+        pytest.param({'caid': 'ca0001'}, {'caid': 'ca0001'}, id='caid-padded-and-lowercased'),
+        pytest.param({'rsid': '00'}, {'rsid': '00'}, id='rsid-without-its-prefix'),
+        pytest.param(
+            {'gene': ' GENE1 ', 'hgvs_c': ' c.1A>G '},
+            {'gene': 'GENE1', 'hgvs_c': 'c.1A>G'},
+            id='gene-and-change',
+        ),
     ],
 )
-def test_requested_variant_accepts_anything_that_can_reach_an_entity(fields: dict[str, str]) -> None:
-    assert _requested_or_raise(**fields)
+def test_requested_variant_accepts_anything_that_can_reach_an_entity(
+    fields: dict[str, str], expected: dict[str, str]
+) -> None:
+    assert _requested_or_raise(**fields) == _requested(**expected)
 
 
 @pytest.mark.parametrize(
@@ -75,16 +81,9 @@ def test_requested_variant_refuses_what_reaches_no_entity(fields: dict[str, str]
         _requested_or_raise(**fields)
 
 
-@pytest.mark.parametrize(
-    ('written', 'same_as'),
-    [
-        ('CA001000', 'CA1000'),  # zero-padding is not part of the id
-        ('ca1000', 'CA1000'),  # nor is case
-        ('  CA1000 ', 'CA1000'),
-    ],
-)
-def test_caid_key_ignores_what_does_not_distinguish_two_ids(written: str, same_as: str) -> None:
-    assert variants.caid_key(written) == variants.caid_key(same_as)
+@pytest.mark.parametrize('written', ['CA1000', 'CA001000', 'ca1000', '  CA1000 '])
+def test_caid_key_ignores_what_does_not_distinguish_two_ids(written: str) -> None:
+    assert variants.caid_key(written) == 'CA1000'
 
 
 @pytest.mark.parametrize(('left', 'right'), [('CA1000', 'CA2000'), ('CA1000', 'CA10000')])
@@ -93,17 +92,22 @@ def test_caid_key_keeps_distinct_ids_distinct(left: str, right: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ('written', 'same_as'),
+    ('written', 'expected'),
     [
-        ('p.Ala355Thr', 'p.A355T'),  # three-letter and one-letter residues
-        ('NP_1.1:p.(Ala355Thr)', 'A355T'),  # transcript prefix and parens
-        ('p.Arg406Arg', 'p.R406='),  # the two spellings of a synonymous change
-        ('p.R406R', 'p.Arg406='),
-        ('p.Gln1352Ter', 'p.Q1352*'),  # the stop codon
+        ('p.Ala355Thr', 'A355T'),
+        ('p.A355T', 'A355T'),
+        ('NP_1.1:p.(Ala355Thr)', 'A355T'),
+        ('A355T', 'A355T'),
+        ('p.Arg406Arg', 'R406='),
+        ('p.R406=', 'R406='),
+        ('p.R406R', 'R406='),
+        ('p.Arg406=', 'R406='),
+        ('p.Gln1352Ter', 'Q1352*'),
+        ('p.Q1352*', 'Q1352*'),
     ],
 )
-def test_protein_change_key_ignores_what_does_not_distinguish_two_changes(written: str, same_as: str) -> None:
-    assert variants.protein_change_key(written) == variants.protein_change_key(same_as)
+def test_protein_change_key_ignores_what_does_not_distinguish_two_changes(written: str, expected: str) -> None:
+    assert variants.protein_change_key(written) == expected
 
 
 @pytest.mark.parametrize(('left', 'right'), [('p.R385R', 'p.R406='), ('p.A355T', 'p.A355S'), ('p.R406fs', 'p.R406=')])
@@ -131,9 +135,14 @@ def test_protein_agreement_only_differs_where_both_forms_are_reconcilable(
     assert variants.protein_agreement(requested, stated) is expected
 
 
-@pytest.mark.parametrize('rsid', ['rs404040', 'RS404040', '404040'])
+@pytest.mark.parametrize('rsid', ['rs404040', 'RS404040', '404040', '  rs404040 '])
 def test_rsid_key_ignores_the_prefix_and_case(rsid: str) -> None:
-    assert variants.rsid_key(rsid) == variants.rsid_key('rs404040')
+    assert variants.rsid_key(rsid) == '404040'
+
+
+@pytest.mark.parametrize(('left', 'right'), [('rs404040', 'rs404041'), ('rs404040', 'rs4040400')])
+def test_rsid_key_keeps_distinct_ids_distinct(left: str, right: str) -> None:
+    assert variants.rsid_key(left) != variants.rsid_key(right)
 
 
 def _labels(**fields: object) -> litvar.EntityLabels:

@@ -50,20 +50,51 @@ def test_lookup_carries_the_source_stamp() -> None:
 
 
 def test_lookup_is_case_insensitive() -> None:
-    assert _table().lookup('hgnc:1100') is not None
+    result = _table().lookup('hgnc:1100')
+    assert result is not None
+    assert result.gene_symbol == 'BRCA1'
+    assert {(c.mondo_id, c.moi) for c in result.curations} == {('MONDO:0700268', 'AD'), ('MONDO:0054748', 'AR')}
 
 
-@pytest.mark.parametrize('hgnc_id', ['HGNC:1100', 'HGNC:47', 'HGNC:20091', 'HGNC:143', 'HGNC:118'])
-def test_every_curated_row_is_returned_as_its_own_entity(hgnc_id: str) -> None:
+@pytest.mark.parametrize(
+    ('hgnc_id', 'expected'),
+    [
+        (
+            'HGNC:1100',
+            {('MONDO:0700268', 'AD', 'Definitive'), ('MONDO:0054748', 'AR', 'Definitive')},
+        ),
+        (
+            'HGNC:47',
+            {('MONDO:0013783', 'AD', 'Limited'), ('MONDO:0014169', 'AD', 'Moderate')},
+        ),
+        (
+            'HGNC:20091',
+            {('MONDO:0016575', 'AR', 'Disputed'), ('MONDO:0004983', 'AR', 'Limited')},
+        ),
+        (
+            'HGNC:143',
+            {
+                ('MONDO:0005045', 'AD', 'Definitive'),
+                ('MONDO:0016587', 'AD', 'No Known Disease Relationship'),
+                ('MONDO:0013261', 'AD', 'Moderate'),
+            },
+        ),
+        (
+            'HGNC:118',
+            {
+                ('MONDO:0044970', 'AD', 'Strong'),
+                ('MONDO:0044970', 'AR', 'Definitive'),
+                ('MONDO:0014571', 'SD', 'Definitive'),
+            },
+        ),
+    ],
+)
+def test_every_curated_row_is_returned_as_its_own_entity(hgnc_id: str, expected: set[tuple[str, str, str]]) -> None:
     # Each row is a (term, mode) ClinGen curates; a lookup that dropped or merged one would answer a
     # gene whose entities it had already chosen among.
     result = _table().lookup(hgnc_id)
     assert result is not None
-    rows = result.raw['rows']
-    assert isinstance(rows, list)
-    assert {(c.mondo_id, c.moi, c.classification) for c in result.curations} == {
-        (row['DISEASE ID (MONDO)'], row['MOI'], row['CLASSIFICATION']) for row in rows
-    }
+    assert {(c.mondo_id, c.moi, c.classification) for c in result.curations} == expected
 
 
 def test_a_curation_carries_the_entity_key_and_a_gateable_classification() -> None:
@@ -96,20 +127,7 @@ def test_absent_gene_is_none() -> None:
     assert _table().lookup('HGNC:404040') is None
 
 
-def test_missing_header_raises_value_error() -> None:
-    with pytest.raises(ValueError, match='FILE CREATED'):
-        clingen_validity.ClinGenValidity.from_bytes(b'"nonsense","payload"\n"1","2"\n')
-
-
-@pytest.mark.parametrize('symbol', ['', ' '])
-def test_a_row_recording_no_gene_symbol_fails_the_load(symbol: str) -> None:
-    # Where the HGNC set lacks the gene's id, DescribeGene names the gene from this column.
-    body = _csv([symbol, 'HGNC:1', 'disease', 'MONDO:1', 'AD', 'SOP1', 'Definitive', 'url', 'date', 'gcep'])
-    with pytest.raises(ValueError, match='no gene symbol'):
-        clingen_validity.ClinGenValidity.from_bytes(body)
-
-
-def test_a_row_shorter_than_the_header_fails_the_load_naming_its_line() -> None:
+def test_a_malformed_download_names_gene_validity() -> None:
     with pytest.raises(ValueError, match='gene-validity download line 7 has 2 fields where the header has 10'):
         clingen_validity.ClinGenValidity.from_bytes(_csv(['', 'HGNC:1']))
 

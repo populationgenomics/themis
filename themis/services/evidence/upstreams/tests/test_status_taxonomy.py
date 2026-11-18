@@ -9,11 +9,11 @@ states a settled fact about a fault a single retry would have cleared. That ever
 reaches a status of its own is ``tests/test_serving.py``'s.
 
 Only one half is universal: every upstream must keep 429 and 5xx retryable. What a 4xx means is a
-per-upstream fact, so each adapter sits in exactly one of three buckets — refuses on any 4xx, refuses
-on one specific status, or has no refusing status at all. Two tests keep that honest: one that the
-buckets partition the exercised entry points, and one that those entry points are *all* the client
-fetchers the adapter modules expose. The shared rule itself is tested in ``tests/test_errors.py``;
-this file is about which adapter is wired to it, and how.
+per-upstream fact, so each adapter sits in one of three buckets — refuses on any 4xx, refuses on
+specific statuses with its own error shape, or has no refusing status at all. Two tests keep that
+honest: one that the buckets partition the exercised entry points, and one that those entry points
+are *all* the client fetchers the adapter modules expose. The shared rule itself is tested in
+``tests/test_errors.py``; this file is about which adapter is wired to it, and how.
 
 One status can also be neither a refusal nor a fault but an *answer*: CSpec's gene table replies to a
 symbol it has no entry for with a 404, and that reply is the rpc's coverage finding. Such a status is
@@ -28,7 +28,9 @@ payload question, and it lives with the adapter that reads the payload (``test_g
 from __future__ import annotations
 
 import asyncio
+import importlib
 import inspect
+import pkgutil
 import types
 from collections.abc import Awaitable, Callable
 
@@ -36,46 +38,17 @@ import httpx2
 import pytest
 
 from themis.rpc import cspec_pb2
-from themis.services.evidence import errors
+from themis.services.evidence import errors, upstreams
 from themis.services.evidence.upstreams import (
     allele_registry,
-    clingen_dosage,
-    clingen_validity,
     clinvar,
     cspec,
     europe_pmc,
-    gencc,
     gnomad,
     gtex,
-    hgnc,
     litvar,
     mavedb,
-    panelapp,
-    pubmed,
-    spliceai,
-    transcript_sequence,
-    transcript_structure,
-    variant_validator,
-    vep,
-)
-
-# The reference-table modules (clingen_dosage, clingen_validity, gencc, hgnc, panelapp) parse bucket
-# bytes and take no client, so they contribute nothing to `_client_fetchers`. Listed anyway: a live
-# fetch reintroduced into one lands in the derived set and has to be classified.
-_ADAPTERS = (
-    allele_registry,
-    clingen_dosage,
-    clingen_validity,
-    clinvar,
-    cspec,
-    europe_pmc,
-    gencc,
-    gnomad,
-    gtex,
-    hgnc,
-    litvar,
-    mavedb,
-    panelapp,
+    mondo,
     pubmed,
     spliceai,
     transcript_sequence,
@@ -88,68 +61,89 @@ _VARIANT_HGVS = 'NM_001042492.3:c.3496G>C'
 _TRANSCRIPT = 'NM_001042492.3'
 _GNOMAD_ID = '17-31232881-G-C'
 
+# The 4xx a caller can plausibly provoke, short of 429 (which is about the rate, never the request).
+_CLIENT_ERRORS = (400, 403, 404, 422)
+
 _ENTRY_POINTS: dict[str, Callable[[httpx2.AsyncClient], Awaitable[object]]] = {
-    'allele_registry': lambda c: allele_registry.fetch_allele_registry(_VARIANT_HGVS, http_client=c),
-    'allele_registry_ids': lambda c: allele_registry.fetch_clingen_allele_ids(_VARIANT_HGVS, http_client=c),
-    'clinvar_archive': lambda c: clinvar.fetch_variant_archive('VCV001731988', http_client=c),
-    'clinvar_pool': lambda c: clinvar.fetch_gene_pool('NF1', http_client=c, review_status_floor=1, limit=500),
-    'clinvar_span': lambda c: clinvar.fetch_span_records('NF1', 31232881, 31232931, http_client=c, limit=500),
-    'cspec': lambda c: cspec.fetch_criteria_specifications('NF1', http_client=c),
-    'europe_pmc_search': lambda c: europe_pmc.search('NF1 variant', 10, http_client=c),
-    'pubmed_articles': lambda c: pubmed.articles_by_pmid(['24789688'], http_client=c),
-    'gnomad_variant': lambda c: gnomad.fetch_gnomad(_GNOMAD_ID, 'gnomad_r4', http_client=c),
-    'gnomad_gene': lambda c: gnomad.fetch_gnomad_gene('NF1', http_client=c),
-    'gtex': lambda c: gtex.fetch_gtex('ENSG00000196712.18', http_client=c),
-    'gtex_by_symbol': lambda c: gtex.fetch_gtex_by_symbol('NF1', http_client=c),
-    'litvar_autocomplete': lambda c: litvar.autocomplete_entity_ids('rs2229707', http_client=c),
-    'litvar_entity': lambda c: litvar.entity_labels('litvar@rs2229707##', http_client=c),
-    'litvar_search': lambda c: litvar.search_pmids('litvar@rs2229707##', 10, http_client=c),
-    'litvar_gene': lambda c: litvar.gene_entities('NF1', http_client=c),
-    'mavedb': lambda c: mavedb.fetch_mavedb(['CA398989536'], http_client=c),
-    'spliceai': lambda c: spliceai.fetch_splice(_GNOMAD_ID, 'GRCh38', http_client=c),
-    'transcript_sequence': lambda c: transcript_sequence.fetch_transcript_sequence(_TRANSCRIPT, http_client=c),
-    'transcript_structure': lambda c: transcript_structure.fetch_transcript_structure(
+    'allele_registry.fetch_allele_registry': lambda c: allele_registry.fetch_allele_registry(
+        _VARIANT_HGVS, http_client=c
+    ),
+    'allele_registry.fetch_clingen_allele_ids': lambda c: allele_registry.fetch_clingen_allele_ids(
+        _VARIANT_HGVS, http_client=c
+    ),
+    'clinvar.fetch_variant_archive': lambda c: clinvar.fetch_variant_archive('VCV001731988', http_client=c),
+    'clinvar.fetch_gene_pool': lambda c: clinvar.fetch_gene_pool(
+        'NF1', http_client=c, review_status_floor=1, limit=500
+    ),
+    'clinvar.fetch_span_records': lambda c: clinvar.fetch_span_records(
+        'NF1', 31232881, 31232931, http_client=c, limit=500
+    ),
+    'cspec.fetch_criteria_specifications': lambda c: cspec.fetch_criteria_specifications('NF1', http_client=c),
+    'europe_pmc.search': lambda c: europe_pmc.search('NF1 variant', 10, http_client=c),
+    'pubmed.articles_by_pmid': lambda c: pubmed.articles_by_pmid(['24789688'], http_client=c),
+    'gnomad.fetch_gnomad': lambda c: gnomad.fetch_gnomad(_GNOMAD_ID, 'gnomad_r4', http_client=c),
+    'gnomad.fetch_gnomad_gene': lambda c: gnomad.fetch_gnomad_gene('NF1', http_client=c),
+    'gtex.fetch_gtex': lambda c: gtex.fetch_gtex('ENSG00000196712.18', http_client=c),
+    'gtex.fetch_gtex_by_symbol': lambda c: gtex.fetch_gtex_by_symbol('NF1', http_client=c),
+    'litvar.autocomplete_entity_ids': lambda c: litvar.autocomplete_entity_ids('rs2229707', http_client=c),
+    'litvar.entity_labels': lambda c: litvar.entity_labels('litvar@rs2229707##', http_client=c),
+    'litvar.search_pmids': lambda c: litvar.search_pmids('litvar@rs2229707##', 10, http_client=c),
+    'litvar.gene_entities': lambda c: litvar.gene_entities('NF1', http_client=c),
+    'mavedb.fetch_mavedb': lambda c: mavedb.fetch_mavedb(['CA398989536'], http_client=c),
+    'mondo.fetch_mondo_version': lambda c: mondo.fetch_mondo_version(http_client=c),
+    'mondo.fetch_subclass_closure': lambda c: mondo.fetch_subclass_closure(['MONDO:0007947'], http_client=c),
+    'spliceai.fetch_splice': lambda c: spliceai.fetch_splice(_GNOMAD_ID, 'GRCh38', http_client=c),
+    'transcript_sequence.fetch_transcript_sequence': lambda c: transcript_sequence.fetch_transcript_sequence(
+        _TRANSCRIPT, http_client=c
+    ),
+    'transcript_structure.fetch_transcript_structure': lambda c: transcript_structure.fetch_transcript_structure(
         _TRANSCRIPT, 'GRCh38', http_client=c
     ),
-    'gene_transcripts': lambda c: transcript_structure.fetch_gene_transcripts('NF1', 'GRCh38', http_client=c),
-    'variant_validator': lambda c: variant_validator.fetch_variant_validator(
+    'transcript_structure.fetch_gene_transcripts': lambda c: transcript_structure.fetch_gene_transcripts(
+        'NF1', 'GRCh38', http_client=c
+    ),
+    'variant_validator.fetch_variant_validator': lambda c: variant_validator.fetch_variant_validator(
         'GRCh38', _VARIANT_HGVS, 'mane', http_client=c
     ),
-    'vep': lambda c: vep.fetch_vep(_VARIANT_HGVS, [], 'GRCh38', http_client=c),
+    'vep.fetch_vep': lambda c: vep.fetch_vep(_VARIANT_HGVS, [], 'GRCh38', http_client=c),
 }
 
 # Every 4xx a caller can provoke is the source refusing the request, and reads as INVALID_ARGUMENT.
 _REFUSES_ANY_4XX = (
-    'allele_registry',
-    'allele_registry_ids',
-    'clinvar_archive',
-    'clinvar_pool',
-    'clinvar_span',
-    'cspec',
-    'europe_pmc_search',
-    'pubmed_articles',
-    'gtex',
-    'gtex_by_symbol',
-    'litvar_autocomplete',
-    'litvar_entity',
-    'litvar_search',
-    'litvar_gene',
-    'mavedb',
-    'transcript_structure',
-    'gene_transcripts',
-    'variant_validator',
-    'vep',
+    'allele_registry.fetch_allele_registry',
+    'allele_registry.fetch_clingen_allele_ids',
+    'clinvar.fetch_variant_archive',
+    'clinvar.fetch_gene_pool',
+    'clinvar.fetch_span_records',
+    'cspec.fetch_criteria_specifications',
+    'europe_pmc.search',
+    'pubmed.articles_by_pmid',
+    'gtex.fetch_gtex',
+    'gtex.fetch_gtex_by_symbol',
+    'litvar.autocomplete_entity_ids',
+    'litvar.entity_labels',
+    'litvar.search_pmids',
+    'litvar.gene_entities',
+    'mavedb.fetch_mavedb',
+    'transcript_structure.fetch_transcript_structure',
+    'transcript_structure.fetch_gene_transcripts',
+    'variant_validator.fetch_variant_validator',
+    'vep.fetch_vep',
 )
 
 # NCBI efetch spells a refusal as "no record", and only on one status: it answers an accession it
 # holds no sequence for with a 400, while its other 4xx are about the client (403 blocked, 429
 # throttled) and stay retryable — asserted in test_transcript_sequence.py. The ClinVar adapter reads
 # that same spelling off the refusal's own ERROR envelope as well as off the status, so a 400 alone
-# does not classify it: `clinvar_archive` stays in `_REFUSES_ANY_4XX` because the body every call
-# here carries is not one it recognises, and the branch that reads it — where the accession the
-# crosswalk named resolves to nothing — is asserted in test_clinvar.py.
+# does not classify it: `clinvar.fetch_variant_archive` stays in `_REFUSES_ANY_4XX` because the body
+# every call here carries is not one it recognises, and the branch that reads it — where the accession
+# the crosswalk named resolves to nothing — is asserted in test_clinvar.py. EBI OLS4 (`mondo`) is
+# asked about curated reference-table terms rather than caller input, so a 4xx is a stale reference
+# table or retired MONDO term (`ValueError`), never a caller refusal.
 _STATUS_SPECIFIC: dict[str, dict[int, type[Exception]]] = {
-    'transcript_sequence': {400: errors.UnknownVariantError},
+    'mondo.fetch_mondo_version': dict.fromkeys(_CLIENT_ERRORS, ValueError),
+    'mondo.fetch_subclass_closure': dict.fromkeys(_CLIENT_ERRORS, ValueError),
+    'transcript_sequence.fetch_transcript_sequence': {400: errors.UnknownVariantError},
 }
 
 # The statuses an adapter answers rather than refuses, carved out of its bucket above, each with what
@@ -158,20 +152,28 @@ _STATUS_SPECIFIC: dict[str, dict[int, type[Exception]]] = {
 # expert panel has specified the gene. LitVar2 spells "no such entity" as a 400, so reading it as a
 # refusal would turn a fact about the index into an INVALID_ARGUMENT no caller can act on.
 _ANSWERED_4XX: dict[str, dict[int, Callable[[object], bool]]] = {
-    'cspec': {
+    'cspec.fetch_criteria_specifications': {
         404: lambda answered: getattr(answered, 'coverage', None) == cspec_pb2.SPECIFICATION_COVERAGE_GENE_ABSENT
     },
-    'litvar_entity': {400: lambda answered: answered is None},
+    'litvar.entity_labels': {400: lambda answered: answered is None},
 }
 
 # No status here means "the caller's request is unacceptable" — see the design doc's taxonomy note.
-_EXEMPT = ('gnomad_variant', 'gnomad_gene', 'spliceai')
+_EXEMPT = ('gnomad.fetch_gnomad', 'gnomad.fetch_gnomad_gene', 'spliceai.fetch_splice')
+
+
+def _adapter_modules() -> list[types.ModuleType]:
+    return [
+        importlib.import_module(f'{upstreams.__name__}.{info.name}')
+        for info in sorted(pkgutil.iter_modules(upstreams.__path__), key=lambda m: m.name)
+        if not info.name.startswith('_')
+    ]
 
 
 def _client_fetchers() -> set[str]:
-    """Every public coroutine an adapter module exposes that issues a request on the shared client."""
+    """Every public coroutine an upstream module exposes that issues a request on the shared client."""
     found: set[str] = set()
-    for module in _ADAPTERS:
+    for module in _adapter_modules():
         name = module.__name__.rsplit('.', 1)[-1]
         for attribute, value in vars(module).items():
             if attribute.startswith('_') or isinstance(value, types.ModuleType):
@@ -190,10 +192,6 @@ def _client_fetchers() -> set[str]:
     return found
 
 
-# The 4xx a caller can plausibly provoke, short of 429 (which is about the rate, never the request).
-_CLIENT_ERRORS = (400, 403, 404, 422)
-
-
 def _call(entry_point: str, status: int) -> object:
     """Drive one upstream entry point against a transport that answers every request with ``status``."""
 
@@ -205,43 +203,42 @@ def _call(entry_point: str, status: int) -> object:
     return asyncio.run(run())
 
 
+class _ReachedTargetError(Exception):
+    """Sentinel raised when an entry point invokes the exact fetcher its key names."""
+
+
 def test_every_entry_point_is_classified() -> None:
     """An adapter in none of the three buckets is silently untested for everything but 429/5xx."""
     assert set(_REFUSES_ANY_4XX) | set(_STATUS_SPECIFIC) | set(_EXEMPT) == set(_ENTRY_POINTS)
+    assert len(_REFUSES_ANY_4XX) + len(_STATUS_SPECIFIC) + len(_EXEMPT) == len(_ENTRY_POINTS)
 
 
-def test_every_client_fetcher_is_exercised_here() -> None:
-    """Partitioning `_ENTRY_POINTS` proves nothing on its own — nothing forces an adapter into it.
+def test_every_client_fetcher_is_exercised_here(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every public `http_client` coroutine under `upstreams` has an entry point that calls it."""
+    discovered = _client_fetchers()
+    assert discovered
+    assert discovered == set(_ENTRY_POINTS)
 
-    So the set is derived from the modules instead: a new fetcher that takes the shared client lands
-    in neither table and fails here, rather than silently acquiring no coverage at all.
-    """
-    exercised = {
-        'allele_registry.fetch_allele_registry',
-        'allele_registry.fetch_clingen_allele_ids',
-        'clinvar.fetch_gene_pool',
-        'clinvar.fetch_span_records',
-        'clinvar.fetch_variant_archive',
-        'cspec.fetch_criteria_specifications',
-        'europe_pmc.search',
-        'pubmed.articles_by_pmid',
-        'gnomad.fetch_gnomad',
-        'gnomad.fetch_gnomad_gene',
-        'gtex.fetch_gtex',
-        'gtex.fetch_gtex_by_symbol',
-        'litvar.autocomplete_entity_ids',
-        'litvar.entity_labels',
-        'litvar.gene_entities',
-        'litvar.search_pmids',
-        'mavedb.fetch_mavedb',
-        'spliceai.fetch_splice',
-        'transcript_sequence.fetch_transcript_sequence',
-        'transcript_structure.fetch_gene_transcripts',
-        'transcript_structure.fetch_transcript_structure',
-        'variant_validator.fetch_variant_validator',
-        'vep.fetch_vep',
-    }
-    assert _client_fetchers() == exercised
+    async def trap(*_args: object, **_kwargs: object) -> object:
+        raise _ReachedTargetError
+
+    def no_network(request: httpx2.Request) -> httpx2.Response:
+        raise AssertionError(f'unexpected HTTP call before reaching target: {request.url}')
+
+    async def call(fn: Callable[[httpx2.AsyncClient], Awaitable[object]]) -> object:
+        async with httpx2.AsyncClient(transport=httpx2.MockTransport(no_network)) as http_client:
+            return await fn(http_client)
+
+    for key, invoke in _ENTRY_POINTS.items():
+        module_name, attr_path = key.split('.', 1)
+        target: object = importlib.import_module(f'{upstreams.__name__}.{module_name}')
+        parts = attr_path.split('.')
+        for part in parts[:-1]:
+            target = getattr(target, part)
+        with monkeypatch.context() as patch:
+            patch.setattr(target, parts[-1], trap)
+            with pytest.raises(_ReachedTargetError):
+                asyncio.run(call(invoke))
 
 
 @pytest.mark.parametrize('entry_point', _REFUSES_ANY_4XX)
