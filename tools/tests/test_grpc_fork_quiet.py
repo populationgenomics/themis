@@ -14,7 +14,7 @@ import sys
 import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_TOOLS = ['tools.clone_analysis', 'tools.sheaf_remote']
+_TOOLS = ['conftest', 'tools.clone_analysis', 'tools.sheaf_remote']
 # Import the tool before or after gRPC, get gRPC threads running with a channel that tries to connect,
 # then fork beside them. `os.fork`, not `subprocess`: on Linux `subprocess` spawns with vfork, which
 # skips the atfork handlers gRPC logs from.

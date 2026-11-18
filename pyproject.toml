@@ -227,7 +227,7 @@ resources = ["google-cloud-storage", "requests", "hgvs-weaver==2.1.0", "hgvs-wea
 # reachable Docker daemon.
 # The schema tests compile fixture protos with grpcio-tools' protoc (schema/tests/test_guest_contract.py), so
 # the test group carries the protoc group.
-test = ["pytest", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "agents" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "run_review" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }, { include-group = "guest" }]
+test = ["pytest", "pytest-xdist", "pyyaml", "testcontainers[postgres]", { include-group = "infra" }, { include-group = "agents" }, { include-group = "sheaf" }, { include-group = "litcache" }, { include-group = "dataflow" }, { include-group = "auth" }, { include-group = "session" }, { include-group = "hello" }, { include-group = "sheaf_service" }, { include-group = "dispatcher" }, { include-group = "sandbox_worker" }, { include-group = "evidence" }, { include-group = "screenshot" }, { include-group = "convert_worker" }, { include-group = "cost_exporter" }, { include-group = "run_review" }, { include-group = "curation" }, { include-group = "resources" }, { include-group = "protoc" }, { include-group = "guest" }]
 # laptop git remote over the sheaf service (tools/sheaf_remote.py, tools/session_token.py): the
 # session client is the channel, stub and google-auth the impersonation rides on; the sheaf group is
 # the mirror the server serves; google-cloud-kms derives the session token (google-crc32c checks its
@@ -317,7 +317,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Both set GRPC_ENABLE_FORK_SUPPORT, which gRPC reads once at import, above their other imports.
+# All three set GRPC_ENABLE_FORK_SUPPORT, which gRPC reads once at import, above their other imports.
+"conftest.py" = ["E402"]
 "tools/clone_analysis.py" = ["E402"]
 "tools/sheaf_remote.py" = ["E402"]
 # One block for every tests tree under `themis/`, rather than one per directory: `*` crosses `/` in

@@ -209,10 +209,6 @@ def test_concurrent_mint_of_one_id_yields_a_single_uuid(
         contextlib.closing(crosswalk_connect()) as verify,
     ):
         with contextlib.closing(a.cursor()) as cur:
-            cur.execute('TRUNCATE litcache.crosswalk')  # isolate: this test does not use the `conn` fixture
-        a.commit()
-
-        with contextlib.closing(a.cursor()) as cur:
             cur.execute('SELECT doc_id FROM litcache.crosswalk WHERE external_id = %s', ('doi:race',))
             assert not cur.fetchall()  # no incumbent yet
             uuid_a = str(uuid.uuid4())

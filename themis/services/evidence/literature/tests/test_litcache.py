@@ -1104,11 +1104,9 @@ def _ingesting_store(
 
 
 def test_ingesting_an_id_upstream_holds_mints_it_and_commits_a_manifest(
-    conn: pg8000.dbapi.Connection,
     crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
     gcs_bucket: storage.Bucket,
 ) -> None:
-    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
     backend = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID])
     ingested = asyncio.run(backend.ingest_papers([_FRESH_PMID]))
 
@@ -1120,11 +1118,9 @@ def test_ingesting_an_id_upstream_holds_mints_it_and_commits_a_manifest(
 
 
 def test_ingesting_an_id_nobody_published_mints_nothing(
-    conn: pg8000.dbapi.Connection,
     crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
     gcs_bucket: storage.Bucket,
 ) -> None:
-    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
     backend = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID])
     assert asyncio.run(backend.ingest_papers([_UNPUBLISHED_DOI])) == {}
     assert asyncio.run(backend.resolve_external_ids([_UNPUBLISHED_DOI])) == {}
@@ -1132,11 +1128,9 @@ def test_ingesting_an_id_nobody_published_mints_nothing(
 
 
 def test_every_spelling_of_one_id_is_answered_with_the_paper_it_reached(
-    conn: pg8000.dbapi.Connection,
     crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
     gcs_bucket: storage.Bucket,
 ) -> None:
-    del conn  # requested for the per-test crosswalk truncation; the store dials its own
     # The fold is for the upstream call, not for the answer: a caller that sent two spellings of one
     # DOI gets both back. One reported UNKNOWN_PAPER would be written off as a paper nobody published.
     store = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_DOI])
@@ -1149,11 +1143,9 @@ def test_every_spelling_of_one_id_is_answered_with_the_paper_it_reached(
 
 
 def test_a_pmcid_miss_is_not_ingested_and_does_not_fail_the_batch(
-    conn: pg8000.dbapi.Connection,
     crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
     gcs_bucket: storage.Bucket,
 ) -> None:
-    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
     # The metadata ladder has no PMCID rung, so the adapter drops it rather than handing litcache an id
     # it would refuse — and the ingestable id beside it still lands.
     backend = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID])
@@ -1168,12 +1160,10 @@ def test_ingesting_without_a_crosswalk_is_a_permanent_condition(gcs_bucket: stor
 
 
 def test_an_ingested_paper_reaches_the_conversion_queue_over_grpc(
-    conn: pg8000.dbapi.Connection,
     crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
     gcs_bucket: storage.Bucket,
 ) -> None:
     """The whole lane, end to end: an id in no corpus comes back with a doc_id and a queued task."""
-    del conn  # requested for the per-test crosswalk truncation; the backend dials its own
     tasks = _FakeTasksClient()
     store = _ingesting_store(gcs_bucket, crosswalk_connect, known_upstream=[_FRESH_PMID], tasks=tasks)
 

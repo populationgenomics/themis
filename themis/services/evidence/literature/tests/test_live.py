@@ -282,11 +282,9 @@ def test_live_maybe_ingest_papers_resolves_known_ids_through_the_crosswalk(
 
 
 def test_live_maybe_ingest_papers_ingests_unknown_ids_and_enqueues_conversion(
-    conn: pg8000.dbapi.Connection,
     crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
     gcs_bucket: storage.Bucket,
 ) -> None:
-    del conn  # requested for the per-test crosswalk truncation; the store dials its own
     tasks = _RecordingTasksClient()
     enqueuer = enqueue.Enqueuer(typing.cast('tasks_v2.CloudTasksClient', tasks), _CONVERT_TARGET)
     doi = _FRESH_DOI.removeprefix('doi:')

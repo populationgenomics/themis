@@ -28,7 +28,6 @@ import pg8000.dbapi
 import pg8000.exceptions
 import protovalidate
 import pytest
-import testcontainers.postgres
 from apache_beam.options import pipeline_options
 from apache_beam.runners import runner
 from apache_beam.testing import test_pipeline
@@ -288,17 +287,10 @@ class _ObservedConn:
 
 @pytest.fixture
 def conn_factory(
-    postgres_container: testcontainers.postgres.PostgresContainer,
+    crosswalk_connect: Callable[[], pg8000.dbapi.Connection],
 ) -> Callable[[], pg8000.dbapi.Connection]:
-    """A picklable factory opening a fresh connection to the migration-applied container."""
-    return functools.partial(
-        pg8000.dbapi.connect,
-        host=postgres_container.get_container_host_ip(),
-        port=int(postgres_container.get_exposed_port(5432)),
-        user='test',
-        password='test',
-        database='litcache',
-    )
+    """Truncate `litcache.crosswalk` once on setup and return a picklable connection factory."""
+    return crosswalk_connect
 
 
 # Distinct DOI bucket keys give two distinct identities from the same bytes (the
@@ -434,7 +426,6 @@ class _BarrierFetcher:
         return None
 
 
-@pytest.mark.usefixtures('conn')
 def test_build_pipeline_shares_one_connection_across_workers(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
@@ -479,7 +470,6 @@ def test_build_pipeline_shares_one_connection_across_workers(
                 c.close()
 
 
-@pytest.mark.usefixtures('conn')
 def test_build_pipeline_serializes_concurrent_mints(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
@@ -540,7 +530,6 @@ def test_build_pipeline_serializes_concurrent_mints(
                 c.close()
 
 
-@pytest.mark.usefixtures('conn')
 def test_build_pipeline_rolls_back_a_failed_mint_and_keeps_the_connection(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
@@ -573,7 +562,6 @@ def test_build_pipeline_rolls_back_a_failed_mint_and_keeps_the_connection(
                 c.close()
 
 
-@pytest.mark.usefixtures('conn')
 def test_build_pipeline_redials_after_the_crosswalk_session_is_lost(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
@@ -605,7 +593,6 @@ def test_build_pipeline_redials_after_the_crosswalk_session_is_lost(
                 c.close()
 
 
-@pytest.mark.usefixtures('conn')
 def test_build_pipeline_redials_when_the_crosswalk_rollback_fails(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
@@ -645,7 +632,6 @@ def test_build_pipeline_redials_when_the_crosswalk_rollback_fails(
                 c.close()
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run claims via its own connection
 def test_each_paper_committed_is_asked_for_once_with_its_generation(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
@@ -705,7 +691,6 @@ def test_a_run_naming_targets_the_worker_cannot_carry_is_refused_before_it_start
         )
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run claims via its own connection
 def test_build_pipeline_limit_caps_ingestion(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
@@ -737,7 +722,6 @@ def test_build_pipeline_re_run_adopts_the_incumbent_doc_ids(
     assert _crosswalk(conn) == first_ids
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_report_run_summarizes_what_the_run_left(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
@@ -1279,7 +1263,6 @@ def test_report_run_consolidates_dead_letters_from_extract_and_write_stages(
         del _BUCKETS[token]
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_run_deletes_the_seeds_its_papers_hold(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
@@ -1293,7 +1276,6 @@ def test_a_run_deletes_the_seeds_its_papers_hold(
     assert ingest_beam.read_counter(result, 'seed_deleted') == 2
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_pdf_alone_is_ingested_once_it_reads_as_its_paper(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
@@ -1316,7 +1298,6 @@ def test_a_pdf_alone_is_ingested_once_it_reads_as_its_paper(
     _assert_balanced(result)
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_pdf_alone_dropped_again_for_its_committed_paper_is_deleted(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
@@ -1420,7 +1401,6 @@ class _GenerationCheckedBucket:
         return self._wrap(key)
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_pdf_listed_alone_whose_json_arrives_is_kept_for_the_next_run(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
@@ -1446,7 +1426,6 @@ def test_a_pdf_listed_alone_whose_json_arrives_is_kept_for_the_next_run(
     _assert_balanced(result)
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_seed_dropped_again_for_a_committed_paper_is_deleted(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
@@ -1462,7 +1441,6 @@ def test_a_seed_dropped_again_for_a_committed_paper_is_deleted(
     assert ingest_beam.read_counter(result, 'paper_skipped') == 2
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_seed_whose_pdf_its_paper_does_not_hold_is_kept_and_dead_lettered(
     conn_factory: Callable[[], pg8000.dbapi.Connection], seeded_bucket: tuple[str, gcs.Bucket]
 ) -> None:
@@ -1484,7 +1462,6 @@ def test_a_seed_whose_pdf_its_paper_does_not_hold_is_kept_and_dead_lettered(
     assert settled == stored == 1
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 @pytest.mark.parametrize('suffix', ['pdf', 'json'])
 def test_a_seed_dropped_again_while_the_run_read_it_is_kept(
     suffix: str,
@@ -1516,7 +1493,6 @@ def test_a_seed_dropped_again_while_the_run_read_it_is_kept(
     assert ingest_beam.read_counter(result, 'seed_deleted') == 1
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_seed_gone_before_the_write_stage_is_counted_and_the_run_completes(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
@@ -1542,7 +1518,6 @@ def test_a_seed_gone_before_the_write_stage_is_counted_and_the_run_completes(
     assert ingest_beam.read_counter(result, 'seed_gone') == 1
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_seed_gone_after_the_driver_listed_it_is_counted_and_the_run_completes(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],
@@ -1566,7 +1541,6 @@ def test_a_seed_gone_after_the_driver_listed_it_is_counted_and_the_run_completes
     assert ingest_beam.read_counter(result, 'seed_gone') == 1
 
 
-@pytest.mark.usefixtures('conn')  # applies the schema; the run mints via its own connection
 def test_a_pdf_dropped_again_after_the_replacement_check_is_kept(
     conn_factory: Callable[[], pg8000.dbapi.Connection],
     seeded_bucket: tuple[str, gcs.Bucket],

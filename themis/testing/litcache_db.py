@@ -16,6 +16,7 @@ Connections are pg8000, the driver the Cloud SQL connector uses in deploy.
 from __future__ import annotations
 
 import contextlib
+import functools
 import pathlib
 from collections.abc import Callable, Iterator
 
@@ -29,13 +30,23 @@ from themis.testing import postgres as postgres_db
 _MIGRATIONS = pathlib.Path(__file__).resolve().parents[2] / 'themis' / 'migrate' / 'migrations'
 
 
-def _connect(container: testcontainers.postgres.PostgresContainer) -> pg8000.dbapi.Connection:
+def _connect_endpoint(host: str, port: int) -> pg8000.dbapi.Connection:
     return pg8000.dbapi.connect(
-        host=container.get_container_host_ip(),
-        port=int(container.get_exposed_port(5432)),
+        host=host,
+        port=port,
         user='test',
         password='test',
         database='litcache',
+    )
+
+
+def _connect_factory(
+    container: testcontainers.postgres.PostgresContainer,
+) -> Callable[[], pg8000.dbapi.Connection]:
+    return functools.partial(
+        _connect_endpoint,
+        container.get_container_host_ip(),
+        int(container.get_exposed_port(5432)),
     )
 
 
@@ -51,24 +62,26 @@ def _apply_migration(conn: pg8000.dbapi.Connection, name: str) -> None:
 def postgres_container(postgres_image: str) -> Iterator[testcontainers.postgres.PostgresContainer]:
     """A session-lived Postgres holding `litcache.crosswalk`."""
     with postgres_db.container(postgres_image, username='test', password='test', dbname='litcache') as container:
-        with contextlib.closing(_connect(container)) as conn:
+        with contextlib.closing(_connect_factory(container)()) as conn:
             _apply_migration(conn, 'litcache_crosswalk')
         yield container
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture
 def crosswalk_connect(
     postgres_container: testcontainers.postgres.PostgresContainer,
 ) -> Callable[[], pg8000.dbapi.Connection]:
-    """A factory that opens a fresh connection to the migration-applied container."""
-    return lambda: _connect(postgres_container)
+    """Truncate `litcache.crosswalk` once on setup and return a picklable connection factory."""
+    connect = _connect_factory(postgres_container)
+    with contextlib.closing(connect()) as connection:
+        with contextlib.closing(connection.cursor()) as cur:
+            cur.execute('TRUNCATE litcache.crosswalk')
+        connection.commit()
+    return connect
 
 
 @pytest.fixture
 def conn(crosswalk_connect: Callable[[], pg8000.dbapi.Connection]) -> Iterator[pg8000.dbapi.Connection]:
     """A context-managed connection with the crosswalk truncated for per-test isolation."""
-    with contextlib.closing(crosswalk_connect()) as connection:  # schema applied once by postgres_container
-        with contextlib.closing(connection.cursor()) as cur:
-            cur.execute('TRUNCATE litcache.crosswalk')
-        connection.commit()
+    with contextlib.closing(crosswalk_connect()) as connection:
         yield connection

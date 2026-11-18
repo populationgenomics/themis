@@ -8,16 +8,25 @@ test that wants neither container pays for neither.
 `recorded_spans` is the other shared fixture: OpenTelemetry's tracer provider is process-global and
 can be installed once, so the one in-memory recorder every span test reads is installed here.
 
-The litcache Postgres fixtures are a plugin rather than fixtures here: three test trees use them, and a
-`conftest.py` is visible only below its own directory. Registering the plugin has to happen in the root
-`conftest.py` — pytest rejects `pytest_plugins` anywhere else — and that import is eager, so every
-session pays for `testcontainers.postgres` whether or not it starts one.
+The Postgres image and litcache crosswalk fixtures live in `themis.testing.postgres` and
+`themis.testing.litcache_db` as plugins rather than fixtures here: test trees across the repository
+use them, and a `conftest.py` is visible only below its own directory. Registering plugins has to
+happen in the root `conftest.py` — pytest rejects `pytest_plugins` anywhere else — and those imports
+are eager, so every session pays for `testcontainers.postgres` whether or not it starts one. This
+module also disables gRPC's `pthread_atfork` handlers before `google.cloud.storage` loads gRPC.
 """
 
 from __future__ import annotations
 
-import functools
 import os
+
+# Set before gRPC is first imported (`google.cloud.storage` below loads it): tests fork `git` and
+# other subprocesses beside live in-process gRPC servers (`SheafServicer`, `in_process_grpc`), and
+# with gRPC's pthread_atfork handlers enabled, concurrent forks under multi-worker load corrupt
+# inherited poll FDs and spam stderr (`tools/clone_analysis.py`, `tools/sheaf_remote.py`).
+os.environ.setdefault('GRPC_ENABLE_FORK_SUPPORT', '0')
+
+import functools
 import shutil
 import subprocess
 import time
@@ -36,7 +45,9 @@ from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.testing import docker_env
 
-pytest_plugins = ('themis.testing.litcache_db', 'themis.testing.postgres')
+# `postgres` precedes `litcache_db`, which imports it: registering `litcache_db` first imports
+# `postgres` before pytest installs assertion rewriting for that plugin.
+pytest_plugins = ('themis.testing.postgres', 'themis.testing.litcache_db')
 
 _READY_TIMEOUT_S = 30
 
