@@ -1351,6 +1351,7 @@ class _Variants:
             validator_version='9',
         )
     )
+    mention_set: variants_pb2.MentionSet = dataclasses.field(default_factory=_mention_set)
     extracted: list[str] = dataclasses.field(default_factory=list)
     validated: list[tuple[variants_pb2.MentionSet, str]] = dataclasses.field(default_factory=list)
     extract_error: Exception | None = None
@@ -1363,7 +1364,7 @@ class _Variants:
         construction.CopyFrom(_EXTRACTED)
         construction.harness_version = variant_extract.HARNESS_VERSION  # the harness running now, as the agent's is
         return variant_extract.Extraction(
-            mention_set=_mention_set(), construction=construction, turns=3, tool_calls=collections.Counter(), usage=[]
+            mention_set=self.mention_set, construction=construction, turns=3, tool_calls=collections.Counter(), usage=[]
         )
 
     def validate(
@@ -1822,6 +1823,72 @@ def test_a_paper_whose_figures_hold_no_pedigree_settles_without_a_reading(gcs_bu
     refs = _load_manifest(gcs_bucket).refs
     assert 'figures' in refs
     assert 'pedigrees' not in refs
+
+
+def test_a_paper_with_only_dismissed_mentions_and_no_figure_keeps_both_answers(gcs_bucket: gcs.Bucket) -> None:
+    # Empty verdicts and an empty figure set once shared the key of empty bytes, and the second write was refused.
+    _write_figure_paper(gcs_bucket, markdown=_VARIANT_MARKDOWN)
+    dismissed = variants_pb2.MentionSet(
+        dismissals=[variants_pb2.Dismissal(text='c.123A>G', line=3, reason='a variant the paper cites')]
+    )
+    no_figure = figures_pb2.FigureSet(pages_annotated=2)
+
+    _request_pedigrees(gcs_bucket, _Figures(figure_set=no_figure), variants=_Variants(mention_set=dismissed))
+
+    assert figures_pb2.FigureSet.FromString(_named(gcs_bucket, 'figures', 'figure-sets')) == no_figure
+
+
+def test_a_mention_set_holding_only_dismissals_settles_its_verdicts_as_found_nothing(gcs_bucket: gcs.Bucket) -> None:
+    _write_variant_paper(gcs_bucket)
+    dismissed = variants_pb2.MentionSet(
+        dismissals=[variants_pb2.Dismissal(text='c.123A>G', line=3, reason='a variant the paper cites')]
+    )
+    variants = _Variants(mention_set=dismissed)
+
+    asyncio.run(
+        _produce(
+            gcs_bucket, _DOC_ID, targets=(produce.VARIANTS_STEP,), fetch=_returning(None), variants=variants.seam()
+        )
+    )
+
+    refs = _load_manifest(gcs_bucket).refs
+    assert 'variants' in refs
+    assert 'verdicts' not in refs
+    verdicts = [(e, o) for s, e, o in _log(gcs_bucket) if s == produce.VERDICTS_STEP]
+    assert verdicts == [(work_pb2.JOB_EVENT_SETTLED, work_pb2.SETTLED_OUTCOME_NOTHING)]
+    assert variants.validated == []
+
+
+def test_pedigrees_read_with_variants_a_newer_mention_set_dismisses_are_read_again_without_them(
+    gcs_bucket: gcs.Bucket, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_figure_paper(gcs_bucket, markdown=_VARIANT_MARKDOWN)
+    pedigrees = _Pedigrees()
+    _request_pedigrees(gcs_bucket, _Figures(), pedigrees, variants=_Variants())
+    _new_harness(monkeypatch, 'next')
+    dismissed = variants_pb2.MentionSet(
+        dismissals=[variants_pb2.Dismissal(text='c.123A>G', line=3, reason='a variant the paper cites')]
+    )
+
+    _extract_variants(gcs_bucket, _Variants(mention_set=dismissed), days=1)
+
+    asyncio.run(
+        _produce(
+            gcs_bucket,
+            _DOC_ID,
+            fetch=_returning(None),
+            targets=(produce.PEDIGREES_STEP,),
+            figures=_Figures().seam(),
+            pedigrees=pedigrees.seam(),
+            variants=_Variants(mention_set=dismissed).seam(),
+            attempt=joblog.Attempt(id=str(uuid.UUID(int=2)), queue='bulk', task='task-2', retry_count=0),
+            now=lambda: _CAPTURED_AT + datetime.timedelta(days=2),
+        )
+    )
+
+    assert [list(paper.variants) for paper in pedigrees.read_papers][1:] == [[]]
+    manifest = _load_manifest(gcs_bucket)
+    assert manifest.refs['verdicts'] not in manifest.records[manifest.refs['pedigrees']].deps
 
 
 def test_a_request_without_the_targets_spends_nothing_on_figures_or_pedigrees(gcs_bucket: gcs.Bucket) -> None:

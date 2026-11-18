@@ -767,7 +767,8 @@ def assemble(pages: Sequence[PageAnswer]) -> figures_pb2.FigureSet:
                 panels=[p for i in sorted(f.drawings) for p in join.drawings[i].drawn.panels],
             )
             for f in join.figures()
-        ]
+        ],
+        pages_annotated=len(pages),
     )
 
 

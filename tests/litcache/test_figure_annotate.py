@@ -169,6 +169,12 @@ def test_each_page_is_its_own_request_and_each_box_is_placed_on_that_page() -> N
     assert annotation.construction.harness_version == figure_annotate.HARNESS_VERSION
 
 
+def test_a_pdf_drawing_no_figure_has_a_figure_set_that_counts_its_pages() -> None:
+    annotation = _annotate(_page_harness(), pages=3)
+
+    assert annotation.figure_set == figures_pb2.FigureSet(pages_annotated=3)
+
+
 def test_the_instructions_are_cached_and_the_page_is_not() -> None:
     harness = _page_harness()
 

@@ -8,6 +8,7 @@ refs. Each kind's ranking lives here, beside that rule.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 
 from themis.litcache.models import litcache_pb2
@@ -22,6 +23,9 @@ VERDICTS_REF = 'verdicts'
 FIGURES_REF = 'figures'
 # The ref naming the paper's pedigrees: the pedigree set read from each of its figures.
 PEDIGREES_REF = 'pedigrees'
+
+# The key of empty bytes, which every kind's empty artifact would share: no record holds it.
+_EMPTY_KEY = hashlib.sha256(b'').hexdigest()
 
 # Rendering fidelity, best first: an xml-faithful litdown rendering over a pdf-derived one, and llm-ocr over the legacy
 # docling route. A converter missing here ranks below every listed one rather than raising: during a deploy, a writer on
@@ -45,22 +49,75 @@ def _rendering_key(
 
 def _made_from(
     *upstreams: str,
-    optional: tuple[str, ...] = (),
 ) -> Callable[[litcache_pb2.Manifest, str, litcache_pb2.Record], tuple[int, int, int, str]]:
     """A derived kind's ranking: made from what each of `upstreams` names now first, then the newest, then the hash.
-
-    An `optional` upstream counts only while its ref is set: a record made without it is current when there is none.
 
     Recency alone is not enough: a slow run on an input since superseded can finish after the run on its successor.
     """
 
     def rank(manifest: litcache_pb2.Manifest, key: str, record: litcache_pb2.Record) -> tuple[int, int, int, str]:
-        current = all(ref in manifest.refs and manifest.refs[ref] in record.deps for ref in upstreams) and all(
-            ref not in manifest.refs or manifest.refs[ref] in record.deps for ref in optional
-        )
+        current = all(ref in manifest.refs and manifest.refs[ref] in record.deps for ref in upstreams)
         return (0 if current else 1, -record.created_at.seconds, -record.created_at.nanos, key)
 
     return rank
+
+
+def named(manifest: litcache_pb2.Manifest, ref: str, kind: str) -> tuple[str, litcache_pb2.Record] | None:
+    """The record `ref` names, as `(key, record)`, or None when the ref is unset.
+
+    Args:
+        manifest: The paper's manifest.
+        ref: The ref to follow.
+        kind: The construction arm the named record must have.
+
+    Raises:
+        ValueError: If the ref names a record the manifest does not hold, or one of another kind: a corrupt manifest.
+    """
+    key = manifest.refs.get(ref)
+    if key is None:
+        return None
+    record = manifest.records.get(key)
+    if record is None or record.WhichOneof('construction') != kind:
+        raise ValueError(f'manifest {manifest.doc_id}: the {ref} ref names {key!r}, which is not a {kind} it holds')
+    return key, record
+
+
+def current_verdicts(manifest: litcache_pb2.Manifest) -> str | None:
+    """The key of the verdicts on the current rendering's mention set, or None when the paper has none.
+
+    The `verdicts` ref can name verdicts on an earlier mention set: a mention set with no mention settles its verdicts
+    without a record, so the ref stays where it was.
+
+    Raises:
+        ValueError: If one of the refs read names a record the manifest does not hold, or one of another kind.
+    """
+    markdown = named(manifest, MARKDOWN_REF, 'rendering')
+    variants = named(manifest, VARIANTS_REF, 'variant_extraction')
+    verdicts = named(manifest, VERDICTS_REF, 'variant_validation')
+    if markdown is None or variants is None or verdicts is None:
+        return None
+    if markdown[0] not in variants[1].deps or variants[0] not in verdicts[1].deps:
+        return None
+    return verdicts[0]
+
+
+def made_from_current_verdicts(manifest: litcache_pb2.Manifest, record: litcache_pb2.Record) -> bool:
+    """Whether `record` was made from the current verdicts, or from none where the paper has none."""
+    verdicts = current_verdicts(manifest)
+    if verdicts is not None:
+        return verdicts in record.deps
+    return not any(
+        dep in manifest.records and manifest.records[dep].WhichOneof('construction') == 'variant_validation'
+        for dep in record.deps
+    )
+
+
+def _pedigrees_key(manifest: litcache_pb2.Manifest, key: str, record: litcache_pb2.Record) -> tuple[int, int, int, str]:
+    """Pedigrees: made from the current rendering, figure set and verdicts first, then the newest, then the hash."""
+    current = all(
+        ref in manifest.refs and manifest.refs[ref] in record.deps for ref in (MARKDOWN_REF, FIGURES_REF)
+    ) and made_from_current_verdicts(manifest, record)
+    return (0 if current else 1, -record.created_at.seconds, -record.created_at.nanos, key)
 
 
 def _newest_pdf(manifest: litcache_pb2.Manifest) -> str | None:
@@ -89,7 +146,7 @@ _RANKINGS: dict[str, Callable[[litcache_pb2.Manifest, str, litcache_pb2.Record],
     'variant_extraction': _made_from(MARKDOWN_REF),
     'variant_validation': _made_from(VARIANTS_REF),
     'figure_annotation': _made_from_newest_pdf,
-    'pedigree_extraction': _made_from(MARKDOWN_REF, FIGURES_REF, optional=(VERDICTS_REF,)),
+    'pedigree_extraction': _pedigrees_key,
 }
 
 
@@ -137,9 +194,14 @@ def put_record(manifest: litcache_pb2.Manifest, key: str, record: litcache_pb2.R
         ref: The ref the record competes for (`MARKDOWN_REF` for the paper's text), or None for a record no ref names.
 
     Raises:
-        RecordRefusedError: If `key` is held as a record of another kind, or `ref` is given for a kind with no
-            ranking, or names a record of another kind or one the manifest does not hold.
+        RecordRefusedError: If `key` is the key of empty bytes, or is held as a record of another kind, or `ref` is
+            given for a kind with no ranking, or names a record of another kind or one the manifest does not hold.
     """
+    if key == _EMPTY_KEY:
+        raise RecordRefusedError(
+            f'manifest {manifest.doc_id}: a {record.WhichOneof("construction")} of empty bytes is no record; '
+            'a run that finds nothing settles without one'
+        )
     held = manifest.records.get(key)
     if held is not None and held.WhichOneof('construction') != record.WhichOneof('construction'):
         raise RecordRefusedError(
@@ -174,26 +236,6 @@ def markdown(manifest: litcache_pb2.Manifest) -> tuple[str, litcache_pb2.Record]
         raise ValueError(
             f'manifest {manifest.doc_id}: the markdown ref names {key!r}, which is not a rendering it holds'
         )
-    return key, record
-
-
-def named(manifest: litcache_pb2.Manifest, ref: str, kind: str) -> tuple[str, litcache_pb2.Record] | None:
-    """The record `ref` names, as `(key, record)`, or None when the ref is unset.
-
-    Args:
-        manifest: The paper's manifest.
-        ref: The ref to follow.
-        kind: The construction arm the named record must have.
-
-    Raises:
-        ValueError: If the ref names a record the manifest does not hold, or one of another kind: a corrupt manifest.
-    """
-    key = manifest.refs.get(ref)
-    if key is None:
-        return None
-    record = manifest.records.get(key)
-    if record is None or record.WhichOneof('construction') != kind:
-        raise ValueError(f'manifest {manifest.doc_id}: the {ref} ref names {key!r}, which is not a {kind} it holds')
     return key, record
 
 

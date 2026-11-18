@@ -661,6 +661,8 @@ async def _run_verdicts(run: _Run, manifest: litcache_pb2.Manifest, inputs: tupl
     agents = variants_pb2.MentionSet.FromString(
         run.bucket.blob(writer.record_path(run.doc_id, _VARIANTS_DIR, variants_key, 'pb')).download_as_bytes()
     )
+    if not agents.mentions:
+        raise _nothing('the mention set has no mention to validate')
     try:
         completed, verdicts, construction = run.variants.validate(agents, text)
     except variant_validate.MisplacedOccurrenceError as e:
@@ -797,17 +799,6 @@ _PEDIGREE_HARNESS_INPUT = hashlib.sha256(
 _NO_VARIANTS = hashlib.sha256(b'no validated variants').hexdigest()
 
 
-def _current_verdicts(manifest: litcache_pb2.Manifest, markdown_key: str) -> str | None:
-    """The verdicts on the current rendering's mention set, or None when the paper has none."""
-    variants = records.named(manifest, records.VARIANTS_REF, 'variant_extraction')
-    verdicts = records.named(manifest, records.VERDICTS_REF, 'variant_validation')
-    if variants is None or verdicts is None:
-        return None
-    if markdown_key not in variants[1].deps or variants[0] not in verdicts[1].deps:
-        return None
-    return verdicts[0]
-
-
 def _pedigrees_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | None:
     """The rendering, the figure set the `figures` ref names, the current pdf revision, the verdicts, the harness.
 
@@ -826,7 +817,7 @@ def _pedigrees_inputs(manifest: litcache_pb2.Manifest) -> tuple[str, ...] | None
     pdf_hash = _current_revision(source).hash
     if pdf_hash not in figures[1].deps:
         return None
-    verdicts = _current_verdicts(manifest, markdown[0]) or _NO_VARIANTS
+    verdicts = records.current_verdicts(manifest) or _NO_VARIANTS
     return (markdown[0], figures[0], pdf_hash, verdicts, _PEDIGREE_HARNESS_INPUT)
 
 
@@ -840,7 +831,8 @@ def _pedigrees_produced(manifest: litcache_pb2.Manifest, _validation: Validation
     inputs = _pedigrees_inputs(manifest)
     return inputs is not None and any(
         record.WhichOneof('construction') == 'pedigree_extraction'
-        and set(inputs[:-1]) - {_NO_VARIANTS} <= set(record.deps)
+        and set(inputs[:3]) <= set(record.deps)
+        and records.made_from_current_verdicts(manifest, record)
         and record.pedigree_extraction.harness_version == pedigree_extract.HARNESS_VERSION
         for record in manifest.records.values()
     )

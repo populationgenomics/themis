@@ -161,6 +161,19 @@ def test_bytes_held_as_one_kind_are_refused_as_another() -> None:
         )
 
 
+def test_empty_bytes_are_refused_as_a_record_of_any_kind() -> None:
+    manifest = _holding()
+    empty = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'  # sha256 of no bytes
+    figure_set = litcache_pb2.Record(
+        deps=['rev'],
+        created_at=timestamp_pb2.Timestamp(seconds=9),
+        figure_annotation=figures_pb2.FigureAnnotationConstruction(model='m', harness_version='1'),
+    )
+    with pytest.raises(records.RecordRefusedError, match='empty bytes'):
+        records.put_record(manifest, empty, figure_set, records.FIGURES_REF)
+    assert empty not in manifest.records
+
+
 def test_a_mention_set_from_a_superseded_rendering_never_takes_the_ref_from_one_on_the_current() -> None:
     # A slow extraction on a rendering since replaced can finish after the one on its successor.
     manifest = _holding(
@@ -209,6 +222,7 @@ def test_a_figure_set_from_a_superseded_pdf_never_takes_the_ref_from_one_on_the_
 
 def test_a_pedigree_set_is_current_only_when_made_from_both_the_text_and_the_figures_named() -> None:
     manifest = litcache_pb2.Manifest(doc_id='d')
+    manifest.records['md'].CopyFrom(_record(litcache_pb2.Converter.CONVERTER_LITDOWN))
     manifest.refs[records.MARKDOWN_REF] = 'md'
     manifest.refs[records.FIGURES_REF] = 'figs'
     construction = pedigrees_pb2.PedigreeExtractionConstruction(
@@ -227,25 +241,82 @@ def test_a_pedigree_set_is_current_only_when_made_from_both_the_text_and_the_fig
     assert manifest.refs[records.PEDIGREES_REF] == 'p-both'
 
 
-def test_a_pedigree_set_made_without_verdicts_stays_current_only_while_the_paper_has_none() -> None:
+def _pedigree_manifest(*, variants_deps: list[str], verdicts: bool) -> litcache_pb2.Manifest:
+    """A paper on rendering `md` and figure set `figs`, its mention set `m` made from `variants_deps`."""
     manifest = litcache_pb2.Manifest(doc_id='d')
+    manifest.records['md'].CopyFrom(_record(litcache_pb2.Converter.CONVERTER_LITDOWN))
     manifest.refs[records.MARKDOWN_REF] = 'md'
     manifest.refs[records.FIGURES_REF] = 'figs'
-    construction = pedigrees_pb2.PedigreeExtractionConstruction(
-        model='m', harness_version='1', figures_read=[pedigrees_pb2.PedigreeFigure(figure=0)]
+    manifest.records['m'].CopyFrom(
+        litcache_pb2.Record(
+            deps=variants_deps,
+            variant_extraction=variants_pb2.VariantExtractionConstruction(model='m', harness_version='1'),
+        )
     )
-    without = litcache_pb2.Record(
-        deps=['md', 'figs'], created_at=timestamp_pb2.Timestamp(seconds=200), pedigree_extraction=construction
+    manifest.refs[records.VARIANTS_REF] = 'm'
+    if verdicts:
+        manifest.records['v'].CopyFrom(
+            litcache_pb2.Record(
+                deps=['m'],
+                variant_validation=variants_pb2.VariantValidationConstruction(
+                    weaver_version='1', stores=[variants_pb2.StoreVersion()]
+                ),
+            )
+        )
+        manifest.refs[records.VERDICTS_REF] = 'v'
+    return manifest
+
+
+def _pedigrees(deps: list[str], seconds: int) -> litcache_pb2.Record:
+    return litcache_pb2.Record(
+        deps=deps,
+        created_at=timestamp_pb2.Timestamp(seconds=seconds),
+        pedigree_extraction=pedigrees_pb2.PedigreeExtractionConstruction(
+            model='m', harness_version='1', figures_read=[pedigrees_pb2.PedigreeFigure(figure=0)]
+        ),
     )
-    records.put_record(manifest, 'p-without', without, records.PEDIGREES_REF)
+
+
+def test_a_pedigree_set_made_from_the_current_verdicts_outranks_a_newer_one_made_without() -> None:
+    manifest = _pedigree_manifest(variants_deps=['md'], verdicts=True)
+
+    records.put_record(manifest, 'p-without', _pedigrees(['md', 'figs'], seconds=200), records.PEDIGREES_REF)
+    records.put_record(manifest, 'p-with', _pedigrees(['md', 'figs', 'v'], seconds=100), records.PEDIGREES_REF)
+
+    assert manifest.refs[records.PEDIGREES_REF] == 'p-with'
+
+
+def test_a_pedigree_set_made_from_retracted_verdicts_yields_to_one_made_without() -> None:
+    # The mention set `m2` holds no mention, so its verdicts settled without a record and the ref stays on `v`.
+    manifest = _pedigree_manifest(variants_deps=['md'], verdicts=True)
+    records.put_record(manifest, 'p-with', _pedigrees(['md', 'figs', 'v'], seconds=100), records.PEDIGREES_REF)
+    manifest.records['m2'].CopyFrom(manifest.records['m'])
+    manifest.records['m2'].created_at.seconds = 150
+    manifest.refs[records.VARIANTS_REF] = 'm2'
+
+    records.put_record(manifest, 'p-without', _pedigrees(['md', 'figs'], seconds=200), records.PEDIGREES_REF)
+
     assert manifest.refs[records.PEDIGREES_REF] == 'p-without'
 
-    manifest.refs[records.VERDICTS_REF] = 'verdicts'
-    with_verdicts = litcache_pb2.Record(
-        deps=['md', 'figs', 'verdicts'],
-        created_at=timestamp_pb2.Timestamp(seconds=100),
-        pedigree_extraction=construction,
-    )
-    records.put_record(manifest, 'p-with', with_verdicts, records.PEDIGREES_REF)
 
-    assert manifest.refs[records.PEDIGREES_REF] == 'p-with'  # older, but made from the verdicts the paper now has
+def test_a_pedigree_set_made_without_verdicts_outranks_a_newer_one_made_on_a_superseded_rendering() -> None:
+    # The mention set on `md` found nothing; `v` is on the mention set of the earlier rendering `md0`.
+    manifest = _pedigree_manifest(variants_deps=['md'], verdicts=True)
+    manifest.records['v'].deps[:] = ['m0']
+    manifest.records['m0'].CopyFrom(manifest.records['m'])
+    manifest.records['m0'].deps[:] = ['md0']
+
+    records.put_record(manifest, 'p-without', _pedigrees(['md', 'figs'], seconds=100), records.PEDIGREES_REF)
+    records.put_record(manifest, 'p-late', _pedigrees(['md', 'figs', 'v'], seconds=200), records.PEDIGREES_REF)
+
+    assert manifest.refs[records.PEDIGREES_REF] == 'p-without'
+
+
+def test_current_verdicts_refuses_a_verdicts_ref_naming_no_held_record_and_leaves_the_manifest_unchanged() -> None:
+    manifest = _pedigree_manifest(variants_deps=['md'], verdicts=False)
+    manifest.refs[records.VERDICTS_REF] = 'gone'
+    before = manifest.SerializeToString(deterministic=True)
+
+    with pytest.raises(ValueError, match='the verdicts ref names'):
+        records.current_verdicts(manifest)
+    assert manifest.SerializeToString(deterministic=True) == before
