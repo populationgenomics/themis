@@ -18,7 +18,12 @@ import {
   openMigratedDatabase,
   SKIP_WITHOUT_POSTGRES,
 } from "@/server/migrated-postgres.test-support";
-import type { Entry, NewVariant } from "./model";
+import { MODES, modeFromColumn } from "./mode";
+import {
+  CLINICAL_CONTEXT_MAX_LENGTH,
+  type Entry,
+  type NewVariant,
+} from "./model";
 import { SqlCurationStore } from "./sql";
 import { isDuplicateRegistrationError } from "./store";
 
@@ -95,12 +100,122 @@ describe.skipIf(SKIP_WITHOUT_POSTGRES)(
       expect(await store.listVariants("other-project")).toEqual([]);
     });
 
+    test.each(MODES.map((entry) => entry.mode))(
+      "round-trips mode of inheritance %p through curation.variants",
+      async (mode) => {
+        const created = await store.createVariant(
+          "validation",
+          { ...FBN1, modeOfInheritance: mode },
+          "manager@example.org",
+        );
+        const loaded = await store.getVariant(created.id);
+        expect(loaded?.modeOfInheritance).toBe(mode);
+      },
+    );
+
+    test("modeFromColumn decodes every mode_of_inheritance value the live constraint admits", async () => {
+      const { rows } = await db.adminPool.query<{ def: string }>(
+        `SELECT pg_get_constraintdef(c.oid) AS def
+         FROM pg_constraint c
+         JOIN pg_attribute a
+           ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+         WHERE c.conrelid = 'curation.variants'::regclass
+           AND c.contype = 'c'
+           AND cardinality(c.conkey) = 1
+           AND a.attname = 'mode_of_inheritance'`,
+      );
+      expect(rows).toHaveLength(1);
+      const admitted = [...(rows[0]?.def.matchAll(/'([^']+)'/g) ?? [])].map(
+        (match) => match[1] as string,
+      );
+      expect(admitted.length).toBeGreaterThan(0);
+      expect(admitted.map(modeFromColumn).sort()).toEqual(
+        MODES.map((entry) => entry.mode).sort(),
+      );
+    });
+
+    test.each([
+      "UNSPECIFIED",
+      "X_LINKED",
+      "MODE_OF_INHERITANCE_AUTOSOMAL_DOMINANT",
+    ])(
+      "curation.variants rejects non-admitted mode_of_inheritance %p",
+      async (invalidMode) => {
+        await expect(
+          db.webPool.query(
+            `INSERT INTO curation.variants
+               (id, project_id, gene, transcript, hgvs_c, disease_label, mondo_id, mode_of_inheritance, clinical_context, created_by)
+             VALUES ($1, 'validation', 'FBN1', 'NM_000138.5', 'c.7003C>T', 'Marfan syndrome', 'MONDO:0007947', $2, 'Tall stature.', 'manager@example.org')`,
+            [`var-${invalidMode}`, invalidMode],
+          ),
+        ).rejects.toMatchObject({
+          code: "23514",
+          constraint: expect.stringContaining("mode_of_inheritance"),
+        });
+      },
+    );
+
+    test("accepts clinicalContext at CLINICAL_CONTEXT_MAX_LENGTH", async () => {
+      const longest = "x".repeat(CLINICAL_CONTEXT_MAX_LENGTH);
+      const created = await store.createVariant(
+        "validation",
+        { ...FBN1, clinicalContext: longest },
+        "manager@example.org",
+      );
+      expect((await store.getVariant(created.id))?.clinicalContext).toBe(
+        longest,
+      );
+    });
+
+    test("rejects clinicalContext past CLINICAL_CONTEXT_MAX_LENGTH", async () => {
+      await expect(
+        store.createVariant(
+          "validation",
+          {
+            ...FBN1,
+            clinicalContext: "x".repeat(CLINICAL_CONTEXT_MAX_LENGTH + 1),
+          },
+          "manager@example.org",
+        ),
+      ).rejects.toMatchObject({
+        code: "23514",
+        constraint: expect.stringContaining("clinical_context"),
+      });
+    });
+
     test("refuses a duplicate registration of the same entity in the same Project", async () => {
       await store.createVariant("validation", FBN1, "manager@example.org");
       const error = await store
         .createVariant("validation", FBN1, "manager@example.org")
         .catch((thrown: unknown) => thrown);
       expect(isDuplicateRegistrationError(error)).toBe(true);
+    });
+
+    test("admits the same variant in the same Project under another mode of inheritance", async () => {
+      const dominant = await store.createVariant(
+        "validation",
+        FBN1,
+        "manager@example.org",
+      );
+      const recessive = await store.createVariant(
+        "validation",
+        {
+          ...FBN1,
+          modeOfInheritance: ModeOfInheritance.AUTOSOMAL_RECESSIVE,
+        },
+        "manager@example.org",
+      );
+      const listed = await store.listVariants("validation");
+      expect(listed).toHaveLength(2);
+      expect(new Set(listed.map((v) => v.id))).toEqual(
+        new Set([dominant.id, recessive.id]),
+      );
+      expect(listed.map((v) => v.modeOfInheritance).sort()).toEqual(
+        [
+          ModeOfInheritance.AUTOSOMAL_DOMINANT,
+          ModeOfInheritance.AUTOSOMAL_RECESSIVE,
+        ].sort(),
+      );
     });
 
     test("submit copies selected drafts into assessments that stay unchanged when drafts are edited", async () => {

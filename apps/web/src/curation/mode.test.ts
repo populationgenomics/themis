@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   ModeOfInheritance,
   ModeOfInheritanceSchema,
@@ -31,12 +29,6 @@ describe("the registered mode", () => {
     },
   );
 
-  test("stores exactly the names the column's CHECK admits", () => {
-    expect(MODES.map((m) => modeColumn(m.mode)).sort()).toEqual(
-      [...checkedModes()].sort(),
-    );
-  });
-
   test("refuses the unstated mode and anything the column could not hold", () => {
     expect(modeFromName("MODE_OF_INHERITANCE_UNSPECIFIED")).toBeUndefined();
     expect(modeFromName("AUTOSOMAL_DOMINANT")).toBeUndefined();
@@ -45,20 +37,3 @@ describe("the registered mode", () => {
     expect(() => modeFromColumn("X_LINKED")).toThrow(/unknown mode/);
   });
 });
-
-const MIGRATIONS = join(
-  import.meta.dir,
-  "../../../../themis/migrate/migrations",
-);
-
-/** The values the migration adding `curation.variants.mode_of_inheritance` lets the column hold. */
-function checkedModes(): string[] {
-  const sql = readdirSync(MIGRATIONS)
-    .map((name) => readFileSync(join(MIGRATIONS, name), "utf-8"))
-    .find((text) => text.includes("ADD COLUMN mode_of_inheritance"));
-  const list = sql?.match(/mode_of_inheritance IN \(([^)]*)\)/)?.[1];
-  if (list === undefined) {
-    throw new Error("no migration declares the mode_of_inheritance CHECK");
-  }
-  return [...list.matchAll(/'([A-Z_]+)'/g)].map((match) => match[1] as string);
-}

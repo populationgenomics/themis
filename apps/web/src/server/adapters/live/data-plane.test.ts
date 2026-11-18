@@ -1,11 +1,18 @@
 import { describe, expect, test } from "bun:test";
+import Anthropic from "@anthropic-ai/sdk";
 import { create } from "@bufbuild/protobuf";
 import { type Analysis, AnalysisSchema } from "@/models/workbench";
-import { isUnmanagedSessionError } from "../../errors";
-import type { AnthropicClient } from "./client";
+import { ResourceNotFoundError, UnmanagedSessionError } from "../../errors";
+import { createPool } from "../../pg";
+import {
+  anthropicClientOverFetch,
+  anthropicErrorResponse,
+  jsonResponse,
+  type RecordedRequest,
+} from "./anthropic.test-support";
 import { DataPlane } from "./data-plane";
 import type { BearerDeriver } from "./derive";
-import type { Sql } from "./sql";
+import { Sql } from "./sql";
 
 // A run driven by another harness has no session here. The poll still has to answer, because the
 // backend adds the workspace tip to its response and the document pane has no other source; but
@@ -20,96 +27,124 @@ function analysis(sessionId: string): Analysis {
   });
 }
 
-type Calls = { listEvents: number; steers: number; interrupts: number };
+const UNUSED_DERIVER: BearerDeriver = {
+  async deriveBearer(sessionId: string): Promise<string> {
+    throw new Error(`unexpected deriveBearer(${sessionId})`);
+  },
+};
+
+function unusedSql(): Sql {
+  return new Sql(
+    createPool({
+      stream: () => {
+        throw new Error("unexpected SQL connection");
+      },
+    }),
+  );
+}
 
 function plane(
-  calls: Calls,
-  listEvents: () => unknown = () => ({ events: [] }),
+  handler: (req: RecordedRequest) => Response | Promise<Response>,
 ) {
-  const anthropic = {
-    listEvents: async () => {
-      calls.listEvents += 1;
-      return listEvents();
-    },
-    sendUserMessage: async () => {
-      calls.steers += 1;
-    },
-    sendInterrupt: async () => {
-      calls.interrupts += 1;
-    },
-  } as unknown as AnthropicClient;
-  return new DataPlane(
-    anthropic,
-    {} as unknown as BearerDeriver,
-    {} as unknown as Sql,
-  );
+  const { client, requests } = anthropicClientOverFetch(handler);
+  return {
+    dataPlane: new DataPlane(client, UNUSED_DERIVER, unusedSql()),
+    requests,
+  };
 }
 
 describe("a run another harness drove", () => {
   test("polls to an empty conversation without asking the platform", async () => {
-    const calls: Calls = { listEvents: 0, steers: 0, interrupts: 0 };
+    const { dataPlane, requests } = plane(() => {
+      throw new Error("unexpected platform request");
+    });
 
-    const response = await plane(calls).pollEvents(analysis("pi_abc"));
+    const response = await dataPlane.pollEvents(analysis("pi_abc"));
 
-    expect(calls.listEvents).toBe(0);
+    expect(requests).toEqual([]);
     expect(response.events).toEqual([]);
   });
 
-  test("refuses a steer and an interrupt rather than sending them nowhere", async () => {
-    const calls: Calls = { listEvents: 0, steers: 0, interrupts: 0 };
-    const plane_ = plane(calls);
+  test.each([
+    [
+      "a thread read",
+      (dataPlane: DataPlane) =>
+        dataPlane.getThread(analysis("pi_abc"), "sthr_1"),
+    ],
+    [
+      "a steer",
+      (dataPlane: DataPlane) =>
+        dataPlane.steerAnalysis(analysis("pi_abc"), "hello"),
+    ],
+    [
+      "an interrupt",
+      (dataPlane: DataPlane) => dataPlane.interruptAnalysis(analysis("pi_abc")),
+    ],
+  ] as const)(
+    "refuses %s rather than sending it nowhere",
+    async (_label, act) => {
+      const { dataPlane, requests } = plane(() => {
+        throw new Error("unexpected platform request");
+      });
 
-    const refusal = async (call: Promise<void>): Promise<unknown> =>
-      call.then(
-        () => null,
-        (error: unknown) => error,
+      await expect(act(dataPlane)).rejects.toBeInstanceOf(
+        UnmanagedSessionError,
       );
-
-    expect(
-      isUnmanagedSessionError(
-        await refusal(plane_.steerAnalysis(analysis("pi_abc"), "hello")),
-      ),
-    ).toBe(true);
-    expect(
-      isUnmanagedSessionError(
-        await refusal(plane_.interruptAnalysis(analysis("pi_abc"))),
-      ),
-    ).toBe(true);
-    expect(calls.steers).toBe(0);
-    expect(calls.interrupts).toBe(0);
-  });
+      expect(requests).toEqual([]);
+    },
+  );
 });
 
 describe("a run the platform holds", () => {
   test("still reads its conversation from the platform", async () => {
-    const calls: Calls = { listEvents: 0, steers: 0, interrupts: 0 };
+    const { dataPlane } = plane((req) => {
+      if (
+        req.method === "GET" &&
+        req.url.pathname === "/v1/sessions/sesn_01xyz/events"
+      ) {
+        return jsonResponse({
+          data: [
+            {
+              type: "agent.message",
+              id: "ev_1",
+              processed_at: "2024-01-01T00:00:00Z",
+              content: [{ type: "text", text: "Reading the locus." }],
+            },
+          ],
+          next_page: null,
+        });
+      }
+      return anthropicErrorResponse(404, "not_found_error", "unknown session");
+    });
 
-    const response = await plane(calls).pollEvents(analysis("sesn_01xyz"));
+    const response = await dataPlane.pollEvents(analysis("sesn_01xyz"));
 
-    expect(calls.listEvents).toBe(1);
-    expect(response.events).toEqual([]);
+    expect(response.events).toHaveLength(1);
+    expect(response.events[0]?.kind).toEqual({
+      case: "assistant",
+      value: expect.objectContaining({ text: "Reading the locus." }),
+    });
   });
 
   test("surfaces a failed read rather than an empty conversation", async () => {
-    const calls: Calls = { listEvents: 0, steers: 0, interrupts: 0 };
-    const outage = plane(calls, () => {
-      throw new Error("the platform is unreachable");
-    });
-
-    await expect(outage.pollEvents(analysis("sesn_01xyz"))).rejects.toThrow(
-      "the platform is unreachable",
+    const { dataPlane } = plane(() =>
+      anthropicErrorResponse(500, "api_error", "the platform is unreachable"),
     );
+
+    await expect(
+      dataPlane.pollEvents(analysis("sesn_01xyz")),
+    ).rejects.toBeInstanceOf(Anthropic.InternalServerError);
   });
 
   test("routes an unrecognised session prefix to the platform so it fails loud rather than silently returning empty", async () => {
-    const calls: Calls = { listEvents: 0, steers: 0, interrupts: 0 };
-    const unknown = plane(calls, () => {
-      throw new Error("unknown session id");
-    });
-
-    await expect(unknown.pollEvents(analysis("unknown_123"))).rejects.toThrow(
-      "unknown session id",
+    const { dataPlane, requests } = plane(() =>
+      anthropicErrorResponse(404, "not_found_error", "unknown session id"),
     );
-    expect(calls.listEvents).toBe(1);
+
+    await expect(
+      dataPlane.pollEvents(analysis("unknown_123")),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url.pathname).toBe("/v1/sessions/unknown_123/events");
   });
 });

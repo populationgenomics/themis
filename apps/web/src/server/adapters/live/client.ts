@@ -84,11 +84,16 @@ export interface SessionEvents {
 export class AnthropicClient {
   private client?: Anthropic;
 
-  constructor(private readonly config: AnthropicConfig) {}
+  /** `client` sends the Managed Agents requests; a test passes one whose
+   *  `fetch` it controls. */
+  constructor(
+    private readonly config: AnthropicConfig,
+    client?: Anthropic,
+  ) {
+    this.client = client;
+  }
 
-  /** The API surface every call goes through; overridable, so a subclass can stand in
-   *  for the network. */
-  protected beta(): Anthropic["beta"] {
+  private beta(): Anthropic["beta"] {
     if (!this.client) {
       this.client = buildClient(this.config);
     }
@@ -153,7 +158,7 @@ export class AnthropicClient {
         raw.push(event);
       }
     } catch (error) {
-      if (isNotFoundError(error)) {
+      if (error instanceof Anthropic.NotFoundError) {
         throw new ResourceNotFoundError(`unknown session: ${sessionId}`);
       }
       throw error;
@@ -177,7 +182,7 @@ export class AnthropicClient {
         raw.push(event);
       }
     } catch (error) {
-      if (isNotFoundError(error)) {
+      if (error instanceof Anthropic.NotFoundError) {
         throw new ResourceNotFoundError(`unknown thread: ${threadId}`);
       }
       throw error;
@@ -211,24 +216,9 @@ export function foldThreadEvents(
  *  path (→ 500), never to a misclassification. The phrase is specific to the
  *  pending-tool-events refusal; the budget-cap refusal words itself differently. */
 function isBusyRefusal(error: unknown): boolean {
-  if (typeof error !== "object" || error === null) return false;
-  const { status, message } = error as { status?: unknown; message?: unknown };
   return (
-    status === 400 &&
-    typeof message === "string" &&
-    message.includes("waiting on responses to events")
-  );
-}
-
-/** True when an SDK error is a 404 (the session id is unknown), so the caller can
- *  map it to `ResourceNotFoundError` (→ 404) instead of a masking 500. */
-function isNotFoundError(error: unknown): boolean {
-  if (error instanceof Anthropic.NotFoundError) return true;
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "status" in error &&
-    (error as { status?: unknown }).status === 404
+    error instanceof Anthropic.BadRequestError &&
+    error.message.includes("waiting on responses to events")
   );
 }
 

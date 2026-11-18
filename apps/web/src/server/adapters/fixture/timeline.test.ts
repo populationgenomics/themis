@@ -49,6 +49,28 @@ function afterPolls(n: number): RunState {
   return state;
 }
 
+/** Advance `start` until further polls reveal nothing more. */
+function pollToEnd(start: RunState): RunState {
+  let state = start;
+  const limit = SCRIPTED_STAGES + start.interjections.length * 2 + 2;
+  for (let i = 0; i <= limit; i += 1) {
+    const next = afterPoll(state);
+    if (next.revealed === state.revealed) return state;
+    state = next;
+  }
+  throw new Error("the scripted run did not settle");
+}
+
+/** Poll from the start of an untouched run until `predicate` holds. */
+function pollUntil(predicate: (state: RunState) => boolean): RunState {
+  let state = initialRunState();
+  for (let i = 0; i <= SCRIPTED_STAGES; i += 1) {
+    if (predicate(state)) return state;
+    state = afterPoll(state);
+  }
+  throw new Error("the scripted run never reached the requested state");
+}
+
 const ids = (events: readonly ConversationEvent[]) => events.map((e) => e.id);
 
 const instants = (events: readonly ConversationEvent[]) =>
@@ -341,16 +363,17 @@ describe("a curator turn joining the run", () => {
   });
 
   test("stays where it was made — the rest of the script still follows it", () => {
-    const steeredState = steered(afterPolls(1), "Answer: Most");
-    let state = steeredState;
-    for (let i = 0; i < 8; i += 1) state = afterPoll(state);
+    const state = pollToEnd(steered(afterPolls(1), "Answer: Most"));
 
     const finished = timelineAt(ANALYSIS, state).events;
     const scripted = timelineAt(ANALYSIS, afterPolls(SCRIPTED_STAGES)).events;
     // Nothing the script would have emitted is lost.
     for (const id of ids(scripted)) expect(ids(finished)).toContain(id);
     // ...and the turn sits inside it, not appended past the ending.
-    const turnIndex = ids(finished).indexOf("ev-steer-1");
+    const turnIndex = finished.findIndex(
+      (event) =>
+        event.kind.case === "user" && event.kind.value.text === "Answer: Most",
+    );
     expect(turnIndex).toBeGreaterThan(0);
     expect(turnIndex).toBeLessThan(finished.length - 1);
   });
@@ -358,7 +381,9 @@ describe("a curator turn joining the run", () => {
   test("never moves an event a curator has already been shown", () => {
     // Ids are the client's reconciliation key and the instants are the ordering key, so
     // a splice that renumbered either would make the poll re-render settled turns.
-    const mid = afterPolls(2);
+    const mid = pollUntil(
+      (state) => timelineAt(ANALYSIS, state).documentVersion === 1,
+    );
     const before = timelineAt(ANALYSIS, mid).events;
     const after = timelineAt(ANALYSIS, steered(mid, "Answer: Most")).events;
 
@@ -369,18 +394,27 @@ describe("a curator turn joining the run", () => {
   test("two turns made between polls are answered in the order they were made", () => {
     // Not just the turns: the replies too. A splice that landed the second turn inside
     // the first turn's block would have the agent answer the newer direction first.
-    const first = steered(afterPolls(1), "first");
-    const second = steered(first, "second");
-    let state = second;
-    for (let i = 0; i < 8; i += 1) state = afterPoll(state);
+    const first = steered(afterPolls(1), "first direction");
+    const second = steered(first, "second direction");
+    const shown = timelineAt(ANALYSIS, pollToEnd(second)).events;
 
-    const shown = ids(timelineAt(ANALYSIS, state).events);
+    const userTurn = (text: string) =>
+      shown.findIndex(
+        (event) => event.kind.case === "user" && event.kind.value.text === text,
+      );
+    const assistantAck = (text: string) =>
+      shown.findIndex(
+        (event) =>
+          event.kind.case === "assistant" &&
+          event.kind.value.text.includes(text),
+      );
+
     const order = [
-      "ev-steer-1",
-      "ev-steer-1-ack",
-      "ev-steer-2",
-      "ev-steer-2-ack",
-    ].map((id) => shown.indexOf(id));
+      userTurn("first direction"),
+      assistantAck("first direction"),
+      userTurn("second direction"),
+      assistantAck("second direction"),
+    ];
     expect(order).not.toContain(-1);
     expect(order).toEqual([...order].sort((a, b) => a - b));
   });
@@ -388,11 +422,21 @@ describe("a curator turn joining the run", () => {
   test("never precedes the kickoff, even sent before the first poll", () => {
     // A curator cannot answer a run that has not started, so a turn taken at reveal
     // zero still lands behind the kickoff rather than opening the conversation.
-    const shown = ids(
-      timelineAt(ANALYSIS, steered(initialRunState(), "Answer: Most")).events,
+    const shown = timelineAt(
+      ANALYSIS,
+      steered(initialRunState(), "Answer: Most"),
+    ).events;
+    const kickoffIndex = shown.findIndex(
+      (event) =>
+        event.kind.case === "user" &&
+        event.kind.value.text.includes("do the thing"),
     );
-    expect(shown.indexOf("ev-kickoff")).toBe(0);
-    expect(shown.indexOf("ev-steer-1")).toBeGreaterThan(0);
+    const turnIndex = shown.findIndex(
+      (event) =>
+        event.kind.case === "user" && event.kind.value.text === "Answer: Most",
+    );
+    expect(kickoffIndex).toBe(0);
+    expect(turnIndex).toBeGreaterThan(kickoffIndex);
   });
 
   test("does not clear a document the run already produced", () => {
@@ -407,19 +451,18 @@ describe("a curator turn joining the run", () => {
 
 describe("the run mid-step and halted", () => {
   test("an interrupt closes the in-flight edit with an error result and ends the script", () => {
-    const halted = interrupted(afterPolls(7));
-    const edit = timelineAt(ANALYSIS, halted).events.find(
-      (event) => event.id === "ev-edit",
+    const midStep = pollUntil((state) => awaitingToolResult(ANALYSIS, state));
+    const halted = interrupted(midStep);
+    const edit = toolCalls(timelineAt(ANALYSIS, halted).events).find(
+      (call) => call.diff.length > 0,
     );
-    if (edit?.kind.case !== "tool") throw new Error("expected the edit call");
-    expect(edit.kind.value.result?.isError).toBe(true);
+    if (edit === undefined) throw new Error("expected the edit call");
+    expect(edit.result?.isError).toBe(true);
     expect(awaitingToolResult(ANALYSIS, halted)).toBe(false);
 
     // The script past the halt never plays, however long the poll runs on.
-    let state = halted;
-    for (let i = 0; i < 8; i += 1) state = afterPoll(state);
-    const settled = timelineAt(ANALYSIS, state);
-    expect(ids(settled.events)).not.toContain("ev-close");
+    const settled = timelineAt(ANALYSIS, pollToEnd(halted));
+    expect(settled.events).toEqual(timelineAt(ANALYSIS, halted).events);
     // The draft the write landed survives the halt; the corrected revision never does.
     expect(settled.documentVersion).toBe(1);
   });
@@ -428,17 +471,25 @@ describe("the run mid-step and halted", () => {
     // No call in flight, but the run is not settled: the halt lands at the frontier
     // — the resolved write keeps its real result, and the rest of the script never
     // plays. The one no-op state is a settled run, as the live API treats idle.
-    const halted = interrupted(afterPolls(2));
-    let state = halted;
-    for (let i = 0; i < 8; i += 1) state = afterPoll(state);
-    const settled = timelineAt(ANALYSIS, state);
-    expect(ids(settled.events)).not.toContain("ev-edit");
-    expect(ids(settled.events)).not.toContain("ev-close");
+    const betweenSteps = pollUntil(
+      (state) =>
+        timelineAt(ANALYSIS, state).documentVersion === 1 &&
+        !awaitingToolResult(ANALYSIS, state),
+    );
+    const atHalt = timelineAt(ANALYSIS, betweenSteps);
+    const settled = timelineAt(ANALYSIS, pollToEnd(interrupted(betweenSteps)));
+    expect(settled.events).toEqual(atHalt.events);
+    expect(toolCalls(settled.events).some((call) => call.diff.length > 0)).toBe(
+      false,
+    );
     // The revealed write already produced the draft; the halt keeps it.
     expect(settled.documentVersion).toBe(1);
-    const write = settled.events.find((event) => event.id === "ev-write");
-    if (write?.kind.case !== "tool") throw new Error("expected the write call");
-    expect(write.kind.value.result?.isError).toBeFalsy();
+    const draft = documentMarkdown(ANALYSIS, 1);
+    const write = toolCalls(settled.events).find((call) =>
+      call.command.includes(draft),
+    );
+    if (write === undefined) throw new Error("expected the write call");
+    expect(write.result?.isError).toBe(false);
   });
 
   test("an interrupt on a settled run changes nothing", () => {
@@ -459,7 +510,9 @@ describe("the run mid-step and halted", () => {
     // The closing error stage is not a script index; a re-halt that recounted it as
     // one would swap the closed call back to its resolved script twin — rewriting
     // events a curator was already shown.
-    const halted = interrupted(afterPolls(7));
+    const halted = interrupted(
+      pollUntil((state) => awaitingToolResult(ANALYSIS, state)),
+    );
     const spoken = steered(halted, "Stop meant stop.");
     const before = timelineAt(ANALYSIS, spoken).events;
     const again = interrupted(spoken);
@@ -467,10 +520,10 @@ describe("the run mid-step and halted", () => {
 
     expect(ids(after).slice(0, before.length)).toEqual(ids(before));
     expect(instants(after).slice(0, before.length)).toEqual(instants(before));
-    const edit = after.find((event) => event.id === "ev-edit");
-    if (edit?.kind.case !== "tool") throw new Error("expected the edit call");
-    expect(edit.kind.value.result?.isError).toBe(true);
-    expect(ids(after)).not.toContain("ev-close");
+    const edit = toolCalls(after).find((call) => call.diff.length > 0);
+    if (edit === undefined) throw new Error("expected the edit call");
+    expect(edit.result?.isError).toBe(true);
+    expect(timelineAt(ANALYSIS, pollToEnd(again)).documentVersion).toBe(1);
   });
 
   test("a halt does not fabricate the uptake of a pending turn", () => {
@@ -479,11 +532,15 @@ describe("the run mid-step and halted", () => {
     // agent visibly do work.
     const spoken = steered(afterPolls(1), "One more thing");
     const halted = interrupted(spoken);
-    expect(ids(timelineAt(ANALYSIS, halted).events)).not.toContain(
-      "ev-steer-1-ack",
-    );
-    expect(ids(timelineAt(ANALYSIS, afterPoll(halted)).events)).toContain(
-      "ev-steer-1-ack",
+    const acknowledged = (events: readonly ConversationEvent[]) =>
+      events.some(
+        (event) =>
+          event.kind.case === "assistant" &&
+          event.kind.value.text.includes("One more thing"),
+      );
+    expect(acknowledged(timelineAt(ANALYSIS, halted).events)).toBe(false);
+    expect(acknowledged(timelineAt(ANALYSIS, afterPoll(halted)).events)).toBe(
+      true,
     );
   });
 });

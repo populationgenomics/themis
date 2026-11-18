@@ -1,6 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { create } from "@bufbuild/protobuf";
 import { createValidator } from "@bufbuild/protovalidate";
 import { ModeOfInheritance } from "@/gen/themis/svcv4/models/svcv4_pb";
@@ -10,7 +8,6 @@ import { FixtureCurationStore } from "./fixture";
 import { toCurationErrorResponse } from "./http";
 import { CLINICAL_CONTEXT_MAX_LENGTH, clinicalContextLength } from "./model";
 import { parseRegistration } from "./registration";
-import { REGISTRATION_KEY } from "./sql";
 import { isDuplicateRegistrationError } from "./store";
 
 // A registration states the whole question, the entity and the clinical context, and states it
@@ -101,23 +98,6 @@ describe("the longest clinical context a registration takes", () => {
       }).clinicalContext,
     ).toHaveLength(CLINICAL_CONTEXT_MAX_LENGTH);
   });
-
-  test("is the bound the latest migration to bound the column declares", () => {
-    // A context the surface accepts and the database refuses would fail the register as a 500.
-    const migrations = join(
-      import.meta.dir,
-      "../../../../themis/migrate/migrations",
-    );
-    const bounds = readdirSync(migrations)
-      .sort()
-      .flatMap((name) => [
-        ...readFileSync(join(migrations, name), "utf-8").matchAll(
-          /char_length\(clinical_context\) <= (\d+)/g,
-        ),
-      ])
-      .map((match) => Number(match[1]));
-    expect(bounds.at(-1)).toBe(CLINICAL_CONTEXT_MAX_LENGTH);
-  });
 });
 
 describe("a second registration of one entity", () => {
@@ -138,22 +118,6 @@ describe("a second registration of one entity", () => {
     expect((await response.json()).error.message).toBe(
       "NM_000138.5:c.7003C>T is already registered against MONDO:0007947 as autosomal dominant",
     );
-  });
-
-  test("is refused in SQL by a constraint a migration declares", () => {
-    // The SQL store names the constraint in its ON CONFLICT; a rename there or in a migration would
-    // turn every registration into a 500.
-    const migrations = join(
-      import.meta.dir,
-      "../../../../themis/migrate/migrations",
-    );
-    expect(
-      readdirSync(migrations).some((name) =>
-        readFileSync(join(migrations, name), "utf-8").includes(
-          `ADD CONSTRAINT ${REGISTRATION_KEY}`,
-        ),
-      ),
-    ).toBe(true);
   });
 
   test("in another Project is a registration of its own", async () => {

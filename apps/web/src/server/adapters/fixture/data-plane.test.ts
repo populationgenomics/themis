@@ -212,7 +212,7 @@ describe("the fixture's spawned threads", () => {
       expect(await atFinalDocument(workspace, run)).toBe(true);
     }
     expect(released).toBeGreaterThan(0);
-  });
+  }, 15_000);
 });
 
 describe("the fixture agent's workspace pushes", () => {

@@ -230,10 +230,17 @@ describe("the served surface", () => {
       projectId: "fixture-cohort",
     });
     const id = created.body?.id as string;
-    // Seven ticks: the seventh reveals the edit call still awaiting its result.
-    for (let i = 0; i < 7; i += 1) {
-      await call("Poll", { analysisId: id });
+    let midStep = false;
+    for (let i = 0; i < 20 && !midStep; i += 1) {
+      const poll = await call("Poll", { analysisId: id });
+      const polledEvents =
+        (poll.body?.events as { tool?: { result?: unknown } }[] | undefined) ??
+        [];
+      midStep = polledEvents.some(
+        (e) => e.tool !== undefined && e.tool.result === undefined,
+      );
     }
+    expect(midStep).toBe(true);
 
     // Refused as the state it is — actionable, never the masked internal error. The
     // Connect code is the discriminator the composer keys on; the protocol carries

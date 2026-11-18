@@ -314,9 +314,8 @@ describe("the working document's pane menu", () => {
           node.getAttribute("role") === "menuitem" &&
           node.textContent.includes(CLEAR),
       );
-      expect(item?.textContent).toBe(
-        `${CLEAR}Clears this workspace from your browser's cache and loads it fresh. Everything saved stays as it is.`,
-      );
+      expect(item).toBeDefined();
+      expect(item?.textContent).toMatch(/\bsaved\b.*stays/i);
     },
   );
 

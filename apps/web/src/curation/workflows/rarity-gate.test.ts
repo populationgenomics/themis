@@ -71,22 +71,26 @@ describe("which workflows the gate reaches", () => {
       visibleWorkflows(),
       popFrq("0.00001", "0.00015"),
     );
-    const expected = visibleWorkflows()
-      .filter(
-        (workflow) =>
-          workflow.source !== "supplement" &&
-          (RARITY_GATED_CODES as readonly string[]).includes(workflow.code),
-      )
-      .map((workflow) => workflow.id);
-    expect([...barred].sort()).toEqual(expected.sort());
-    // Every gated code is reached, which is the property; how many workflows carry each is a fact
-    // about the routing on screen and would make this a change detector.
-    const reached = new Set(
-      visibleWorkflows()
-        .filter((workflow) => barred.has(workflow.id))
-        .map((workflow) => workflow.code),
-    );
-    expect([...reached].sort()).toEqual([...RARITY_GATED_CODES].sort());
+    expect([...barred].sort()).toEqual([
+      "cln_aff_ad",
+      "cln_dnv",
+      "loc_phe",
+      "loc_seg_ad",
+    ]);
+    expect(
+      [
+        ...barredWorkflowIds(ALL_WORKFLOWS, popFrq("0.00001", "0.00015")),
+      ].sort(),
+    ).toEqual([
+      "cln_aff_ad",
+      "cln_aff_arxl",
+      "cln_dnv",
+      "loc_phe",
+      "loc_seg_ad",
+      "loc_seg_ar",
+      "loc_seg_sd",
+      "loc_seg_xl",
+    ]);
   });
 
   test("the non-segregation branch stays answerable on a common variant", () => {

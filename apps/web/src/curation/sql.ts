@@ -21,7 +21,7 @@ const VARIANT_COLUMNS =
   "id, project_id, gene, transcript, hgvs_c, clingen_allele_id, disease_label, mondo_id, mode_of_inheritance, clinical_context, created_by, created_at";
 /** The uniqueness key `0019_curation_projects` declares on `curation.variants`: one registration per
  *  Project, variant and entity. */
-export const REGISTRATION_KEY = "variants_registration_key";
+const REGISTRATION_KEY = "variants_registration_key";
 const WORKSHEET_COLUMNS =
   "id, variant_id, curator_email, workflows_version, assigned_by, assigned_at";
 

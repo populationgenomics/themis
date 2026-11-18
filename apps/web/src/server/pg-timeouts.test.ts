@@ -1,10 +1,16 @@
-import { afterEach, describe, expect, jest, test } from "bun:test";
+import { afterEach, describe, expect, jest, spyOn, test } from "bun:test";
+import { once } from "node:events";
 import { Duplex } from "node:stream";
+import type { Pool, PoolClient } from "pg";
+import {
+  postgresUrl,
+  SKIP_WITHOUT_POSTGRES,
+} from "./migrated-postgres.test-support";
 import { createPool, inTransaction } from "./pg";
 
-// createPool's timeouts, over real pg clients: a stand-in socket that plays a Postgres server which
-// accepts the login and then goes silent, and a real server named by THEMIS_TEST_PG_URL (required
-// in CI, which provides one; skipped elsewhere without it).
+// `createPool` and `inTransaction` over real pg clients: a stand-in socket that plays a Postgres
+// server which accepts the login and then goes silent, and a real server named by
+// `THEMIS_TEST_PG_URL` (required in CI, which provides one; skipped elsewhere without it).
 
 function message(type: string, body: Buffer): Buffer {
   const header = Buffer.alloc(5);
@@ -98,6 +104,7 @@ function required(value: number | undefined, name: string): number {
 
 afterEach(() => {
   jest.useRealTimers();
+  jest.restoreAllMocks();
 });
 
 describe("the Cloud SQL pool's waits", () => {
@@ -189,92 +196,199 @@ describe("the Cloud SQL pool's waits", () => {
   });
 });
 
-const POSTGRES_URL = process.env.THEMIS_TEST_PG_URL;
+describe.skipIf(SKIP_WITHOUT_POSTGRES)("against Postgres", () => {
+  test("reuses one connection across a minute's pause, and closes it before the egress timeout", async () => {
+    const url = postgresUrl();
+    jest.useFakeTimers();
+    const pool = createPool({ connectionString: url });
+    let reapTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const first = await pool.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+      expect(first.rows[0]?.pid).toBeDefined();
+      jest.advanceTimersByTime(60 * 1000);
+      const second = await pool.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+      expect(second.rows[0]?.pid).toBe(first.rows[0]?.pid);
 
-/** The test server's URL; CI must provide one, so a missing one there fails rather than skips. */
-function postgresUrl(): string {
-  if (POSTGRES_URL === undefined) {
-    throw new Error("THEMIS_TEST_PG_URL is not set; CI provides a Postgres");
-  }
-  return POSTGRES_URL;
-}
+      // `remove` fires after `client.end()` finishes closing the reaped connection's socket.
+      const abort = new AbortController();
+      const removed = once(pool, "remove", { signal: abort.signal });
+      // Cloud Run closes an outbound connection after 10 minutes idle (run/docs/container-contract).
+      jest.advanceTimersByTime(10 * 60 * 1000 - 1);
+      expect(pool.totalCount).toBe(0);
+      jest.useRealTimers();
+      reapTimer = setTimeout(
+        () =>
+          abort.abort(
+            new Error("timed out waiting for reaped client to finish end()"),
+          ),
+        5_000,
+      );
+      await removed;
+    } finally {
+      clearTimeout(reapTimer);
+      jest.useRealTimers();
+      await pool.end();
+    }
+  });
 
-describe.skipIf(POSTGRES_URL === undefined && process.env.CI === undefined)(
-  "against Postgres",
-  () => {
-    test("the server cancels a statement past statement_timeout, and the connection stays usable", async () => {
-      const pool = createPool({ connectionString: postgresUrl() });
+  test("an idle connection's failure is logged once, and the next query dials a fresh one", async () => {
+    const url = postgresUrl();
+    let pool: Pool | undefined;
+    let admin: Pool | undefined;
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      pool = createPool({ connectionString: url });
+      admin = createPool({ connectionString: url });
+      const first = await pool.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+      const firstPid = first.rows[0]?.pid;
+      expect(firstPid).toBeDefined();
+
+      await Promise.all([
+        once(pool, "error", { signal: AbortSignal.timeout(5_000) }),
+        admin.query("SELECT pg_terminate_backend($1)", [firstPid]),
+      ]);
+      expect(pool.totalCount).toBe(0);
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(logged.mock.calls[0]?.join(" ")).toMatch(
+        /pooled connection failed.*\S/i,
+      );
+
+      const second = await pool.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+      expect(second.rows[0]?.pid).toBeDefined();
+      expect(second.rows[0]?.pid).not.toBe(firstPid);
+    } finally {
+      await admin?.end();
+      await pool?.end();
+      logged.mockRestore();
+    }
+  });
+
+  test("a checked-out connection's failure is logged, and releasing it discards it", async () => {
+    const url = postgresUrl();
+    let pool: Pool | undefined;
+    let admin: Pool | undefined;
+    let client: PoolClient | undefined;
+    let released = false;
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      pool = createPool({ connectionString: url });
+      admin = createPool({ connectionString: url });
+      client = await pool.connect();
+      const { rows } = await client.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+      const firstPid = rows[0]?.pid;
+      expect(firstPid).toBeDefined();
+      await Promise.all([
+        once(client, "error", { signal: AbortSignal.timeout(5_000) }),
+        admin.query("SELECT pg_terminate_backend($1)", [firstPid]),
+      ]);
+      expect(logged).toHaveBeenCalled();
+      for (const args of logged.mock.calls) {
+        expect(args.join(" ")).toMatch(/pooled connection failed.*\S/i);
+      }
+
+      client.release();
+      released = true;
+      expect(pool.totalCount).toBe(0);
+
+      const second = await pool.query<{ pid: number }>(
+        "SELECT pg_backend_pid() AS pid",
+      );
+      expect(second.rows[0]?.pid).toBeDefined();
+      expect(second.rows[0]?.pid).not.toBe(firstPid);
+    } finally {
+      if (!released) client?.release(true);
+      await admin?.end();
+      await pool?.end();
+      logged.mockRestore();
+    }
+  });
+
+  test("the server cancels a statement past statement_timeout, and the connection stays usable", async () => {
+    const pool = createPool({ connectionString: postgresUrl() });
+    let client: PoolClient | undefined;
+    try {
       const timeout = required(
         pool.options.statement_timeout || undefined,
         "statement_timeout",
       );
-      const client = await pool.connect();
-      try {
-        const overrunSeconds = timeout / 1000 + 1;
-        await expect(
-          client.query("SELECT pg_sleep($1)", [overrunSeconds]),
-        ).rejects.toMatchObject({ code: "57014" });
+      client = await pool.connect();
+      const overrunSeconds = timeout / 1000 + 1;
+      await expect(
+        client.query("SELECT pg_sleep($1)", [overrunSeconds]),
+      ).rejects.toMatchObject({ code: "57014" });
 
-        const after = await client.query<{ one: number }>("SELECT 1 AS one");
-        expect(after.rows).toEqual([{ one: 1 }]);
-      } finally {
-        client.release();
-        await pool.end();
-      }
-    }, 30_000);
+      const after = await client.query<{ one: number }>("SELECT 1 AS one");
+      expect(after.rows).toEqual([{ one: 1 }]);
+    } finally {
+      client?.release();
+      await pool.end();
+    }
+  }, 30_000);
 
-    test("the server holds the idle-in-transaction timeout the pool sets", async () => {
-      const pool = createPool({ connectionString: postgresUrl() });
-      const timeout = required(
-        pool.options.idle_in_transaction_session_timeout,
-        "idle_in_transaction_session_timeout",
+  test("the server holds the idle-in-transaction timeout the pool sets", async () => {
+    const pool = createPool({ connectionString: postgresUrl() });
+    const timeout = required(
+      pool.options.idle_in_transaction_session_timeout,
+      "idle_in_transaction_session_timeout",
+    );
+    try {
+      const shown = await pool.query<{ ms: string }>(
+        "SELECT setting AS ms FROM pg_settings WHERE name = 'idle_in_transaction_session_timeout'",
       );
-      try {
-        const shown = await pool.query<{ ms: string }>(
-          "SELECT setting AS ms FROM pg_settings WHERE name = 'idle_in_transaction_session_timeout'",
-        );
-        expect(Number(shown.rows[0]?.ms)).toBe(timeout);
-      } finally {
-        await pool.end();
-      }
-    });
+      expect(Number(shown.rows[0]?.ms)).toBe(timeout);
+    } finally {
+      await pool.end();
+    }
+  });
 
-    test("a transaction's rows are visible once it commits, and absent when it fails", async () => {
-      const pool = createPool({ connectionString: postgresUrl() });
-      const table = `pool_test_${process.pid}_${Date.now()}`;
-      try {
-        await pool.query(`CREATE TABLE ${table} (id text PRIMARY KEY)`);
-        await inTransaction(pool, async (client) => {
-          await client.query(`INSERT INTO ${table} VALUES ('kept')`);
-        });
-        await expect(
-          inTransaction(pool, async (client) => {
-            await client.query(`INSERT INTO ${table} VALUES ('dropped')`);
-            throw new Error("the body failed after its write");
-          }),
-        ).rejects.toThrow("the body failed");
+  test("a transaction's rows are visible once it commits, and absent when it fails and its connection is discarded", async () => {
+    const pool = createPool({ connectionString: postgresUrl() });
+    const table = `pool_test_${process.pid}_${Date.now()}`;
+    try {
+      await pool.query(`CREATE TABLE ${table} (id text PRIMARY KEY)`);
+      await inTransaction(pool, async (client) => {
+        await client.query(`INSERT INTO ${table} VALUES ('kept')`);
+      });
+      expect(pool.idleCount).toBe(1);
 
-        const rows = await pool.query<{ id: string }>(
-          `SELECT id FROM ${table} ORDER BY id`,
-        );
-        expect(rows.rows).toEqual([{ id: "kept" }]);
-      } finally {
-        await pool.query(`DROP TABLE IF EXISTS ${table}`);
-        await pool.end();
-      }
-    });
+      await expect(
+        inTransaction(pool, async (client) => {
+          await client.query(`INSERT INTO ${table} VALUES ('dropped')`);
+          throw new Error("the body failed after its write");
+        }),
+      ).rejects.toThrow("the body failed");
+      expect(pool.totalCount).toBe(0);
 
-    test("a transaction a caught error aborted raises at COMMIT", async () => {
-      const pool = createPool({ connectionString: postgresUrl() });
-      try {
-        await expect(
-          inTransaction(pool, async (client) => {
-            await client.query("SELECT 1 / 0").catch(() => undefined);
-          }),
-        ).rejects.toThrow("rolled back at COMMIT");
-      } finally {
-        await pool.end();
-      }
-    });
-  },
-);
+      const rows = await pool.query<{ id: string }>(
+        `SELECT id FROM ${table} ORDER BY id`,
+      );
+      expect(rows.rows).toEqual([{ id: "kept" }]);
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS ${table}`);
+      await pool.end();
+    }
+  });
+
+  test("a transaction a caught error aborted raises at COMMIT", async () => {
+    const pool = createPool({ connectionString: postgresUrl() });
+    try {
+      await expect(
+        inTransaction(pool, async (client) => {
+          await client.query("SELECT 1 / 0").catch(() => undefined);
+        }),
+      ).rejects.toThrow("rolled back at COMMIT");
+    } finally {
+      await pool.end();
+    }
+  });
+});

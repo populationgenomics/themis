@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type Anthropic from "@anthropic-ai/sdk";
-import type {
-  BetaManagedAgentsSessionEvent,
-  EventSendParams,
-} from "@anthropic-ai/sdk/resources/beta/sessions/events";
+import Anthropic from "@anthropic-ai/sdk";
+import type { BetaManagedAgentsSessionEvent } from "@anthropic-ai/sdk/resources/beta/sessions/events";
 import { timestampDate } from "@bufbuild/protobuf/wkt";
 import {
   type ConversationEvent,
@@ -12,11 +9,12 @@ import {
 } from "@/models/workbench";
 import { ResourceNotFoundError, SessionBusyError } from "../../errors";
 import {
-  AnthropicClient,
-  foldEvents,
-  foldThreadEvents,
-  MANAGED_AGENTS_BETA,
-} from "./client";
+  anthropicClientOverFetch,
+  anthropicErrorResponse,
+  jsonResponse,
+  TEST_ANTHROPIC_CONFIG,
+} from "./anthropic.test-support";
+import { foldEvents, foldThreadEvents, MANAGED_AGENTS_BETA } from "./client";
 
 // The projection is the production path (the fixture bypasses it), so its
 // load-bearing behaviours are pinned here: agent/user messages fold to
@@ -184,52 +182,37 @@ describe("a fan-out of spawned threads", () => {
     expect(cards(events)[0].status).toBe(SubAgentStatus.DONE);
   });
 
-  test("a retrying thread is still running, and one never heard from is too", () => {
-    const status = (raw: BetaManagedAgentsSessionEvent[]) =>
-      cards(foldEvents(raw).events)[0]?.status;
-    expect(
-      status([
-        ev({ type: "session.thread_created", session_thread_id: THREAD }),
-        ev({
-          type: "session.thread_status_rescheduled",
-          session_thread_id: THREAD,
-        }),
-      ]),
-    ).toBe(SubAgentStatus.RUNNING);
+  test("a spawned thread never heard from is running", () => {
     // Never the zero value: zero is what an unknown status name decodes to on a stale
     // client, so the projection always names a state.
-    expect(
-      status([
+    const projected = cards(
+      foldEvents([
         ev({ type: "session.thread_created", session_thread_id: THREAD }),
-      ]),
-    ).toBe(SubAgentStatus.RUNNING);
+      ]).events,
+    );
+    expect(projected).toHaveLength(1);
+    expect(projected[0].status).toBe(SubAgentStatus.RUNNING);
   });
 
-  test("every status the projection emits names a state — zero never leaves it", () => {
-    // The client degrades a zero status rather than throwing (a stale tab decodes an
-    // unknown status name to zero), so this is where a projection that stopped setting
-    // the field fails.
-    const upstream = [
-      "session.thread_status_running",
-      "session.thread_status_rescheduled",
-      "session.thread_status_idle",
-      "session.thread_status_terminated",
-    ];
-    for (const type of upstream) {
-      const projected = cards(
-        foldEvents([
-          ev({ type: "session.thread_created", session_thread_id: THREAD }),
-          // Every idle carries a stop reason; the other statuses ignore it.
-          ev({
-            type,
-            session_thread_id: THREAD,
-            stop_reason: { type: "end_turn" },
-          }),
-        ]).events,
-      );
-      expect(projected).toHaveLength(1);
-      expect(projected[0].status).not.toBe(SubAgentStatus.UNSPECIFIED);
-    }
+  test.each([
+    ["session.thread_status_running", SubAgentStatus.RUNNING],
+    ["session.thread_status_rescheduled", SubAgentStatus.RUNNING],
+    ["session.thread_status_idle", SubAgentStatus.IDLE],
+    ["session.thread_status_terminated", SubAgentStatus.DONE],
+  ] as const)("%s folds to SubAgentStatus %p", (type, expectedStatus) => {
+    const projected = cards(
+      foldEvents([
+        ev({ type: "session.thread_created", session_thread_id: THREAD }),
+        // Every idle carries a stop reason; the other statuses ignore it.
+        ev({
+          type,
+          session_thread_id: THREAD,
+          stop_reason: { type: "end_turn" },
+        }),
+      ]).events,
+    );
+    expect(projected).toHaveLength(1);
+    expect(projected[0].status).toBe(expectedStatus);
   });
 
   test("the card states the first instruction sent and the last reply returned", () => {
@@ -631,80 +614,39 @@ describe("the projected stream's order", () => {
   });
 });
 
-/** The client with its one API seam replaced: records what would be sent, and can be
- *  told to fail either call. */
-class StubbedClient extends AnthropicClient {
-  readonly sends: { sessionId: string; params: EventSendParams }[] = [];
-  readonly creates: unknown[] = [];
-
-  constructor(
-    private readonly failures: {
-      send?: unknown;
-      list?: unknown;
-    } = {},
-  ) {
-    super({
-      federationRuleId: "rule",
-      organizationId: "org",
-      serviceAccountId: "sa",
-      workspaceId: "ws",
-      agentId: "agent",
-      environmentId: "env",
-    });
-  }
-
-  protected override beta(): Anthropic["beta"] {
-    const stub = {
-      sessions: {
-        create: async (params: unknown) => {
-          this.creates.push(params);
-          return { id: "sesn_created" };
-        },
-        events: {
-          send: async (sessionId: string, params: EventSendParams) => {
-            if (this.failures.send) throw this.failures.send;
-            this.sends.push({ sessionId, params });
-          },
-          list: () => {
-            if (this.failures.list) throw this.failures.list;
-            return [];
-          },
-        },
-      },
-    };
-    return stub as unknown as Anthropic["beta"];
-  }
-}
-
-const notFound = () =>
-  Object.assign(new Error("upstream said 404"), { status: 404 });
-
-describe("sending a user turn", () => {
+describe("AnthropicClient over the SDK", () => {
   test("the curator's text reaches the named session as a user.message", async () => {
-    const client = new StubbedClient();
+    const { client, requests } = anthropicClientOverFetch(() =>
+      jsonResponse({ data: [] }),
+    );
     await client.sendUserMessage(
       "sesn_1",
       "Treat the exon as clinically relevant.",
     );
 
-    expect(client.sends).toHaveLength(1);
-    const [send] = client.sends;
-    expect(send.sessionId).toBe("sesn_1");
-    expect(send.params.events).toEqual([
-      {
-        type: "user.message",
-        content: [
-          { type: "text", text: "Treat the exon as clinically relevant." },
-        ],
-      },
-    ]);
+    expect(requests).toHaveLength(1);
+    const [send] = requests;
+    expect(send.method).toBe("POST");
+    expect(send.url.pathname).toBe("/v1/sessions/sesn_1/events");
+    expect(send.body).toEqual({
+      events: [
+        {
+          type: "user.message",
+          content: [
+            { type: "text", text: "Treat the exon as clinically relevant." },
+          ],
+        },
+      ],
+    });
     // The header gates the whole Managed Agents surface and is optional in the SDK's
     // params type, so dropping it compiles and 400s every send.
-    expect(send.params.betas).toContain(MANAGED_AGENTS_BETA);
+    expect(send.headers.get("anthropic-beta")).toContain(MANAGED_AGENTS_BETA);
   });
 
   test("a blank turn is refused before the API is reached", async () => {
-    const client = new StubbedClient();
+    const { client, requests } = anthropicClientOverFetch(() => {
+      throw new Error("unexpected request");
+    });
     const error = await client
       .sendUserMessage("sesn_1", "   \n  ")
       .catch((e: unknown) => e);
@@ -713,7 +655,7 @@ describe("sending a user turn", () => {
     // A blank turn is a broken caller invariant, not a reference that resolves to
     // nothing: it must not borrow the not-found that hides existence.
     expect(error).not.toBeInstanceOf(ResourceNotFoundError);
-    expect(client.sends).toEqual([]);
+    expect(requests).toEqual([]);
   });
 
   test("a failed send propagates unchanged rather than resolving to not-found", async () => {
@@ -721,63 +663,220 @@ describe("sending a user turn", () => {
     // session is our database and the session store disagreeing — a broken invariant
     // (→ 500, logged), never a not-found the curator caused. The 404 branch logs
     // nothing, so remapping here would lose the one trace a dropped turn leaves.
-    const failure = notFound();
-    const client = new StubbedClient({ send: failure });
-    await expect(client.sendUserMessage("sesn_1", "Most")).rejects.toBe(
-      failure,
+    const { client } = anthropicClientOverFetch(() =>
+      anthropicErrorResponse(404, "not_found_error", "session not found"),
     );
+    const error = await client
+      .sendUserMessage("sesn_1", "Most")
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Anthropic.NotFoundError);
+    expect(error).not.toBeInstanceOf(ResourceNotFoundError);
   });
 
   test("a busy refusal surfaces typed — a state to act on, not a masked failure", async () => {
     // The API's refusal while a tool result is pending; its only discriminator is the
-    // message text, mirrored here as the SDK carries it (`400 {json body}`).
-    const refusal = Object.assign(
-      new Error(
-        '400 {"type":"error","error":{"type":"invalid_request_error","message":"Invalid user.message event at events[0]: waiting on responses to events [sevt_x]; only `user.tool_confirmation`, `user.custom_tool_result`, `user.tool_result`, or `user.interrupt` may be sent (a `system.message` may trail a tool result)"}}',
+    // message text on a 400 `invalid_request_error`.
+    const { client } = anthropicClientOverFetch(() =>
+      anthropicErrorResponse(
+        400,
+        "invalid_request_error",
+        "Invalid user.message event at events[0]: waiting on responses to events [sevt_x]; only `user.tool_confirmation`, `user.custom_tool_result`, `user.tool_result`, or `user.interrupt` may be sent (a `system.message` may trail a tool result)",
       ),
-      { status: 400 },
     );
-    const client = new StubbedClient({ send: refusal });
     await expect(
       client.sendUserMessage("sesn_1", "Most"),
     ).rejects.toBeInstanceOf(SessionBusyError);
   });
 
   test("a different 400 propagates unchanged rather than reading as busy", async () => {
-    const failure = Object.assign(new Error("400 malformed request"), {
-      status: 400,
-    });
-    const client = new StubbedClient({ send: failure });
-    await expect(client.sendUserMessage("sesn_1", "Most")).rejects.toBe(
-      failure,
+    const { client } = anthropicClientOverFetch(() =>
+      anthropicErrorResponse(400, "invalid_request_error", "malformed request"),
     );
+    const error = await client
+      .sendUserMessage("sesn_1", "Most")
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Anthropic.BadRequestError);
+    expect(error).not.toBeInstanceOf(SessionBusyError);
   });
 
   test("an unknown session on the poll is still a typed not-found", async () => {
     // The counterpart to the case above: on a read a 404 can mean a stale client's
     // unknown session, so the remap stays. The two directions differ deliberately.
-    const client = new StubbedClient({ list: notFound() });
+    const { client } = anthropicClientOverFetch(() =>
+      anthropicErrorResponse(404, "not_found_error", "session not found"),
+    );
     await expect(client.listEvents("sesn_gone")).rejects.toBeInstanceOf(
       ResourceNotFoundError,
     );
   });
 
+  test("an unknown thread on the thread listing is a typed not-found", async () => {
+    const { client } = anthropicClientOverFetch(() =>
+      anthropicErrorResponse(404, "not_found_error", "thread not found"),
+    );
+    await expect(
+      client.listThreadEvents("sesn_1", "sthr_gone"),
+    ).rejects.toBeInstanceOf(ResourceNotFoundError);
+  });
+
   test("the halt reaches the named session as a user.interrupt", async () => {
-    const client = new StubbedClient();
+    const { client, requests } = anthropicClientOverFetch(() =>
+      jsonResponse({ data: [] }),
+    );
     await client.sendInterrupt("sesn_1");
 
-    expect(client.sends).toHaveLength(1);
-    const [send] = client.sends;
-    expect(send.sessionId).toBe("sesn_1");
-    expect(send.params.events).toEqual([{ type: "user.interrupt" }]);
-    expect(send.params.betas).toContain(MANAGED_AGENTS_BETA);
+    expect(requests).toHaveLength(1);
+    const [send] = requests;
+    expect(send.method).toBe("POST");
+    expect(send.url.pathname).toBe("/v1/sessions/sesn_1/events");
+    expect(send.body).toEqual({ events: [{ type: "user.interrupt" }] });
+    expect(send.headers.get("anthropic-beta")).toContain(MANAGED_AGENTS_BETA);
   });
 
   test("a blank kickoff mints no session", async () => {
     // The body is built before the session, so a refusal leaves nothing behind.
-    const client = new StubbedClient();
+    const { client, requests } = anthropicClientOverFetch(() => {
+      throw new Error("unexpected request");
+    });
     await expect(client.createSession("  ")).rejects.toBeInstanceOf(Error);
-    expect(client.creates).toEqual([]);
-    expect(client.sends).toEqual([]);
+    expect(requests).toEqual([]);
+  });
+
+  test("creating a session mints it and seeds the kickoff turn", async () => {
+    const { client, requests } = anthropicClientOverFetch(
+      (req) => {
+        if (req.url.pathname === "/v1/sessions") {
+          return jsonResponse({ id: "sesn_created" });
+        }
+        if (req.url.pathname === "/v1/sessions/sesn_created/events") {
+          return jsonResponse({ data: [] });
+        }
+        return anthropicErrorResponse(
+          404,
+          "not_found_error",
+          "unexpected path",
+        );
+      },
+      {
+        ...TEST_ANTHROPIC_CONFIG,
+        agentId: "agent_cfg",
+        environmentId: "env_cfg",
+      },
+    );
+
+    expect(await client.createSession("Classify NM_000138.5:c.7003C>T")).toBe(
+      "sesn_created",
+    );
+    expect(requests).toHaveLength(2);
+    expect(requests[0].headers.get("anthropic-beta")).toContain(
+      MANAGED_AGENTS_BETA,
+    );
+    expect(requests[0].body).toEqual({
+      agent: "agent_cfg",
+      environment_id: "env_cfg",
+    });
+    expect(requests[1].headers.get("anthropic-beta")).toContain(
+      MANAGED_AGENTS_BETA,
+    );
+    expect(requests[1].body).toEqual({
+      events: [
+        {
+          type: "user.message",
+          content: [{ type: "text", text: "Classify NM_000138.5:c.7003C>T" }],
+        },
+      ],
+    });
+  });
+
+  test("listing session events requests ascending order and pages cursors to the end", async () => {
+    const { client, requests } = anthropicClientOverFetch((req) => {
+      if (req.url.pathname !== "/v1/sessions/sesn_1/events") {
+        return anthropicErrorResponse(
+          404,
+          "not_found_error",
+          "unexpected path",
+        );
+      }
+      return req.url.searchParams.get("page") === null
+        ? jsonResponse({
+            data: [
+              ev({ type: "user.message", id: "u1", content: text("first") }),
+            ],
+            next_page: "cursor_2",
+          })
+        : jsonResponse({
+            data: [
+              ev({
+                type: "agent.message",
+                id: "m1",
+                content: text("second"),
+              }),
+            ],
+            next_page: null,
+          });
+    });
+
+    const session = await client.listEvents("sesn_1");
+    expect(session.events.map((e) => e.id)).toEqual(["u1", "m1"]);
+    expect(requests).toHaveLength(2);
+    expect(requests[0].url.searchParams.get("order")).toBe("asc");
+    expect(requests[0].url.searchParams.get("page")).toBeNull();
+    expect(requests[0].headers.get("anthropic-beta")).toContain(
+      MANAGED_AGENTS_BETA,
+    );
+    expect(requests[1].url.searchParams.get("order")).toBe("asc");
+    expect(requests[1].url.searchParams.get("page")).toBe("cursor_2");
+    expect(requests[1].headers.get("anthropic-beta")).toContain(
+      MANAGED_AGENTS_BETA,
+    );
+  });
+
+  test("listing thread events scopes the path to the session and pages cursors to the end", async () => {
+    const { client, requests } = anthropicClientOverFetch((req) => {
+      if (req.url.pathname !== "/v1/sessions/sesn_1/threads/sthr_1/events") {
+        return anthropicErrorResponse(
+          404,
+          "not_found_error",
+          "unexpected path",
+        );
+      }
+      return req.url.searchParams.get("page") === null
+        ? jsonResponse({
+            data: [
+              ev({
+                type: "agent.thread_message_received",
+                id: "tin",
+                from_session_thread_id: ROOT,
+                content: text("sweep corpus"),
+              }),
+            ],
+            next_page: "cursor_t2",
+          })
+        : jsonResponse({
+            data: [
+              ev({
+                type: "agent.message",
+                id: "tout",
+                content: text("found two assays"),
+              }),
+            ],
+            next_page: null,
+          });
+    });
+
+    const thread = await client.listThreadEvents("sesn_1", "sthr_1");
+    expect(thread.map((e) => e.id)).toEqual(["tin", "tout"]);
+    expect(requests).toHaveLength(2);
+    expect(requests[0].url.pathname).toBe(
+      "/v1/sessions/sesn_1/threads/sthr_1/events",
+    );
+    expect(requests[0].url.searchParams.get("page")).toBeNull();
+    expect(requests[0].headers.get("anthropic-beta")).toContain(
+      MANAGED_AGENTS_BETA,
+    );
+    expect(requests[1].url.searchParams.get("page")).toBe("cursor_t2");
+    expect(requests[1].headers.get("anthropic-beta")).toContain(
+      MANAGED_AGENTS_BETA,
+    );
   });
 });

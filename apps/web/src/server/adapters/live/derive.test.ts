@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import {
   type BearerDeriver,
   crc32c,
@@ -10,18 +10,13 @@ import {
 
 // Byte-for-byte parity with `themis/clients/auth/derive.py`: the dispatcher
 // re-derives the same bearer at spawn and auth resolves it, so the TS and
-// Python derivations MUST agree. The KMS deriver and Python's `fixture_deriver`
-// share the same primitive — HMAC-SHA256 then base64url-unpadded (`_encode`) — so
-// proving the encoding of an HMAC over a fixed (secret, session_id) matches the
-// Python output proves the encoding both derivers rely on.
-//
-// Reference computed once (do not regenerate casually — a change means the
-// encodings diverged):
-//   uv run python -c "import asyncio; from themis.clients.auth import derive; \
-//     print(asyncio.run(derive.fixture_deriver(b'SECRET')('SID')))"
+// Python derivations MUST agree. Both apply HMAC-SHA256 then base64url-unpadded
+// (`_encode` in `derive.py`).
 const SECRET = Buffer.from("SECRET", "utf8");
 const SESSION_ID = "SID";
 const PYTHON_REFERENCE_BEARER = "WnyhjKs_-Wc9f4pZW-H7kYKeS31QgIkgM59Au7AWXaQ";
+const PYTHON_REFERENCE_HASH =
+  "a4ed8c4eb074a2f303d30353926170ce17a79a61a79b5e1663cbbdb5d19f9839";
 
 function referenceMac(): Buffer {
   return createHmac("sha256", SECRET).update(SESSION_ID, "utf8").digest();
@@ -33,15 +28,12 @@ describe("session-token bearer derivation parity with derive.py", () => {
   });
 
   test("encodeBearer emits unpadded base64url (no '=', '+', or '/')", () => {
-    expect(encodeBearer(referenceMac())).not.toMatch(/[=+/]/);
+    // Standard base64 encodes 0xfb 0xff 0x03 0x04 as "+/8DBA=="; unpadded base64url is "-_8DBA".
+    expect(encodeBearer(Uint8Array.of(0xfb, 0xff, 0x03, 0x04))).toBe("-_8DBA");
   });
 
   test("hashBearer is the lowercase-hex sha256 of the bearer", () => {
-    const expected = createHash("sha256")
-      .update(PYTHON_REFERENCE_BEARER, "utf8")
-      .digest("hex");
-    expect(hashBearer(PYTHON_REFERENCE_BEARER)).toBe(expected);
-    expect(hashBearer(PYTHON_REFERENCE_BEARER)).toMatch(/^[0-9a-f]{64}$/);
+    expect(hashBearer(PYTHON_REFERENCE_BEARER)).toBe(PYTHON_REFERENCE_HASH);
   });
 
   // CRC32C's published check value, which `google_crc32c.value(b'123456789')`
