@@ -6,6 +6,7 @@ import { BackLink } from "@/components/back-link";
 import { ReaderTime } from "@/components/reader-time";
 import { useGroupRef } from "@/components/ui/resizable";
 import { Tooltip } from "@/components/ui/tooltip";
+import { AnalysisIdentifiersMenu } from "@/components/workbench/analysis-identifiers-menu";
 import { useCopyClearedAnnouncements } from "@/components/workbench/clear-copy";
 import { REGISTRY } from "@/components/workbench/content-kinds";
 import { ConversationDock } from "@/components/workbench/conversation-dock";
@@ -35,6 +36,7 @@ import {
   type Source,
   WORKING_DOC_TAB_ID,
 } from "@/components/workbench/workspace-model";
+import { isManagedSession } from "@/lib/harness";
 import { usePoll } from "@/lib/queries";
 import { projectPath } from "@/lib/routes";
 import { useTipAnnouncements } from "@/lib/tip-announcements";
@@ -54,8 +56,9 @@ export interface AnalysisIdentity {
    *  until `ReaderTime` reformats it on the reader's clock. */
   created: { iso: string; pinnedLabel: string };
   projectId: string;
-  /** Whether the platform holds this run's session, and so whether it has a conversation. */
-  managed: boolean;
+  /** The session the run's agent runs in; whether the platform holds it, and so whether the run has
+   *  a conversation here, is read off it (lib/harness.ts). */
+  sessionId: string;
 }
 
 /** What the conversation region says when it has no stream to render. */
@@ -77,6 +80,7 @@ export function Workbench({
   analysis: AnalysisIdentity;
 }) {
   const analysisId = analysis.id;
+  const managed = isManagedSession(analysis.sessionId);
   const workspace = useWorkspaceModelController();
   const mainWindow = workspace.state.windows.find(
     (w) => w.id === workspace.state.mainId,
@@ -211,6 +215,10 @@ export function Workbench({
                 </span>
               </Tooltip>
             </span>
+            <AnalysisIdentifiersMenu
+              analysisId={analysis.id}
+              sessionId={managed ? analysis.sessionId : null}
+            />
           </>
         }
         right={
@@ -234,7 +242,7 @@ export function Workbench({
             // Four states the region must not collapse into one: a run with no conversation here,
             // a run whose conversation has never been read, a run whose conversation has stopped
             // advancing, and a run that has yet to speak. Only the last is empty.
-            const conversation = !analysis.managed ? (
+            const conversation = !managed ? (
               <ConversationNotice>
                 This run is driven outside the workbench, so it has no
                 conversation here and cannot be steered from this page. Its

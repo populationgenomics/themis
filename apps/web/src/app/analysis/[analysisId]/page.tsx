@@ -2,7 +2,6 @@ import { timestampDate } from "@bufbuild/protobuf/wkt";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { timeAgo } from "@/lib/format";
-import { isManagedSession } from "@/lib/harness";
 import {
   analysisDetail,
   analysisTitle,
@@ -60,9 +59,7 @@ export default async function AnalysisPage({
         scenario: scenarioLabel(inputs),
         created: created(timestampDate(analysis.createdAt).toISOString()),
         projectId: project.id,
-        // Whether this run has a conversation to show at all; the session id it is read from stays
-        // server-side, so the chrome is told the consequence rather than the identifier.
-        managed: isManagedSession(analysis.sessionId),
+        sessionId: analysis.sessionId,
       }}
     />
   );

@@ -1,4 +1,3 @@
-import { ChevronDown } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Logo } from "@/components/logo";
@@ -50,7 +49,6 @@ export function AppBar({
         <span className="max-w-[280px] truncate font-mono text-[12px] text-ink-muted">
           {userEmail}
         </span>
-        <ChevronDown className="size-[11px] text-ink-faintest" aria-hidden />
       </div>
     </header>
   );
