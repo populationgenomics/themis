@@ -1,13 +1,13 @@
 """The trace pipeline's configuration, its sampling decision, and the exporter it is built on.
 
-Nothing here reaches a network: the exporter is built, never used, and installed providers are
-shut down before any span is exported.
+Sampling and provider tests shut down before exporting; the Telemetry API exporter test exports a span
+over TLS to a loopback OTLP server.
 """
 
 from __future__ import annotations
 
 import contextlib
-import datetime
+import datetime as dt
 import threading
 import time
 from collections.abc import Iterator, Sequence
@@ -17,14 +17,16 @@ import grpc
 import pytest
 from google.auth import credentials as google_credentials
 from opentelemetry import context, trace
+from opentelemetry.proto.collector.trace.v1 import trace_service_pb2, trace_service_pb2_grpc
 from opentelemetry.sdk import resources
 from opentelemetry.sdk import trace as sdk_trace
 from opentelemetry.sdk.trace import export as trace_export
 from opentelemetry.sdk.trace.export import in_memory_span_exporter
 
 from themis.telemetry import telemetry_api, tracing
+from themis.telemetry.tests import otlp_loopback
 
-_TIMEOUT = datetime.timedelta(seconds=5)
+_TIMEOUT = dt.timedelta(seconds=5)
 
 
 @pytest.mark.parametrize('raw', ['', 'one', '-0.1', '1.5', 'nan', 'inf'])
@@ -159,19 +161,34 @@ def test_the_decision_is_the_trace_ids_alone(ratio: float, trace_id: str, record
 
 
 def test_the_exporter_is_built_for_the_telemetry_api_over_tls(monkeypatch: pytest.MonkeyPatch) -> None:
-    built: dict[str, object] = {}
+    received: list[tuple[trace_service_pb2.ExportTraceServiceRequest, dict[str, str | bytes], float]] = []
 
-    class _Built:
-        def __init__(self, **kwargs: object) -> None:
-            built.update(kwargs)
+    class _Collector(trace_service_pb2_grpc.TraceServiceServicer):
+        @override
+        def Export(
+            self,
+            request: trace_service_pb2.ExportTraceServiceRequest,
+            context: grpc.ServicerContext,
+        ) -> trace_service_pb2.ExportTraceServiceResponse:
+            received.append((request, dict(context.invocation_metadata()), context.time_remaining()))
+            return trace_service_pb2.ExportTraceServiceResponse()
 
-    monkeypatch.setattr(tracing.otlp_grpc, 'OTLPSpanExporter', _Built)
+    with otlp_loopback.serving_tls(
+        monkeypatch, lambda s: trace_service_pb2_grpc.add_TraceServiceServicer_to_server(_Collector(), s)
+    ):
+        exporter = tracing.telemetry_api_exporter(otlp_loopback.FixedTokenCredentials('trace-token'), timeout=_TIMEOUT)
+        provider = sdk_trace.TracerProvider()
+        provider.add_span_processor(trace_export.SimpleSpanProcessor(exporter))
+        try:
+            provider.get_tracer('t').start_span('rpc_call').end()
+        finally:
+            provider.shutdown()
 
-    tracing.telemetry_api_exporter(google_credentials.AnonymousCredentials(), timeout=_TIMEOUT)
-
-    assert built['endpoint'] == 'https://telemetry.googleapis.com:443'
-    assert isinstance(built['credentials'], grpc.ChannelCredentials)
-    assert built['timeout'] == _TIMEOUT.total_seconds()
+    [(req, metadata, remaining)] = received
+    assert metadata['authorization'] == 'Bearer trace-token'
+    assert 0 < remaining <= _TIMEOUT.total_seconds()
+    exported_names = [s.name for rs in req.resource_spans for ss in rs.scope_spans for s in ss.spans]
+    assert exported_names == ['rpc_call']
 
 
 def test_a_flush_returns_at_its_timeout_while_the_export_is_still_running(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -195,7 +212,7 @@ def test_a_flush_returns_at_its_timeout_while_the_export_is_still_running(monkey
     provider.get_tracer(__name__).start_span('still held').end()
     started = time.monotonic()
     try:
-        tracing.flush(datetime.timedelta(seconds=0.2))
+        tracing.flush(dt.timedelta(seconds=0.2))
         waited = time.monotonic() - started
         assert exporting.is_set()
         assert waited < 5

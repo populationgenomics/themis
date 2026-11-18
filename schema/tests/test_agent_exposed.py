@@ -9,15 +9,13 @@ resting on review of the generated diff.
 
 from __future__ import annotations
 
-import shutil
-
 import pytest
 from google.protobuf import descriptor_pb2
 
 from themis.rpc import sandbox_options_pb2
 from tools.schema import agent_exposed
 
-_needs_buf = pytest.mark.skipif(shutil.which('buf') is None, reason='buf not on PATH')
+_needs_buf = pytest.mark.usefixtures('buf_cli')
 
 
 # The callers an rpc admits: the agent alone, another caller alone, or none.

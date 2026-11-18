@@ -6,9 +6,14 @@ The pure `filled` runs offline; `run` and `verify` run against a fake-gcs-server
 
 from __future__ import annotations
 
-import typing
+import contextlib
+import urllib.parse
 from collections.abc import Mapping
+from typing import override
 
+import requests
+import requests.adapters
+from google.auth import credentials
 from google.cloud import storage as gcs
 from google.protobuf import unknown_fields
 
@@ -110,38 +115,88 @@ def test_verify_reports_a_record_filled_by_an_older_rule(gcs_bucket: gcs.Bucket)
     assert 'differ from what the current rule fills' in failure.reason
 
 
-class _BlobWithoutGeneration:
-    """A blob whose read reports no generation, as a misbehaving client would."""
+def test_run_scans_only_paper_metadata_records(gcs_endpoint: str, gcs_bucket: gcs.Bucket) -> None:
+    assert gcs_bucket.name is not None
+    _store(gcs_bucket, _stale())
+    gcs_bucket.blob('other/ignored.pb').upload_from_string(b'outside papers/ prefix')
+    list_queries: list[dict[str, list[str]]] = []
 
-    def __init__(self, name: str, data: bytes) -> None:
-        self.name = name
-        self.generation = None
-        self._data = data
-        self.uploads = 0
+    class _RecordListQuery(requests.adapters.HTTPAdapter):
+        @override
+        def send(
+            self,
+            request: requests.PreparedRequest,
+            stream: bool = False,
+            timeout: float | tuple[float | None, float | None] | None = None,
+            verify: bool | str = True,
+            cert: str | tuple[str, str] | None = None,
+            proxies: dict[str, str] | None = None,
+        ) -> requests.Response:
+            parsed = urllib.parse.urlsplit(request.url or '')
+            if request.method == 'GET' and parsed.path.endswith('/o'):
+                list_queries.append(urllib.parse.parse_qs(parsed.query))
+            return super().send(request, stream=stream, timeout=timeout, verify=verify, cert=cert, proxies=proxies)
 
-    def download_as_bytes(self) -> bytes:
-        return self._data
-
-    def upload_from_string(self, *_args: object, **_kwargs: object) -> None:
-        self.uploads += 1
-
-
-class _BucketWithoutGenerations:
-    def __init__(self, blob: _BlobWithoutGeneration) -> None:
-        self._blob = blob
-
-    def list_blobs(self, **_kwargs: object) -> list[_BlobWithoutGeneration]:
-        return [self._blob]
-
-    def blob(self, _name: str) -> _BlobWithoutGeneration:
-        return self._blob
-
-
-def test_a_record_read_without_a_generation_is_reported_and_never_written() -> None:
-    blob = _BlobWithoutGeneration(writer.metadata_path(_DOC), _stale().SerializeToString())
-    report = fill_metadata_fields.run(
-        typing.cast('gcs.Bucket', _BucketWithoutGenerations(blob)), dry_run=False, workers=1
+    session = requests.Session()
+    session.mount('http://', _RecordListQuery())
+    client = gcs.Client(
+        project='themis-test',
+        credentials=credentials.AnonymousCredentials(),
+        client_options={'api_endpoint': gcs_endpoint},
+        _http=session,
     )
+    with contextlib.closing(session), contextlib.closing(client):
+        report = fill_metadata_fields.run(client.bucket(gcs_bucket.name), dry_run=True, workers=1)
+
+    assert report.records == 1
+    assert list_queries
+    assert list_queries[0]['prefix'] == ['papers/']
+    assert list_queries[0]['matchGlob'] == ['papers/*/metadata.pb']
+
+
+def test_a_record_read_without_a_generation_is_reported_and_never_written(
+    gcs_endpoint: str, gcs_bucket: gcs.Bucket
+) -> None:
+    assert gcs_bucket.name is not None
+    _store(gcs_bucket, _stale())
+    stored = gcs_bucket.blob(writer.metadata_path(_DOC))
+    stored.reload()
+    initial_generation = stored.generation
+    uploads: list[str] = []
+
+    class _StripDownloadGeneration(requests.adapters.HTTPAdapter):
+        @override
+        def send(
+            self,
+            request: requests.PreparedRequest,
+            stream: bool = False,
+            timeout: float | tuple[float | None, float | None] | None = None,
+            verify: bool | str = True,
+            cert: str | tuple[str, str] | None = None,
+            proxies: dict[str, str] | None = None,
+        ) -> requests.Response:
+            if request.method in ('POST', 'PUT'):
+                uploads.append(request.url or '')
+            response = super().send(request, stream=stream, timeout=timeout, verify=verify, cert=cert, proxies=proxies)
+            if request.method == 'GET' and '/download/' in (request.url or ''):
+                response.headers.pop('X-Goog-Generation', None)
+            return response
+
+    session = requests.Session()
+    session.mount('http://', _StripDownloadGeneration())
+    client = gcs.Client(
+        project='themis-test',
+        credentials=credentials.AnonymousCredentials(),
+        client_options={'api_endpoint': gcs_endpoint},
+        _http=session,
+    )
+    with contextlib.closing(session), contextlib.closing(client):
+        report = fill_metadata_fields.run(client.bucket(gcs_bucket.name), dry_run=False, workers=1)
+
+    assert report.records == 1
     assert [f.doc_id for f in report.failures] == [_DOC]
     assert 'no generation' in report.failures[0].reason
-    assert blob.uploads == 0
+    assert uploads == []
+    stored.reload()
+    assert stored.generation == initial_generation
+    assert _load(gcs_bucket).metadata.title == 'An older title'

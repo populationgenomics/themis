@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import ast
 import pathlib
-import shutil
 
 import pytest
 from google.protobuf import descriptor_pb2
@@ -23,7 +22,7 @@ from google.protobuf import descriptor_pb2
 from tools.schema import agent_exposed
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_needs_buf = pytest.mark.skipif(shutil.which('buf') is None, reason='buf not on PATH')
+_needs_buf = pytest.mark.usefixtures('buf_cli')
 
 
 def _service_methods() -> dict[str, dict[str, list[str]]]:

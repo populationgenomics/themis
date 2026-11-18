@@ -7,6 +7,7 @@ daemon the suite runs against — including in CI, where the derivation has to c
 
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 import urllib.parse
@@ -121,7 +122,21 @@ def test_a_docker_cli_that_fails_gets_nothing(broken_docker_cli: None) -> None:
     assert docker_env.env_additions({'HOME': _HOME}) == {}
 
 
-@pytest.mark.skipif(shutil.which('docker') is None, reason='needs the docker CLI')
+@pytest.fixture
+def docker_cli() -> None:
+    """Gate the real-CLI format check on ``docker``: skipped locally, an error under CI.
+
+    Raises:
+        RuntimeError: If ``docker`` is absent under CI.
+    """
+    if shutil.which('docker') is not None:
+        return
+    if os.environ.get('CI', '').lower() not in {'', '0', 'false'}:
+        raise RuntimeError('docker is not on PATH: the real-CLI check cannot run')
+    pytest.skip('needs the docker CLI')
+
+
+@pytest.mark.usefixtures('docker_cli')
 def test_the_real_cli_answers_the_query_this_module_makes() -> None:
     """The format template is the one string here that no stub can keep honest."""
     endpoint = docker_env.active_context_endpoint()

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import gzip
+import hashlib
 import http.server
+import io
 import json
 import os
 import pathlib
@@ -19,6 +22,7 @@ from typing import TextIO, override
 
 import pytest
 import requests
+import requests.adapters
 from google.auth import credentials
 from google.cloud import storage
 from weaver_data_provider import genome as genome_mod
@@ -567,19 +571,75 @@ def test_an_annotation_naming_no_release_is_refused(tmp_path: pathlib.Path) -> N
         build.check_release(annotation, 'GCF_1.40-RS_2025_08')
 
 
-def test_the_committed_manifest_declares_what_every_planned_build_reads() -> None:
-    # `plan` reads assemblies and objects by id; an id it names that the manifest lacks raises before any bucket read.
+@contextlib.contextmanager
+def _seeded_committed_manifest(
+    gcs_endpoint: str, gcs_bucket: storage.Bucket, pinned: manifest.Manifest
+) -> Iterator[storage.Bucket]:
+    """Seed ``gcs_bucket`` with every entry in ``pinned`` and yield a bucket reporting pinned MD5 hashes."""
+    assert gcs_bucket.name is not None
+    pinned_md5_by_object: dict[str, str] = {}
+    for entry in pinned.entries:
+        name = f'{pinned.dataset}/{entry.object}'
+        payload = entry.id.encode('utf-8')
+        gcs_bucket.blob(name).upload_from_string(payload)
+        digest = entry.md5 or hashlib.md5(payload).hexdigest()  # noqa: S324
+        if entry.md5 is not None:
+            pinned_md5_by_object[name] = base64.b64encode(bytes.fromhex(entry.md5)).decode('ascii')
+        sidecar = {'url': entry.url, 'digest': digest, 'digest_algorithm': 'md5'}
+        gcs_bucket.blob(name + mirror.PROVENANCE_SUFFIX).upload_from_string(json.dumps(sidecar))
+
+    class _PinnedDigestAdapter(requests.adapters.HTTPAdapter):
+        @override
+        def send(
+            self,
+            request: requests.PreparedRequest,
+            stream: bool = False,
+            timeout: float | tuple[float | None, float | None] | None = None,
+            verify: bool | str = True,
+            cert: str | tuple[str, str] | None = None,
+            proxies: dict[str, str] | None = None,
+        ) -> requests.Response:
+            response = super().send(request, stream=stream, timeout=timeout, verify=verify, cert=cert, proxies=proxies)
+            if request.method == 'GET' and '/o/' in (request.url or '') and '/download/' not in (request.url or ''):
+                meta = response.json()
+                if isinstance(meta, dict) and (md5_b64 := pinned_md5_by_object.get(str(meta.get('name')))):
+                    meta['md5Hash'] = md5_b64
+                    encoded = json.dumps(meta).encode('utf-8')
+                    rewritten = requests.Response()
+                    rewritten.status_code = response.status_code
+                    rewritten.headers.update(response.headers)
+                    rewritten.headers['Content-Length'] = str(len(encoded))
+                    rewritten.raw = io.BytesIO(encoded)
+                    rewritten.request = request
+                    rewritten.url = response.url
+                    return rewritten
+            return response
+
+    session = requests.Session()
+    session.mount('http://', _PinnedDigestAdapter())
+    client = storage.Client(
+        project='themis-test',
+        credentials=credentials.AnonymousCredentials(),
+        client_options={'api_endpoint': gcs_endpoint},
+        _http=session,
+    )
+    with contextlib.closing(session), contextlib.closing(client):
+        bucket = client.bucket(gcs_bucket.name)
+        _status_table(bucket, pinned, '2026-11-08', b'a')
+        yield bucket
+
+
+def test_the_committed_manifest_declares_what_every_planned_build_reads(
+    gcs_endpoint: str, gcs_bucket: storage.Bucket
+) -> None:
+    # Drive `build.plan` and `build.build_all(..., dry_run=True)` over the committed manifest in GCS so any
+    # assembly, release, object role or table a planned build begins reading fails unless declared in `reference.toml`.
     pinned = manifest.load()
-    for assembly_id, _ in build._REFSEQ:
-        assembly = pinned.assembly(assembly_id)
-        assert assembly.release is not None
-        for path in ('genome', 'annotation', 'transcripts', 'proteins', 'records', 'alignments', 'alignments/index'):
-            assembly.object(path)
-    for assembly_id, _, ncbi_id in build._ENSEMBL:
-        assembly = pinned.assembly(assembly_id)
-        assert assembly.release is not None
-        for path in ('whole-annotation', 'whole-annotation-gtf', 'transcripts', 'ncrna', 'proteins'):
-            assembly.object(path)
-        pinned.assembly(ncbi_id).object('genome')
-    pinned.table('hgnc-complete-set')
-    pinned.table('mane-summary')
+    with _seeded_committed_manifest(gcs_endpoint, gcs_bucket, pinned) as bucket:
+        planned = build.plan(pinned, bucket=bucket, genomes=_no_genome_dir)
+        failed = build.build_all(pinned, bucket=bucket, dry_run=True)
+
+    assert planned
+    assert [p.error for p in planned] == [None] * len(planned)
+    assert all(p.build is not None for p in planned)
+    assert failed == []

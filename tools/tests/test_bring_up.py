@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime
+import datetime as dt
 import json
 import pathlib
 from collections.abc import Mapping, Sequence
@@ -56,6 +56,7 @@ class _World(bring_up.Shell):
         self.runs: list[_Run] = []
         self.deploy_fails_in: tuple[str, ...] = ()
         self.commands: list[list[str]] = []
+        self.invocations: list[tuple[list[str], dict[str, str]]] = []
 
     @override
     def run(
@@ -64,12 +65,13 @@ class _World(bring_up.Shell):
         *,
         cwd: pathlib.Path | None = None,
         env: Mapping[str, str] | None = None,
-        timeout: datetime.timedelta | None = None,
+        timeout: dt.timedelta | None = None,
         echo: bool = False,
     ) -> bytes:
-        del cwd, env, timeout, echo
+        del cwd, timeout, echo
         command = list(args)
         self.commands.append(command)
+        self.invocations.append((command, dict(env or {})))
         answer = self._answer(command)
         return answer.encode('utf-8') if isinstance(answer, str) else answer
 
@@ -126,7 +128,7 @@ class _World(bring_up.Shell):
         return ''
 
     @override
-    def sleep(self, delay: datetime.timedelta) -> None:
+    def sleep(self, delay: dt.timedelta) -> None:
         del delay
 
     def ran(self, *words: str) -> bool:
@@ -145,7 +147,7 @@ def values(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     return stated
 
 
-def _bring_up(world: _World, *, acl_wait: datetime.timedelta = datetime.timedelta(minutes=5)) -> None:
+def _bring_up(world: _World, *, acl_wait: dt.timedelta = dt.timedelta(minutes=5)) -> None:
     bring_up.BringUp(_ENV, world, acl_wait=acl_wait).run()
 
 
@@ -157,9 +159,9 @@ def _targeted(world: _World, target: str) -> bool:
 def test_a_fresh_stack_is_brought_up_through_every_step() -> None:
     world = _World()
     _bring_up(world)
-    assert _targeted(world, bring_up.first_targets(_ENV)[0])
+    assert _targeted(world, 'urn:pulumi:prod::themis::themis:infra:Baseline**')
     assert world.dispatches(images_only=True) == 1
-    assert _targeted(world, bring_up.refresh_targets(_ENV)[0])
+    assert _targeted(world, 'urn:pulumi:prod::themis::gcp:cloudrunv2/job:Job::themis-gene-disease-refresh-job')
     assert world.ran('jobs', 'execute')
     assert any('up' in command and '--target' not in command for command in world.commands)
     assert world.dispatches(images_only=False) == 1
@@ -246,7 +248,7 @@ def test_a_missing_acl_stops_at_the_deadline() -> None:
     world = _World()
     world.acl = [None]
     with pytest.raises(bring_up.BringUpError, match='no readable version'):
-        _bring_up(world, acl_wait=datetime.timedelta(0))
+        _bring_up(world, acl_wait=dt.timedelta(0))
 
 
 def test_the_agent_step_may_fail_while_the_deploy_identity_is_a_placeholder(values: dict[str, str]) -> None:
@@ -282,11 +284,28 @@ def test_a_check_that_fails_for_another_reason_than_absence_is_loud() -> None:
         _Denied().exists(['gcloud', 'artifacts', 'docker', 'images', 'describe', 'x', '--quiet'])
 
 
+@pytest.mark.usefixtures('values')
 def test_every_image_override_is_set_on_every_up() -> None:
-    declared = {image['env'] for image in bring_up.images()}
+    declared = {
+        entry['env']: entry['name'] for entry in json.loads((_ROOT / '.github' / 'images.json').read_text('utf-8'))
+    }
     assert declared
-    assert set(bring_up.placeholder_images()) == declared
-    assert set(bring_up.built_images(_ENV, _MAIN)) == declared
+    world = _World()
+    _bring_up(world)
+
+    ups = [env for command, env in world.invocations if 'pulumi' in command and 'up' in command]
+    assert len(ups) == 3
+    first_up, refresh_up, full_up = ups
+    assert first_up == {
+        'PULUMI_BACKEND_URL': 'gs://p-pulumi-state',
+        **dict.fromkeys(declared, 'gcr.io/cloudrun/hello'),
+    }
+    built_expected = {
+        'PULUMI_BACKEND_URL': 'gs://p-pulumi-state',
+        **{var: f'australia-southeast1-docker.pkg.dev/p/themis/{name}:{_MAIN}' for var, name in declared.items()},
+    }
+    assert refresh_up == built_expected
+    assert full_up == built_expected
 
 
 def _workflow() -> dict[object, object]:

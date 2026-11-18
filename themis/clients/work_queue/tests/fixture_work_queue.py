@@ -31,6 +31,8 @@ class FixtureWorkQueue(client.WorkQueue):
 
     @override
     async def ack(self, work_id: str) -> None:
+        if work_id in self.stopped:
+            raise RuntimeError(f'cannot ack already-stopped work item {work_id!r}')
         self.acked.append(work_id)
 
     @override

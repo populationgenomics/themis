@@ -16,7 +16,7 @@ import pathlib
 import re
 import shutil
 import subprocess
-from types import SimpleNamespace
+import types
 from typing import NamedTuple
 
 import pytest
@@ -25,7 +25,6 @@ from google.protobuf import descriptor_pb2
 from tools.schema import agent_exposed, guest_contract
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_needs_buf = pytest.mark.skipif(shutil.which('buf') is None, reason='buf not on PATH')
 _STUB_METHOD = re.compile(r'^\s+self\.(\w+) = channel\.', re.MULTILINE)
 _SERVICER_METHOD = re.compile(r'^    def (\w+)\(self, request', re.MULTILINE)
 
@@ -315,10 +314,9 @@ def test_a_block_comment_above_a_doomed_declaration_is_refused(tmp_path: pathlib
 
 
 @pytest.fixture(scope='module')
-def tree(tmp_path_factory: pytest.TempPathFactory) -> SimpleNamespace:
+def tree(buf_cli: None, tmp_path_factory: pytest.TempPathFactory) -> types.SimpleNamespace:
     """The guest contract tree, generated into a temporary root from the module as `regen` sees it."""
-    if shutil.which('buf') is None:
-        pytest.skip('buf not on PATH')
+    del buf_cli
     image_bytes = agent_exposed.build_image()
     export = tmp_path_factory.mktemp('export')
     subprocess.run(['buf', 'export', '.', '--output', str(export)], cwd=_REPO_ROOT, check=True)  # noqa: S603, S607
@@ -341,7 +339,7 @@ def tree(tmp_path_factory: pytest.TempPathFactory) -> SimpleNamespace:
         target = guest / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
-    return SimpleNamespace(
+    return types.SimpleNamespace(
         image_bytes=image_bytes,
         image=agent_exposed.image_of(image_bytes),
         services=agent_exposed.marked_services(image_bytes),
@@ -369,8 +367,7 @@ def _leading_comments(file: descriptor_pb2.FileDescriptorProto) -> dict[str, str
     return comments
 
 
-@_needs_buf
-def test_every_stub_offers_exactly_the_marked_rpcs(tree: SimpleNamespace) -> None:
+def test_every_stub_offers_exactly_the_marked_rpcs(tree: types.SimpleNamespace) -> None:
     """Per service, the methods on the guest's stub equal the allowlist's — no stub file for an unmarked service."""
     python = tree.root / guest_contract.PYTHON
     stubs = {path.relative_to(python).as_posix(): path.read_text('utf-8') for path in python.rglob('*_pb2_grpc.py')}
@@ -385,8 +382,7 @@ def test_every_stub_offers_exactly_the_marked_rpcs(tree: SimpleNamespace) -> Non
         assert set(_SERVICER_METHOD.findall(text)) == expected[path], f'{path}: servicer base names other rpcs'
 
 
-@_needs_buf
-def test_every_shipped_type_is_reachable_and_every_reachable_type_is_shipped(tree: SimpleNamespace) -> None:
+def test_every_shipped_type_is_reachable_and_every_reachable_type_is_shipped(tree: types.SimpleNamespace) -> None:
     """In each authored file the top-level types are exactly the ones the guest reaches: none unused, none missing."""
     authored = [f for f in tree.shipped.files if f.startswith('themis/')]
     guest = guest_contract.compile_tree(tree.guest, authored + tree.whole)
@@ -402,8 +398,7 @@ def test_every_shipped_type_is_reachable_and_every_reachable_type_is_shipped(tre
         assert declared == reachable, f'{name}: declared {sorted(declared)} vs reachable {sorted(reachable)}'
 
 
-@_needs_buf
-def test_the_files_shipped_whole_build_against_the_cut_tree(tree: SimpleNamespace) -> None:
+def test_the_files_shipped_whole_build_against_the_cut_tree(tree: types.SimpleNamespace) -> None:
     """Every message stub the guest takes from the main tree resolves the types it names in the guest tree's sources.
 
     A descriptor naming a type the cut left out fails the guest's import of the stub, where no test runs; compiled
@@ -414,8 +409,7 @@ def test_the_files_shipped_whole_build_against_the_cut_tree(tree: SimpleNamespac
     assert set(tree.whole) <= compiled
 
 
-@_needs_buf
-def test_no_mark_and_no_option_import_survives(tree: SimpleNamespace) -> None:
+def test_no_mark_and_no_option_import_survives(tree: types.SimpleNamespace) -> None:
     for path in (tree.root / guest_contract.PROTO).rglob('*.proto'):
         text = path.read_text('utf-8')
         assert 'admits_' not in text, f'{path.name} still carries an admission option'
@@ -423,8 +417,7 @@ def test_no_mark_and_no_option_import_survives(tree: SimpleNamespace) -> None:
         assert 'sandbox_options' not in text, f'{path.name} still imports the options proto'
 
 
-@_needs_buf
-def test_every_import_in_a_cut_file_resolves_inside_the_tree_or_the_runtime(tree: SimpleNamespace) -> None:
+def test_every_import_in_a_cut_file_resolves_inside_the_tree_or_the_runtime(tree: types.SimpleNamespace) -> None:
     proto = tree.root / guest_contract.PROTO
     for name, file in _by_file(tree.filtered).items():
         for dependency in file.dependency:
@@ -432,8 +425,7 @@ def test_every_import_in_a_cut_file_resolves_inside_the_tree_or_the_runtime(tree
             assert resolves, f'{name} imports {dependency}, which the tree does not hold'
 
 
-@_needs_buf
-def test_a_kept_rpc_keeps_its_own_comment(tree: SimpleNamespace) -> None:
+def test_a_kept_rpc_keeps_its_own_comment(tree: types.SimpleNamespace) -> None:
     """The cut is by position, so a shifted position would hand one rpc another's comment; each is held to its own."""
     full, filtered = _by_file(tree.image), _by_file(tree.filtered)
     checked = 0
@@ -446,8 +438,7 @@ def test_a_kept_rpc_keeps_its_own_comment(tree: SimpleNamespace) -> None:
     assert checked, 'no kept rpc compared'
 
 
-@_needs_buf
-def test_no_unmarked_rpc_is_declared_in_the_cut_sources(tree: SimpleNamespace) -> None:
+def test_no_unmarked_rpc_is_declared_in_the_cut_sources(tree: types.SimpleNamespace) -> None:
     full, filtered = _by_file(tree.image), _by_file(tree.filtered)
     for marked in tree.services:
         before = {m.name for s in full[marked.file].service if s.name == marked.name for m in s.method}
@@ -457,8 +448,7 @@ def test_no_unmarked_rpc_is_declared_in_the_cut_sources(tree: SimpleNamespace) -
         assert not (unmarked & declared)
 
 
-@_needs_buf
-def test_files_this_repo_does_not_author_ship_intact(tree: SimpleNamespace) -> None:
+def test_files_this_repo_does_not_author_ship_intact(tree: types.SimpleNamespace) -> None:
     shipped_intact = [f for f in tree.shipped.files if not f.startswith('themis/')]
     assert shipped_intact, 'no upstream copy in the closure — the check would be vacuous'
     for name in shipped_intact:
@@ -466,8 +456,7 @@ def test_files_this_repo_does_not_author_ship_intact(tree: SimpleNamespace) -> N
         assert shipped_bytes == (tree.export / name).read_bytes(), name
 
 
-@_needs_buf
-def test_generation_is_deterministic(tree: SimpleNamespace, tmp_path: pathlib.Path) -> None:
+def test_generation_is_deterministic(tree: types.SimpleNamespace, tmp_path: pathlib.Path) -> None:
     guest_contract.generate(tree.image_bytes, tree.export, tmp_path)
     first = {
         p.relative_to(tree.root): p.read_bytes() for p in tree.root.rglob('*') if p.is_file() and p.suffix != '.binpb'

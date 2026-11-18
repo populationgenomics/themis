@@ -1,24 +1,25 @@
 """The resource a workload's series belong to, and the one-shot reader's fail-loud export.
 
-The detectors are fakes standing in for what the GCP detector yields on a Cloud Run service; the
-exporter is a fake recording what it was handed. Nothing here reaches a network.
+Detectors stand in for what the GCP detector yields on a Cloud Run service; reader unit tests use an
+in-memory exporter, and the Telemetry API exporter test flushes over TLS to a loopback OTLP server.
 """
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 from typing import override
 
 import grpc
 import pytest
-from google.auth import credentials as google_credentials
+from opentelemetry.proto.collector.metrics.v1 import metrics_service_pb2, metrics_service_pb2_grpc
 from opentelemetry.sdk import metrics as sdk_metrics
 from opentelemetry.sdk import resources
 from opentelemetry.sdk.metrics import export as metrics_export
 
 from themis.telemetry import metrics, telemetry_api
+from themis.telemetry.tests import otlp_loopback
 
-_TIMEOUT = datetime.timedelta(seconds=5)
+_TIMEOUT = dt.timedelta(seconds=5)
 
 
 class _Detector(resources.ResourceDetector):
@@ -189,17 +190,34 @@ def test_shutdown_exports_nothing() -> None:
 
 
 def test_the_exporter_is_built_for_the_telemetry_api_over_tls(monkeypatch: pytest.MonkeyPatch) -> None:
-    built: dict[str, object] = {}
+    received: list[tuple[metrics_service_pb2.ExportMetricsServiceRequest, dict[str, str | bytes], float]] = []
 
-    class _Built:
-        def __init__(self, **kwargs: object) -> None:
-            built.update(kwargs)
+    class _Collector(metrics_service_pb2_grpc.MetricsServiceServicer):
+        @override
+        def Export(
+            self,
+            request: metrics_service_pb2.ExportMetricsServiceRequest,
+            context: grpc.ServicerContext,
+        ) -> metrics_service_pb2.ExportMetricsServiceResponse:
+            received.append((request, dict(context.invocation_metadata()), context.time_remaining()))
+            return metrics_service_pb2.ExportMetricsServiceResponse()
 
-    monkeypatch.setattr(metrics.otlp_grpc, 'OTLPMetricExporter', _Built)
+    with otlp_loopback.serving_tls(
+        monkeypatch, lambda s: metrics_service_pb2_grpc.add_MetricsServiceServicer_to_server(_Collector(), s)
+    ):
+        exporter = metrics.telemetry_api_exporter(
+            otlp_loopback.FixedTokenCredentials('metrics-token'), timeout=_TIMEOUT
+        )
+        reader = metrics.OneShotReader(exporter)
+        provider = sdk_metrics.MeterProvider(metric_readers=[reader], shutdown_on_exit=False)
+        try:
+            provider.get_meter('t').create_gauge('spend_usd').set(42)
+            reader.flush(timeout=_TIMEOUT)
+        finally:
+            provider.shutdown()
 
-    metrics.telemetry_api_exporter(google_credentials.AnonymousCredentials(), timeout=_TIMEOUT)
-
-    # An https endpoint is what makes the SDK open a secure channel; the credentials carry the token.
-    assert built['endpoint'] == 'https://telemetry.googleapis.com:443'
-    assert isinstance(built['credentials'], grpc.ChannelCredentials)
-    assert built['timeout'] == _TIMEOUT.total_seconds()
+    [(req, metadata, remaining)] = received
+    assert metadata['authorization'] == 'Bearer metrics-token'
+    assert 0 < remaining <= _TIMEOUT.total_seconds()
+    exported_names = [m.name for rm in req.resource_metrics for sm in rm.scope_metrics for m in sm.metrics]
+    assert exported_names == ['spend_usd']

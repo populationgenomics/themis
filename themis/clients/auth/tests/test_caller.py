@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
+import datetime as dt
 import json
 import time
 import typing
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 
 import grpc.aio
 import pytest
@@ -78,15 +78,15 @@ def google_key() -> tuple[str, str]:
     """An RSA key standing in for one of Google's ID-token signing keys: (private key PEM, certificate PEM)."""
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, 'test')])
-    now = datetime.datetime.now(datetime.UTC)
+    now = dt.datetime.now(dt.UTC)
     certificate = (
         x509.CertificateBuilder()
         .subject_name(name)
         .issuer_name(name)
         .public_key(key.public_key())
         .serial_number(1)
-        .not_valid_before(now - datetime.timedelta(days=1))
-        .not_valid_after(now + datetime.timedelta(days=1))
+        .not_valid_before(now - dt.timedelta(days=1))
+        .not_valid_after(now + dt.timedelta(days=1))
         .sign(key, hashes.SHA256())
     )
     private_pem = key.private_bytes(
@@ -107,10 +107,16 @@ def google_certs(monkeypatch: pytest.MonkeyPatch, google_key: tuple[str, str]) -
     monkeypatch.setattr(caller_mod.google_auth_requests, 'Request', _Transport)
 
 
-def _id_token(google_key: tuple[str, str], *, audience: str, email_verified: bool = True) -> str:
+def _id_token(
+    google_key: tuple[str, str],
+    *,
+    audience: str,
+    email_verified: bool = True,
+    issuer: str = 'https://accounts.google.com',
+) -> str:
     now = int(time.time())
     claims = {
-        'iss': 'https://accounts.google.com',
+        'iss': issuer,
         'aud': audience,
         'email': 'sa@x',
         'email_verified': email_verified,
@@ -156,25 +162,44 @@ def test_cloud_run_verifier_takes_only_an_https_audience(audience: str) -> None:
         caller_mod.cloud_run_caller_verifier(audience)
 
 
-def test_cloud_run_verifier_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _raise(*_a: object, **_k: object) -> dict[str, object]:
-        raise google_auth_exceptions.GoogleAuthError('bad token')
-
-    monkeypatch.setattr(caller_mod.google_id_token, 'verify_oauth2_token', _raise)
+@pytest.mark.usefixtures('google_certs')
+def test_cloud_run_verifier_fails_closed(google_key: tuple[str, str]) -> None:
+    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    untrusted = _id_token((other_key.decode(), ''), audience=_AUDIENCE)
+    non_google_issuer = _id_token(google_key, audience=_AUDIENCE, issuer='https://other.issuer.invalid')
     verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
     assert _run(verify(_ctx(_bearer('forged')))) is None
+    assert _run(verify(_ctx(_bearer(untrusted)))) is None
+    assert _run(verify(_ctx(_bearer(non_google_issuer)))) is None
     # An absent bearer never reaches verification.
     assert _run(verify(_ctx())) is None
 
 
-def test_a_certificate_fetch_failure_propagates_rather_than_declining(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _unreachable(*_a: object, **_k: object) -> dict[str, object]:
-        raise google_auth_exceptions.TransportError('certs unreachable')
+def _raise_transport_error() -> _FakeResponse:
+    raise google_auth_exceptions.TransportError('certs unreachable')
 
-    monkeypatch.setattr(caller_mod.google_id_token, 'verify_oauth2_token', _unreachable)
+
+@pytest.mark.parametrize(
+    'fetch',
+    [
+        pytest.param(_raise_transport_error, id='transport-error'),
+        pytest.param(lambda: _FakeResponse(status=503), id='http-503'),
+    ],
+)
+def test_a_certificate_fetch_failure_propagates_rather_than_declining(
+    monkeypatch: pytest.MonkeyPatch, google_key: tuple[str, str], fetch: Callable[[], _FakeResponse]
+) -> None:
+    class _UnreachableTransport:
+        def __call__(self, _url: str, **_k: object) -> _FakeResponse:
+            return fetch()
+
+    monkeypatch.setattr(caller_mod.google_auth_requests, 'Request', _UnreachableTransport)
     verify = caller_mod.cloud_run_caller_verifier(_AUDIENCE)
+    token = _id_token(google_key, audience=_AUDIENCE)
     with pytest.raises(google_auth_exceptions.TransportError):
-        _run(verify(_ctx(_bearer('good'))))
+        _run(verify(_ctx(_bearer(token))))
 
 
 def test_cloud_run_verifier_fetches_certificates_once_per_max_age(
