@@ -126,9 +126,6 @@ class _Deployment:
         cpu: The CPU limit per instance.
         memory: The memory limit per instance: its requests' PDFs and page images at once, beside the
             server and its pdfium process.
-        gen2: Whether the instance runs in the second-generation execution environment, where the
-            kernel's out-of-memory killer picks a victim inside the container rather than ending the
-            instance, so the pdfium child's preference to be killed first takes effect.
     """
 
     name: str
@@ -136,7 +133,6 @@ class _Deployment:
     max_instances: int
     cpu: str
     memory: str
-    gen2: bool
 
 
 _INTERACTIVE = _Deployment(
@@ -145,7 +141,6 @@ _INTERACTIVE = _Deployment(
     max_instances=_INTERACTIVE_CONCURRENT_DISPATCHES,
     cpu='2',
     memory='4Gi',
-    gen2=False,
 )
 # Memory: a request at worst holds a PDF at the open-access fetch cap (100 MB), its page images within the
 # request byte budget (~24 MB) and their encoded request body (~64 MB), so about 250 MB; sixteen of those
@@ -156,7 +151,6 @@ _BULK = _Deployment(
     max_instances=_BULK_MAX_INSTANCES,
     cpu='2',
     memory='8Gi',
-    gen2=True,
 )
 
 
@@ -182,7 +176,7 @@ def _worker_service(
         ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
         template=gcp.cloudrunv2.ServiceTemplateArgs(
             service_account=service_account_email,
-            execution_environment='EXECUTION_ENVIRONMENT_GEN2' if deployment.gen2 else None,
+            execution_environment=cloud_run.EXECUTION_ENVIRONMENT,
             scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                 min_instance_count=0,
                 max_instance_count=deployment.max_instances,

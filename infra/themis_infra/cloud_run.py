@@ -1,4 +1,4 @@
-"""What every Cloud Run service shares: the URL it is called at, and the probe that admits a new instance.
+"""What every Cloud Run service shares: its URL, the probe that admits a new instance, and its execution environment.
 
 Cloud Run serves every service at two URLs: a hashed one (`Service.uri`), and one built from the service's
 name, the project number and the region. It admits an ID token minted for either. A service that checks the
@@ -18,6 +18,15 @@ A service on an interactive request's path, whose start is most of what the pers
 (web, sheaf, auth, evidence), also sets `startup_cpu_boost`: Cloud Run gives a 1-vCPU instance 2 vCPUs while
 it starts and for 10 s after, billed at the boosted rate for that time. A service whose callers wait on much
 longer work (a sandbox job, a conversion) does not.
+
+Every service sets the second-generation execution environment (`EXECUTION_ENVIRONMENT`); a job always runs in
+it. A service with no environment set runs on whichever generation Cloud Run selects, so nothing in the program
+would say which kernel and network stack its instances have. The second generation runs the container on a Linux
+kernel in a microVM, where the first emulates system calls in gVisor. Google documents faster networking for it,
+most of all under packet loss. The convert worker's pdfium child marks itself as the first process to kill when
+the container runs out of memory (`themis/litcache/pdf.py`), which assumes that Linux kernel. An instance on the
+second generation needs at least 1 vCPU and 512 MiB of memory, and Google says some services start more slowly
+on it.
 """
 
 from __future__ import annotations
@@ -27,6 +36,7 @@ from collections.abc import Sequence
 import pulumi
 import pulumi_gcp as gcp
 
+EXECUTION_ENVIRONMENT = 'EXECUTION_ENVIRONMENT_GEN2'
 # Cloud Run's floor for a probe's period; its timeout may not exceed the period, so it is 1 s too.
 _PROBE_PERIOD_SECONDS = 1
 # Covers a service's slowest start with a margin; a service whose start can run longer names its own.

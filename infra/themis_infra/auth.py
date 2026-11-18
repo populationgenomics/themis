@@ -189,6 +189,7 @@ class AuthService(pulumi.ComponentResource):
             ingress='INGRESS_TRAFFIC_INTERNAL_ONLY',
             template=gcp.cloudrunv2.ServiceTemplateArgs(
                 service_account=service_account.email,
+                execution_environment=cloud_run.EXECUTION_ENVIRONMENT,
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                     min_instance_count=min_instances, max_instance_count=max_instances
                 ),
