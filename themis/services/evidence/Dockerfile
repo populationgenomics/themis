@@ -7,7 +7,7 @@
 # and serves gRPC over HTTP/2.
 # A named stage rather than `COPY --from=<image>`: Dependabot updates images on FROM lines only.
 FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
-FROM python:3.13.16-slim-bookworm@sha256:73aa5faee130c60da030e105ec971ccf57473fbd22ce73bd6fc9ba99a40b838d AS base
+FROM python:3.13.16-slim-trixie@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f AS base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 # The base image ships the standard library without bytecode, and PYTHONDONTWRITEBYTECODE stops a process caching
