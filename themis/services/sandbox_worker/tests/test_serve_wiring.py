@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import errno
 import json
 import os
 import pathlib
@@ -139,9 +140,11 @@ class _HostSandbox:
         profile: postern.SandboxProfile,
         *,
         hatch: Sequence[object] | object | None = None,
+        verify_error: Exception | None = None,
     ) -> None:
         self._harness = harness
         self._profile = profile
+        self._verify_error = verify_error
         self.workspace = harness.workspace
         if hatch is None:
             self._hatches: list[object] = []
@@ -155,6 +158,8 @@ class _HostSandbox:
 
     def verify(self, *, timeout: float = 30) -> None:
         del timeout
+        if self._verify_error is not None:
+            raise self._verify_error
         self._harness.verified = True
         for host, guest in self._profile.required_ro_binds:
             if guest == file_tools.GUEST_REQUESTS:
@@ -267,6 +272,8 @@ def _wired_serve(
     tmp_path: pathlib.Path,
     *,
     sheaf_target: str | None = None,
+    build_error: Exception | None = None,
+    verify_error: Exception | None = None,
     serve_error: Exception | None = None,
     on_session: Callable[[_ToolsFactory], Coroutine[object, object, None]] | None = None,
     on_mirror: Callable[[bare.BareRepo], None] | None = None,
@@ -281,7 +288,9 @@ def _wired_serve(
     channel_info: dict[grpc.Channel, tuple[str, grpc.ChannelCredentials]] = {}
 
     def sandbox_factory(profile: postern.SandboxProfile, *, hatch: object = None) -> _HostSandbox:
-        return _HostSandbox(harness, profile, hatch=hatch)
+        if build_error is not None:
+            raise build_error
+        return _HostSandbox(harness, profile, hatch=hatch, verify_error=verify_error)
 
     def channel_credentials(url: str) -> grpc.ChannelCredentials:
         assert url in {_HELLO_URL, _EVIDENCE_URL}
@@ -647,6 +656,120 @@ def test_serve_fails_loud_on_a_missing_env_var(monkeypatch: pytest.MonkeyPatch, 
     # a required value absent at boot must raise before any sandbox launch, not fail deep in the SDK
     monkeypatch.delenv(missing)
     with pytest.raises(SystemExit, match=missing):
+        asyncio.run(worker._serve())
+
+
+# What stops the boot gate, as (the error building the sandbox, the error in the self-test, how the exit names it).
+# A verdict is postern's answer; a fault is the host or this process failing before there is an answer.
+_GATE_VERDICTS = [
+    pytest.param(
+        ValueError('SandboxProfile.host_uid must be a non-root uid'),
+        None,
+        'invalid sandbox profile',
+        id='profile rejected',
+    ),
+    pytest.param(
+        None,
+        postern.IsolationError('sandbox failed to launch: no user namespace'),
+        'isolation self-test failed',
+        id='isolation not enforced',
+    ),
+    pytest.param(None, RuntimeError('bwrap not found on PATH'), 'isolation self-test failed', id='no bubblewrap'),
+]
+_GATE_FAULTS = [
+    pytest.param(
+        PermissionError(errno.EACCES, 'Permission denied', '/workspace'),
+        None,
+        'isolation self-test did not complete',
+        id='workspace not creatable',
+    ),
+    pytest.param(
+        None,
+        ChildProcessError('bwrap (pid 7) was reaped by something else in this process'),
+        'isolation self-test did not complete',
+        id='child reaped elsewhere',
+    ),
+    pytest.param(
+        None,
+        OSError(errno.EMFILE, 'Too many open files'),
+        'isolation self-test did not complete',
+        id='no descriptor left',
+    ),
+]
+
+
+@pytest.mark.usefixtures('_env')
+@pytest.mark.parametrize(('build_error', 'verify_error', 'outcome'), [*_GATE_VERDICTS, *_GATE_FAULTS])
+def test_serve_refuses_unless_the_isolation_self_test_passes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    build_error: Exception | None,
+    verify_error: Exception | None,
+    outcome: str,
+) -> None:
+    with (
+        _wired_serve(monkeypatch, tmp_path, build_error=build_error, verify_error=verify_error) as harness,
+        pytest.raises(SystemExit) as raised,
+    ):
+        asyncio.run(worker._serve())
+
+    error = verify_error if build_error is None else build_error
+    message = str(raised.value)
+    assert message.startswith(f'{outcome}, refusing to serve: ')
+    assert message.endswith(str(error))
+    assert raised.value.__cause__ is error
+    # Nothing past the gate ran, and the item is left unacked for a fresh spawn to take.
+    assert harness.grpc_hatches == []
+    assert harness.mirrors == []
+    assert harness.sessions_served == 0
+    assert harness.work_queue.acked == []
+    assert harness.work_queue.stopped == []
+
+
+@pytest.mark.usefixtures('_env')
+@pytest.mark.parametrize(('build_error', 'verify_error', 'outcome'), _GATE_FAULTS)
+def test_a_fault_in_the_self_test_is_reported_with_its_type_and_its_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+    build_error: Exception | None,
+    verify_error: Exception | None,
+    outcome: str,
+) -> None:
+    # An OSError's text does not say what raised it, and an exit prints no traceback.
+    with (
+        _wired_serve(monkeypatch, tmp_path, build_error=build_error, verify_error=verify_error),
+        pytest.raises(SystemExit) as raised,
+    ):
+        asyncio.run(worker._serve())
+
+    error = verify_error if build_error is None else build_error
+    assert str(raised.value) == f'{outcome}, refusing to serve: {type(error).__name__}: {error}'
+    assert [record.exc_info[1] for record in caplog.records if record.exc_info] == [error]
+
+
+@pytest.mark.usefixtures('_env')
+def test_a_value_error_out_of_the_self_test_is_not_taken_for_a_rejected_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path
+) -> None:
+    # Only building the sandbox checks the profile; the same type out of a launch is a defect, and keeps its traceback.
+    error = ValueError('poll() on a closed, unreaped Launch')
+    with (
+        _wired_serve(monkeypatch, tmp_path, verify_error=error),
+        pytest.raises(ValueError, match='unreaped') as raised,
+    ):
+        asyncio.run(worker._serve())
+
+    assert raised.value is error
+
+
+@pytest.mark.usefixtures('_env')
+def test_postern_rejects_a_root_host_uid_and_the_gate_reports_the_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    # postern itself rather than a stand-in: it checks the uid when the sandbox is built, before any launch.
+    monkeypatch.setattr(os, 'geteuid', lambda: 0)
+    monkeypatch.setenv(worker._HOST_UID_ENV, '0')
+    monkeypatch.setenv(worker._HOST_GID_ENV, '61000')
+    with pytest.raises(SystemExit, match=r'invalid sandbox profile, refusing to serve: .*host_uid'):
         asyncio.run(worker._serve())
 
 

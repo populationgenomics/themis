@@ -274,6 +274,29 @@ async def _restore_or_fail_item(
     return True
 
 
+def _verify_isolation(profile: postern.SandboxProfile) -> None:
+    """The boot gate: run postern's isolation self-test under ``profile``, and return only if it passes.
+
+    Raises:
+        SystemExit: If postern rejects the profile, if isolation is not enforced here, or if a fault of the host or
+            of this process stops the self-test before its answer. The message says which.
+    """
+    try:
+        try:
+            sandbox = postern.Sandbox(profile)
+        except ValueError as exc:
+            raise SystemExit(f'invalid sandbox profile, refusing to serve: {exc}') from exc
+        sandbox.verify()
+    except (postern.IsolationError, RuntimeError) as exc:
+        raise SystemExit(f'isolation self-test failed, refusing to serve: {exc}') from exc
+    except OSError as exc:
+        # An exit prints its message alone, so the traceback that locates the fault goes to the log.
+        _logger.exception('isolation self-test did not complete')
+        raise SystemExit(
+            f'isolation self-test did not complete, refusing to serve: {type(exc).__name__}: {exc}'
+        ) from exc
+
+
 async def _serve() -> None:
     session_token = _require('THEMIS_SESSION_TOKEN')
     environment_key = _require('ANTHROPIC_ENVIRONMENT_KEY')
@@ -293,10 +316,7 @@ async def _serve() -> None:
     requests = file_tools.request_directory(host_identity)
     try:
         profile = _build_profile(host_identity, requests)
-        try:
-            postern.Sandbox(profile).verify()
-        except (postern.IsolationError, RuntimeError) as exc:
-            raise SystemExit(f'isolation self-test failed, refusing to serve: {exc}') from exc
+        _verify_isolation(profile)
         _logger.info('isolation verified; serving session %s (work %s)', session_id, work_id)
 
         hello_credentials = id_token.channel_credentials(hello_url)
