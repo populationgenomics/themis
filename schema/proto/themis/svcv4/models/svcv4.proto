@@ -13,10 +13,6 @@
 //   SVCv4 SM1's ordered classes, which `themis.svcv4.reference` loads as `Reference.class_order`.
 //   SVCv4 SM18's gate, whose two terminal levels end in a result string rather than a class —
 //     `Reference.gate[…].result`, returned as `scoring.GateOutcome.final_class`.
-//
-// EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
-// thresholds and code names may change before publication. Nothing here is validated for clinical or
-// diagnostic use, and a classification composed under it is not a clinical variant classification.
 
 syntax = "proto3";
 

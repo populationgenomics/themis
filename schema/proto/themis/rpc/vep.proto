@@ -10,11 +10,6 @@
 //     and `TranscriptAnnotation`, each annotated transcript with its MANE pair and the
 //     calibrated missense scores read off their wire forms.
 //
-// EVALUATION ONLY, AGAINST A DRAFT STANDARD. SVCv4 is a July 2026 pilot: its point values,
-// thresholds and code names may change before publication, so the SVCv4 codes named throughout
-// these comments are provisional. Nothing here is validated for clinical or diagnostic use, and a
-// classification composed from these facts is not a clinical variant classification.
-//
 // Auth is per the service pattern (services.md): the session token arrives as x-themis-session-token
 // metadata and resolves via themis.clients.auth; it is never a message field.
 //
