@@ -327,8 +327,10 @@ answer ([see failure-mode rules](#where-absence-is-scored-a-shape-precondition-i
 
 **Caveats.** A `NOT_FOUND` response from `Gnomad.DescribeVariant` carries no coverage distinction: "not observed at a
 well-covered position" and "position not covered" return the same status, even though rarity evidence depends on the
-difference ([Open questions](#open-questions)). In addition, gnomAD's rate limit is enforced per IP address, so
-concurrent sessions behind one egress IP share the budget.
+difference ([Open questions](#open-questions)). In addition, gnomAD's rate limit is enforced per IP address. The
+evidence service's calls leave from an address pool that Google shares among Cloud Run workloads
+([`security.md`](security.md#calls-to-public-hosts)), so concurrent sessions can share the budget with each other and
+with other callers on the same address.
 
 **Moving off the upstream.** A local gnomAD mirror is the at-scale form of this RPC; the triggers that flip it are in
 [Alternatives considered](#scale-and-framework-encoding).
@@ -1360,6 +1362,8 @@ to them live in [`svcv4-interpretations.md`](svcv4-interpretations.md).
   classified-variant pool behind `*_INF` and SM18's exon-level pathogenic density at usable query cost, or whether exon
   density — a count that must be complete across the gene to be meaningful — triggers the local VCV dump ingest ahead of
   rate limits.
-- **Rate limits at multi-session scale.** Because gnomAD's and the Broad splice hosts' rate limits are enforced per IP
-  address, concurrent curation sessions sharing an egress IP share one budget. How many concurrent curators that budget
+- **Rate limits at multi-session scale.** gnomAD's and the Broad splice hosts' rate limits are enforced per IP address,
+  and the evidence service's calls leave from an address pool that Google shares among Cloud Run workloads
+  ([`security.md`](security.md#calls-to-public-hosts)). Concurrent curation sessions that leave from one address share
+  one budget, with each other and with any other caller on that address. How many concurrent curators that budget
   tolerates before firing the mirror or self-hosting trigger has not yet been measured.

@@ -266,23 +266,11 @@ flowchart LR
   job -->|"run.app URL, own ID token"| sheaf
 ```
 
-Internal callers inside the project reach each data-plane service at its `run.app` URL over the services VPC, presenting
-their own service-account ID token for Cloud Run's invoker check. To use this internal path, the web tier attaches to
-the services VPC and routes all of its outbound traffic through the VPC. Routing only private IP ranges
-(`PRIVATE_RANGES_ONLY`) would fail to satisfy Cloud Run's internal ingress check, because `run.app` URLs resolve to
-public Google IP addresses and Cloud Run treats a call as internal only when the packets arrive from an attached VPC
-network.
+Calls from inside the project do not pass the load balancer. The web tier and the sandbox job reach each data-plane
+service at its `run.app` URL over the services VPC, presenting their own service-account ID token for Cloud Run's
+invoker check ([Routing of a service's outbound calls](#routing-of-a-services-outbound-calls)).
 
-Routing all web-tier egress through the VPC carries two operational costs:
-
-- **Wider network reachability inside the VPC.** At the network layer, the web tier can reach internal-only services
-  that it has no reason to call, such as the hello service. Cloud Run's IAM invoker bindings on those services still
-  reject the web tier's service account.
-- **NAT gateway cost and dependency.** Outbound calls from the web tier to external APIs such as Anthropic traverse the
-  VPC's Cloud NAT gateway, which bills per gigabyte processed and sits on the critical path of those calls. Although
-  Google's documentation notes that routing all traffic through a VPC can add latency to initial outbound connections on
-  cold start, measurements on the development deployment in October 2026 showed at most 2 seconds of added cold-start
-  time on `themis-web`, with subsequent database reads completing in about 30 ms.
+#### The path of a maintainer's call
 
 When a maintainer calls a data-plane service from a laptop, the request enters through the external load balancer.
 Because a single Cloud Run service can host multiple gRPC services (as `themis-evidence` does), the load balancer
@@ -395,6 +383,203 @@ this document. Adding a new public entry point requires a reviewed edit to both 
 section here. Because the test inspects Pulumi resource declarations rather than live GCP state, resources or IAM
 bindings created manually in the GCP console remain outside its reach.
 
+### Routing of a service's outbound calls
+
+A Themis service calls other Themis services, which admit only internal traffic, and it calls public hosts: Anthropic,
+the public biology databases, Google's own APIs. The two kinds of call need different network paths, and this section
+decides how each call finds its path.
+
+A call between two of our services goes to the callee's `run.app` URL. Cloud Run admits such a call to a service with
+internal ingress only if the request arrives over a VPC network of the same project. A caller with no VPC attachment
+reaches the service's public front end, and Cloud Run rejects the request there before it checks IAM.
+
+So every workload that calls an internal-ingress service attaches to one shared network, the services VPC
+([`services_network.py`](../../infra/themis_infra/services_network.py)). These are the web tier, the sandbox job, and
+the data-plane services that ask the auth service to resolve a session. Attaching is not enough by itself. A workload
+also chooses which of its outbound calls enter the VPC, and a `run.app` host normally resolves to a public Google
+address.
+
+The obvious setting routes all of a workload's outbound traffic into the VPC. Every call to a `run.app` host then
+arrives over the VPC, whatever address the host resolves to. The setting breaks on the calls that are not internal. A
+call to Anthropic or to a public database enters the VPC too, where an instance has no external address, so it can leave
+only through a Cloud NAT gateway. Google documents a cost for that combination: "With Cloud NAT, you might experience
+cold start delays of 30s or more on instance startup when using Direct VPC egress"
+([Direct VPC egress, Limitations](https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc)).
+
+A measurement of this setting did not show that delay. On the development deployment in October 2026, the web tier ran
+with all-traffic egress and a NAT, and joining the VPC added at most two seconds to its cold start. That figure covers
+the measured starts of one service. It does not say how often the documented delay occurs, and Google gives no rate for
+it. A delay of that length outlasts the connect timeout of an ordinary HTTP client, so a new instance that met it could
+pass its startup probe and then fail its first call to a public host.
+
+Each workload therefore routes only private address ranges into the VPC, and the VPC's DNS makes the hosts of our own
+services resolve into those ranges. Under this setting (`PRIVATE_RANGES_ONLY`), Cloud Run sends a packet into the VPC
+only if its destination is a private address or lies in one of two small ranges that Google reserves for reaching its
+services privately. Every other packet leaves by Cloud Run's own path to the internet and never enters the VPC.
+
+Direct VPC egress has a second documented start-up cost, which does not depend on the NAT: "connection establishment
+delays of a minute or more on instance startup", from the same list of limitations. It applies under either setting.
+With all traffic in the VPC, every call of a new instance is exposed to both delays. With private ranges only, there is
+no NAT, so the NAT delay cannot occur, and the other delay applies to the calls that stay on the VPC
+([The first calls of a new instance](#the-first-calls-of-a-new-instance)).
+
+The DNS half of the arrangement works because of how an attached workload resolves names. With Direct VPC egress, "All
+DNS queries are sent to the DNS server configured for the VPC network"
+([Private networking and Cloud Run](https://docs.cloud.google.com/run/docs/securing/private-networking)). The lookup for
+a public host goes there as much as the lookup for one of our services. An answer configured on the VPC therefore
+reaches every attached workload, and no workload outside the VPC.
+
+The services VPC has one private Cloud DNS zone for each internal service that is dialled over the VPC. Callers dial a
+service at the URL that Cloud Run builds from the service's name, the project number and the region. The name of the
+service's zone is exactly the host of that URL, `<service>-<project number>.<region>.run.app`. The zone holds a single
+address record at its own name, the position that DNS calls the apex of a zone. The record answers the host with the
+four addresses of one of the reserved ranges, `private.googleapis.com`. The subnet has Private Google Access, which
+delivers a packet for those addresses to Cloud Run over the VPC.
+
+There is one zone per host so that the answer is overridden for our own internal services and for no other name. A zone
+for a suffix answers for every host under that suffix, whoever owns the host. Suppose the network had a single zone for
+the region's `run.app` suffix, with a wildcard record. A Cloud Run service of another project in the same region,
+dialled at its regional URL, would receive the private answer as well, and the call to it would enter the VPC without
+anyone having decided that. Google recommends the per-host shape for another product, its regional API endpoints: "We
+recommend creating a private zone that uses the same hostname as the target regional or multi-regional endpoint, and
+create an apex record in that zone". The page gives the same reason: "Creating records in the domain apex means that you
+can access the public hostname of other endpoints"
+([Access regional and multi-regional Google APIs through endpoints](https://docs.cloud.google.com/vpc/docs/access-regional-google-apis-endpoints)).
+The wider zones are weighed under [Alternatives considered](#alternatives-considered).
+
+Google documents each part of this arrangement, but no page of its documentation builds it in this shape. The Cloud Run
+page quoted above lists DNS answers of this kind among the ways to make a call count as internal. The
+[Private Google Access page](https://docs.cloud.google.com/vpc/docs/configure-private-google-access) configures all of
+`run.app`, with an address record at the top of the zone and a wildcard alias that points to it. Google's
+[walkthrough of a call to an internal-only service](https://codelabs.developers.google.com/codelabs/how-to-access-internal-only-service-while-retaining-internet)
+overrides the host of one service, as a single record inside a zone for `a.run.app`. The zone per host comes from the
+regional-endpoints page.
+
+The mechanism is a zone because a private zone is authoritative for its name. For a lookup that falls under a private
+zone, the VPC's DNS answers from the zone alone and never asks public DNS: "NXDOMAIN is returned if there's no record
+for myapp.gcp.example.com defined in the gcp.example.com private zone, even if there is a record for
+myapp.gcp.example.com defined in a public zone"
+([DNS zones overview](https://docs.cloud.google.com/dns/docs/zones/zones-overview)). So no lookup of one of our hosts,
+of any record type, can return a public answer, and a zone for one host changes the answer of no other host.
+
+The record type matters because a `run.app` host has public IPv6 addresses as well as IPv4 ones, and an instance on this
+egress setting can use them: "IPv6 is supported when Direct VPC egress uses dual-stack subnets or when accessing non-VPC
+endpoints while vpc-egress is set to private-ranges-only"
+([Known issues](https://docs.cloud.google.com/run/docs/known-issues)). A client that asked for the IPv6 address of the
+auth service's host and received the public one would dial it over the internet path, and Cloud Run would reject the
+call. Under the service's zone that lookup returns no address, and the client dials one of the four IPv4 addresses. On
+the development deployment, an IPv6 lookup of an internal service's host on the services network returned no address,
+and the IPv4 lookup returned the four `private.googleapis.com` addresses. No zone holds an IPv6 record of its own. The
+subnet is IPv4-only, and every range that this egress setting routes into the VPC is an IPv4 range, so an IPv6 answer
+could only take the call off the VPC.
+
+Cloud DNS can also override single answers with a response policy rule, which leaves every name that the rule does not
+match to regular DNS. Google does not document what such a rule answers for a record type that its data does not
+include, so the design does not rest on one.
+
+Two calls from one instance of the web tier show the split:
+
+```
+themis-web instance                    Direct VPC egress, private ranges only
+
+  call to themis-evidence-<project number>.<region>.run.app
+    DNS      the zone for this host answers 199.36.153.8, a private.googleapis.com address
+    route    into the services VPC
+    result   themis-evidence sees a request from the VPC, admits it as internal, then checks the invoker
+
+  call to api.anthropic.com
+    DNS      no private zone covers the name, so the VPC's DNS returns the public answer
+    route    Cloud Run's own path to the internet; the packet never enters the VPC
+```
+
+A `run.app` host that is not ours takes the second path too. The evidence service calls the Broad Institute's
+splice-prediction services, which are Cloud Run services of another project, at hosts under `a.run.app`. No zone of ours
+covers those hosts, so they keep their public answers, and the calls leave by the internet path like the call to
+Anthropic.
+
+This shape has a cost that a zone for a suffix does not have: every internal service that is dialled over the VPC needs
+a zone of its own. A service without one is not reachable by its callers. They receive the public answer and their calls
+leave by the internet path, where Cloud Run rejects each call before it checks IAM: "The network ingress setting is
+evaluated first at the network perimeter"
+([Restrict network endpoint ingress](https://docs.cloud.google.com/run/docs/securing/ingress)). The caller receives a
+404 response. Google's troubleshooting page lists it as the case where a request "doesn't satisfy the specified network
+restriction", and says that "you can't find the 404 error in Cloud Logging"
+([Troubleshoot Cloud Run issues](https://docs.cloud.google.com/run/docs/troubleshooting)), so the callee's request log
+shows nothing. A missing zone cannot admit a caller. The network path decides only whether a request counts as internal,
+and IAM still decides who may call.
+
+Repair is slow as well. Creating the missing zone changes no caller's configuration, so no new revision of a caller
+starts, and a running revision can keep the public answer for hours. Google's walkthrough says of this 404 that "you can
+either wait for the cache on the global run.app record to expire (e.g. 6 hours) or you can create a new revision (hence
+clearing the cache)". A repair therefore includes a new revision of each caller.
+
+Because the failure is quiet and slow to repair, the Pulumi program gives a caller only one way to obtain the URL of an
+internal service. The network component ([`services_network.py`](../../infra/themis_infra/services_network.py)) hands
+out the URL of each internal service that is dialled over the VPC, and creating that URL creates the service's zone and
+its record. A caller's environment holds such a URL only through that hand-out, so every URL that a caller is handed is
+a host that a zone answers.
+
+The hand-out also puts the record and the caller in the right order. A revision that started before the record of a
+service it calls existed can keep the public answer in the same way, so the record has to exist before a calling
+revision starts. The URL carries the record as a dependency in the Pulumi program, so an update that creates both
+creates the record first.
+
+The tests of the services network find the calls in the program itself, with no list of services to maintain: a workload
+dials an internal service if it is attached to the network, may invoke the service and holds its URL. For every such
+call, a zone must answer the host of the URL with a record at its apex, and the workload must depend on that record, so
+it cannot start before the record exists. Each zone must cover exactly one such host and hold exactly that one record,
+so no zone answers for a suffix or holds a wildcard.
+
+A zone is authoritative from the moment it exists, so a zone without its record makes its one host unresolvable on the
+network. An update that creates a service's zone creates the record directly after it, and lookups of that host can fail
+on the network for the moment between the two.
+
+Cloud Run serves each service at other hosts as well, and no zone answers for those. One is a second, hashed URL under
+`a.run.app`. A caller that was handed the hashed URL would receive the public answer, leave by the internet path and be
+rejected, which is why the hand-out gives out only the URL whose host has a zone. Cloud Run also serves a revision that
+has a traffic tag at a sibling host, `<tag>---<service>-<project number>.<region>.run.app`
+([Invoke with an HTTPS Request](https://docs.cloud.google.com/run/docs/triggering/https-request)). Themis uses no tagged
+revisions.
+
+The network also logs every DNS query that it resolves for an attached workload, with the record type asked for and the
+answer given. The log is how an operator checks which address a workload received for a host.
+
+At the network layer, an attached workload can reach every internal-ingress service, including one it has no reason to
+call, such as the hello service from the web tier. Cloud Run's IAM invoker bindings still decide which caller each
+service admits. The sandbox guest is outside all of this, because it runs in an empty network namespace and only the
+trusted worker makes these calls.
+
+#### Calls to public hosts
+
+Public calls leave from an address pool that Google shares among its customers' Cloud Run workloads, where a NAT would
+give them an address of ours. Google's advice on the pool is that "you shouldn't rely on it when you need a predictable
+origin IP address or isolated IP reputation"
+([Static outbound IP address](https://docs.cloud.google.com/run/docs/configuring/static-outbound-ip)). That matters for
+an upstream that limits requests per address. The ClinVar client sends no API key and paces itself to the allowance NCBI
+gives a keyless address, and it shares that allowance with whoever else is calling NCBI from the same address. An
+upstream that had to see a stable address of ours would need a static outbound address, which Cloud Run offers only
+through all-traffic egress and a NAT.
+
+Services reach the Cloud SQL instance at its public address, through the Cloud SQL connector
+([Cloud SQL's public IP](#cloud-sqls-public-ip)). The connections of the web tier and the evidence service therefore
+take the internet path, as those of the auth service do, which has no VPC attachment at all.
+
+The VPC carries only the calls between our workloads and has no NAT gateway, so nothing placed in it can observe or
+restrict what a service sends to a public host. A VPC egress firewall and a VPC Service Controls perimeter both act on
+traffic inside a VPC. Adopting either would mean routing all traffic into the VPC and adding the NAT, with the start-up
+delay quoted above. What a service may dial is bounded in the application instead
+([Where the rules land](#where-the-rules-land)).
+
+#### The first calls of a new instance
+
+The comparison of the two egress settings leaves one documented start-up cost under private ranges only: connection
+delays of a minute or more at the start of an instance
+([Routing of a service's outbound calls](#routing-of-a-services-outbound-calls)). Google documents the delay for
+connections over Direct VPC egress, which under this setting are the calls between our services. A call to a public host
+depends on the VPC at that moment too, because its name lookup goes to the VPC's DNS like every lookup of an attached
+workload. Whether a new instance can already resolve names and use the internet path while its VPC interface is still
+coming up is not documented ([Open questions](#open-questions)).
+
 ### Where the rules land
 
 Each boundary in the system applies the rules above through a concrete mechanism owned by its area design doc:
@@ -419,9 +604,10 @@ Each boundary in the system applies the rules above through a concrete mechanism
   exit is the local UNIX socket hatch, whose method allowlist is generated directly from protobuf annotations. Because a
   forwarded hatch RPC is the only way agent-supplied text can reach a third party, an RPC must satisfy the exfiltration
   channel criterion above before it may be exposed to the agent.
-- **Service egress** relies on application-level host enforcement rather than a VPC egress firewall. Because the
-  services VPC allows outbound internet traffic, what an exposed RPC may dial is bounded by the evidence image's shared
-  HTTP client, which admits only the upstream hosts recorded in
+- **Service egress** relies on application-level host enforcement rather than a network control. A service's calls to
+  public hosts leave by Cloud Run's own path to the internet and never enter the services VPC
+  ([Calls to public hosts](#calls-to-public-hosts)), so no firewall of ours sees them. What an exposed RPC may dial is
+  bounded by the evidence image's shared HTTP client, which admits only the upstream hosts recorded in
   [`destinations.py`](../../themis/services/evidence/upstreams/destinations.py).
 - **Agent capabilities** ([`tool-surface.md`](tool-surface.md)) are default-deny: the agent definition grants no tool by
   default and names each one it enables. Every capability, Anthropic's server tools included, is measured against the
@@ -449,9 +635,35 @@ Each boundary in the system applies the rules above through a concrete mechanism
   strings.
 - **A network-level egress allowlist in front of internal services.** A VPC egress proxy or firewall that restricts
   which external hosts internal services may dial would provide defense in depth if an adapter bypassed the shared HTTP
-  client. It cannot replace the code-level criterion, because a request to an allowlisted host can still leak data if
-  the adapter fails to percent-encode path segments or uses a depositing endpoint. Designing a network egress layer
-  remains worthwhile once the set of upstream databases grows beyond a small list.
+  client. It acts only on traffic inside the VPC, so the services would have to route all of their traffic into the VPC
+  and leave through a Cloud NAT gateway, and Google documents start-up delays of 30 seconds or more for that combination
+  ([Routing of a service's outbound calls](#routing-of-a-services-outbound-calls)). It also cannot replace the
+  code-level criterion, because a request to an allowlisted host can still leak data if the adapter fails to
+  percent-encode path segments or uses a depositing endpoint. The layer is worth weighing again, at that cost, once the
+  set of upstream databases grows beyond a small list.
+- **One private DNS zone for the region's `run.app` suffix, with a wildcard record.** The zone and its record are
+  created once, and a new internal service needs no registration, so the quiet failure of a service without a zone
+  ([Routing of a service's outbound calls](#routing-of-a-services-outbound-calls)) cannot occur. It loses because the
+  zone answers for every Cloud Run host of the region, ours or not, and a call to another project's service at its
+  regional URL would enter the VPC without anyone having decided that. A wide zone also catches more names once Cloud
+  DNS follows alias (CNAME) chains from public names into private zones, which it does from 5 January 2027: "If your
+  private zones or response policies have overlapping domain names with public CNAME targets, queries might resolve to
+  unintended internal IP addresses or return resolution errors"
+  ([Cloud DNS release notes](https://docs.cloud.google.com/dns/docs/release-notes)). The zones per host are the better
+  choice only while the Pulumi program can guarantee each service's zone. If a caller could come to hold the URL of an
+  internal service that no zone answers, and no test could catch that, the wildcard's freedom from registration would
+  outweigh its wider reach.
+- **One private DNS zone for all of `run.app`.** This is the form on Google's Private Google Access page: an address
+  record at the top of the zone and a wildcard alias that points to it. It needs no registration either, and it also
+  answers the hashed URL of a service. It loses because it answers the `run.app` hosts of every other project too. It
+  would give the Broad Institute's hosts under `a.run.app` the private addresses and pull the evidence service's calls
+  to them into the VPC. That cost holds for as long as a workload on the network calls a Cloud Run service of another
+  project.
+- **One private DNS zone for `a.run.app`, with a record for each service.** This is the form of Google's walkthrough,
+  which builds a call to an internal-only service from start to finish, and a single zone holds the records of all
+  services. It loses because the zone is authoritative for all of `a.run.app`: every other host under that suffix would
+  not resolve at all on the network, the Broad Institute's hosts among them. The zone also does not cover the URL that
+  our callers dial, which lies under the region's suffix.
 - **Cloud Run IAM alone on data-plane services with public ingress enabled.** Allowing callers to reach data-plane
   `run.app` URLs directly from the internet removes the load-balancer hop and the second token for maintainers, but
   allows any service-account ID token leaked from the web tier or sandbox to be replayed from anywhere on the internet.
@@ -473,3 +685,8 @@ Each boundary in the system applies the rules above through a concrete mechanism
   interface that takes a constant base URL, path segment arguments, and query parameters (applying percent-encoding by
   construction so raw string interpolation is impossible to express), or add a static lint rule over URL construction.
   Whether the safety of a typed request builder outweighs the churn of migrating existing adapters remains undecided.
+- **Whether a starting instance's first calls can stall on either path.** Google documents connection delays of a minute
+  or more at instance start for calls over Direct VPC egress, and says nothing about whether the internet path is usable
+  while the VPC interface is still coming up. A call to a public host also depends on the VPC then, because its name
+  lookup goes to the VPC's DNS ([The first calls of a new instance](#the-first-calls-of-a-new-instance)). If either
+  shows up in a deployment, a service would have to prove its outbound path before it reports itself started.

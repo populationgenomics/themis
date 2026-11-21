@@ -149,8 +149,10 @@ Each component omitted from the infrastructure is a direct consequence of namesp
 | A separate container running the SDK's worker                                                      | The session loop runs in the trusted worker process, with `shell` replacing the SDK's built-in `bash` tool.                                                                                            |
 | Custom ID-token audiences on internal services                                                     | The worker dials each service at its own `run.app` URL and mints ID tokens for that URL. Maintainer calls through the load balancer carry tokens for the same URL, which IAP passes through unchanged. |
 
-The worker container itself has ordinary egress: a NAT route to Anthropic and Direct VPC egress onto the shared services
-network to reach internal-ingress services. Only the bubblewrap guest runs without a network.
+The worker container itself has ordinary egress. Its calls to public hosts, Anthropic among them, leave by Cloud Run's
+own path to the internet. Its calls to internal-ingress services go over the shared services network, which the worker
+attaches to with Direct VPC egress and whose DNS keeps those calls on the VPC
+([`security.md`](security.md#routing-of-a-services-outbound-calls)). Only the bubblewrap guest runs without a network.
 
 ### The guest's world is assembled at build time
 
@@ -258,7 +260,7 @@ the RPC, the upstream by its public label or host, the status and reason the ups
 - a full URL with its query string;
 - a credential or any header value;
 - a database or driver's raw error text; or
-- our NAT egress IP address, which some external upstreams echo back in error responses.
+- the IP address our call left from, which some external upstreams echo back in error responses.
 
 Any diagnostic text that might contain one of those items is written to the worker or service log, and the gRPC status
 is left unmarked.
