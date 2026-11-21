@@ -11,6 +11,9 @@ preferred one, so the choice can take the transcript the paper numbered against,
 
 Only candidates without a numbering rewrite are tried: an offset or a legacy-numbering rewrite is the agent's
 answer to the question this asks of the printed numbering.
+
+Where the mentions single nothing out, `spread` places each change on every current transcript of its gene instead,
+and the validation step's anchor order chooses among the placements.
 """
 
 from __future__ import annotations
@@ -206,6 +209,65 @@ def complete(
                 source=source.hgvs,
             )
     return out
+
+
+def spread(
+    mention_set: variants_pb2.MentionSet, result: Fit, references: variant_reference.References
+) -> variants_pb2.MentionSet:
+    """The mention set with each change moved onto every current transcript of its gene, where no fit singles one out.
+
+    Which transcripts the agent wrote a bare change on varies from one reading to the next; placing it on all of them
+    leaves the choice to the anchor rank alone, so MANE's is taken where the change holds there, and a change holding
+    on several other transcripts is ambiguous rather than whichever the agent named.
+
+    A mention the agent renumbered is not placed: it prints a numbering that is no transcript's. Nor is a change placed
+    on another version of an accession the agent wrote at a held version: `variant_versions.update` compared the two
+    around the change and has answered. An accession written without a version, or at one not held, is never
+    compared, so its other versions are placed.
+
+    Args:
+        mention_set: The agent's candidates, perhaps completed by `complete`.
+        result: The fit of the agent's candidates.
+        references: The reference stores.
+
+    Returns:
+        A copy with the added candidates after those it had, each marked with a transcript-spread rewrite.
+    """
+    out = variants_pb2.MentionSet()
+    out.CopyFrom(mention_set)
+    for mention, fitted in zip(out.mentions, result.fitted, strict=True):
+        if fitted or not mention.HasField('gene') or mention.known_species != variants_pb2.SPECIES_HUMAN:
+            continue
+        if any(r.kind in NUMBERING_REWRITES for c in mention.candidates for r in c.rewrites):
+            continue
+        gene = references.current_symbol(mention.gene)
+        if gene is None:
+            continue
+        sources = _sources(list(mention.candidates))
+        held = {c.hgvs for c in mention.candidates}
+        written = {
+            _accession(c).partition('.')[0]
+            for c in mention.candidates
+            if _accession(c) in references.held_versions(_accession(c))
+        }
+        for transcript in references.transcripts(gene):
+            for source, kind, change in sources:
+                target = transcript.accession if kind == 'c' else transcript.protein
+                if target is None or target.partition('.')[0] in written or f'{target}:{change}' in held:
+                    continue
+                held.add(f'{target}:{change}')
+                moved = mention.candidates.add(hgvs=f'{target}:{change}', rewrites=source.rewrites)
+                moved.rewrites.add(
+                    kind=variants_pb2.REWRITE_KIND_TRANSCRIPT_SPREAD,
+                    note=f'moved from {_accession(source)} to {target}, a current transcript of {gene}',
+                    source=source.hgvs,
+                )
+    return out
+
+
+def placed(candidate: variants_pb2.Candidate) -> bool:
+    """Whether `spread` placed this candidate on a transcript no fit singled out."""
+    return any(r.kind == variants_pb2.REWRITE_KIND_TRANSCRIPT_SPREAD for r in candidate.rewrites)
 
 
 def without_derived(mention_set: variants_pb2.MentionSet) -> variants_pb2.MentionSet:

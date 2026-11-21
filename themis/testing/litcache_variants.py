@@ -229,6 +229,25 @@ def _gene1_bundles(g38: bytearray) -> tuple[bundle_pb2.GeneBundle, bundle_pb2.Ge
     return refseq, ensembl
 
 
+def _ver1_ensembl_bundle(g38: bytearray) -> bundle_pb2.GeneBundle:
+    # Longer than any RefSeq VER1 transcript (45 residues); Cys2, Phe4 and Lys5, so c.4 and c.10 are T and c.13 is A.
+    return _gene_bundle(
+        'VER1',
+        '200',
+        [
+            _TranscriptSpec(
+                'ENST00000000205',
+                1,
+                'ENSP00000000205',
+                1,
+                ((1401, 'ATGTGCCTGTTCAAA' + 'CTG' * 40 + 'TAA'),),
+                publisher=bundle_pb2.PUBLISHER_ENSEMBL,
+            ),
+        ],
+        g38,
+    )
+
+
 def _ver1_bundle(g38: bytearray) -> bundle_pb2.GeneBundle:
     ver_prefix = 'ATGTTC' + 'CTG' * 16
     ver_v2_prefix = 'ATGTTC' + 'CTG' * 5 + 'CCA' + 'CTG' * 10
@@ -243,6 +262,10 @@ def _ver1_bundle(g38: bytearray) -> bundle_pb2.GeneBundle:
             _TranscriptSpec('NM_000201', 1, 'NP_000201', 1, ((901, ver_prefix + 'TGCGAATAA'),)),
             _TranscriptSpec('NM_000202', 1, 'NP_000202', 1, ((1001, ver202_ex1), (1051, 'ATCGAACAAAGTTAA'))),
             _TranscriptSpec('NM_000202', 2, 'NP_000202', 2, ((1001, ver202_ex1), (1101, 'AGAGAACAAAGTTAA'))),
+            # The longest curated coding sequence (32 residues), at the highest NM_ accession; Cys2, so c.4 is T.
+            _TranscriptSpec('NM_000204', 1, 'NP_000204', 1, ((1201, 'ATGTGC' + 'CTG' * 30 + 'TAA'),)),
+            # A predicted model, longer still (35 residues), sharing the Ensembl transcript's first five codons.
+            _TranscriptSpec('XM_000206', 1, 'XP_000206', 1, ((1601, 'ATGTGCCTGTTCAAA' + 'CTG' * 30 + 'TAA'),)),
         ],
         g38,
     )
@@ -255,11 +278,12 @@ def build_references(root: pathlib.Path) -> variant_reference.References:
     g37 = bytearray(('ACGT' * 750).encode('ascii'))
     gene1_refseq, gene1_ensembl = _gene1_bundles(g38)
     ver1 = _ver1_bundle(g38)
+    ver1_ensembl = _ver1_ensembl_bundle(g38)
 
     _write_genome(root / 'genome38', CHROM_38, g38, bundle_pb2.ASSEMBLY_GRCH38)
     _write_genome(root / 'genome37', CHROM_37, g37, bundle_pb2.ASSEMBLY_GRCH37)
     _write_store(root / 'refseq38', [gene1_refseq, ver1], 'REFSEQ_38', bundle_pb2.ASSEMBLY_GRCH38)
-    _write_store(root / 'ensembl38', [gene1_ensembl], 'ENSEMBL_38', bundle_pb2.ASSEMBLY_GRCH38)
+    _write_store(root / 'ensembl38', [gene1_ensembl, ver1_ensembl], 'ENSEMBL_38', bundle_pb2.ASSEMBLY_GRCH38)
     _write_store(
         root / 'refseq37',
         [bundle_pb2.GeneBundle(gene=bundle_pb2.Gene(symbol='REF37', ncbi_gene_id='37'))],

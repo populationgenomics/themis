@@ -7,7 +7,7 @@ import itertools
 
 import pytest
 
-from themis.litcache import variant_reference, variant_validate
+from themis.litcache import variant_fit, variant_reference, variant_validate
 from themis.litcache.models import variants_pb2
 from themis.testing import litcache_variants
 
@@ -75,7 +75,7 @@ def test_among_stated_transcripts_that_hold_mane_is_taken(references: variant_re
     _, verdicts, construction = _validate(references, mention, text='Numbered on NM_000102.1 and NM_000101.1.')
 
     verdict = verdicts.mentions[0]
-    assert [c.anchor for c in verdict.candidates] == [
+    assert [c.anchor for c in verdict.candidates[:2]] == [
         variants_pb2.ANCHOR_STATED_ACCESSION,
         variants_pb2.ANCHOR_STATED_ACCESSION,
     ]
@@ -179,7 +179,7 @@ def test_the_transcript_holding_every_checkable_mention_is_singled_out_and_outra
 
     completed, verdicts, _ = _validate(references, *mentions)
 
-    assert [[c.hgvs for c in m.candidates] for m in completed.mentions] == [
+    assert [[c.hgvs for c in m.candidates if not variant_fit.placed(c)] for m in completed.mentions] == [
         ['NM_000101.1:c.10A>G', 'NM_000102.1:c.10A>G'],
         ['NM_000102.1:c.20C>T'],
         ['NM_000101.1:c.30G>A', 'NM_000102.1:c.30G>A'],
@@ -265,7 +265,7 @@ def test_version_updates_and_transcript_fit_compose_without_conflict(
 
     completed, _, _ = _validate(references, *mentions)
 
-    assert [c.hgvs for c in completed.mentions[0].candidates] == [
+    assert [c.hgvs for c in completed.mentions[0].candidates if not variant_fit.placed(c)] == [
         'NM_000101.1:c.10A>G',
         'NP_000200.1:p.Phe2Ala',
         'NP_000200.3:p.Phe2Ala',
@@ -282,7 +282,7 @@ def test_a_renumbered_candidate_is_not_tried_in_the_fit(references: variant_refe
         _mention(_candidate('NM_000101.1:c.30G>A', renumbered=True), verbatim='c.30G>A'),
     )
 
-    assert [[c.hgvs for c in m.candidates] for m in completed.mentions] == [
+    assert [[c.hgvs for c in m.candidates if not variant_fit.placed(c)] for m in completed.mentions] == [
         ['NM_000101.1:c.10A>G'],
         ['NM_000101.1:c.20C>T'],
         ['NM_000101.1:c.30G>A'],
@@ -314,7 +314,7 @@ def test_mentions_without_a_known_human_gene_are_left_out_of_the_fit(
 
     completed, verdicts, _ = _validate(references, *unknown, *mouse)
 
-    assert all(len(m.candidates) == 1 for m in completed.mentions)
+    assert all(len([c for c in m.candidates if not variant_fit.placed(c)]) == 1 for m in completed.mentions)
     assert all(v.candidates[0].anchor != variants_pb2.ANCHOR_GENE_FIT for v in verdicts.mentions)
 
 
@@ -327,7 +327,7 @@ def test_fewer_than_three_checkable_mentions_single_nothing_out(
         _mention('NM_000101.1:c.30G>A', verbatim='c.30G>A'),
     )
 
-    assert all(len(m.candidates) == 1 for m in completed.mentions)
+    assert all(len([c for c in m.candidates if not variant_fit.placed(c)]) == 1 for m in completed.mentions)
 
 
 def test_mentions_every_isoform_holds_single_nothing_out(references: variant_reference.References) -> None:
@@ -338,7 +338,7 @@ def test_mentions_every_isoform_holds_single_nothing_out(references: variant_ref
         _mention('NM_000101.1:c.20C>T', verbatim='c.20C>T'),
     )
 
-    assert all(len(m.candidates) == 1 for m in completed.mentions)
+    assert all(len([c for c in m.candidates if not variant_fit.placed(c)]) == 1 for m in completed.mentions)
     assert [v.candidates[0].anchor for v in verdicts.mentions] == [variants_pb2.ANCHOR_MANE] * 3
 
 
@@ -350,18 +350,24 @@ def test_a_change_and_its_version_update_at_one_rank_choose_the_update(
 ) -> None:
     completed, verdicts, _ = _validate(references, _mention('NP_000200.1:p.Phe2Ala', verbatim='F2A', gene='VER1'))
 
-    assert [c.hgvs for c in completed.mentions[0].candidates] == ['NP_000200.1:p.Phe2Ala', 'NP_000200.3:p.Phe2Ala']
+    assert [c.hgvs for c in completed.mentions[0].candidates if not variant_fit.placed(c)] == [
+        'NP_000200.1:p.Phe2Ala',
+        'NP_000200.3:p.Phe2Ala',
+    ]
     verdict = verdicts.mentions[0]
     assert (verdict.choice, verdict.chosen) == (variants_pb2.CHOICE_CHOSEN, 1)
 
 
-def test_another_allele_at_the_rank_of_a_version_update_is_still_ambiguous(
+def test_alleles_left_level_on_unnamed_proteins_of_one_length_take_the_lowest_accession(
     references: variant_reference.References,
 ) -> None:
+    # NP_000200.1 updates to NP_000200.3, which is as long as NP_000201.1; the two name different alleles.
     mention = _mention('NP_000200.1:p.Phe2Ala', 'NP_000201.1:p.Phe2Ala', verbatim='F2A', gene='VER1')
-    _, verdicts, _ = _validate(references, mention)
+    completed, verdicts, _ = _validate(references, mention)
 
-    assert verdicts.mentions[0].choice == variants_pb2.CHOICE_AMBIGUOUS
+    verdict = verdicts.mentions[0]
+    assert verdict.choice == variants_pb2.CHOICE_CHOSEN
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NP_000200.3:p.Phe2Ala'
 
 
 def test_a_source_whose_update_ranks_lower_does_not_yield(references: variant_reference.References) -> None:
@@ -369,7 +375,7 @@ def test_a_source_whose_update_ranks_lower_does_not_yield(references: variant_re
     _, verdicts, _ = _validate(references, mention, text='Numbered on NP_000200.1 and NP_000201.1.')
 
     verdict = verdicts.mentions[0]
-    assert [c.anchor for c in verdict.candidates] == [
+    assert [c.anchor for c in verdict.candidates[:3]] == [
         variants_pb2.ANCHOR_STATED_ACCESSION,
         variants_pb2.ANCHOR_STATED_ACCESSION,
         variants_pb2.ANCHOR_STATED_OTHER_VERSION,
@@ -382,7 +388,7 @@ def test_only_the_source_of_an_update_yields_to_it(references: variant_reference
     mention = _mention('NP_000200.1:p.Phe2Ala', 'NP_000200.2:p.Phe2Ala', verbatim='F2A', gene='VER1')
     completed, verdicts, _ = _validate(references, mention)
 
-    assert [c.hgvs for c in completed.mentions[0].candidates] == [
+    assert [c.hgvs for c in completed.mentions[0].candidates if not variant_fit.placed(c)] == [
         'NP_000200.1:p.Phe2Ala',
         'NP_000200.2:p.Phe2Ala',
         'NP_000200.3:p.Phe2Ala',
@@ -396,12 +402,297 @@ def test_an_update_that_unsettles_a_choice_is_set_aside(references: variant_refe
     mention = _mention('NM_000202.1:c.4G>A', 'NP_000202.1:p.Ala2Thr', verbatim='c.4G>A', gene='VER1')
     completed, verdicts, _ = _validate(references, mention)
 
-    assert [c.hgvs for c in completed.mentions[0].candidates] == [
+    assert [c.hgvs for c in completed.mentions[0].candidates if not variant_fit.placed(c)] == [
         'NM_000202.1:c.4G>A',
         'NP_000202.1:p.Ala2Thr',
         'NM_000202.2:c.4G>A',
     ]
     assert (verdicts.mentions[0].choice, verdicts.mentions[0].chosen) == (variants_pb2.CHOICE_CHOSEN, 0)
+
+
+# --- placement on every transcript, guesses, and printed pairs --------------------
+
+
+def test_a_change_on_an_unnamed_transcript_is_taken_on_mane_where_it_holds_there(
+    references: variant_reference.References,
+) -> None:
+    completed, verdicts, _ = _validate(references, _mention('NM_000103.1:c.40A>G', verbatim='c.40A>G'))
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000101.1:c.40A>G'
+    assert verdict.candidates[verdict.chosen].anchor == variants_pb2.ANCHOR_MANE
+
+
+def test_a_change_written_on_an_accession_without_its_version_is_placed_on_the_current_one(
+    references: variant_reference.References,
+) -> None:
+    mention = _mention('NM_000202:c.4G>A', verbatim='c.4G>A', gene='VER1')
+    completed, verdicts, _ = _validate(references, mention, text='Numbered on NM_000202.\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000202.2:c.4G>A'
+
+
+def test_a_change_holding_only_where_it_was_placed_is_not_chosen(references: variant_reference.References) -> None:
+    # c.4 is G on NM_000202.2, where the agent wrote it, and T on NM_000200.3 and NM_000201.1, where it was placed.
+    _, verdicts, _ = _validate(references, _mention('NM_000202.2:c.4T>G', verbatim='c.4T>G', gene='VER1'))
+
+    assert verdicts.mentions[0].choice == variants_pb2.CHOICE_NONE
+
+
+def test_alleles_left_level_on_unnamed_transcripts_take_the_longest_coding_sequence(
+    references: variant_reference.References,
+) -> None:
+    # c.1A>G holds on every VER1 transcript; of the curated ones NM_000204.1, the highest accession, codes the most.
+    completed, verdicts, _ = _validate(references, _mention('NM_000202.2:c.1A>G', verbatim='c.1A>G', gene='VER1'))
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000204.1:c.1A>G'
+
+
+def test_alleles_left_level_on_unnamed_transcripts_take_refseq_over_a_longer_ensembl_transcript(
+    references: variant_reference.References,
+) -> None:
+    # c.10T>C holds on NM_000202.2 (11 residues) and ENST00000000205.1 (44 residues) alone.
+    completed, verdicts, _ = _validate(references, _mention('NM_000202.2:c.10T>C', verbatim='c.10T>C', gene='VER1'))
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000202.2:c.10T>C'
+
+
+def test_alleles_left_level_on_unnamed_transcripts_take_a_predicted_refseq_model_over_a_longer_ensembl_one(
+    references: variant_reference.References,
+) -> None:
+    # c.13A>G holds on XM_000206.1 (35 residues) and ENST00000000205.1 (45 residues) alone.
+    completed, verdicts, _ = _validate(references, _mention('XM_000206.1:c.13A>G', verbatim='c.13A>G', gene='VER1'))
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'XM_000206.1:c.13A>G'
+
+
+def test_different_changes_left_level_on_unnamed_transcripts_are_not_guessed_between(
+    references: variant_reference.References,
+) -> None:
+    # A renumbered candidate keeps the mention from being placed; the two candidates write different changes.
+    mention = _mention(
+        'NM_000201.1:c.1A>G', _candidate('NM_000204.1:c.4T>C', renumbered=True), verbatim='c.1A>G', gene='VER1'
+    )
+    _, verdicts, _ = _validate(references, mention)
+
+    assert verdicts.mentions[0].choice == variants_pb2.CHOICE_AMBIGUOUS
+
+
+def test_the_verdicts_keep_only_a_chosen_placement(references: variant_reference.References) -> None:
+    completed, _, _ = _validate(references, _mention('NM_000202.2:c.1A>G', verbatim='c.1A>G', gene='VER1'))
+
+    assert [c.hgvs for c in completed.mentions[0].candidates] == ['NM_000202.2:c.1A>G', 'NM_000204.1:c.1A>G']
+
+
+def test_a_guessed_choice_is_anchored_on_the_tie_break(references: variant_reference.References) -> None:
+    _, verdicts, _ = _validate(references, _mention('NM_000202.2:c.1A>G', verbatim='c.1A>G', gene='VER1'))
+
+    verdict = verdicts.mentions[0]
+    assert verdict.choice == variants_pb2.CHOICE_CHOSEN
+    assert verdict.candidates[verdict.chosen].anchor == variants_pb2.ANCHOR_TIE_BREAK
+
+
+def test_disagreeing_changes_on_one_unnamed_transcript_are_not_guessed_between(
+    references: variant_reference.References,
+) -> None:
+    mention = _mention('NM_000202.2:c.1A>G', 'NM_000202.2:c.1A>C', verbatim='c.1A>G', gene='VER1')
+    _, verdicts, _ = _validate(references, mention)
+
+    assert verdicts.mentions[0].choice == variants_pb2.CHOICE_AMBIGUOUS
+
+
+def test_the_protein_change_printed_beside_a_c_change_overrules_mane(
+    references: variant_reference.References,
+) -> None:
+    # c.28A>G predicts p.Thr10Ala on MANE (NM_000101.1) and p.Lys10Glu on NM_000102.1; the row prints p.Lys10Glu.
+    c_mention = _mention('NM_000103.1:c.28A>G', verbatim='c.28A>G', line=4)
+    p_mention = _mention('NP_000102.1:p.Lys10Glu', verbatim='p.Lys10Glu', line=4)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='a\nb\nc\nrow\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000102.1:c.28A>G'
+
+
+def test_a_protein_change_printed_on_another_line_does_not_pair(references: variant_reference.References) -> None:
+    c_mention = _mention('NM_000103.1:c.28A>G', verbatim='c.28A>G', line=2)
+    p_mention = _mention('NP_000102.1:p.Lys10Glu', verbatim='p.Lys10Glu', line=4)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='a\nb\nc\nrow\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000101.1:c.28A>G'
+
+
+def test_a_printed_protein_change_does_not_overrule_a_stated_accession(
+    references: variant_reference.References,
+) -> None:
+    # The paper prints NM_000101.1, where c.28A>G predicts p.Thr10Ala; the row prints p.Lys10Glu (NM_000102.1's).
+    c_mention = _mention('NM_000101.1:c.28A>G', verbatim='c.28A>G', line=1)
+    p_mention = _mention('NP_000102.1:p.Lys10Glu', verbatim='p.Lys10Glu', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='NM_000101.1 c.28A>G p.Lys10Glu\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000101.1:c.28A>G'
+
+
+def test_a_c_change_on_a_stated_transcript_moves_its_printed_protein_change_onto_that_transcripts_protein(
+    references: variant_reference.References,
+) -> None:
+    # The agent wrote p.Ala2Thr on the current NP_000202.2; the paper prints NM_000202.1, which encodes NP_000202.1.
+    c_mention = _mention('NM_000202.1:c.4G>A', verbatim='c.4G>A', gene='VER1', line=1)
+    p_mention = _mention('NP_000202.2:p.Ala2Thr', verbatim='p.Ala2Thr', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='NM_000202.1 c.4G>A p.Ala2Thr\n')
+
+    verdict = verdicts.mentions[1]
+    assert completed.mentions[1].candidates[verdict.chosen].hgvs == 'NP_000202.1:p.Ala2Thr'
+
+
+def test_a_guess_its_printed_partner_settles_carries_no_guess_marker(
+    references: variant_reference.References,
+) -> None:
+    # c.1A>G holds on every VER1 transcript, so it is guessed onto NM_000200.3; the paper prints NP_000201.1 beside it.
+    c_mention = _mention('NM_000202.2:c.1A>G', verbatim='c.1A>G', gene='VER1', line=1)
+    p_mention = _mention('NP_000201.1:p.Met1Val', verbatim='p.Met1Val', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='NP_000201.1 c.1A>G p.Met1Val\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000201.1:c.1A>G'
+    assert [c.anchor for c in verdict.candidates].count(variants_pb2.ANCHOR_TIE_BREAK) == 0
+
+
+def test_a_start_loss_on_a_stated_transcript_moves_its_printed_protein_change_onto_that_transcripts_protein(
+    references: variant_reference.References,
+) -> None:
+    # c.1A>G is predicted as p.Met1?; the row prints the residue the new codon reads, p.Met1Val.
+    c_mention = _mention('NM_000202.1:c.1A>G', verbatim='c.1A>G', gene='VER1', line=1)
+    p_mention = _mention('NP_000202.2:p.Met1Val', verbatim='p.Met1Val', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='NM_000202.1 c.1A>G p.Met1Val\n')
+
+    verdict = verdicts.mentions[1]
+    assert completed.mentions[1].candidates[verdict.chosen].hgvs == 'NP_000202.1:p.Met1Val'
+
+
+def test_a_partner_holding_a_c_change_is_not_re_chosen_as_a_protein_change(
+    references: variant_reference.References,
+) -> None:
+    stated = _mention('NM_000202.1:c.4G>A', verbatim='c.4G>A', gene='VER1', line=1)
+    both = _mention('NM_000202.2:c.4G>A', 'NP_000202.2:p.Ala2Thr', verbatim='c.4G>A (p.A2T)', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, stated, both, text='NM_000202.1 c.4G>A; c.4G>A (p.A2T)\n')
+
+    verdict = verdicts.mentions[1]
+    assert completed.mentions[1].candidates[verdict.chosen].hgvs == 'NM_000202.2:c.4G>A'
+
+
+def test_a_c_change_written_with_its_protein_change_is_guessed_like_one_written_alone(
+    references: variant_reference.References,
+) -> None:
+    # c.1A>G holds on every VER1 transcript and p.Met1Val on every VER1 protein; NM_000204.1 codes the most.
+    mention = _mention('NM_000202.2:c.1A>G', 'NP_000202.2:p.Met1Val', verbatim='c.1A>G (p.M1V)', gene='VER1')
+    completed, verdicts, _ = _validate(references, mention)
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000204.1:c.1A>G'
+
+
+def test_a_c_change_written_with_its_protein_change_is_guessed_only_where_it_predicts_that_change(
+    references: variant_reference.References,
+) -> None:
+    # c.4T>G holds on NM_000200.3 and NM_000201.1 as p.Phe2Val, and on the longer NM_000204.1 as p.Cys2Gly.
+    mention = _mention('NM_000201.1:c.4T>G', 'NP_000201.1:p.Phe2Val', verbatim='c.4T>G (p.F2V)', gene='VER1')
+    completed, verdicts, _ = _validate(references, mention)
+
+    verdict = verdicts.mentions[0]
+    assert verdict.choice == variants_pb2.CHOICE_CHOSEN
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000200.3:c.4T>G'
+
+
+def test_alleles_left_level_only_where_the_change_was_placed_are_not_guessed_between(
+    references: variant_reference.References,
+) -> None:
+    # c.4T>G holds on NM_000204.1, where the agent wrote it, as p.Cys2Gly; it predicts the printed p.Phe2Val on
+    # NM_000200.3 and NM_000201.1, where it was placed. The p. change is written on a protein the stores do not hold.
+    c_mention = _mention('NM_000204.1:c.4T>G', verbatim='c.4T>G', gene='VER1', line=1)
+    p_mention = _mention('NP_000999.1:p.Phe2Val', verbatim='p.Phe2Val', gene='VER1', line=1)
+    _, verdicts, _ = _validate(references, c_mention, p_mention, text='c.4T>G p.Phe2Val\n')
+
+    assert verdicts.mentions[0].choice == variants_pb2.CHOICE_AMBIGUOUS
+
+
+def test_a_protein_change_a_guess_settles_is_marked_as_a_guess(references: variant_reference.References) -> None:
+    # c.1A>G is guessed onto NM_000204.1; p.Met1Val, written on a protein the stores do not hold, follows it there.
+    c_mention = _mention('NM_000202.2:c.1A>G', verbatim='c.1A>G', gene='VER1', line=1)
+    p_mention = _mention('NP_000999.1:p.Met1Val', verbatim='p.Met1Val', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='c.1A>G p.Met1Val\n')
+
+    verdict = verdicts.mentions[1]
+    assert completed.mentions[1].candidates[verdict.chosen].hgvs == 'NP_000204.1:p.Met1Val'
+    assert verdict.candidates[verdict.chosen].anchor == variants_pb2.ANCHOR_TIE_BREAK
+
+
+def test_a_start_loss_does_not_pair_with_a_residue_its_new_codon_does_not_read(
+    references: variant_reference.References,
+) -> None:
+    # c.1A>G makes GTG, Val; the row prints p.Met1Thr, so the p. change stays where the agent wrote it.
+    c_mention = _mention('NM_000202.1:c.1A>G', verbatim='c.1A>G', gene='VER1', line=1)
+    p_mention = _mention('NP_000202.2:p.Met1Thr', verbatim='p.Met1Thr', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='NM_000202.1 c.1A>G p.Met1Thr\n')
+
+    verdict = verdicts.mentions[1]
+    assert completed.mentions[1].candidates[verdict.chosen].hgvs == 'NP_000202.2:p.Met1Thr'
+
+
+def test_a_placement_predicting_the_printed_protein_change_is_chosen_where_the_agents_candidate_fails(
+    references: variant_reference.References,
+) -> None:
+    # c.106C>A is past the end of NM_000202.2, where the agent wrote it; it holds on ENST00000000205.1 alone, predicting
+    # the printed p.Leu36Met. The p. change is written on a protein the stores do not hold.
+    c_mention = _mention('NM_000202.2:c.106C>A', verbatim='c.106C>A', gene='VER1', line=1)
+    p_mention = _mention('NP_000999.1:p.Leu36Met', verbatim='p.Leu36Met', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='c.106C>A p.Leu36Met\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'ENST00000000205.1:c.106C>A'
+
+
+def test_a_c_change_left_unchosen_follows_its_stated_printed_partners_protein(
+    references: variant_reference.References,
+) -> None:
+    # c.5T>G fails on NM_000202.2, where the agent wrote it, and predicts p.Phe2Cys on NM_000200.3 and NM_000201.1
+    # alike, so it is left ambiguous; the paper prints NP_000201.1 beside it.
+    c_mention = _mention('NM_000202.2:c.5T>G', verbatim='c.5T>G', gene='VER1', line=1)
+    p_mention = _mention('NP_000201.1:p.Phe2Cys', verbatim='p.Phe2Cys', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='c.5T>G NP_000201.1:p.Phe2Cys\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000201.1:c.5T>G'
+
+
+def test_a_stated_protein_moves_its_printed_c_partner_onto_an_older_transcript_version(
+    references: variant_reference.References,
+) -> None:
+    # The paper prints NP_000202.1, encoded by NM_000202.1 alone; the agent wrote c.4G>A on the current NM_000202.2.
+    c_mention = _mention('NM_000202.2:c.4G>A', verbatim='c.4G>A', gene='VER1', line=1)
+    p_mention = _mention('NP_000202.1:p.Ala2Thr', verbatim='p.Ala2Thr', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='c.4G>A NP_000202.1:p.Ala2Thr\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000202.1:c.4G>A'
+
+
+def test_a_guess_its_stated_partner_confirms_carries_no_guess_marker(
+    references: variant_reference.References,
+) -> None:
+    # c.1A>G is guessed onto NM_000204.1; the paper prints its protein, NP_000204.1, beside it.
+    c_mention = _mention('NM_000202.2:c.1A>G', verbatim='c.1A>G', gene='VER1', line=1)
+    p_mention = _mention('NP_000204.1:p.Met1Val', verbatim='p.Met1Val', gene='VER1', line=1)
+    completed, verdicts, _ = _validate(references, c_mention, p_mention, text='c.1A>G NP_000204.1:p.Met1Val\n')
+
+    verdict = verdicts.mentions[0]
+    assert completed.mentions[0].candidates[verdict.chosen].hgvs == 'NM_000204.1:c.1A>G'
+    assert verdict.candidates[verdict.chosen].anchor != variants_pb2.ANCHOR_TIE_BREAK
 
 
 # --- no-allele descriptions, allele identity, and protein spellings -------------
@@ -423,6 +714,17 @@ def test_a_description_naming_no_allele_is_never_chosen(references: variant_refe
     _, verdicts, _ = _validate(references, _mention(hgvs, verbatim=hgvs))
 
     assert verdicts.mentions[0].choice == variants_pb2.CHOICE_NONE
+
+
+def test_two_nucleotide_changes_sharing_a_protein_change_are_not_one_allele_without_their_alleles() -> None:
+    placed_only_on_an_alternate_locus = variant_validate.Identity(
+        'NM_000301.1:c.6A>T', protein='ga4gh:VA.lys2asn', at_nucleotide=True
+    )
+    on_the_genome = variant_validate.Identity(
+        'NM_000301.2:c.6A>C', allele='ga4gh:VA.g6c', protein='ga4gh:VA.lys2asn', at_nucleotide=True
+    )
+
+    assert not placed_only_on_an_alternate_locus.same(on_the_genome)
 
 
 def test_a_synonymous_change_at_a_position_names_an_allele(references: variant_reference.References) -> None:

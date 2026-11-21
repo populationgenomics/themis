@@ -354,6 +354,21 @@ class References:
         index = s.provider.get_transcript(accession, None)['cds_start_index']
         return None if index is None else index + 1
 
+    def cds_length(self, accession: str) -> int | None:
+        """The length in bases of a transcript's coding sequence, stop codon included; None for a non-coding one.
+
+        Raises:
+            KeyError: If no store holds the accession.
+        """
+        s = self._store_for(accession)
+        if s is None:
+            raise KeyError(accession)
+        transcript = s.provider.get_transcript(accession, None)
+        start, end = transcript['cds_start_index'], transcript['cds_end_index']
+        if start is None or end is None:
+            return None
+        return end - start + 1
+
     def mapper(self, accession: str) -> weaver.VariantMapper:
         """A weaver mapper over the store holding `accession`.
 
