@@ -324,15 +324,16 @@ So the step's output is split along the line between judgement and checking:
 - **The verdicts** are weaver's result on every candidate in the mention set, the anchor of each, and the allele chosen
   for each mention, together with the version of weaver, the build of each reference store, and the version of the
   validation step's own rules. They also hold the candidates the validation step derives from the agent's
-  ([Two candidates the validation step writes itself](#two-candidates-the-validation-step-writes-itself)). The
-  validation step writes them, the `verdicts` ref names them, and their one dep is the mention set. They are current
-  while that mention set is the one the `variants` ref names.
+  ([Candidates the validation step writes itself](#candidates-the-validation-step-writes-itself)). The validation step
+  writes them, the `verdicts` ref names them, and their one dep is the mention set. They are current while that mention
+  set is the one the `variants` ref names.
 
 The verdicts record what was decided, not the working that led to it. Validation is deterministic, and the verdicts name
 the weaver version and store builds they were made with, so rerunning it reproduces the rest: how each of a gene's
 transcripts fared against the paper's mentions, say, or which transcripts each mention holds on. Storing those would
-save only a rerun, and they are the bulkiest part of a verdict. The builds stay in the bucket after the worker moves on,
-which is what keeps the rerun possible.
+save only a rerun, and they are the bulkiest part of a verdict. So of the candidates the step places on every transcript
+of a gene, the verdicts keep only a chosen one. The builds stay in the bucket after the worker moves on, which is what
+keeps the rerun possible.
 
 One record holding both, re-validated in place, would save the reader a lookup. It loses because a record is named by
 the hash of its bytes, and agents cite a mention by the hash of the record it sits in. Writing new verdicts into the
@@ -376,25 +377,28 @@ it outranks the alternative-transcript one without a model call.
 That recovery is complete only for a bug that wrongly rejects. A bug that wrongly accepts, as hgvs-weaver#59 did,
 recovers only in part. If the agent's first intronic candidate passed, it had no reason to write another. After the fix,
 validation correctly fails that candidate. If the mention set holds no alternative, the mention loses its allele, and
-only reading the paper again gets it back. The two candidates the validation step derives rescue some of these mentions,
-but not in general. Nothing re-extracts the rest on its own, because a weaver release does not change the extraction
-version ([Open questions](#open-questions)).
+only reading the paper again gets it back. The candidates the validation step derives rescue some of these mentions, but
+not in general. Nothing re-extracts the rest on its own, because a weaver release does not change the extraction version
+([Open questions](#open-questions)).
 
 The full order, from most trusted to least, adds the anchors that test has not measured:
 
 1. an accession the paper states;
 1. a transcript the paper's own mentions single out
-   ([Two candidates the validation step writes itself](#two-candidates-the-validation-step-writes-itself));
+   ([Candidates the validation step writes itself](#candidates-the-validation-step-writes-itself));
 1. the gene's MANE transcript;
 1. a genomic coordinate on a build the paper states;
 1. a stated accession, at a version other than the one stated;
 1. a stretch of flanking sequence;
 1. some other transcript of the gene;
-1. a genomic coordinate on a build the paper does not state.
+1. a genomic coordinate on a build the paper does not state;
+1. a guess among transcripts the paper does not name, made only where nothing else chooses
+   ([When nothing the paper prints tells transcripts apart](#when-nothing-the-paper-prints-tells-transcripts-apart)).
 
 The unmeasured anchors sit where the reasoning puts them until the test covers them and replaces the guess. A transcript
 singled out by many of the paper's mentions is close to a stated one, so it ranks just below. A coordinate on an
-unstated build ranks last, because GRCh37 and GRCh38 positions differ and nothing says which one the paper used.
+unstated build ranks last of the anchors that rest on evidence, because GRCh37 and GRCh38 positions differ and nothing
+says which one the paper used. Only a guess ranks below it.
 
 A candidate that names no reference base, such as a deletion that gives no bases, passes on any transcript that has the
 position, so its pass says little. It is chosen only on a stated accession or the MANE transcript. Anywhere else the
@@ -404,7 +408,9 @@ Within an anchor, a candidate that follows a numbering convention the paper decl
 APOE example, `p.Lys146Gln` read literally fails, but at 6.1% of positions a literal reading validates by coincidence
 ([Appendix](#legacy-numbering-offsets)). Where it does, the candidate that applies the declared offset still wins,
 because the paper says how to read its own numbers. Where two candidates are left level and imply different alleles, the
-mention is recorded as *ambiguous* rather than as either allele.
+mention is recorded as *ambiguous* rather than as either allele. The one exception is a deterministic guess among
+transcripts the paper does not name
+([When nothing the paper prints tells transcripts apart](#when-nothing-the-paper-prints-tells-transcripts-apart)).
 
 "Imply different alleles" is checked between every pair of level candidates, not against the first one. Sameness here is
 not transitive. A protein change such as `p.Gly12Asp` agrees with both `c.35G>A` and `c.35_36delinsAC`, which both
@@ -413,11 +419,11 @@ call that mention settled. Among level candidates that do all agree, the choice 
 GRCh38 ([An allele is identified on GRCh38](#an-allele-is-identified-on-grch38)), because it says the most about the
 allele.
 
-### Two candidates the validation step writes itself
+### Candidates the validation step writes itself
 
-The agent writes every candidate in the mention set. Two kinds of candidate need no judgement, though, and the
+The agent writes every candidate in the mention set. Three kinds of candidate need no judgement, though, and the
 validation step derives them from the agent's. It stores them in the verdicts rather than the mention set, so the
-mention set's hash, which citations carry, never changes. Both are re-derived on every validation, so a store or weaver
+mention set's hash, which citations carry, never changes. All are re-derived on every validation, so a store or weaver
 change can add or remove them.
 
 The first moves a change from a superseded version of its accession to the current one. A paper written in 2005 cites
@@ -451,6 +457,123 @@ transcripts then gains its change moved onto the singled-out one, and that candi
 mention 3, written by the agent on the MANE transcript, where it fails, gains a candidate on `.1` that validates. Only
 the agent's candidates in the paper's own numbering take part in the fit. A candidate the agent renumbered by a declared
 offset has already answered the question the fit asks.
+
+The third covers a gene whose mentions single out no transcript. That is common, because a fit needs at least three
+mentions of the gene that hold somewhere. The agent still has to write the change on some transcript, and which one it
+picks varies from one reading of the paper to the next. Suppose a paper prints `c.250C>T` in a gene with a MANE
+transcript and an older isoform, and the change holds on both. One reading writes it on the MANE transcript, another on
+the older isoform. Where the two transcripts number the gene differently, the two readings record different alleles for
+one printed string, and nothing in the paper chose between them.
+
+The store can measure how often this happens. About four thousand papers are stored twice, once under a DOI and once
+under a PMID, and each copy was read separately. A variant found in one copy and not the other is a reading that did not
+reproduce. Across the hundred pairs with the most variants, 1,006 variants were found in one copy only.
+
+So the validation step places each change of such a mention on every current transcript of its gene, marked as a
+placement, and the anchor order decides as it does for any candidate. Where the change holds on the MANE transcript,
+that candidate outranks every unnamed transcript, whichever one the agent wrote. A placed candidate on a transcript the
+paper names, at the printed version or another, ranks as any candidate there does. But a placed candidate on a
+transcript the paper does not name is never chosen on its own. A change holds on an arbitrary transcript by chance often
+enough (28% in the wrong-base test) that a pass on a transcript no reading named is no evidence for it. What a placed
+candidate can do is make the agent's choice among unnamed transcripts ambiguous, by holding there with a different
+allele. With placement, the variants found in one copy only fell from 1,006 to 665, and those found in both rose from
+4,409 to 4,542. The cost is that mentions recorded as ambiguous rose from 15 to 253, which the next two sections take
+up.
+
+Some changes are not placed. A mention the agent renumbered prints a number that is no transcript's, so its printed
+change would be wrong on all of them. A change the agent wrote on a version of an accession that the stores hold is not
+placed on the accession's other versions: whether it names the same allele there is the version update's question, and
+the update has already answered it. A change written on an accession without its version is placed, since the update
+never compares one. And a placed candidate that states no reference base is never chosen, since its pass would show only
+that the transcript is long enough.
+
+### A change and its protein change printed together
+
+Papers usually print a coding change beside the protein change it causes: a table row reading `c.250C>T  p.Arg84Trp`, or
+a sentence reading "c.250C>T (p.Arg84Trp)". The agent records them as two mentions, and each is checked on its own. Yet
+the pair says more than either half. Position `c.250` is the first base of codon 84 on every coding transcript, but
+transcripts that differ upstream put a different stretch of the gene there. Suppose `c.250C>T` holds on two transcripts
+of the gene. On the MANE transcript codon 84 reads `CGC`, so the change predicts `p.Arg84Cys`; on an older isoform it
+reads `CGG`, so the change predicts `p.Arg84Trp`. Only the older isoform agrees with what the paper prints, so the paper
+has said which transcript it numbered against, though the MANE candidate would otherwise be taken.
+
+The validation step pairs a coding change with a protein change when both are of the same gene, both are printed on the
+same line of the rendering, and the coding change predicts the printed protein change. A rendering puts each paragraph
+and each table row on one line, so a line is the unit within which a paper sets the two side by side. A start loss is
+predicted as `p.Met1?`, but papers print the residue the new codon reads, `p.Met1Val` for `c.1A>G`. So a predicted start
+loss pairs with a printed one only where that residue is the new codon's.
+
+The printed protein change first narrows the coding change's own choice. Where the coding change would be taken on a
+default, the MANE transcript or an unnamed one, or on nothing at all, but predicts there a protein change other than the
+one printed beside it, a candidate on a transcript where it predicts the printed one is taken instead. That candidate
+may be one the step placed: a placement that predicts the printed protein change is evidence, where one that merely
+holds is not. In the example, the older isoform is taken over MANE. Every other anchor rests on something the paper
+states, such as an accession, a build, flanking sequence or a transcript its mentions single out, and is not overruled:
+there the paper says more directly which sequence it means, and a protein change that disagrees is as likely a misprint.
+
+The half with the firmer anchor then settles the other. If the coding change is on a stated accession, the protein
+change is placed on the protein that transcript encodes. If the protein change is the firmer one, for example because
+the paper prints a protein accession, the coding change is placed on a transcript that encodes that protein, at any
+version the stores hold, and this also settles a coding change that was left ambiguous or unchosen. A placed half is
+chosen only where it validates. A protein change chosen on a default can be the firmer half by accident: the MANE
+protein can hold the printed residue through another codon. Where such a half cannot take the coding change, the coding
+change settles it instead. Where a pairing does not check out, because the prediction matches on no transcript or the
+placed half fails, it is ignored, and each half keeps the choice it made alone.
+
+In the hundred pairs, pairing resolves 76 of the 253 mentions that placement left ambiguous, and 170 more mentions are
+chosen in all: it also settles coding changes that placement left with no choice.
+
+The agent could instead report which of its mentions name the same variant, wherever they are printed. That would reach
+pairs on different lines, such as a coding change in a table and its protein change in the text. Measured on the same
+papers, such pairs would add 5 to some 5,000 chosen coding changes, so the step pairs by line alone and the agent's
+output stays as it is. If the report is added later, each group it names is a hypothesis checked like a pairing, and
+ignored as a whole where no allele satisfies every member.
+
+### When nothing the paper prints tells transcripts apart
+
+That leaves a mention whose change holds on several transcripts the paper does not name, with a different allele on
+each, and no paired protein change to choose among them. The ambiguity is real: every such coding mention in the hundred
+pairs projects to at least two genomic alleles. But a mention recorded as ambiguous joins nothing in other papers.
+
+One answer is to store no transcript at all: record the genomic allele, and derive the transcripts consistent with it
+when someone asks. That loses nothing for a coding change whose genomic allele is known. But here the change has several
+genomic alleles, one per transcript, and a protein change has no genomic allele to derive from at all. So the step keeps
+every consistent candidate and, where they disagree, guesses deterministically. A RefSeq transcript comes before an
+Ensembl one, and a curated RefSeq record (`NM_`) before a predicted model (`XM_`). Among those, the longest coding
+sequence comes first, then the lowest accession. RefSeq comes first because clinical papers number against RefSeq
+records by convention: HGVS recommends them and ClinVar reports on them. Length comes next because the longest coding
+sequence is the canonical transcript several databases used before MANE, so it is the one an older paper most plausibly
+numbered against. Whatever the order, every reading of a paper makes the same guess.
+
+The guess is made only among level candidates on unnamed transcripts, each on a different transcript, at least one of
+them written by the agent. Where a printed protein change rules some of them out, the guess is made among the rest.
+Disagreeing candidates on a stated accession, candidates that write different changes, or two different changes on one
+transcript are a disagreement in what the paper prints, and a guess about transcripts would hide it. Those mentions stay
+ambiguous.
+
+A guess must not look like evidence, so the chosen candidate carries an anchor of its own, ranked after every other, in
+place of the unnamed-transcript anchor. A protein change that follows a guessed coding change onto an unnamed protein is
+a guess too and carries the same anchor; one that a firmer partner settles, or that lands on a sequence the paper names,
+does not. A reader weighing a choice by its anchor sees which alleles were guessed. The alternative was a third kind of
+choice beside *chosen* and *ambiguous*. That would hide the guess from any consumer that reads only chosen alleles, but
+a guess that joins nothing across papers would undo the reason for making it.
+
+In the hundred pairs, the guess settles 151 of the 177 mentions that pairing left ambiguous, and 26 stay ambiguous; 152
+mentions carry the guess's anchor, since a protein change that follows a guessed coding change is a guess too. Where
+both copies of a paper reach a guess on the same mention, they guess the same allele in 54 of the 55 such mentions. The
+other is in a table row where one reading repaired a misprinted protein change (`Tpr` for `Trp`) and so paired its
+coding change, and the other did not. Most guesses that land in one copy only are on a mention the other copy could not
+settle at all. Taken together, the three changes move the hundred pairs as follows.
+
+| on the hundred pairs                 | variants in one copy | in both | mentions chosen | ambiguous |
+| ------------------------------------ | -------------------- | ------- | --------------- | --------- |
+| as the agent wrote them              | 1,006                | 4,409   | 11,107          | 15        |
+| placed on every transcript           | 665                  | 4,542   | 10,974          | 253       |
+| and paired with printed protein      | 650                  | 4,601   | 11,144          | 177       |
+| and guessed where nothing else holds | 684                  | 4,654   | 11,296          | 26        |
+
+An allele the guess reaches in one copy alone counts against agreement in this table, though that copy then has one
+allele more than it had.
 
 ### The validation step computes the anchor
 
@@ -542,9 +665,12 @@ its protein change until liftover is added.
 The validation step still compares candidates by whichever genome they project to. Two candidates on GRCh37 that name
 different bases are different alleles even though neither has a GRCh38 identifier, and treating them as the same because
 they share a protein change would make a choice the evidence does not support. So comparison uses the identifier on any
-genome, and the GRCh38 restriction applies only to what the verdicts record. A protein change is identified by its VRS
-identifier on its protein's sequence, so proteins with the same sequence share it. A frameshift, which VRS does not
-represent, is keyed by the protein's sequence digest and the change written one way.
+genome, and the GRCh38 restriction applies only to what the verdicts record. A coding change that cannot be placed on
+any genome, such as a transcript version the stores place only on an alternate locus that weaver cannot project, still
+has its predicted protein change identified, so the index finds it through that. Two coding changes are still never
+judged the same through their protein changes alone. A protein change is identified by its VRS identifier on its
+protein's sequence, so proteins with the same sequence share it. A frameshift, which VRS does not represent, is keyed by
+the protein's sequence digest and the change written one way.
 
 ### The worker pins the builds it validates against
 

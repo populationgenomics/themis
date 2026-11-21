@@ -43,6 +43,8 @@ class RewriteKind(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     REWRITE_KIND_REFERENCE: _ClassVar[RewriteKind]
     REWRITE_KIND_TRANSCRIPT_FIT: _ClassVar[RewriteKind]
     REWRITE_KIND_VERSION_UPDATE: _ClassVar[RewriteKind]
+    REWRITE_KIND_TRANSCRIPT_SPREAD: _ClassVar[RewriteKind]
+    REWRITE_KIND_PRINTED_PARTNER: _ClassVar[RewriteKind]
 
 class Outcome(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -66,6 +68,7 @@ class Anchor(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     ANCHOR_OTHER_TRANSCRIPT: _ClassVar[Anchor]
     ANCHOR_GENOMIC_UNSTATED_BUILD: _ClassVar[Anchor]
     ANCHOR_GENE_FIT: _ClassVar[Anchor]
+    ANCHOR_TIE_BREAK: _ClassVar[Anchor]
 
 class Choice(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
@@ -97,6 +100,8 @@ REWRITE_KIND_NUMBERING: RewriteKind
 REWRITE_KIND_REFERENCE: RewriteKind
 REWRITE_KIND_TRANSCRIPT_FIT: RewriteKind
 REWRITE_KIND_VERSION_UPDATE: RewriteKind
+REWRITE_KIND_TRANSCRIPT_SPREAD: RewriteKind
+REWRITE_KIND_PRINTED_PARTNER: RewriteKind
 OUTCOME_UNSPECIFIED: Outcome
 OUTCOME_VALIDATED: Outcome
 OUTCOME_NOTHING_TO_CHECK: Outcome
@@ -114,6 +119,7 @@ ANCHOR_FLANKING: Anchor
 ANCHOR_OTHER_TRANSCRIPT: Anchor
 ANCHOR_GENOMIC_UNSTATED_BUILD: Anchor
 ANCHOR_GENE_FIT: Anchor
+ANCHOR_TIE_BREAK: Anchor
 CHOICE_UNSPECIFIED: Choice
 CHOICE_CHOSEN: Choice
 CHOICE_AMBIGUOUS: Choice

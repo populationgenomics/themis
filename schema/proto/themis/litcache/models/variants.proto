@@ -129,14 +129,21 @@ enum RewriteKind {
   // The change of another candidate, moved from an older version of its accession to the newest, where the two
   // project it to one genomic allele or are the same around it; made by the validation step, never by the agent.
   REWRITE_KIND_VERSION_UPDATE = 5;
+  // The change of another candidate, placed on a current transcript of its gene where the paper's mentions of the gene
+  // single none out; made by the validation step, never by the agent.
+  REWRITE_KIND_TRANSCRIPT_SPREAD = 6;
+  // The change of another candidate, moved to the sequence of the change printed beside it at the other level: a p.
+  // change to the protein its c. partner's transcript encodes, a c. change to a transcript encoding its p. partner's
+  // protein; made by the validation step, never by the agent.
+  REWRITE_KIND_PRINTED_PARTNER = 7;
 }
 
 // One change the agent made in getting from the printed mention to a candidate.
 message Rewrite {
   option (buf.validate.message).cel = {
     id: "rewrite.derived_has_source"
-    message: "a rewrite the validation step made (TRANSCRIPT_FIT, VERSION_UPDATE) names its source"
-    expression: "(this.kind != 4 && this.kind != 5) || has(this.source)"
+    message: "a rewrite the validation step made (TRANSCRIPT_FIT, VERSION_UPDATE, TRANSCRIPT_SPREAD, PRINTED_PARTNER) names its source"
+    expression: "!(this.kind in [4, 5, 6, 7]) || has(this.source)"
   };
 
   RewriteKind kind = 1 [(buf.validate.field).enum = {
@@ -278,8 +285,8 @@ enum Outcome {
   OUTCOME_REVERSES_PRINTED = 7;
 }
 
-// The sequence a candidate was checked against, as the validation step computes it. Ordered from the
-// most trusted; the choice of a mention's allele reads this order.
+// The sequence a candidate was checked against, as the validation step computes it; ANCHOR_TIE_BREAK alone says how
+// a choice was made instead. Ordered from the most trusted; the choice of a mention's allele reads this order.
 enum Anchor {
   ANCHOR_UNSPECIFIED = 0;
   // Printed anywhere in the rendering, or in a declaring sentence the rendering holds; or the protein such a
@@ -292,6 +299,11 @@ enum Anchor {
   ANCHOR_OTHER_TRANSCRIPT = 6;  // a transcript of the gene the paper does not name
   ANCHOR_GENOMIC_UNSTATED_BUILD = 7;  // a chromosome on a build the paper does not declare
   ANCHOR_GENE_FIT = 8;  // a transcript the paper's mentions of the gene single out, or its protein
+  // Set only on a chosen candidate, in place of ANCHOR_OTHER_TRANSCRIPT: the change holds on several transcripts of its
+  // gene that the paper does not name, with different alleles, and nothing the paper prints tells them apart. The
+  // chosen one is a guess (curated RefSeq, then predicted RefSeq, then Ensembl; within those the longest coding
+  // sequence, then the lowest accession), made so that every reading of the paper guesses alike.
+  ANCHOR_TIE_BREAK = 9;
 }
 
 message CandidateVerdict {
@@ -337,6 +349,11 @@ message MentionVerdict {
     message: "VRS ids are set only when choice is CHOICE_CHOSEN (=1)"
     expression: "this.choice == 1 || (!has(this.nucleotide_vrs_id) && !has(this.protein_vrs_id))"
   };
+  option (buf.validate.message).cel = {
+    id: "mention_verdict.tie_break_only_when_chosen"
+    message: "ANCHOR_TIE_BREAK (=9) is on the chosen candidate and no other"
+    expression: "this.candidates.filter(c, c.anchor == 9).size() == (has(this.chosen) && this.chosen < size(this.candidates) && this.candidates[this.chosen].anchor == 9 ? 1 : 0)"
+  };
 
   // Parallel to the mention's candidates, and then to `derived`: an index past the mention's own names a derived one.
   repeated CandidateVerdict candidates = 1;
@@ -353,9 +370,10 @@ message MentionVerdict {
   // allele.
   optional string nucleotide_vrs_id = 4 [(buf.validate.field).string.prefix = "ga4gh:"];
   optional string protein_vrs_id = 5 [(buf.validate.field).string.prefix = "ga4gh:"];
-  // The candidates this step derived from the mention's (a version update, a change moved to the transcript the fit
-  // singles out), in order. They are made again on every validation, so they live here rather than in the mention set
-  // the extraction step wrote.
+  // The candidates this step derived from the mention's, in order: a version update, a change moved to the transcript
+  // the fit singles out or to its printed partner's sequence, and of the changes placed on every transcript of the
+  // gene, the chosen one alone. They are made again on every validation, so they live here rather than in the mention
+  // set the extraction step wrote.
   repeated Candidate derived = 6;
 }
 

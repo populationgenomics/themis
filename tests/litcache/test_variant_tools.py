@@ -46,6 +46,15 @@ def test_a_mention_first_recorded_with_no_candidates_can_be_recorded_again_as_wh
     assert mention.disposition == variants_pb2.DISPOSITION_NOT_WRITABLE
 
 
+@pytest.mark.parametrize('kind', ['transcript_fit', 'version_update', 'transcript_spread', 'printed_partner'])
+def test_a_rewrite_kind_only_the_validation_step_makes_is_refused(kind: str) -> None:
+    rewrite = {'kind': kind, 'declared': False, 'note': 'moved'}
+    candidate = {'hgvs': 'NM_000001.1:c.2A>G', 'flanking': None, 'rewrites': [rewrite]}
+    entry = _entry(disposition='has_candidates', reason='', candidates=[candidate])
+    with pytest.raises(variant_tools.ToolInputError, match='kind'):
+        _toolbox().call('record_mentions', {'mentions': [entry]})
+
+
 def test_a_float_where_an_integer_belongs_is_refused_as_input_the_agent_can_correct() -> None:
     with pytest.raises(variant_tools.ToolInputError, match='line'):
         _toolbox().call('record_mentions', {'mentions': [_entry(line=2.0)]})

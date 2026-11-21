@@ -27,7 +27,14 @@ from themis.litcache.models import variants_pb2
 # The rewrites that renumber a printed change; a candidate made with one is not the paper's own numbering.
 NUMBERING_REWRITES = frozenset({variants_pb2.REWRITE_KIND_NUMBERING})
 # The rewrites only the validation step makes.
-DERIVED_REWRITES = frozenset({variants_pb2.REWRITE_KIND_TRANSCRIPT_FIT, variants_pb2.REWRITE_KIND_VERSION_UPDATE})
+DERIVED_REWRITES = frozenset(
+    {
+        variants_pb2.REWRITE_KIND_TRANSCRIPT_FIT,
+        variants_pb2.REWRITE_KIND_VERSION_UPDATE,
+        variants_pb2.REWRITE_KIND_TRANSCRIPT_SPREAD,
+        variants_pb2.REWRITE_KIND_PRINTED_PARTNER,
+    }
+)
 # Mentions that must hold on every transcript singled out, counting only those holding on some transcript of the gene:
 # one holding on none (a misprint, say) says nothing of which the paper numbered against.
 _MIN_CHECKABLE = 3

@@ -43,11 +43,48 @@ def test_an_unchosen_mention_carries_no_allele_identifier() -> None:
     protovalidate.validate(chosen)
 
 
-@pytest.mark.parametrize('kind', [variants_pb2.REWRITE_KIND_TRANSCRIPT_FIT, variants_pb2.REWRITE_KIND_VERSION_UPDATE])
+@pytest.mark.parametrize(
+    'kind',
+    [
+        variants_pb2.REWRITE_KIND_TRANSCRIPT_FIT,
+        variants_pb2.REWRITE_KIND_VERSION_UPDATE,
+        variants_pb2.REWRITE_KIND_TRANSCRIPT_SPREAD,
+        variants_pb2.REWRITE_KIND_PRINTED_PARTNER,
+    ],
+)
 def test_a_rewrite_the_validation_step_made_must_name_its_source(kind: variants_pb2.RewriteKind) -> None:
     with pytest.raises(protovalidate.ValidationError, match='names its source'):
         protovalidate.validate(variants_pb2.Rewrite(kind=kind))
     protovalidate.validate(variants_pb2.Rewrite(kind=kind, source='NM_000001.1:c.2A>G'))
+
+
+def _verdict_with_anchors(*anchors: variants_pb2.Anchor, chosen: int | None) -> variants_pb2.MentionVerdict:
+    verdict = variants_pb2.MentionVerdict(
+        choice=variants_pb2.CHOICE_CHOSEN if chosen is not None else variants_pb2.CHOICE_AMBIGUOUS
+    )
+    for anchor in anchors:
+        verdict.candidates.add(outcome=variants_pb2.OUTCOME_VALIDATED, anchor=anchor)
+    if chosen is not None:
+        verdict.chosen = chosen
+    return verdict
+
+
+def test_a_guess_marked_on_the_chosen_candidate_is_accepted() -> None:
+    protovalidate.validate(
+        _verdict_with_anchors(variants_pb2.ANCHOR_OTHER_TRANSCRIPT, variants_pb2.ANCHOR_TIE_BREAK, chosen=1)
+    )
+
+
+def test_a_guess_marked_on_an_unchosen_candidate_is_refused() -> None:
+    verdict = _verdict_with_anchors(variants_pb2.ANCHOR_TIE_BREAK, variants_pb2.ANCHOR_OTHER_TRANSCRIPT, chosen=1)
+    with pytest.raises(protovalidate.ValidationError, match='TIE_BREAK'):
+        protovalidate.validate(verdict)
+
+
+def test_a_guess_marked_where_nothing_is_chosen_is_refused() -> None:
+    verdict = _verdict_with_anchors(variants_pb2.ANCHOR_TIE_BREAK, variants_pb2.ANCHOR_OTHER_TRANSCRIPT, chosen=None)
+    with pytest.raises(protovalidate.ValidationError, match='TIE_BREAK'):
+        protovalidate.validate(verdict)
 
 
 def test_a_rewrite_the_agent_made_needs_no_source() -> None:
