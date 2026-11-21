@@ -395,14 +395,11 @@ class SandboxJob(pulumi.ComponentResource):
                     # short default, which would kill a long agent-backgrounded computation.
                     timeout=f'{task_timeout_seconds}s',
                     max_retries=_MAX_RETRIES,
-                    # ALL_TRAFFIC so the internal-ingress hello service is reachable at its (public) run.app
-                    # IP over the VPC — private-ranges-only would send that straight to the internet and the
-                    # service would refuse it. Trade-off (sandbox-worker.md §"One trusted process, not two
-                    # containers"): the trusted worker then has unrestricted public egress, so
-                    # post-compromise exfil containment rests on the worker being trusted-only code
-                    # and the guest having zero network.
+                    # Private ranges only: the services network's DNS keeps the worker's calls to the
+                    # internal-ingress services on the VPC (services_network.py), and its calls to public hosts
+                    # never enter it. The trusted worker's public egress is unrestricted; the guest has no network.
                     vpc_access=gcp.cloudrunv2.JobTemplateTemplateVpcAccessArgs(
-                        egress='ALL_TRAFFIC',
+                        egress='PRIVATE_RANGES_ONLY',
                         network_interfaces=[
                             gcp.cloudrunv2.JobTemplateTemplateVpcAccessNetworkInterfaceArgs(
                                 network=network, subnetwork=subnetwork

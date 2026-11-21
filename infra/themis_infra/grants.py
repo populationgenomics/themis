@@ -29,6 +29,7 @@ _DEPLOY_ROLES: tuple[str, ...] = (
     'roles/cloudsql.admin',
     'roles/cloudtasks.queueAdmin',
     'roles/compute.admin',
+    'roles/dns.admin',  # the services network's zone, record and query logging; `compute.admin` carries no `dns.*`
     'roles/iam.serviceAccountAdmin',
     'roles/iam.serviceAccountUser',
     'roles/iap.admin',  # the web service's IAP policy and its OAuth-client settings

@@ -276,15 +276,16 @@ class WebService(pulumi.ComponentResource):
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                     min_instance_count=min_instances, max_instance_count=max_instances
                 ),
-                # Direct VPC egress on the services network, all traffic, so the auth, evidence and sheaf services
-                # admit the BFF's calls at their run.app URLs (services_network.py).
+                # Direct VPC egress on the services network, private ranges only: the network's DNS keeps the BFF's
+                # calls to the data-plane services' run.app URLs on the VPC, where they are admitted
+                # (services_network.py).
                 vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                     network_interfaces=[
                         gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
                             network=vpc_network, subnetwork=vpc_subnetwork
                         )
                     ],
-                    egress='ALL_TRAFFIC',
+                    egress='PRIVATE_RANGES_ONLY',
                 ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(

@@ -524,11 +524,12 @@ service it calls existed can keep the public answer in the same way, so the reco
 revision starts. The URL carries the record as a dependency in the Pulumi program, so an update that creates both
 creates the record first.
 
-The tests of the services network find the calls in the program itself, with no list of services to maintain: a workload
-dials an internal service if it is attached to the network, may invoke the service and holds its URL. For every such
-call, a zone must answer the host of the URL with a record at its apex, and the workload must depend on that record, so
-it cannot start before the record exists. Each zone must cover exactly one such host and hold exactly that one record,
-so no zone answers for a suffix or holds a wildcard.
+The tests of the services network ([`test_services_network.py`](../../infra/tests/test_services_network.py)) find the
+calls in the program itself, with no list of services to maintain: a workload dials an internal service if it is
+attached to the network, may invoke the service and holds its URL. For every such call, a zone must answer the host of
+the URL with a record at its apex, and the workload must depend on that record, so it cannot start before the record
+exists. Each zone must cover exactly one such host and hold exactly that one record, so no zone answers for a suffix or
+holds a wildcard.
 
 A zone is authoritative from the moment it exists, so a zone without its record makes its one host unresolvable on the
 network. An update that creates a service's zone creates the record directly after it, and lookups of that host can fail

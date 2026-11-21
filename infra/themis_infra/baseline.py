@@ -29,6 +29,7 @@ _REQUIRED_SERVICES = (
     'artifactregistry.googleapis.com',
     'run.googleapis.com',
     'compute.googleapis.com',
+    'dns.googleapis.com',
     'iap.googleapis.com',
     'storage.googleapis.com',
     'secretmanager.googleapis.com',

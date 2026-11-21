@@ -90,6 +90,8 @@ class Workload(NamedTuple):
     """A service's ingress setting; None for a job, which takes no requests."""
     all_traffic_networks: frozenset[str]
     """The networks it has Direct VPC egress on for all traffic, by id."""
+    private_ranges_networks: frozenset[str]
+    """The networks it has Direct VPC egress on for private ranges only, by id."""
 
 
 class Capture(NamedTuple):
@@ -98,6 +100,9 @@ class Capture(NamedTuple):
     project: str
     """The stack's `gcp:project`, which the program's bucket names carry as a prefix."""
     resources: dict[str, mocks.MockMonitor.ResourceRegistration]
+    dependencies: dict[str, frozenset[str]]
+    """What each resource is registered as depending on, by URN: where its inputs come from and what its
+    `depends_on` names, with a component counted as its children."""
     bindings: list[Binding]
     workloads: list[Workload]
 
@@ -155,19 +160,20 @@ class _Monitor(mocks.MockMonitor):
     """The mock monitor, refusing a URN registered twice — which the base overwrites.
 
     At least as strict as the engine: a mock URN carries only the immediate parent's type, so two
-    same-named bindings under different grandparents collide here and not in a real update.
+    same-named bindings under different grandparents collide here and not in a real update. It also
+    keeps the dependencies each resource is registered with, which the base drops.
     """
 
     def __init__(self, program_mocks: mocks.Mocks) -> None:
         super().__init__(program_mocks)
-        self.seen: set[str] = set()
+        self.dependencies: dict[str, frozenset[str]] = {}
 
     @override
     def RegisterResource(self, request: resource_pb2.RegisterResourceRequest) -> resource_pb2.RegisterResourceResponse:
         response = super().RegisterResource(request)
-        if response.urn in self.seen:
+        if response.urn in self.dependencies:
             raise AssertionError(f'registered twice: {response.urn}')
-        self.seen.add(response.urn)
+        self.dependencies[response.urn] = frozenset(request.dependencies)
         return response
 
 
@@ -263,6 +269,13 @@ def of_type(program: Capture, type_: str) -> list[Registration]:
     return [registration for urn, registration in program.resources.items() if urn_type_chain(urn)[-1] == type_]
 
 
+def env_values(workload: Registration) -> dict[str, object]:
+    """Each environment variable of a Cloud Run service's or job's containers with its value, None for a mounted one."""
+    template = workload.state['template']
+    template = template.get('template', template)  # a job nests its task template one level down
+    return {env['name']: env.get('value') for container in template['containers'] for env in container.get('envs', [])}
+
+
 def fronted_services(program: Capture, backend: Registration) -> set[str]:
     """The Cloud Run services behind a backend service's serverless NEGs, by name."""
     groups = {entry['group'] for entry in backend.state.get('backends', [])}
@@ -315,14 +328,27 @@ def _bindings(resources: dict[str, mocks.MockMonitor.ResourceRegistration]) -> l
     return bindings
 
 
-def _all_traffic_networks(template: dict[str, object]) -> frozenset[str]:
-    """The networks a workload template has Direct VPC egress on for all traffic, by id."""
+def _egress_networks(template: dict[str, object], egress: str) -> frozenset[str]:
+    """The networks a workload template has Direct VPC egress on with the setting `egress`, by id."""
     vpc_access = template.get('vpcAccess')
-    # Cloud Run's default egress is private ranges only, which sends a public-hostname call off the VPC.
-    if not isinstance(vpc_access, dict) or vpc_access.get('egress') != 'ALL_TRAFFIC':
+    # A template that leaves the setting unset is counted under neither value.
+    if not isinstance(vpc_access, dict) or vpc_access.get('egress') != egress:
         return frozenset()
     return frozenset(
         str(interface['network']) for interface in vpc_access.get('networkInterfaces', []) if 'network' in interface
+    )
+
+
+def _workload(kind: str, name: object, ingress: object, template: dict[str, object]) -> Workload:
+    return Workload(
+        kind,
+        str(name),
+        str(template['serviceAccount']),
+        None if ingress is None else str(ingress),
+        _egress_networks(template, 'ALL_TRAFFIC'),
+        # Of a workload's calls, this setting routes into the VPC those to a private address or to one of
+        # Google's private-access VIPs.
+        _egress_networks(template, 'PRIVATE_RANGES_ONLY'),
     )
 
 
@@ -332,23 +358,9 @@ def _workloads(resources: dict[str, mocks.MockMonitor.ResourceRegistration]) -> 
         type_ = urn_type_chain(urn)[-1]
         state = registration.state
         if type_ == _SERVICE_TYPE:
-            template = state['template']
-            workloads.append(
-                Workload(
-                    'service',
-                    str(state['name']),
-                    str(template['serviceAccount']),
-                    str(state['ingress']),
-                    _all_traffic_networks(template),
-                )
-            )
+            workloads.append(_workload('service', state['name'], state['ingress'], state['template']))
         elif type_ == _JOB_TYPE:
-            template = state['template']['template']
-            workloads.append(
-                Workload(
-                    'job', str(state['name']), str(template['serviceAccount']), None, _all_traffic_networks(template)
-                )
-            )
+            workloads.append(_workload('job', state['name'], None, state['template']['template']))
     return workloads
 
 
@@ -380,7 +392,7 @@ def capture_program(stack: str) -> Capture:
         asyncio.set_event_loop(None)
         loop.close()
     resources = monitor.resources
-    return Capture(config['gcp:project'], resources, _bindings(resources), _workloads(resources))
+    return Capture(config['gcp:project'], resources, monitor.dependencies, _bindings(resources), _workloads(resources))
 
 
 if __name__ == '__main__':

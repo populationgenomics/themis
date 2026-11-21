@@ -42,7 +42,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cloud_run, grants, secrets, sql
+from themis_infra import cloud_run, grants, secrets, services_network, sql
 
 _SERVICE_NAME = 'themis-evidence'
 
@@ -76,7 +76,8 @@ class EvidenceService(pulumi.ComponentResource):
             grants, `SELECT` and `INSERT`, fed to the migrate runner as `EVIDENCE_DB_USER`.
         service_name: The Cloud Run service name, the subject of the program's invoker bindings.
         url: The service's ``run.app`` URL — what a caller dials, and the audience its ID token names.
-            It resolves once Cloud Run reports serving the service at it.
+            It resolves once Cloud Run reports serving the service at it and the services network's record
+            answers its host.
     """
 
     def __init__(
@@ -87,8 +88,7 @@ class EvidenceService(pulumi.ComponentResource):
         region: str,
         image: pulumi.Input[str],
         auth_url: pulumi.Input[str],
-        vpc_network: pulumi.Input[str],
-        vpc_subnetwork: pulumi.Input[str],
+        services_net: services_network.ServicesNetwork,
         fulltext_bucket: pulumi.Input[str],
         resources_bucket: pulumi.Input[str],
         sql_instance: gcp.sql.DatabaseInstance,
@@ -185,15 +185,15 @@ class EvidenceService(pulumi.ComponentResource):
                 scaling=gcp.cloudrunv2.ServiceTemplateScalingArgs(
                     min_instance_count=0, max_instance_count=max_instances
                 ),
-                # Direct VPC egress on the services network, all traffic: the public upstream hosts are
-                # reached through the services subnet's NAT.
+                # Direct VPC egress on the services network, private ranges only: the public upstream hosts and
+                # Cloud SQL are reached off the VPC (services_network.py).
                 vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                     network_interfaces=[
                         gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
-                            network=vpc_network, subnetwork=vpc_subnetwork
+                            network=services_net.network, subnetwork=services_net.subnetwork
                         )
                     ],
-                    egress='ALL_TRAFFIC',
+                    egress='PRIVATE_RANGES_ONLY',
                 ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
@@ -241,8 +241,8 @@ class EvidenceService(pulumi.ComponentResource):
                         ],
                         ports=gcp.cloudrunv2.ServiceTemplateContainerPortsArgs(name='h2c', container_port=8080),
                         # 120 s: the port binds only after every interface has built its backend, and
-                        # the reference downloads sit behind a Direct VPC egress path a cold instance
-                        # takes a minute or more to establish.
+                        # gene_disease first downloads its reference tables from the resources bucket
+                        # and parses them.
                         startup_probe=cloud_run.grpc_startup_probe(8080, budget_seconds=120),
                     )
                 ],
@@ -254,7 +254,7 @@ class EvidenceService(pulumi.ComponentResource):
             ),
         )
         self.service_name = service.name
-        self.url = cloud_run.reported_url(service, url)
+        self.url = services_net.internal_url(service, name=_SERVICE_NAME, url=url)
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,

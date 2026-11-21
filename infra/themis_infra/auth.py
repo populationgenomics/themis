@@ -21,7 +21,7 @@ import re
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cloud_run, grants, sql
+from themis_infra import cloud_run, grants, services_network, sql
 
 _SERVICE_NAME = 'themis-auth'
 # A secret's resource name, its project by id or by number.
@@ -103,7 +103,8 @@ class AuthService(pulumi.ComponentResource):
             substitutes.
         service_name: The Cloud Run service's name (the invoker-binding target).
         url: The service's `run.app` URL, built from its name — the URL a caller dials and mints its ID token
-            for, and the audience the service checks.
+            for, and the audience the service checks. It resolves once Cloud Run reports serving the service at it
+            and the services network's record answers its host.
     """
 
     def __init__(
@@ -113,6 +114,7 @@ class AuthService(pulumi.ComponentResource):
         project_number: str,
         region: str,
         image: pulumi.Input[str],
+        services_net: services_network.ServicesNetwork,
         sql_instance: gcp.sql.DatabaseInstance,
         sql_connection_name: pulumi.Input[str],
         sql_database: pulumi.Input[str],
@@ -131,6 +133,7 @@ class AuthService(pulumi.ComponentResource):
             project_number: The project's numeric id, part of the service's built URL.
             region: The service's region.
             image: The container image.
+            services_net: The network the service's callers dial it over; the service itself does not attach.
             sql_instance: The Cloud SQL instance `session_context` lives in.
             sql_connection_name: The instance's connection name, for the connector.
             sql_database: The application database.
@@ -226,7 +229,7 @@ class AuthService(pulumi.ComponentResource):
             opts=child,
         )
         self.service_name = service.name
-        self.url = cloud_run.reported_url(service, url)
+        self.url = services_net.internal_url(service, name=_SERVICE_NAME, url=url)
         self.register_outputs(
             {
                 'service_account_email': self.service_account_email,

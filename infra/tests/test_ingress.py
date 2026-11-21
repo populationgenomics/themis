@@ -1,11 +1,15 @@
 """Every caller granted invoke on a service that takes only internal traffic can reach it.
 
 Internal ingress, and internal-and-load-balancer ingress, admit a request from a caller only if it arrives over a
-same-project VPC or from a Google event source such as Cloud Tasks. A `run.app` URL resolves to a public address,
-so a Cloud Run workload reaches the service only with Direct VPC egress on the services network for all traffic.
-An invoker grant to any other caller is a call Cloud Run refuses before IAM. Two invokers arrive another way, through
-the load balancer, and only where the ingress admits it: IAP's service agent, and the public invoker of a named
-exception, which `test_public_ingress.py` holds to its own controls.
+same-project VPC or from a Google event source such as Cloud Tasks. A `run.app` URL resolves publicly to an address
+Cloud Run reaches over the internet. A workload reaches the service over the VPC only with Direct VPC egress on the
+services network, and with one of two egress settings. Either it routes all of its traffic into the VPC, whatever
+address the URL's host resolves to. Or it routes only private ranges into the VPC, and the URL's host resolves into
+one of them: the network's private DNS answers every attached workload with a private-access VIP
+(`test_services_network.py`), which that setting counts among the private ranges. An invoker grant to any other
+caller is a call Cloud Run refuses before IAM. Two invokers arrive another way, through the load balancer, and only
+where the ingress admits it: IAP's service agent, and the public invoker of a named exception, which
+`test_public_ingress.py` holds to its own controls.
 """
 
 from __future__ import annotations
@@ -55,7 +59,11 @@ def test_every_invoker_of_an_internal_service_is_on_the_services_network(program
     internal = _services_with_ingress(program, _INTERNAL)
     behind_load_balancer = _services_with_ingress(program, frozenset({_LOAD_BALANCER}))
     network = _services_network_id(program)
-    attached = {f'serviceAccount:{w.service_account}' for w in program.workloads if network in w.all_traffic_networks}
+    attached = {
+        f'serviceAccount:{w.service_account}'
+        for w in program.workloads
+        if network in w.all_traffic_networks | w.private_ranges_networks
+    }
     tasks = _task_identities(program)
     # A project-level invoker reaches every service, the internal ones included.
     invokers = [
@@ -72,7 +80,7 @@ def test_every_invoker_of_an_internal_service_is_on_the_services_network(program
             and not (target in behind_load_balancer and _through_the_load_balancer(member))
         }
     )
-    assert not unreachable, f'invokers of internal services with no all-traffic egress on its VPC: {unreachable}'
+    assert not unreachable, f'invokers of internal services with no egress into the services network: {unreachable}'
 
 
 def test_auth_is_internal_only(program: capture.Capture) -> None:

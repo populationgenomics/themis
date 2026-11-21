@@ -23,7 +23,7 @@ from __future__ import annotations
 import pulumi
 import pulumi_gcp as gcp
 
-from themis_infra import cloud_run, grants, storage
+from themis_infra import cloud_run, grants, services_network, storage
 
 # What a caller may publish in one call, and what a publish may leave behind. The document ceiling sits
 # under gRPC's default 4 MiB message limit, since `ReadRefDoc` returns the document in one message.
@@ -56,7 +56,8 @@ class SheafService(pulumi.ComponentResource):
             the object-user on the repository bucket, and the account pack URLs are signed as.
         service_name: The Cloud Run service name, the subject of the program's invoker bindings.
         url: The service's ``run.app`` URL — the audience a caller's ID-token interceptor mints for. It
-            resolves once Cloud Run reports serving the service at it.
+            resolves once Cloud Run reports serving the service at it and the services network's record
+            answers its host.
     """
 
     def __init__(
@@ -67,8 +68,7 @@ class SheafService(pulumi.ComponentResource):
         region: str,
         image: pulumi.Input[str],
         auth_url: pulumi.Input[str],
-        vpc_network: pulumi.Input[str],
-        vpc_subnetwork: pulumi.Input[str],
+        services_net: services_network.ServicesNetwork,
         cors_origins: list[str],
         trace_sample_ratio: float,
         opts: pulumi.ResourceOptions | None = None,
@@ -165,15 +165,14 @@ class SheafService(pulumi.ComponentResource):
                 # `_MAX_PUBLISH_BYTES` (512 MiB) peak per request — so three in flight fit the 2Gi limit
                 # with the GCS client and runtime; Cloud Run's default of 80 would not.
                 max_instance_request_concurrency=3,
-                # Direct VPC egress on the services network, all traffic; GCS stays on the private path
-                # (subnet PGA).
+                # Direct VPC egress on the services network, private ranges only (services_network.py).
                 vpc_access=gcp.cloudrunv2.ServiceTemplateVpcAccessArgs(
                     network_interfaces=[
                         gcp.cloudrunv2.ServiceTemplateVpcAccessNetworkInterfaceArgs(
-                            network=vpc_network, subnetwork=vpc_subnetwork
+                            network=services_net.network, subnetwork=services_net.subnetwork
                         )
                     ],
-                    egress='ALL_TRAFFIC',
+                    egress='PRIVATE_RANGES_ONLY',
                 ),
                 containers=[
                     gcp.cloudrunv2.ServiceTemplateContainerArgs(
@@ -211,7 +210,7 @@ class SheafService(pulumi.ComponentResource):
             opts=child,
         )
         self.service_name = service.name
-        self.url = cloud_run.reported_url(service, url)
+        self.url = services_net.internal_url(service, name=_SERVICE_NAME, url=url)
         self.register_outputs(
             {
                 'repository_bucket': self.repository_bucket,

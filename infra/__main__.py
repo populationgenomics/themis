@@ -268,11 +268,20 @@ sandbox_job_account = sandbox.job_account(project=project, opts=pulumi.ResourceO
 sample_metadata_account = sample_metadata.runtime_account(
     project=project, opts=pulumi.ResourceOptions(depends_on=[base])
 )
+# Every caller of an internal-ingress service attaches here (Direct VPC egress): the web tier and the data-plane
+# services reach auth over it, the web tier evidence and sheaf too, and the sandbox worker hello, evidence and sheaf.
+# Each of those services takes the URL its callers dial from the network, which answers its host privately.
+services_net = services_network.ServicesNetwork(
+    project=project,
+    region=region,
+    opts=pulumi.ResourceOptions(depends_on=[base, deploy.bindings['roles/dns.admin']]),
+)
 auth_service = auth.AuthService(
     project=project,
     project_number=project_number,
     region=region,
     image=_image(_AUTH_IMAGE_ENV, lambda: _live_service_image('themis-auth')),
+    services_net=services_net,
     sql_instance=database.instance,
     sql_connection_name=database.instance_connection_name,
     sql_database=database.database_name,
@@ -284,21 +293,14 @@ auth_service = auth.AuthService(
     max_instances=auth_max_instances,
     opts=pulumi.ResourceOptions(depends_on=[database]),
 )
-# Every caller of an internal-ingress service attaches here (Direct VPC egress): the web tier and the data-plane
-# services reach auth over it, the web tier evidence and sheaf too, and the sandbox worker hello, evidence and sheaf.
-services_net = services_network.ServicesNetwork(
-    project=project,
-    region=region,
-    opts=pulumi.ResourceOptions(depends_on=[base]),
-)
 hello_service = hello.HelloService(
     project=project,
+    project_number=project_number,
     region=region,
     image=_image(_HELLO_IMAGE_ENV, lambda: _live_service_image('themis-hello')),
     auth_url=auth_service.url,
-    vpc_network=services_net.network.id,
-    vpc_subnetwork=services_net.subnetwork.id,
-    opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
+    services_net=services_net,
+    opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 # The workspace repository's storage protocol, over a bucket of repositories of its own (sheaf-service.md).
 sheaf_service = sheaf.SheafService(
@@ -307,12 +309,11 @@ sheaf_service = sheaf.SheafService(
     region=region,
     image=_image(_SHEAF_IMAGE_ENV, lambda: _live_service_image('themis-sheaf')),
     auth_url=auth_service.url,
-    vpc_network=services_net.network.id,
-    vpc_subnetwork=services_net.subnetwork.id,
+    services_net=services_net,
     # The workbench downloads repository packs cross-origin by URLs the sheaf service signs.
     cors_origins=[f'https://{domain}'],
     trace_sample_ratio=trace_sample_ratio,
-    opts=pulumi.ResourceOptions(depends_on=[base, services_net]),
+    opts=pulumi.ResourceOptions(depends_on=[base]),
 )
 # The litcache corpus the literature interface resolves papers in and the BFF serves objects from.
 fulltext = storage.fulltext_bucket(
@@ -376,8 +377,7 @@ evidence_service = evidence.EvidenceService(
     region=region,
     image=_image(_EVIDENCE_IMAGE_ENV, lambda: _live_service_image('themis-evidence')),
     auth_url=auth_service.url,
-    vpc_network=services_net.network.id,
-    vpc_subnetwork=services_net.subnetwork.id,
+    services_net=services_net,
     fulltext_bucket=fulltext.name,
     resources_bucket=resources.name,
     sql_instance=database.instance,
@@ -389,7 +389,7 @@ evidence_service = evidence.EvidenceService(
     openalex_api_key=openalex,
     max_instances=evidence_max_instances,
     opts=pulumi.ResourceOptions(
-        depends_on=[base, database, services_net, fulltext, resources, convert_queue, convert_worker, convert_invoker]
+        depends_on=[base, database, fulltext, resources, convert_queue, convert_worker, convert_invoker]
     ),
 )
 # What the evidence service needs to put a task on the lane: the queue, and the identity whose OIDC
@@ -575,14 +575,14 @@ sandbox_job = sandbox.SandboxJob(
     region=region,
     worker_image=_image(_SANDBOX_WORKER_IMAGE_ENV, lambda: _live_job_image('themis-sandbox', 'worker')),
     service_account=sandbox_job_account,
-    network=services_net.network.id,
-    subnetwork=services_net.subnetwork.id,
+    network=services_net.network,
+    subnetwork=services_net.subnetwork,
     hello_url=hello_service.url,
     evidence_url=evidence_service.url,
     sheaf_url=sheaf_service.url,
     task_timeout_seconds=_TASK_TIMEOUT_SECONDS,
     trace_sample_ratio=trace_sample_ratio,
-    opts=pulumi.ResourceOptions(depends_on=[base, services_net, hello_service, evidence_service, sheaf_service]),
+    opts=pulumi.ResourceOptions(depends_on=[base, hello_service, evidence_service, sheaf_service]),
 )
 # The job SA invokes the services the worker reaches: the sheaf service its mirror of the Analysis repository
 # hydrates from and publishes to, and the hatch's forward targets. Every one is session-scoped, so the binding is
@@ -679,14 +679,14 @@ site = web.WebService(
     min_instances=web_min_instances,
     max_instances=web_max_instances,
     iap_service_agent=base.iap_service_agent,
-    vpc_network=services_net.network.id,
-    vpc_subnetwork=services_net.subnetwork.id,
+    vpc_network=services_net.network,
+    vpc_subnetwork=services_net.subnetwork,
     # Anthropic's webhook reaches the dispatcher through this load balancer, past the dispatcher's Cloud Armor policy.
     routes=[
         web.Route(path=sandbox.DISPATCHER_WEBHOOK_PATH, backend_service=dispatcher_service.backend_service),
         *operator_routes,
     ],
-    opts=pulumi.ResourceOptions(depends_on=[base, database, services_net, sheaf_service]),
+    opts=pulumi.ResourceOptions(depends_on=[base, database, sheaf_service]),
 )
 # Any Google account, service accounts included, may pass IAP: IAP only establishes who the caller is, and the ACL
 # decides who is admitted (the auth service's GetAccess, at the app's perimeter and its data seam).
