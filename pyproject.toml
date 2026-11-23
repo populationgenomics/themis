@@ -52,7 +52,7 @@ screenshot = ["google-cloud-storage"]
 # provider is installed.
 # litfetch/litdown/pubmed_proto/hgvs-weaver(-data)/grus are exact-pinned because they're age-gate-exempt ([tool.uv] above) — the pin makes a new release an
 # explicit choice, not a re-lock side effect. Runtime group, not a CLI.
-litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate>=2.1", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", "hgvs-weaver==2.1.0", "hgvs-weaver-data[gcs]==0.1.4", "jsonschema>=4.26,<5", "grus==0.4.1", "opentelemetry-api", { include-group = "cloudsql" }]
+litcache = ["google-cloud-storage", "google-cloud-tasks", "google-cloud-secret-manager", "httpx2", "docling-core", "pypdfium2", "pillow", "protovalidate>=2.1", "anthropic", "lxml", "litfetch==0.5.0", "litdown==0.7.0", "pubmed_proto==0.5.0", "hgvs-weaver==2.1.0", "hgvs-weaver-data[gcs]==0.1.4", "jsonschema>=4.26,<5", "grus==0.4.2", "opentelemetry-api", { include-group = "cloudsql" }]
 # Schema codegen (tools/schema/regen.py): grpcio-tools' protoc emits the committed Python stubs
 # from the buf-exported protos. Its bundled protoc pins the generated-code version to the
 # protobuf 6.x runtime (buf's own protoc is too new); TypeScript uses a local protoc-gen-es.
@@ -62,7 +62,7 @@ protoc = ["grpcio-tools"]
 # resolves ahead of the pinned protobuf wheel's own .pyi — so `lint` takes `protoc` alone. clinvar_proto,
 # pubmed_proto and grus are imported: regen copies each record's .proto out of its wheel into the buf module,
 # so the same pin that fixes the runtime stubs fixes the schema they are generated against.
-codegen = ["mypy-protobuf", "clinvar_proto==0.2.0", "pubmed_proto==0.5.0", "grus==0.4.1", { include-group = "protoc" }]
+codegen = ["mypy-protobuf", "clinvar_proto==0.2.0", "pubmed_proto==0.5.0", "grus==0.4.2", { include-group = "protoc" }]
 # Seed-ingestion runtime (litcache/ingest_beam.py): the per-paper core wrapped in
 # Beam/Dataflow. apache-beam[gcp] pins google-cloud-storage to the 2.x line its
 # gcsio requires (co-resolves with litcache in the worker). Exact pin: it must equal the SDK
@@ -162,7 +162,7 @@ convert_worker = [
     "hgvs-weaver==2.1.0",
     "hgvs-weaver-data[gcs]==0.1.4",
     "jsonschema>=4.26,<5",
-    "grus==0.4.1",
+    "grus==0.4.2",
     { include-group = "tracing" },
 ]
 # cost exporter (themis/services/cost_exporter): the workspace-spend monitor's Cloud Run Job. anthropic lists the
