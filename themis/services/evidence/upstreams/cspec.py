@@ -163,7 +163,7 @@ def _data(response: httpx2.Response, *, subject: str, caller_supplied_id: bool =
         caller_supplied_id: Whether the identifier in the URL came from the request.
 
     Raises:
-        errors.InvalidRequestError: On a non-429 4xx for a caller-supplied identifier.
+        errors.InvalidRequestError: On a 4xx that judges the request, for a caller-supplied identifier.
         httpx2.HTTPStatusError: On a 429 or a 5xx.
         ValueError: On any other failure, and if a 2xx carries no ``data`` object — the registry
             states an outcome in the status and the payload under ``data``, so a success without one
@@ -730,8 +730,8 @@ async def fetch_criteria_specifications(gene: str, *, http_client: httpx2.AsyncC
         considered, and one `SourceQuery` per request issued.
 
     Raises:
-        errors.InvalidRequestError: If the registry refuses a request (any non-429 4xx but the gene
-            lookup's 404, which is `SPECIFICATION_COVERAGE_GENE_ABSENT`).
+        errors.InvalidRequestError: If the registry refuses a request (any 4xx that judges it but the
+            gene lookup's 404, which is `SPECIFICATION_COVERAGE_GENE_ABSENT`).
         httpx2.HTTPStatusError: On a 429 or a 5xx.
         ValueError: If a record's shape is not one this adapter reads.
     """

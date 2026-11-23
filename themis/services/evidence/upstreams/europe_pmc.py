@@ -62,8 +62,8 @@ async def search(query: str, max_results: int, *, http_client: httpx2.AsyncClien
         empty ``pmid`` rather than the index's own id for it.
 
     Raises:
-        errors.InvalidRequestError: If Europe PMC refuses the call — a non-429 4xx, or the refusal
-            document it delivers with HTTP 200 for a query it will not run.
+        errors.InvalidRequestError: If Europe PMC refuses the call — a 4xx that judges the request,
+            or the refusal document it delivers with HTTP 200 for a query it will not run.
         httpx2.HTTPStatusError: If Europe PMC returns a 429 or a 5xx.
         ValueError: If the answer states no hit count or carries no readable result list.
     """

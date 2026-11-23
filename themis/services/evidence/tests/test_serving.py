@@ -257,6 +257,12 @@ def test_an_upstream_failure_no_reissue_clears_stays_uncharacterised(error: Exce
     assert not authored_status.authored(failure)
 
 
+def test_a_route_the_upstream_removed_is_a_fault_of_ours_not_the_callers_request() -> None:
+    """A 410 answers whatever was asked: INVALID_ARGUMENT would blame the caller, UNAVAILABLE an outage."""
+    failure = _refused(_RaisingBackend(_raised(410, 'this route has been removed')))
+    assert failure.code() == grpc.StatusCode.UNKNOWN
+
+
 def test_a_failure_raised_with_no_request_is_still_reported() -> None:
     """An error raised with no request still reports: httpx raises RuntimeError for an unset `.request`."""
     failure = _refused(_RaisingBackend(httpx2.ReadTimeout('stalled')))

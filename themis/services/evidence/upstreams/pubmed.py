@@ -46,7 +46,7 @@ async def articles_by_pmid(pmids: Sequence[str], *, http_client: httpx2.AsyncCli
         deleted (the set's ``DeleteCitation``): the index states the two alike.
 
     Raises:
-        errors.InvalidRequestError: If efetch refuses the call (a non-429 4xx).
+        errors.InvalidRequestError: If efetch refuses the call (a 4xx that judges the request).
         httpx2.HTTPStatusError: If efetch returns a 429 or a 5xx.
         transient.FailedBodyError: If efetch answers 2xx with an `errorResponse` in the body.
         ValueError: If the answer is not a `PubmedArticleSet`, carries a record or a deletion under

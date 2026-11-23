@@ -20,6 +20,7 @@ from themis.services.evidence import deps as deps_mod
 from themis.services.evidence.mavedb import interface
 from themis.services.evidence.tests import authz
 from themis.testing import in_process_grpc
+from themis.testing import mavedb as fake_mavedb
 
 _FIXTURES = pathlib.Path(__file__).resolve().parents[2] / 'upstreams' / 'tests' / 'fixtures'
 _ALLELE_FIXTURE = json.loads((_FIXTURES / 'allele_registry.json').read_bytes())
@@ -127,18 +128,17 @@ def test_register_denies_an_unadmitted_caller(monkeypatch: pytest.MonkeyPatch) -
 
 def test_live_selector_serves_over_the_shared_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('THEMIS_MAVEDB_BACKEND', 'live')
-    misses: dict[str, object] = {'exactMatch': None, 'equivalentNt': [], 'equivalentAa': []}
+    # The recorded deposit, listed under the canonical allele the recorded registry answer names.
+    mavedb = fake_mavedb.handler(
+        measurements={'CA000251': _MAVEDB_FIXTURE['measurements']['CA003252']},
+        score_sets=_MAVEDB_FIXTURE['score_sets'],
+        variants=_MAVEDB_FIXTURE['variants'],
+    )
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         if request.url.host == 'reg.clinicalgenome.org':
             return httpx2.Response(200, json=_ALLELE_FIXTURE)
-        if request.method == 'POST' and request.url.path.endswith('/clingen-allele-id-lookups'):
-            asked = json.loads(request.content)['clingenAlleleIds']
-            first = _MAVEDB_FIXTURE['lookup'][0] | {'clingenAlleleId': asked[0]}
-            rest = [misses | {'clingenAlleleId': allele_id} for allele_id in asked[1:]]
-            return httpx2.Response(200, json=[first, *rest])
-        urn = request.url.path.rsplit('/', 1)[-1]
-        return httpx2.Response(200, json=_MAVEDB_FIXTURE['variants'][urn])
+        return mavedb(request)
 
     async def run() -> mavedb_pb2.DescribeVariantResponse:
         async with (
@@ -148,5 +148,5 @@ def test_live_selector_serves_over_the_shared_client(monkeypatch: pytest.MonkeyP
             return await stub.DescribeVariant(mavedb_pb2.DescribeVariantRequest(variant='NM_000546.6:c.524G>A'))
 
     reply = asyncio.run(run())
-    assert reply.acmg_criterion == 'BS3'
+    assert reply.acmg_strength == 'STRONG'
     assert [p.source for p in reply.provenance] == ['ClinGen Allele Registry', 'MaveDB']

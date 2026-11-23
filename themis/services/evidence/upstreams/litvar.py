@@ -94,7 +94,7 @@ async def autocomplete_entity_ids(query: str, *, http_client: httpx2.AsyncClient
         The matched entity ids; empty where the index matched nothing.
 
     Raises:
-        errors.InvalidRequestError: If LitVar2 refuses the call (a non-429 4xx).
+        errors.InvalidRequestError: If LitVar2 refuses the call (a 4xx that judges the request).
         httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: If the answer is not a list of matches.
     """
@@ -127,7 +127,7 @@ async def entity_labels(entity_id: str, *, http_client: httpx2.AsyncClient) -> E
 
     Raises:
         errors.InvalidRequestError: If ``entity_id`` cannot be a path segment (empty, ``.`` or ``..``), or
-            LitVar2 refuses the call (a non-400, non-429 4xx).
+            LitVar2 refuses the call (a 4xx that judges the request, other than a 400).
         httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: If the entity record is not a mapping, or states no id of its own.
     """
@@ -172,7 +172,7 @@ async def search_pmids(entity_id: str, limit: int, *, http_client: httpx2.AsyncC
         The ranked PMIDs the walk reached, and the whole count the index states for the entity.
 
     Raises:
-        errors.InvalidRequestError: If LitVar2 refuses the call (a non-429 4xx).
+        errors.InvalidRequestError: If LitVar2 refuses the call (a 4xx that judges the request).
         httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: A page is not a mapping carrying an integer ``count`` and ``total_pages`` — the
             shape the walk's own bound and the census both read — or it states a PMID that is not one.
@@ -218,7 +218,7 @@ async def gene_entities(gene: str, *, http_client: httpx2.AsyncClient) -> list[L
 
     Raises:
         errors.InvalidRequestError: If ``gene`` cannot be a path segment (empty, ``.`` or ``..``), or LitVar2
-            refuses the call (a non-429 4xx).
+            refuses the call (a 4xx that judges the request).
         httpx2.HTTPStatusError: If LitVar2 returns a 429 or a 5xx.
         ValueError: A line does not parse, or does not carry the two fields a row is.
     """

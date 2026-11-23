@@ -525,7 +525,7 @@ class Servicer(literature_pb2_grpc.LiteratureServicer):
 async def _discovered[R](context: grpc.aio.ServicerContext, discovery: Awaitable[R]) -> R:
     """Await one discovery rpc's backend call, mapping an upstream's refusal of the request onto its code.
 
-    An index that refused the request as issued — a non-429 4xx (``errors.raise_for_status``), or
+    An index that refused the request as issued — a refusing 4xx (``errors.raise_for_status``), or
     Europe PMC's HTTP-200 refusal document — judged it, so reissuing it unchanged cannot change the
     answer; that is what the guest's retry helper does with the UNKNOWN an unmapped error becomes.
     """

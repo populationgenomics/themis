@@ -1,16 +1,17 @@
 """MaveDB adapter: the depositor's calibrated MAVE result for one variant (the *_FXN input).
 
-Flow: ask MaveDB which of its scored variants carry the queried ClinGen allele ids -> fetch each
-matched variant's record (its functional score plus the score set's ``scoreCalibrations``) until one
-carries a calibration bin the score falls in. The bin's OddsPath ratio + ACMG criterion/strength
-become the typed fields.
+Flow: ask MaveDB which deposited measurements it holds on each queried ClinGen allele id -> read the
+score set behind each measurement (its publication date and its ``scoreCalibrations``) -> answer
+from the first measurement whose score falls in a calibration bin. The bin's OddsPath ratio + ACMG
+criterion/strength become the typed fields, and that measurement's variant record rides in ``raw``
+with its score set.
 
-The lookup is keyed on ClinGen allele ids: every mapped variant MaveDB holds carries a
-``clingenAlleleId``, and the endpoint answers a list of them in one request. MaveDB bridges the
-nucleotide and protein levels itself, through ``equivalentAa``/``equivalentNt``, but not for every
-allele — so the caller's expression is registered to *both* kinds
-(``allele_registry.fetch_clingen_allele_ids``) and both are asked. ``docs/design/evidence-interfaces.md``
-records what that redundancy is worth, and why the keying is not on HGVS text.
+The lookup is keyed on ClinGen allele ids, one request per id. MaveDB relates the nucleotide and
+protein levels itself — it labels each measurement ``direct``, ``protein_consequence`` or
+``nucleotide_encoding`` — and the caller's expression is registered to *both* kinds
+(``allele_registry.fetch_clingen_allele_ids``), with both asked.
+``docs/design/evidence-interfaces.md`` records what that redundancy is worth, and why the keying is
+not on HGVS text.
 
 Calibration selection: MaveDB deposits several calibrations per score set (controls, ExCALIBR,
 investigator classes). The bin carrying an OddsPath ratio is preferred, else one carrying an ACMG
@@ -28,9 +29,10 @@ candidate list; ``docs/design/evidence-interfaces.md`` records why.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import urllib.parse
-from collections.abc import Iterable, Sequence
+from collections.abc import Coroutine, Iterable, Mapping, Sequence
 from typing import NamedTuple
 
 import httpx2
@@ -40,18 +42,23 @@ from themis.services.evidence import errors
 _API_URL = 'https://api.mavedb.org/api/v1'
 _SOURCE = 'MaveDB'
 
-# How a lookup response reports a hit, most direct first. `exactMatch` arrives as a lone object, the
-# other two as lists.
-_MATCH_KINDS = ('exactMatch', 'equivalentAa', 'equivalentNt')
+# How a measurement relates to the allele asked about, most direct first.
+_RELATIONSHIPS = ('direct', 'protein_consequence', 'nucleotide_encoding')
+
+# Of the other sources a variant record cites, the ones ``raw`` keeps: these annotations, and
+# cross-references into this identifier system.
+_ANNOTATION_SOURCES = frozenset({'vep', 'gnomad'})
+_CLINGEN_SYSTEM = 'https://reg.clinicalgenome.org/'
 
 
 class _Candidate(NamedTuple):
-    """One deposited measurement the lookup matched, and how it was reached."""
+    """One deposited measurement MaveDB lists for an asked allele, and how it was reached."""
 
     allele_id: str
-    kind: str
+    relationship: str
     urn: str
-    published: str
+    score_set_urn: str
+    score: float | None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -66,7 +73,9 @@ class MavedbResult:
         acmg_strength: Its evidence strength, verbatim from MaveDB (e.g. ``"STRONG"``,
             ``"MODERATE_PLUS"``, ``"SUPPORTING"``); empty when uncalibrated.
         score: The variant's raw MAVE functional score; ``None`` when the row carries no numeric score.
-        raw: The matched variant record (``score_data`` + the score set's ``scoreCalibrations``).
+        raw: The matched variant record (its ``scores`` row), with its score set — title, experiment,
+            ``scoreCalibrations`` — under ``scoreSet``. ClinVar's entries on the record and the
+            calibrations' control variants are left out.
         source: The upstream label.
         dataset_versions: The matched score-set URN (identifies the exact deposit + version).
         query: The allele ids asked, every candidate URN they matched, and the one selected.
@@ -143,171 +152,132 @@ def _select_classification(calibrations: Sequence[dict[str, object]], score: flo
     return with_odds or with_acmg
 
 
-async def _lookup(allele_ids: Sequence[str], *, http_client: httpx2.AsyncClient) -> list[dict[str, object]]:
-    """MaveDB's answer for each queried ClinGen allele id — one entry per id, hit or not."""
-    response = await http_client.post(
-        f'{_API_URL}/variants/clingen-allele-id-lookups', json={'clingenAlleleIds': list(allele_ids)}
-    )
-    errors.raise_for_status(response, upstream=_SOURCE, subject=f'ClinGen alleles {list(allele_ids)}')
+async def _gathered[T](calls: Iterable[Coroutine[object, None, T]]) -> list[T]:
+    """The results of independent MaveDB calls made together; a failed one surfaces as itself, not as a group."""
+    try:
+        async with asyncio.TaskGroup() as group:
+            tasks = [group.create_task(call) for call in calls]
+    except BaseExceptionGroup as failures:
+        raise errors.first_failure(failures) from failures
+    return [task.result() for task in tasks]
+
+
+def _score(value: object, urn: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f'MaveDB measurement {urn!r} carries a score in no known shape')
+    return float(value)
+
+
+def _candidate(entry: object, allele_id: str) -> _Candidate | None:
+    """One listed measurement, or ``None`` for one from a superseded version of its score set.
+
+    Read whole either way: an entry skipped as unreadable would count as an absence.
+    """
+    if not isinstance(entry, dict):
+        raise ValueError(f'MaveDB listed a non-object measurement for ClinGen allele {allele_id!r}')
+    urn = entry.get('variantUrn')
+    if not isinstance(urn, str) or not urn:
+        raise ValueError(f'MaveDB listed a measurement for ClinGen allele {allele_id!r} naming no variant')
+    score_set_urn = entry.get('scoreSetUrn')
+    if not isinstance(score_set_urn, str) or not score_set_urn:
+        raise ValueError(f'MaveDB measurement {urn!r} names no score set')
+    relationship = entry.get('relationship')
+    if not isinstance(relationship, str) or relationship not in _RELATIONSHIPS:
+        raise ValueError(f'MaveDB measurement {urn!r} relates to ClinGen allele {allele_id!r} in no known way')
+    current = entry.get('isCurrent')
+    if not isinstance(current, bool):
+        raise ValueError(f'MaveDB measurement {urn!r} does not state whether its score set version is current')
+    candidate = _Candidate(allele_id, relationship, urn, score_set_urn, _score(entry.get('score'), urn))
+    return candidate if current else None
+
+
+async def _measurements(allele_id: str, *, http_client: httpx2.AsyncClient) -> list[_Candidate]:
+    """MaveDB's current measurements on one ClinGen allele; an allele it holds nothing on lists none."""
+    encoded = urllib.parse.quote(allele_id, safe='')
+    response = await http_client.get(f'{_API_URL}/clingen-alleles/{encoded}/measurements')
+    errors.raise_for_status(response, upstream=_SOURCE, subject=f'ClinGen allele {allele_id!r}')
     body = response.json()
     if not isinstance(body, list):
-        raise ValueError(f'MaveDB allele lookup for {list(allele_ids)} is not a list')
-    if not all(isinstance(entry, dict) for entry in body):
-        raise ValueError(f'MaveDB allele lookup for {list(allele_ids)} carries a non-object answer')
-    return list(body)
+        raise ValueError(f'MaveDB measurements for ClinGen allele {allele_id!r} are not a list')
+    listed = [_candidate(entry, allele_id) for entry in body]
+    return [candidate for candidate in listed if candidate is not None]
 
 
-def _matched_variants(entry: dict[str, object], kind: str) -> list[dict[str, object]]:
-    """The variants one answer reports under ``kind``; an explicit null is the miss, an absent key is not."""
-    if kind not in entry:
-        raise ValueError(f'MaveDB answer for ClinGen allele {entry.get("clingenAlleleId")!r} reports no {kind!r}')
-    matched = entry[kind]
-    if matched is None:
-        return []
-    if isinstance(matched, dict):
-        return [matched]
-    if isinstance(matched, list) and all(isinstance(variant, dict) for variant in matched):
-        return list(matched)
-    raise ValueError(f'MaveDB reported {kind!r} for ClinGen allele {entry.get("clingenAlleleId")!r} in no known shape')
+async def _record(collection: str, urn: str, *, http_client: httpx2.AsyncClient) -> dict[str, object]:
+    """One record MaveDB itself named, by URN: a variant's (``variants``) or a score set's (``score-sets``).
+
+    The URN comes from MaveDB's own measurement list, so a 404 here is an inconsistency between its
+    endpoints rather than a verdict on anything the caller sent — it must not reach the caller as
+    INVALID_ARGUMENT, which would send an agent off rewriting a correct expression.
+    """
+    # A variant URN carries a '#', which must be percent-encoded in the path.
+    encoded = urllib.parse.quote(urn, safe='')
+    response = await http_client.get(f'{_API_URL}/{collection}/{encoded}')
+    if response.status_code == httpx2.codes.NOT_FOUND:
+        raise ValueError(f'MaveDB has no {collection} record for {urn!r}, which its own measurements named')
+    errors.raise_for_status(response, upstream=_SOURCE, subject=f'{collection} record {urn!r}')
+    body = response.json()
+    if not isinstance(body, dict):
+        raise ValueError(f'MaveDB {collection} record {urn!r} is not an object')
+    return body
 
 
-def _published(measurement: dict[str, object], urn: str) -> str:
-    """The ISO date the measurement's score set was published; empty when it is unpublished."""
-    score_set = measurement.get('scoreSet')
-    if not isinstance(score_set, dict):
-        raise ValueError(f'MaveDB measurement {urn!r} names no score set')
+def _published(score_set: Mapping[str, object], urn: str) -> str:
+    """The ISO date the score set was published; empty when it is unpublished."""
     published = score_set.get('publishedDate')
     if published is None:
         return ''
     if not isinstance(published, str):
-        raise ValueError(f'MaveDB measurement {urn!r} carries a publishedDate in no known shape')
+        raise ValueError(f'MaveDB score set {urn!r} carries a publishedDate in no known shape')
     return published
 
 
-def _measurements(variant: dict[str, object], allele_id: str, kind: str) -> list[_Candidate]:
-    """The deposited measurements one matched variant carries — never none, since it is a match."""
-    measurements = variant.get('variantEffectMeasurements')
-    if not isinstance(measurements, list) or not measurements:
-        raise ValueError(f'MaveDB reported {kind} on {allele_id!r} with no readable measurement list')
-    found: list[_Candidate] = []
-    for measurement in measurements:
-        urn = measurement.get('urn') if isinstance(measurement, dict) else None
-        if not isinstance(urn, str) or not urn:
-            raise ValueError(f'MaveDB reported {kind} on {allele_id!r} with a measurement naming no variant')
-        found.append(_Candidate(allele_id, kind, urn, _published(measurement, urn)))
-    return found
+def _calibrations(score_set: Mapping[str, object], urn: str) -> list[dict[str, object]]:
+    """The score set's calibrations; none where it states an empty list, a null, or nothing."""
+    calibrations = score_set.get('scoreCalibrations')
+    if calibrations is None:
+        return []
+    if not isinstance(calibrations, list) or not all(isinstance(c, dict) for c in calibrations):
+        raise ValueError(f'MaveDB score set {urn!r} carries its scoreCalibrations in no known shape')
+    return list(calibrations)
 
 
-def _by_allele_id(responses: Iterable[dict[str, object]]) -> dict[str, dict[str, object]]:
-    by_id: dict[str, dict[str, object]] = {}
-    for entry in responses:
-        allele_id = entry.get('clingenAlleleId')
-        if not isinstance(allele_id, str):
-            raise ValueError('MaveDB returned a lookup answer naming no ClinGen allele')
-        if allele_id in by_id:
-            raise ValueError(f'MaveDB answered twice for ClinGen allele {allele_id!r}')
-        by_id[allele_id] = entry
-    return by_id
-
-
-def _candidates(responses: Iterable[dict[str, object]], allele_ids: Sequence[str]) -> list[_Candidate]:
-    """Every deposited measurement the lookup matched, in a total order the payload's own order cannot move.
-
-    Raises:
-        ValueError: If MaveDB left an asked id unanswered, answered one twice, or reported a match in
-            a shape this cannot read — none of which is an absence, and all of which would otherwise
-            reduce to one.
-    """
-    by_id = _by_allele_id(responses)
-    matched: list[_Candidate] = []
-    for allele_id in allele_ids:
-        entry = by_id.get(allele_id)
-        if entry is None:
-            raise ValueError(f'MaveDB returned no answer for ClinGen allele {allele_id!r}')
-        matched.extend(
-            candidate
-            for kind in _MATCH_KINDS
-            for variant in _matched_variants(entry, kind)
-            for candidate in _measurements(variant, allele_id, kind)
-        )
+def _ranked(matched: Iterable[_Candidate], published: Mapping[str, str], allele_ids: Sequence[str]) -> list[_Candidate]:
+    """Every matched measurement once, in a total order the payloads' own order cannot move."""
     # Least significant key first: a stable sort leaves each earlier ordering intact under the next.
     # `asked` ranks above the date because a deposit reached under the caller's own allele is about
     # the caller's own change, and one reached under a derived allele is about its consequence.
     asked = {allele_id: rank for rank, allele_id in enumerate(allele_ids)}
     ranked = sorted(matched, key=lambda c: c.urn)
-    ranked.sort(key=lambda c: c.published, reverse=True)
+    ranked.sort(key=lambda c: published[c.score_set_urn], reverse=True)
     ranked.sort(key=lambda c: asked[c.allele_id])
-    ranked.sort(key=lambda c: _MATCH_KINDS.index(c.kind))
+    ranked.sort(key=lambda c: _RELATIONSHIPS.index(c.relationship))
     unique: dict[str, _Candidate] = {}
     for candidate in ranked:
         unique.setdefault(candidate.urn, candidate)
     return list(unique.values())
 
 
-async def _variant_record(variant_urn: str, *, http_client: httpx2.AsyncClient) -> dict[str, object]:
-    """One deposited measurement's record: its score, and its score set's calibrations.
-
-    The URN is MaveDB's own, from the lookup, so a 404 here is an inconsistency between its two
-    endpoints rather than a verdict on anything the caller sent — it must not reach the caller as
-    INVALID_ARGUMENT, which would send an agent off rewriting a correct expression.
-    """
-    # The variant URN carries a '#', which must be percent-encoded in the path.
-    encoded = urllib.parse.quote(variant_urn, safe='')
-    response = await http_client.get(f'{_API_URL}/variants/{encoded}')
-    if response.status_code == httpx2.codes.NOT_FOUND:
-        raise ValueError(f'MaveDB has no record for variant {variant_urn!r}, which its own lookup named')
-    errors.raise_for_status(response, upstream=_SOURCE, subject=f'variant {variant_urn!r}')
-    body = response.json()
-    if not isinstance(body, dict):
-        raise ValueError(f'MaveDB variant {variant_urn!r} is not an object')
-    return body
-
-
-def _score_of(record: dict[str, object]) -> float | None:
-    data = record.get('data')
-    score_data = data.get('score_data') if isinstance(data, dict) else None
-    value = score_data.get('score') if isinstance(score_data, dict) else None
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
-
-
-def _calibrations(record: dict[str, object]) -> list[dict[str, object]]:
-    score_set = record.get('scoreSet')
-    calibrations = score_set.get('scoreCalibrations') if isinstance(score_set, dict) else None
-    if not isinstance(calibrations, list):
-        return []
-    return [c for c in calibrations if isinstance(c, dict)]
-
-
-def _score_set_urn(record: dict[str, object], variant_urn: str) -> str:
-    score_set = record.get('scoreSet')
-    urn = score_set.get('urn') if isinstance(score_set, dict) else None
-    if not isinstance(urn, str) or not urn:
-        raise ValueError(f'MaveDB variant {variant_urn!r} names no score set')
-    return urn
-
-
-async def _selected(
-    candidates: Sequence[_Candidate], *, http_client: httpx2.AsyncClient
-) -> tuple[_Candidate, dict[str, object], dict[str, object] | None] | None:
+def _selected(
+    candidates: Sequence[_Candidate], calibrations: Mapping[str, Sequence[dict[str, object]]]
+) -> tuple[_Candidate, dict[str, object] | None] | None:
     """The deposit to answer from and its calibration bin, or ``None`` when nothing was matched.
 
     Calibrated first, else scored, else the leading candidate — a deposit that carries neither a
     calibration nor a numeric score would otherwise shadow one further down that carries both.
     """
-    scored: tuple[_Candidate, dict[str, object]] | None = None
-    first: tuple[_Candidate, dict[str, object]] | None = None
+    scored: _Candidate | None = None
     for candidate in candidates:
-        record = await _variant_record(candidate.urn, http_client=http_client)
-        score = _score_of(record)
-        classification = _select_classification(_calibrations(record), score)
+        classification = _select_classification(calibrations[candidate.score_set_urn], candidate.score)
         if classification is not None:
-            return candidate, record, classification
-        if first is None:
-            first = (candidate, record)
-        if scored is None and score is not None:
-            scored = (candidate, record)
-    fallback = scored or first
-    return None if fallback is None else (fallback[0], fallback[1], None)
+            return candidate, classification
+        if scored is None and candidate.score is not None:
+            scored = candidate
+    if scored is not None:
+        return scored, None
+    return (candidates[0], None) if candidates else None
 
 
 def _acmg_fields(classification: dict[str, object] | None) -> tuple[float | None, str, str]:
@@ -323,12 +293,67 @@ def _acmg_fields(classification: dict[str, object] | None) -> tuple[float | None
     return oddspath, criterion if isinstance(criterion, str) else '', strength if isinstance(strength, str) else ''
 
 
+def _kept_annotations(record: Mapping[str, object], urn: str) -> dict[str, object]:
+    """Each linked allele's annotations, from the sources the answer keeps."""
+    annotations = record.get('annotations')
+    if not isinstance(annotations, dict) or not all(isinstance(sources, dict) for sources in annotations.values()):
+        raise ValueError(f'MaveDB variant {urn!r} carries its annotations in no known shape')
+    return {
+        allele: {source: held for source, held in sources.items() if source in _ANNOTATION_SOURCES}
+        for allele, sources in annotations.items()
+    }
+
+
+def _kept_mappings(representation: object, urn: str) -> dict[str, object]:
+    """The variant's GA4GH representation, cross-referenced to ClinGen alleles alone."""
+    if not isinstance(representation, dict):
+        raise ValueError(f'MaveDB variant {urn!r} carries its molecularRepresentation in no known shape')
+    mappings = representation.get('mappings')
+    if mappings is None:
+        return dict(representation)
+    if not isinstance(mappings, list):
+        raise ValueError(f'MaveDB variant {urn!r} carries its cross-references in no known shape')
+    kept: list[object] = []
+    for mapping in mappings:
+        coding = mapping.get('coding') if isinstance(mapping, dict) else None
+        if not isinstance(coding, dict):
+            raise ValueError(f'MaveDB variant {urn!r} carries a cross-reference in no known shape')
+        if coding.get('system') == _CLINGEN_SYSTEM:
+            kept.append(mapping)
+    return {**representation, 'mappings': kept}
+
+
+def _raw(
+    record: Mapping[str, object],
+    score_set: Mapping[str, object],
+    calibrations: Iterable[Mapping[str, object]],
+    urn: str,
+) -> dict[str, object]:
+    """The variant's record with its score set under ``scoreSet``, as the answer passes them through.
+
+    Raises:
+        ValueError: If the record's annotations or cross-references are in a shape this cannot read:
+            what cannot be read cannot be shown to hold no ClinVar entry.
+    """
+    # ClinVar's annotations and ids and the calibrations' control labels stay out: the ClinVar service reports those.
+    raw = {**record, 'annotations': _kept_annotations(record, urn)}
+    if record.get('molecularRepresentation') is not None:
+        raw['molecularRepresentation'] = _kept_mappings(record['molecularRepresentation'], urn)
+    raw['scoreSet'] = {
+        **score_set,
+        'scoreCalibrations': [
+            {field: held for field, held in calibration.items() if field != 'controls'} for calibration in calibrations
+        ],
+    }
+    return raw
+
+
 async def fetch_mavedb(allele_ids: Sequence[str], *, http_client: httpx2.AsyncClient) -> MavedbResult:
     """Fetch the depositor's MAVE calibration for one variant, by its ClinGen allele ids.
 
     Args:
         allele_ids: The ClinGen allele ids the variant registers, in the order to prefer them
-            (``allele_registry.fetch_clingen_allele_ids``). All are asked in one request.
+            (``allele_registry.fetch_clingen_allele_ids``). Each is asked in a request of its own.
         http_client: The async HTTP client (caller owns its lifecycle).
 
     Returns:
@@ -338,29 +363,40 @@ async def fetch_mavedb(allele_ids: Sequence[str], *, http_client: httpx2.AsyncCl
 
     Raises:
         ValueError: If ``allele_ids`` is empty, or a response is not the shape MaveDB documents.
-        errors.InvalidRequestError: If MaveDB refuses a call (a non-429 4xx).
-        httpx2.HTTPStatusError: If a MaveDB call returns a 429 or a 5xx.
+        errors.InvalidRequestError: If MaveDB refuses a call (``errors.raise_for_status``).
+        httpx2.HTTPStatusError: If a MaveDB call returns any other non-2xx: a 429 or a 5xx, or a
+            status that names the endpoint rather than the request.
         errors.UnknownVariantError: If no deposited variant carries any of the ids — MaveDB has
             answered, and the answer is that no assay covers it.
     """
     if not allele_ids:
         raise ValueError('MaveDB lookup needs at least one ClinGen allele id')
-    asked = list(dict.fromkeys(allele_ids))  # MaveDB echoes a repeated id twice, which reads as its own fault
-    candidates = _candidates(await _lookup(asked, http_client=http_client), asked)
+    asked = list(dict.fromkeys(allele_ids))
+    listed = await _gathered(_measurements(allele_id, http_client=http_client) for allele_id in asked)
+    matched = [candidate for measurements in listed for candidate in measurements]
 
-    chosen = await _selected(candidates, http_client=http_client)
+    score_set_urns = sorted({candidate.score_set_urn for candidate in matched})
+    records = await _gathered(_record('score-sets', urn, http_client=http_client) for urn in score_set_urns)
+    score_sets = dict(zip(score_set_urns, records, strict=True))
+    published = {urn: _published(score_set, urn) for urn, score_set in score_sets.items()}
+    calibrations = {urn: _calibrations(score_set, urn) for urn, score_set in score_sets.items()}
+
+    candidates = _ranked(matched, published, asked)
+    chosen = _selected(candidates, calibrations)
     if chosen is None:
         raise errors.UnknownVariantError(f'MaveDB has no scored variant for ClinGen allele(s) {asked}')
 
-    candidate, record, classification = chosen
+    candidate, classification = chosen
+    record = await _record('variants', candidate.urn, http_client=http_client)
     oddspath, criterion, strength = _acmg_fields(classification)
+    considered = [(c.allele_id, c.relationship, c.urn, published[c.score_set_urn]) for c in candidates]
     return MavedbResult(
         oddspath_ratio=oddspath,
         acmg_criterion=criterion,
         acmg_strength=strength,
-        score=_score_of(record),
-        raw=record,
+        score=candidate.score,
+        raw=_raw(record, score_sets[candidate.score_set_urn], calibrations[candidate.score_set_urn], candidate.urn),
         source=_SOURCE,
-        dataset_versions=(_score_set_urn(record, candidate.urn),),
-        query=f'clingen_allele_ids={asked}; candidates={[tuple(c) for c in candidates]} -> {candidate.urn}',
+        dataset_versions=(candidate.score_set_urn,),
+        query=f'clingen_allele_ids={asked}; candidates={considered} -> {candidate.urn}',
     )

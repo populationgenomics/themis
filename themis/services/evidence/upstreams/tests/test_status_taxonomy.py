@@ -9,11 +9,14 @@ states a settled fact about a fault a single retry would have cleared. That ever
 reaches a status of its own is ``tests/test_serving.py``'s.
 
 Only one half is universal: every upstream must keep 429 and 5xx retryable. What a 4xx means is a
-per-upstream fact, so each adapter sits in one of three buckets — refuses on any 4xx, refuses on
-specific statuses with its own error shape, or has no refusing status at all. Two tests keep that
-honest: one that the buckets partition the exercised entry points, and one that those entry points
-are *all* the client fetchers the adapter modules expose. The shared rule itself is tested in
-``tests/test_errors.py``; this file is about which adapter is wired to it, and how.
+per-upstream fact, so each adapter sits in one of three buckets — refuses on any 4xx that judges a
+request, refuses on specific statuses with its own error shape, or has no refusing status at all.
+Two tests keep that honest: one that the buckets partition the exercised entry points, and one that
+those entry points are *all* the client fetchers the adapter modules expose. The shared rule itself
+is tested in ``tests/test_errors.py``; this file is about which adapter is wired to it, and how.
+
+A 4xx that names the endpoint rather than the request (a 410 from a route the upstream removed) is
+no refusal at any adapter: the caller's request was never what had to change.
 
 One status can also be neither a refusal nor a fault but an *answer*: CSpec's gene table replies to a
 symbol it has no entry for with a 404, and that reply is the rpc's coverage finding. Such a status is
@@ -63,6 +66,9 @@ _GNOMAD_ID = '17-31232881-G-C'
 
 # The 4xx a caller can plausibly provoke, short of 429 (which is about the rate, never the request).
 _CLIENT_ERRORS = (400, 403, 404, 422)
+
+# The 4xx that say the route is gone or takes another method, whatever it was asked.
+_ENDPOINT_ERRORS = (405, 410)
 
 _ENTRY_POINTS: dict[str, Callable[[httpx2.AsyncClient], Awaitable[object]]] = {
     'allele_registry.fetch_allele_registry': lambda c: allele_registry.fetch_allele_registry(
@@ -267,6 +273,17 @@ def test_a_status_specific_refusal_reaches_the_caller_as_its_own_shape(
     entry_point: str, status: int, settled: type[Exception]
 ) -> None:
     with pytest.raises(settled):
+        _call(entry_point, status)
+
+
+@pytest.mark.parametrize('entry_point', list(_ENTRY_POINTS))
+@pytest.mark.parametrize('status', _ENDPOINT_ERRORS)
+def test_a_status_about_the_endpoint_is_a_fault_and_never_a_settled_answer(entry_point: str, status: int) -> None:
+    """INVALID_ARGUMENT would send the caller off rewriting a request a removed route never read.
+
+    Every settled answer is one of the taxonomy's own types, and neither type accepted here is one.
+    """
+    with pytest.raises((httpx2.HTTPStatusError, ValueError)):
         _call(entry_point, status)
 
 

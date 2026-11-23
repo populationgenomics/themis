@@ -31,8 +31,9 @@ _ADMITTED: Mapping[str, str] = {
         'is a separate authenticated API we hold no credential for.'
     ),
     'api.mavedb.org': (
-        'MaveDB. Looks up published multiplexed-assay scores by variant URN or ClinGen allele id; '
-        'submission is a separate authenticated surface we hold no credential for.'
+        'MaveDB. Looks up published multiplexed-assay measurements by ClinGen allele id, and the variant '
+        'and score-set records behind them by URN; submission is a separate authenticated surface we '
+        'hold no credential for.'
     ),
     'api.openalex.org': (
         'OpenAlex. Looks up the works it holds for a PMID or DOI by a works filter; the API is read-only, '

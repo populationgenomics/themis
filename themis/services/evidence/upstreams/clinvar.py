@@ -376,7 +376,7 @@ async def _esearch(
     """Run one ClinVar esearch and return its UID page plus the total behind it.
 
     Raises:
-        errors.InvalidRequestError: If E-utilities refuses the call (a non-429 4xx).
+        errors.InvalidRequestError: If E-utilities refuses the call (a 4xx that judges the request).
         httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If the response carries no ``esearchresult.idlist`` / ``count``.
     """
@@ -399,7 +399,7 @@ async def _esummary(uids: Sequence[str], *, http_client: httpx2.AsyncClient) -> 
     """Fetch the esummary ``result`` map for a batch of UIDs (POSTed, so any batch size fits).
 
     Raises:
-        errors.InvalidRequestError: If E-utilities refuses the call (a non-429 4xx).
+        errors.InvalidRequestError: If E-utilities refuses the call (a 4xx that judges the request).
         httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If the response carries no ``result`` object.
     """
@@ -459,8 +459,8 @@ async def _efetch_archive(accession: str, *, http_client: httpx2.AsyncClient) ->
             well-formed (`requests.require_vcv_accession`) and came from a crosswalk that resolved
             the allele, so ClinVar answering with no archive is the two sources disagreeing about a
             variation, never the allele being absent from ClinVar.
-        errors.InvalidRequestError: If E-utilities refuses the call for any other reason (a non-429
-            4xx).
+        errors.InvalidRequestError: If E-utilities refuses the call for any other reason (a 4xx that
+            judges the request).
         httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If the response is not a ``ClinVarResult-Set``, or carries more than one archive.
     """
@@ -884,7 +884,7 @@ async def fetch_variant_archive(vcv: str, *, http_client: httpx2.AsyncClient) ->
             crosswalk named, whichever of its two spellings efetch answers with (see
             `_efetch_archive`).
         errors.InvalidRequestError: If ``vcv`` is not a zero-padded VCV accession, or if E-utilities
-            refuses the call for any other reason (a non-429 4xx).
+            refuses the call for any other reason (a 4xx that judges the request).
         httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If efetch answers with more than one archive, or the archive is structurally
             malformed.
@@ -964,7 +964,7 @@ async def fetch_gene_pool(
 
     Raises:
         errors.InvalidRequestError: If ``gene`` is empty.
-        errors.InvalidRequestError: If E-utilities refuses the call (a non-429 4xx).
+        errors.InvalidRequestError: If E-utilities refuses the call (a 4xx that judges the request).
         httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
         ValueError: If ``review_status_floor`` is outside ClinVar's gold-star range, ``limit`` is not
             positive, an esearch/esummary response is structurally malformed, or a record carries a
@@ -1080,8 +1080,8 @@ async def fetch_span_records(
         variant.
 
     Raises:
-        errors.InvalidRequestError: If ``gene`` is empty, or if E-utilities refuses the call (a
-            non-429 4xx).
+        errors.InvalidRequestError: If ``gene`` is empty, or if E-utilities refuses the call (a 4xx
+            that judges the request).
         errors.InconsistentSourcesError: If the span matched nothing and ClinVar indexes no record
             under the symbol at all (see ``_require_indexed_gene``).
         httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.

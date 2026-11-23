@@ -263,7 +263,7 @@ async def _resolve_gencode_id(gene_symbol: str, *, http_client: httpx2.AsyncClie
     """Resolve an HGNC symbol to its ``gtex_v10`` (GENCODE v39) versioned GENCODE id.
 
     Raises:
-        errors.InvalidRequestError: If GTEx refuses the reference-gene query (a non-429 4xx).
+        errors.InvalidRequestError: If GTEx refuses the reference-gene query (a 4xx that judges the request).
         httpx2.HTTPStatusError: If the reference-gene endpoint returns a 429 or a 5xx.
         errors.UnknownVariantError: If GTEx has no record for the symbol.
         ValueError: If the response has no ``data`` list, the symbol is ambiguous, or a record comes

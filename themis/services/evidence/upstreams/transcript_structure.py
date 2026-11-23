@@ -506,8 +506,8 @@ async def fetch_transcript_structure(
         The parsed `TranscriptStructureResult`.
 
     Raises:
-        errors.InvalidRequestError: If VariantValidator refuses the accession (a non-429 4xx). An
-            accession it cannot resolve comes back 200 with an ``error`` string instead.
+        errors.InvalidRequestError: If VariantValidator refuses the accession (a 4xx that judges the
+            request). An accession it cannot resolve comes back 200 with an ``error`` string instead.
         errors.UnknownVariantError: If VariantValidator holds no record for the accession or no
             alignment on the assembly.
         httpx2.HTTPStatusError: If either request returns a 429 or a 5xx, or if `/hello/` — which
@@ -752,8 +752,8 @@ async def fetch_gene_transcripts(
         One `GeneTranscriptsResult` per annotation set, RefSeq first.
 
     Raises:
-        errors.InvalidRequestError: If VariantValidator refuses the symbol (a non-429 4xx). A symbol
-            it cannot resolve comes back 200 with an ``error`` string instead.
+        errors.InvalidRequestError: If VariantValidator refuses the symbol (a 4xx that judges the
+            request). A symbol it cannot resolve comes back 200 with an ``error`` string instead.
         errors.UnknownVariantError: If VariantValidator does not recognise the symbol.
         httpx2.HTTPStatusError: If a request returns a 429 or a 5xx, or if `/hello/` — which carries
             no caller input, so its failure is never a refusal — returns any non-2xx.

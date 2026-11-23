@@ -186,8 +186,8 @@ async def fetch_variant_validator(
         The parsed `VariantValidatorResult`.
 
     Raises:
-        errors.InvalidRequestError: If VariantValidator refuses the request (a non-429 4xx). A
-            variant it cannot validate comes back 200 with `validation_warnings`, so this is the
+        errors.InvalidRequestError: If VariantValidator refuses the request (a 4xx that judges it).
+            A variant it cannot validate comes back 200 with `validation_warnings`, so this is the
             request itself being unacceptable, not the variant being unknown.
         httpx2.HTTPStatusError: If VariantValidator returns a 429 or a 5xx.
         errors.UnknownVariantError: If the response carries no transcript variant.

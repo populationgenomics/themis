@@ -163,16 +163,33 @@ def explanation(response: httpx2.Response, detail: str | None = None) -> str:
     return trailer.clipped(_scrubbed(text))
 
 
+# The statuses with which an upstream judges what it was asked: malformed (400, 422), not permitted
+# (403), not held (404), too long (413, 414). Any other 4xx names the endpoint or the exchange.
+_REFUSALS = frozenset(
+    {
+        httpx2.codes.BAD_REQUEST,
+        httpx2.codes.FORBIDDEN,
+        httpx2.codes.NOT_FOUND,
+        httpx2.codes.CONTENT_TOO_LARGE,
+        httpx2.codes.URI_TOO_LONG,
+        httpx2.codes.UNPROCESSABLE_CONTENT,
+    }
+)
+
+
 def raise_for_status(response: httpx2.Response, *, upstream: str, subject: str, detail: str | None = None) -> None:
     """Fail a non-2xx upstream response, telling a refusal from a fault.
 
-    A non-429 4xx is the upstream judging the request as issued, so reissuing it unchanged cannot
-    change the answer: it becomes ``InvalidRequestError`` (``INVALID_ARGUMENT``) rather than the
-    ``UNKNOWN`` a bare ``httpx2.Response.raise_for_status`` yields, which the guest's retry helper
-    counts as transient and reissues with backoff. 429 and 5xx become ``UpstreamStatusError``, which
-    the servicer reports as ``UNAVAILABLE``: a retry can clear those. An upstream that reports "no
-    record" with a 4xx needs its own branch ahead of this call — ``UnknownVariantError`` is a settled
-    answer, not a refusal.
+    A 400, 403, 404, 413, 414 or 422 is the upstream judging the request as issued, so reissuing it
+    unchanged cannot change the answer: it becomes ``InvalidRequestError`` (``INVALID_ARGUMENT``)
+    rather than the ``UNKNOWN`` a bare ``httpx2.Response.raise_for_status`` yields, which the guest's
+    retry helper counts as transient and reissues with backoff. Every other non-2xx becomes
+    ``UpstreamStatusError``.
+    The servicer reports a 429 or 5xx as ``UNAVAILABLE``, since a retry can clear those, and leaves
+    the rest ``UNKNOWN``: a status that names the endpoint (a 410 for a removed route, a 405) is this
+    service's adapter to repair, and ``INVALID_ARGUMENT`` would send the caller off rewriting a
+    request that was never at fault. An upstream that reports "no record" with a 4xx needs its own
+    branch ahead of this call — ``UnknownVariantError`` is a settled answer, not a refusal.
 
     Not every transport qualifies; ``docs/design/evidence-interfaces.md`` names the exemptions and the test.
 
@@ -184,15 +201,14 @@ def raise_for_status(response: httpx2.Response, *, upstream: str, subject: str, 
             when omitted. Either way it passes through ``explanation``.
 
     Raises:
-        InvalidRequestError: On a non-429 4xx.
-        UpstreamStatusError: On a 429, a 5xx, or any other non-2xx.
+        InvalidRequestError: On a 400, 403, 404, 413, 414 or 422.
+        UpstreamStatusError: On any other non-2xx.
     """
     if response.is_success:
         return
     explained = explanation(response, detail)
     named = trailer.clipped(subject)
-    # 429 is a 4xx about the caller's rate, not about the request, so it stays retryable.
-    if response.is_client_error and response.status_code != httpx2.codes.TOO_MANY_REQUESTS:
+    if response.status_code in _REFUSALS:
         raise InvalidRequestError(f'{upstream} rejected {named} ({response.status_code}): {explained}')
     raise UpstreamStatusError(
         f'{upstream} returned {response.status_code} for {named}: {explained}',
@@ -242,10 +258,10 @@ def transient_upstream_fault(error: BaseException) -> str | None:
     way the connection failed, and that such a failure is usually transient. Reported as ``UNAVAILABLE``:
     a 429 or 5xx; a connect, read or write timeout; and a connection that could not be made or broke
     off. Everything else stays an uncharacterised fault of ours (``UNKNOWN``): any other status (a
-    3xx, a 4xx on an exempt transport), a malformed request line or an unsupported scheme, a
-    ``PoolTimeout`` (this service's own connections are all in use; the upstream was never asked),
-    and a connection refused by TLS verification, which either our trust store or the upstream's
-    certificate causes and no reissue clears.
+    3xx, a 4xx that is no refusal or comes from an exempt transport), a malformed request line or an
+    unsupported scheme, a ``PoolTimeout`` (this service's own connections are all in use; the
+    upstream was never asked), and a connection refused by TLS verification, which either our trust
+    store or the upstream's certificate causes and no reissue clears.
 
     The upstream is named by its label where ``raise_for_status`` raised, else by host, and never by
     URL: a URL repeats the whole query, including parameters this service adds to it (the dbNSFP

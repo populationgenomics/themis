@@ -16,15 +16,26 @@ def _response(status: int, *, body: str = 'upstream said no') -> httpx2.Response
     return httpx2.Response(status, text=body, request=httpx2.Request('GET', 'https://upstream.example/q'))
 
 
-@pytest.mark.parametrize('status', [400, 401, 403, 404, 409, 422])
-def test_a_non_429_client_error_is_a_refusal(status: int) -> None:
+@pytest.mark.parametrize('status', [400, 403, 404, 413, 414, 422])
+def test_a_status_that_judges_the_request_is_a_refusal(status: int) -> None:
     with pytest.raises(errors.InvalidRequestError):
         errors.raise_for_status(_response(status), upstream='Source', subject="'v'")
 
 
+@pytest.mark.parametrize('status', [401, 405, 409, 410, 426, 431])
+def test_a_client_error_that_does_not_judge_the_request_is_an_upstream_fault(status: int) -> None:
+    """A removed route answers 410 whatever it is asked, so a refusal would blame the caller for our adapter.
+
+    Nor can a reissue clear it, so it is not reported as transient either.
+    """
+    with pytest.raises(errors.UpstreamStatusError) as caught:
+        errors.raise_for_status(_response(status), upstream='Source', subject="'v'")
+    assert errors.transient_upstream_fault(caught.value) is None
+
+
 @pytest.mark.parametrize('status', [429, 500, 502, 503, 504])
 def test_a_throttle_or_a_server_fault_stays_retryable(status: int) -> None:
-    """429 sits inside the 4xx range but is about the caller's rate, so it is the rule's one carve-out."""
+    """429 sits inside the 4xx range but is about the caller's rate, so it is never a refusal."""
     with pytest.raises(errors.UpstreamStatusError):
         errors.raise_for_status(_response(status), upstream='Source', subject="'v'")
 
