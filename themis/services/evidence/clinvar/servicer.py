@@ -11,14 +11,16 @@ from themis.services.evidence import errors, requests, serving
 from themis.services.evidence.clinvar import backend as clinvar_backend
 from themis.svcv4 import frequency
 
-# The most records `DescribeVariant` will fetch into one pool: at ~10 s per 500, what fits beside the
-# allele lookup inside the rpc deadline. A request above it is refused rather than run to the deadline.
+# The most records `DescribeVariant` will fetch into one pool: at the typical ~10 s per 500, what fits
+# beside the allele lookup inside the rpc deadline. A request above it is refused rather than run to the
+# deadline. A pool heavy in copy-number records costs several times the typical (one of 427 records took
+# nine esummary requests and 34 s), so it can reach the deadline below the bound.
 _MAX_POOL_RECORDS = 2000
 
 # And the most `SearchCodingSpan` will fetch into one census. Lower because its other leg is longer:
 # the exon table comes from VariantValidator, whose client self-extends to 60 s, so one esummary page
-# is what the rpc's remaining budget covers. Accepting more would refuse the request at the deadline
-# instead of at the bound, which is what the bound exists to prevent.
+# at its typical cost is what the rpc's remaining budget covers. Accepting more would refuse the request
+# at the deadline instead of at the bound, which is what the bound exists to prevent.
 _MAX_SPAN_RECORDS = 500
 
 

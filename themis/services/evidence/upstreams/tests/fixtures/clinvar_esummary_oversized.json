@@ -1,0 +1,1 @@
+{ "header":{"type":"eutils", "version" : "0.3"}, "eutilsresult" : {"ERROR": "Input XML size is 41471562 bytes, and cannot be transformed to JSON. the max size is 10MB"} }

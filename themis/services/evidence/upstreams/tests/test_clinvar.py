@@ -17,6 +17,7 @@ import copy
 import json
 import pathlib
 import re
+import urllib.parse
 import xml.etree.ElementTree as ET
 from collections.abc import Awaitable, Callable
 
@@ -33,6 +34,10 @@ _FIXTURE = json.loads((_FIXTURES / 'clinvar.json').read_bytes())
 _VCV_XML = (_FIXTURES / 'clinvar_vcv.xml').read_bytes()
 # What efetch answered VCV999999999 with, recorded off the live endpoint.
 _NO_RECORD_ENVELOPE = (_FIXTURES / 'clinvar_efetch_no_record.xml').read_bytes()
+# What esummary answered 500 of ClinVar's longest records with, and 501 records of one gene with, both
+# recorded off the live endpoint. Each is a 200.
+_OVERSIZED_SUMMARY = (_FIXTURES / 'clinvar_esummary_oversized.json').read_bytes()
+_TOO_MANY_UIDS = (_FIXTURES / 'clinvar_esummary_too_many_uids.json').read_bytes()
 _GENE = _FIXTURE['_gene']
 _VCV = 'VCV001731988'
 # The bound the pool is fetched under here; the rpc takes it from the caller and defaults nothing.
@@ -973,6 +978,93 @@ def test_malformed_esummary_raises() -> None:
 
     with pytest.raises(ValueError, match='no result object'):
         _pool(handler)
+
+
+def _refusing_for_size(
+    uids: list[str], refused: Callable[[list[str]], bool]
+) -> Callable[[httpx2.Request], httpx2.Response]:
+    """A transport whose search matches ``uids`` and whose esummary refuses, for its size, a batch ``refused`` picks.
+
+    Any other batch is answered with one single-star pathogenic record per UID asked for, `VCV` and the UID.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.endswith('/esearch.fcgi'):
+            return _search_response(uids)
+        batch = urllib.parse.parse_qs(request.content.decode())['id'][0].split(',')
+        if refused(batch):
+            return httpx2.Response(200, content=_OVERSIZED_SUMMARY, headers={'content-type': 'application/json'})
+        records = {
+            uid: {
+                'accession': f'VCV{uid}',
+                'title': f'NM_1.1:c.{uid}A>G',
+                'germline_classification': {
+                    'description': 'Pathogenic',
+                    'review_status': 'criteria provided, single submitter',
+                },
+            }
+            for uid in batch
+        }
+        return httpx2.Response(200, json={'result': {'uids': batch, **records}})
+
+    return handler
+
+
+def test_a_pool_esummary_refuses_for_the_size_of_its_records_is_fetched_in_parts() -> None:
+    """The bound is on bytes, so a gene's copy-number records pass it well inside one batch of UIDs."""
+    pool = _pool(_refusing_for_size(['11', '12', '13', '14', '15'], lambda batch: len(batch) > 2))
+
+    assert [r.clinvar_id for r in pool.records] == ['VCV11', 'VCV12', 'VCV13', 'VCV14', 'VCV15']
+
+
+def test_the_parts_of_a_refused_first_half_come_before_the_half_after_it() -> None:
+    """The pool keeps the search's order when a part is fetched after the request for a later batch was queued."""
+    refused_with_the_first = _refusing_for_size(
+        ['11', '12', '13', '14'], lambda batch: '11' in batch and len(batch) > 1
+    )
+
+    pool = _pool(refused_with_the_first)
+
+    assert [r.clinvar_id for r in pool.records] == ['VCV11', 'VCV12', 'VCV13', 'VCV14']
+
+
+def test_a_span_esummary_refuses_for_the_size_of_its_records_is_fetched_in_parts() -> None:
+    found = _span(_refusing_for_size(['11', '12', '13'], lambda batch: len(batch) > 1))
+
+    assert [r.clinvar_id for r in found.records] == ['VCV11', 'VCV12', 'VCV13']
+
+
+def test_a_record_esummary_refuses_on_its_own_fails_the_pool() -> None:
+    """Left out, the record would make the pool read as ClinVar holding one fewer for the gene."""
+    with pytest.raises(ValueError, match='the max size is 10MB'):
+        _pool(_refusing_for_size(['11', '12', '13'], lambda batch: '12' in batch))
+
+
+def _too_many_uids(asked: list[httpx2.Request]) -> Callable[[httpx2.Request], httpx2.Response]:
+    """A transport whose esummary answers as it does one UID past its bound, noting each request in ``asked``."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path.endswith('/esearch.fcgi'):
+            return _search_response(['11', '12'])
+        asked.append(request)
+        return httpx2.Response(200, content=_TOO_MANY_UIDS, headers={'content-type': 'application/json'})
+
+    return handler
+
+
+def test_a_missing_result_is_reported_in_the_words_esummary_gave_for_it() -> None:
+    with pytest.raises(ValueError, match='Maximum number of UIDs is 500 for JSON format output'):
+        _pool(_too_many_uids([]))
+
+
+def test_a_batch_refused_for_another_reason_than_its_size_is_not_asked_for_again() -> None:
+    """Halving answers one refusal; any other would be reissued down to a single UID to no effect."""
+    asked: list[httpx2.Request] = []
+
+    with pytest.raises(ValueError, match='no result object'):
+        _pool(_too_many_uids(asked))
+
+    assert len(asked) == 1
 
 
 def test_an_esearch_without_a_count_raises() -> None:

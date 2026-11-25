@@ -50,10 +50,11 @@ The remaps that make the difference between a right and a wrong answer:
 from __future__ import annotations
 
 import asyncio
+import collections
 import dataclasses
 import itertools
 import xml.etree.ElementTree as ET
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 
 import clinvar_proto
 import defusedxml.common
@@ -77,9 +78,19 @@ _RATE_LIMIT_DELAY_S = 0.34
 # history; the pool is walked in pages so a caller's bound is honoured whatever the server serves.
 _ESEARCH_PAGE = 10000
 
-# UIDs per esummary POST. Measured against the live index (July 2026): 500 ClinVar records are
-# ~1.1 MB and ~10 s.
+# UIDs per esummary POST, and the most its JSON output takes: one more is answered "Too many UIDs in
+# request. Maximum number of UIDs is 500 for JSON format output." Typically 500 ClinVar records are
+# ~1.1 MB and ~10 s (measured against the live index, July 2026). A batch heavy in copy-number
+# records costs several times that: a pool of 427 took nine requests and 34 s (November 2026).
 _ESUMMARY_BATCH = 500
+
+# The ERROR esummary states, in a 200 with no result, for a batch whose records are more XML than it
+# transforms to JSON: "Input XML size is 41471562 bytes, and cannot be transformed to JSON. the max
+# size is 10MB". The bound is on bytes and no fixed count of UIDs keeps under it: a copy-number
+# record names every gene in its extent, and that answer was to 500 of ClinVar's longest records
+# (measured November 2026). Matched as a fragment of the lowercased body of a 200 that carries no
+# result object.
+_OVERSIZED_SUMMARY_ERROR = 'cannot be transformed to json'
 
 # The envelope efetch wraps its answer in, whatever the answer is; an empty one carries no child.
 _RESULT_SET = 'ClinVarResult-Set'
@@ -395,20 +406,61 @@ async def _esearch(
     return _SearchResult(uids=[uid for uid in result['idlist'] if isinstance(uid, str)], total=int(count))
 
 
+class _OversizedSummaryError(ValueError):
+    """esummary answered a batch with `_OVERSIZED_SUMMARY_ERROR` in place of its records."""
+
+
 async def _esummary(uids: Sequence[str], *, http_client: httpx2.AsyncClient) -> dict[str, object]:
-    """Fetch the esummary ``result`` map for a batch of UIDs (POSTed, so any batch size fits).
+    """Fetch the esummary ``result`` map for one batch of at most `_ESUMMARY_BATCH` UIDs.
 
     Raises:
         errors.InvalidRequestError: If E-utilities refuses the call (a 4xx that judges the request).
         httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
-        ValueError: If the response carries no ``result`` object.
+        _OversizedSummaryError: If esummary states the batch's records are more than it transforms
+            to JSON.
+        ValueError: If the response carries no ``result`` object for any other reason; the message
+            quotes what esummary answered instead. Either message names the UID of a batch of one
+            and gives the count of a larger batch.
     """
     params = {'db': _DB, 'retmode': 'json', 'id': ','.join(uids)}
     response = await _post('esummary.fcgi', params, http_client=http_client)
     result = response.json().get('result')
-    if not isinstance(result, dict):
-        raise ValueError(f'ClinVar esummary returned no result object for ids {list(uids)!r}')
-    return result
+    if isinstance(result, dict):
+        return result
+    asked = f'id {uids[0]!r}' if len(uids) == 1 else f'{len(uids)} ids'
+    message = f'ClinVar esummary returned no result object for {asked}: {errors.explanation(response)}'
+    if _OVERSIZED_SUMMARY_ERROR in response.text.lower():
+        raise _OversizedSummaryError(message)
+    raise ValueError(message)
+
+
+async def _summaries(uids: Sequence[str], *, http_client: httpx2.AsyncClient) -> AsyncIterator[dict[str, object]]:
+    """The esummary ``result`` maps that together hold every one of ``uids``, in their order.
+
+    A batch esummary refuses for the size of its records is fetched as its two halves instead, and
+    each half is treated the same way: what a record weighs is known only once it is fetched, so no
+    count chosen beforehand fits. Each UID is asked for in exactly one batch that esummary answers
+    with a map, or the walk raises; whether a map holds a record for every UID of its batch is not
+    checked here.
+
+    Raises:
+        errors.InvalidRequestError: If E-utilities refuses a call (a 4xx that judges the request).
+        httpx2.HTTPStatusError: If E-utilities returns a 429 or a 5xx.
+        ValueError: If esummary refuses a single record for its size, or answers a batch with no
+            ``result`` object for any other reason.
+    """
+    pending = collections.deque[Sequence[str]](itertools.batched(uids, _ESUMMARY_BATCH, strict=False))
+    while pending:
+        batch = pending.popleft()
+        try:
+            result = await _esummary(batch, http_client=http_client)
+        except _OversizedSummaryError:
+            if len(batch) == 1:
+                raise
+            middle = len(batch) // 2
+            pending.extendleft((batch[middle:], batch[:middle]))
+            continue
+        yield result
 
 
 def _stated_no_record(response: httpx2.Response) -> str | None:
@@ -924,10 +976,10 @@ async def _walk_uids(term: str, limit: int, *, http_client: httpx2.AsyncClient) 
 
 
 async def _summarised(uids: Sequence[str], *, http_client: httpx2.AsyncClient) -> list[ClinvarRecordData]:
-    """Every UID's esummary record, fetched in batches sized to the measured payload cost."""
+    """Every UID's esummary record, in the order of ``uids``."""
     records: list[ClinvarRecordData] = []
-    for batch in itertools.batched(uids, _ESUMMARY_BATCH, strict=False):
-        records.extend(_records_from_summary(await _esummary(batch, http_client=http_client)))
+    async for result in _summaries(uids, http_client=http_client):
+        records.extend(_records_from_summary(result))
     return records
 
 
@@ -951,10 +1003,12 @@ async def fetch_gene_pool(
             this layer would silently narrow one the caller thinks it is choosing. It scopes the
             search itself, so raising it is what makes a well-reviewed record beyond ``limit``
             reachable rather than merely selecting among the records the bound already admitted.
-        limit: Max records to summarise and filter. Required: it is the pool's whole cost, ~1.1 MB
-            and ~10 s per 500 records against the live index, so no layer here can pick one for a
-            caller that must answer within a deadline. ``total`` still reports every record the term
-            matches, so a bounded pool says so.
+        limit: Max records to summarise and filter. Required: it bounds the pool's whole cost,
+            typically ~1.1 MB and ~10 s per 500 records against the live index, so no layer here can
+            pick one for a caller that must answer within a deadline. A pool heavy in copy-number
+            records costs several times that (one of 427 records took nine requests and 34 s) and
+            can reach the rpc deadline. ``total`` still reports every record the term matches, so a
+            bounded pool says so.
 
     Returns:
         The ``ClinvarGenePool``: the records ClinVar classifies pathogenic in any of its aggregate
@@ -1095,8 +1149,8 @@ async def fetch_span_records(
     if not search.total:
         await _require_indexed_gene(gene, http_client=http_client)
     records: list[ClinvarRecordData] = []
-    for batch in itertools.batched(search.uids, _ESUMMARY_BATCH, strict=False):
-        records.extend(_overlapping_records(await _esummary(batch, http_client=http_client), start, end))
+    async for result in _summaries(search.uids, http_client=http_client):
+        records.extend(_overlapping_records(result, start, end))
     return ClinvarSpanRecords(
         records=records,
         total=search.total,
