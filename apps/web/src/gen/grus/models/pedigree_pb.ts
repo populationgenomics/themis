@@ -2,7 +2,7 @@
 // the text form, not just render round-trip. Covers the full Bennett/NSGC concept space (2008 + 2022),
 // even where the extraction prompt does not yet emit a field and the renderer does not yet draw it.
 //
-// Meaning-only: WHO is in the pedigree, their gender/clinical status, and how they relate — never
+// Meaning-only: WHO is in the pedigree, their gender, what their symbols show, and how they relate — never
 // geometry. The only semantic horizontal ordering is sibling birth order (Mating.offspring order).
 //
 // Referential integrity (loader-enforced, cross-message; protovalidate covers only field-local rules):
@@ -10,8 +10,9 @@
 // within a Pedigree; a mating's two partners are distinct; offspring exist; acyclic for tier-1 render.
 // Citations (optional provenance) are checked there too: unique ids, every reference resolves, a Support's
 // field on the closed path list, its scope in the pedigree.
-// Conditions are declared once per set and referenced by id: every id resolves, declarations are unique and
-// each is referenced, and no person has two entries for one condition.
+// Key entries are declared once per set and referenced by id: every id resolves, ids and texts are unique, each entry
+// is shown by someone, a person marks an entry at most once and never a genotype entry, and a mark's grade is one its
+// phenotype declares.
 // Loci are declared the same way: ids are unique, a named locus's (gene, name) is declared once, each locus is
 // referenced; every genotype's locus resolves and each allele is one of its symbols, at most one genotype per person
 // per locus, genotypes sharing a phase set have equal ploidy, and an annotation's loci are ones its person has a
@@ -30,7 +31,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file grus/models/pedigree.proto.
  */
 export const file_grus_models_pedigree: GenFile = /*@__PURE__*/
-  fileDesc("ChpncnVzL21vZGVscy9wZWRpZ3JlZS5wcm90bxIUZ3J1cy5tb2RlbHMucGVkaWdyZWUiPwoIUG9zaXRpb24SGwoKZ2VuZXJhdGlvbhgBIAEoBUIHukgEGgIoARIWCgVpbmRleBgCIAEoBUIHukgEGgIoASJ+CgxDb25kaXRpb25EZWYSEwoCaWQYASABKAlCB7pIBHICEAESDAoEbmFtZRgCIAEoCRI7Cgtpbmhlcml0YW5jZRgDIAEoDjIhLmdydXMubW9kZWxzLnBlZGlncmVlLkluaGVyaXRhbmNlSACIAQFCDgoMX2luaGVyaXRhbmNlIvgBCglDb25kaXRpb24SHQoMY29uZGl0aW9uX2lkGAUgASgJQge6SARyAhABEjUKBnN0YXR1cxgCIAEoDjIlLmdydXMubW9kZWxzLnBlZGlncmVlLkNvbmRpdGlvblN0YXR1cxIWCglvbnNldF9hZ2UYBCABKAlIAIgBATpQukhNGksKGmNvbmRpdGlvbi5zdGF0dXNfc3BlY2lmaWVkEhtzdGF0dXMgbXVzdCBiZSBhIHJlYWwgdmFsdWUaEHRoaXMuc3RhdHVzICE9IDBCDAoKX29uc2V0X2FnZUoECAEQAkoECAMQBFIEbmFtZVILaW5oZXJpdGFuY2Ui0gcKCkluZGl2aWR1YWwSGwoKZ2VuZXJhdGlvbhgBIAEoBUIHukgEGgIoARIWCgVpbmRleBgCIAEoBUIHukgEGgIoARIsCgZnZW5kZXIYAyABKA4yHC5ncnVzLm1vZGVscy5wZWRpZ3JlZS5HZW5kZXISTAoVc2V4X2Fzc2lnbmVkX2F0X2JpcnRoGAQgASgOMiguZ3J1cy5tb2RlbHMucGVkaWdyZWUuU2V4QXNzaWduZWRBdEJpcnRoSACIAQESMwoKY29uZGl0aW9ucxgFIAMoCzIfLmdydXMubW9kZWxzLnBlZGlncmVlLkNvbmRpdGlvbhIQCghkZWNlYXNlZBgGIAEoCBIPCgdwcm9iYW5kGAcgASgIEhIKCmNvbnN1bHRhbmQYCCABKAgSTAoUcmVwcm9kdWN0aXZlX291dGNvbWUYCSABKA4yKS5ncnVzLm1vZGVscy5wZWRpZ3JlZS5SZXByb2R1Y3RpdmVPdXRjb21lSAGIAQESRgoRcmVwcm9kdWN0aXZlX3JvbGUYCiABKA4yJi5ncnVzLm1vZGVscy5wZWRpZ3JlZS5SZXByb2R1Y3RpdmVSb2xlSAKIAQESGwoFY291bnQYCyABKAVCB7pIBBoCKAFIA4gBARIZChFjb3VudF91bnNwZWNpZmllZBgMIAEoCBI1Cgthbm5vdGF0aW9ucxgNIAMoCzIgLmdydXMubW9kZWxzLnBlZGlncmVlLkFubm90YXRpb24SGAoLZXh0ZXJuYWxfaWQYDiABKAlIBIgBARIdChVkb2N1bWVudGVkX2V2YWx1YXRpb24YDyABKAgSMQoJZ2Vub3R5cGVzGBAgAygLMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuR2Vub3R5cGU60gG6SM4BGkwKG2luZGl2aWR1YWwuZ2VuZGVyX3NwZWNpZmllZBIbZ2VuZGVyIG11c3QgYmUgYSByZWFsIHZhbHVlGhB0aGlzLmdlbmRlciAhPSAwGn4KGmluZGl2aWR1YWwuY291bnRfZXhjbHVzaXZlEjJjb3VudCBhbmQgY291bnRfdW5zcGVjaWZpZWQgYXJlIG11dHVhbGx5IGV4Y2x1c2l2ZRosIShoYXModGhpcy5jb3VudCkgJiYgdGhpcy5jb3VudF91bnNwZWNpZmllZClCGAoWX3NleF9hc3NpZ25lZF9hdF9iaXJ0aEIXChVfcmVwcm9kdWN0aXZlX291dGNvbWVCFAoSX3JlcHJvZHVjdGl2ZV9yb2xlQggKBl9jb3VudEIOCgxfZXh0ZXJuYWxfaWQiwAEKCkFubm90YXRpb24SFQoEdGV4dBgBIAEoCUIHukgEcgIQARIyCgR0eXBlGAIgASgOMiQuZ3J1cy5tb2RlbHMucGVkaWdyZWUuQW5ub3RhdGlvblR5cGUSGgoEbG9jaRgDIAMoCUIMukgJkgEGIgRyAhABOku6SEgaRgoZYW5ub3RhdGlvbi50eXBlX3NwZWNpZmllZBIZdHlwZSBtdXN0IGJlIGEgcmVhbCB2YWx1ZRoOdGhpcy50eXBlICE9IDAirwEKCklkZW50aWZpZXISNgoGc2NoZW1lGAEgASgOMiYuZ3J1cy5tb2RlbHMucGVkaWdyZWUuSWRlbnRpZmllclNjaGVtZRIWCgV2YWx1ZRgCIAEoCUIHukgEcgIQATpRukhOGkwKG2lkZW50aWZpZXIuc2NoZW1lX3NwZWNpZmllZBIbc2NoZW1lIG11c3QgYmUgYSByZWFsIHZhbHVlGhB0aGlzLnNjaGVtZSAhPSAwInkKBkFsbGVsZRIXCgZzeW1ib2wYASABKAlCB7pIBHICEAESDAoEbmFtZRgCIAEoCRIRCglyZWZlcmVuY2UYAyABKAgSNQoLaWRlbnRpZmllcnMYBCADKAsyIC5ncnVzLm1vZGVscy5wZWRpZ3JlZS5JZGVudGlmaWVyIogBCgVMb2N1cxITCgJpZBgBIAEoCUIHukgEcgIQARIMCgRuYW1lGAIgASgJEhoKBGdlbmUYAyABKAlCB7pIBHICEAFIAIgBARI3CgdhbGxlbGVzGAQgAygLMhwuZ3J1cy5tb2RlbHMucGVkaWdyZWUuQWxsZWxlQgi6SAWSAQIIAUIHCgVfZ2VuZSJ3CghHZW5vdHlwZRIZCghsb2N1c19pZBgBIAEoCUIHukgEcgIQARIhCgdhbGxlbGVzGAIgAygJQhC6SA2SAQoIARACIgRyAhABEh8KCXBoYXNlX3NldBgDIAEoCUIHukgEcgIQAUgAiAEBQgwKCl9waGFzZV9zZXQitAMKBk1hdGluZxI2CglwYXJ0bmVyX2EYASABKAsyHi5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Qb3NpdGlvbkgAiAEBEjYKCXBhcnRuZXJfYhgCIAEoCzIeLmdydXMubW9kZWxzLnBlZGlncmVlLlBvc2l0aW9uSAGIAQESFgoOY29uc2FuZ3VpbmVvdXMYAyABKAgSPQoGc3RhdHVzGAQgASgOMiguZ3J1cy5tb2RlbHMucGVkaWdyZWUuUmVsYXRpb25zaGlwU3RhdHVzSAKIAQESPwoNY2hpbGRsZXNzbmVzcxgFIAEoDjIjLmdydXMubW9kZWxzLnBlZGlncmVlLkNoaWxkbGVzc25lc3NIA4gBARIyCglvZmZzcHJpbmcYBiADKAsyHy5ncnVzLm1vZGVscy5wZWRpZ3JlZS5PZmZzcHJpbmcSNQoLYW5ub3RhdGlvbnMYByADKAsyIC5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Bbm5vdGF0aW9uQgwKCl9wYXJ0bmVyX2FCDAoKX3BhcnRuZXJfYkIJCgdfc3RhdHVzQhAKDl9jaGlsZGxlc3NuZXNzIpwDCglPZmZzcHJpbmcSLQoFY2hpbGQYASABKAsyHi5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Qb3NpdGlvbhIXCgp0d2luX2dyb3VwGAIgASgFSACIAQESNQoJdHdpbl90eXBlGAMgASgOMiIuZ3J1cy5tb2RlbHMucGVkaWdyZWUuWnlnb3NpdHlUeXBlEjcKCXBhcmVudGFnZRgEIAEoDjIfLmdydXMubW9kZWxzLnBlZGlncmVlLlBhcmVudGFnZUgBiAEBEjUKCGFkb3B0aW9uGAUgASgOMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuQWRvcHRpb25IAogBATp2ukhzGnEKHW9mZnNwcmluZy50d2luX3R5cGVfaWZmX2dyb3VwEiF0d2luX3R5cGUgc2V0IGlmZiBpbiBhIHR3aW4gZ3JvdXAaLWhhcyh0aGlzLnR3aW5fZ3JvdXApID09ICh0aGlzLnR3aW5fdHlwZSAhPSAwKUINCgtfdHdpbl9ncm91cEIMCgpfcGFyZW50YWdlQgsKCV9hZG9wdGlvbiKVAQoFTGFiZWwSFQoEdGV4dBgBIAEoCUIHukgEcgIQARItCgRraW5kGAIgASgOMh8uZ3J1cy5tb2RlbHMucGVkaWdyZWUuTGFiZWxLaW5kOka6SEMaQQoUbGFiZWwua2luZF9zcGVjaWZpZWQSGWtpbmQgbXVzdCBiZSBhIHJlYWwgdmFsdWUaDnRoaXMua2luZCAhPSAwIswCCghQZWRpZ3JlZRIPCgJpZBgBIAEoCUgAiAEBEisKBmxhYmVscxgCIAMoCzIbLmdydXMubW9kZWxzLnBlZGlncmVlLkxhYmVsEj8KC2luZGl2aWR1YWxzGAMgAygLMiAuZ3J1cy5tb2RlbHMucGVkaWdyZWUuSW5kaXZpZHVhbEIIukgFkgECCAESLQoHbWF0aW5ncxgEIAMoCzIcLmdydXMubW9kZWxzLnBlZGlncmVlLk1hdGluZxI5Cgpwcm92ZW5hbmNlGAUgASgLMiAuZ3J1cy5tb2RlbHMucGVkaWdyZWUuUHJvdmVuYW5jZUgBiAEBEhAKCGV2aWRlbmNlGAYgAygJEi8KCHN1cHBvcnRzGAcgAygLMh0uZ3J1cy5tb2RlbHMucGVkaWdyZWUuU3VwcG9ydEIFCgNfaWRCDQoLX3Byb3ZlbmFuY2UisgIKC1BlZGlncmVlU2V0EjEKCXBlZGlncmVlcxgBIAMoCzIeLmdydXMubW9kZWxzLnBlZGlncmVlLlBlZGlncmVlEjkKCnByb3ZlbmFuY2UYAiABKAsyIC5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Qcm92ZW5hbmNlSACIAQESMQoJY2l0YXRpb25zGAMgAygLMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuQ2l0YXRpb24SEAoIZXZpZGVuY2UYBCADKAkSNgoKY29uZGl0aW9ucxgFIAMoCzIiLmdydXMubW9kZWxzLnBlZGlncmVlLkNvbmRpdGlvbkRlZhIpCgRsb2NpGAYgAygLMhsuZ3J1cy5tb2RlbHMucGVkaWdyZWUuTG9jdXNCDQoLX3Byb3ZlbmFuY2UijwEKCENpdGF0aW9uEhMKAmlkGAEgASgJQge6SARyAhABEhMKC2RvY3VtZW50X2lkGAIgASgJEhgKBXF1b3RlGAMgASgJQge6SARyAhABSAASLgoGcmVnaW9uGAQgASgLMhwuZ3J1cy5tb2RlbHMucGVkaWdyZWUuUmVnaW9uSABCDwoGYW5jaG9yEgW6SAIIASK6AQoGUmVnaW9uEhUKBHBhZ2UYASABKAVCB7pIBBoCKAASCgoCeDAYAiABKAISCgoCeTAYAyABKAISCgoCeDEYBCABKAISCgoCeTEYBSABKAI6abpIZhpkChZyZWdpb24ucG9zaXRpdmVfZXh0ZW50EiJhIHJlZ2lvbiBuZWVkcyB4MSA+IHgwIGFuZCB5MSA+IHkwGiZ0aGlzLngxID4gdGhpcy54MCAmJiB0aGlzLnkxID4gdGhpcy55MCKHAgoHU3VwcG9ydBIbCgljaXRhdGlvbnMYASADKAlCCLpIBZIBAggBEhYKBWZpZWxkGAIgASgJQge6SARyAhABEiIKDGNvbmRpdGlvbl9pZBgGIAEoCUIHukgEcgIQAUgAiAEBEjMKC2luZGl2aWR1YWxzGAQgAygLMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuUG9zaXRpb24SMAoHbWF0aW5ncxgFIAMoCzIfLmdydXMubW9kZWxzLnBlZGlncmVlLk1hdGluZ1JlZhIaCgRsb2NpGAcgAygJQgy6SAmSAQYiBHICEAFCDwoNX2NvbmRpdGlvbl9pZEoECAMQBFIJY29uZGl0aW9uIpcBCglNYXRpbmdSZWYSNgoJcGFydG5lcl9hGAEgASgLMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuUG9zaXRpb25IAIgBARI2CglwYXJ0bmVyX2IYAiABKAsyHi5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Qb3NpdGlvbkgBiAEBQgwKCl9wYXJ0bmVyX2FCDAoKX3BhcnRuZXJfYiKuAQoKUHJvdmVuYW5jZRIXCgpmaWd1cmVfdXJpGAEgASgJSACIAQESEAoDZG9pGAIgASgJSAGIAQESHAoPZXh0cmFjdG9yX21vZGVsGAMgASgJSAKIAQESGgoNc291cmNlX2Zvcm1hdBgEIAEoCUgDiAEBQg0KC19maWd1cmVfdXJpQgYKBF9kb2lCEgoQX2V4dHJhY3Rvcl9tb2RlbEIQCg5fc291cmNlX2Zvcm1hdCpsCgZHZW5kZXISFgoSR0VOREVSX1VOU1BFQ0lGSUVEEAASDgoKR0VOREVSX01BThABEhAKDEdFTkRFUl9XT01BThACEhQKEEdFTkRFUl9OT05CSU5BUlkQAxISCg5HRU5ERVJfVU5LTk9XThAEKqMBChJTZXhBc3NpZ25lZEF0QmlydGgSJQohU0VYX0FTU0lHTkVEX0FUX0JJUlRIX1VOU1BFQ0lGSUVEEAASHgoaU0VYX0FTU0lHTkVEX0FUX0JJUlRIX01BTEUQARIgChxTRVhfQVNTSUdORURfQVRfQklSVEhfRkVNQUxFEAISJAogU0VYX0FTU0lHTkVEX0FUX0JJUlRIX1VOQVNTSUdORUQQAyrUAQoPQ29uZGl0aW9uU3RhdHVzEiAKHENPTkRJVElPTl9TVEFUVVNfVU5TUEVDSUZJRUQQABIfChtDT05ESVRJT05fU1RBVFVTX1VOQUZGRUNURUQQARIdChlDT05ESVRJT05fU1RBVFVTX0FGRkVDVEVEEAISHAoYQ09ORElUSU9OX1NUQVRVU19DQVJSSUVSEAMSIwofQ09ORElUSU9OX1NUQVRVU19QUkVTWU1QVE9NQVRJQxAEEhwKGENPTkRJVElPTl9TVEFUVVNfVU5LTk9XThAFKvMBCgtJbmhlcml0YW5jZRIbChdJTkhFUklUQU5DRV9VTlNQRUNJRklFRBAAEiIKHklOSEVSSVRBTkNFX0FVVE9TT01BTF9ET01JTkFOVBABEiMKH0lOSEVSSVRBTkNFX0FVVE9TT01BTF9SRUNFU1NJVkUQAhIhCh1JTkhFUklUQU5DRV9YX0xJTktFRF9ET01JTkFOVBADEiIKHklOSEVSSVRBTkNFX1hfTElOS0VEX1JFQ0VTU0lWRRAEEhgKFElOSEVSSVRBTkNFX1lfTElOS0VEEAUSHQoZSU5IRVJJVEFOQ0VfTUlUT0NIT05EUklBTBAGKpECChNSZXByb2R1Y3RpdmVPdXRjb21lEiQKIFJFUFJPRFVDVElWRV9PVVRDT01FX1VOU1BFQ0lGSUVEEAASHQoZUkVQUk9EVUNUSVZFX09VVENPTUVfTElWRRABEiIKHlJFUFJPRFVDVElWRV9PVVRDT01FX1BSRUdOQU5DWRACEiMKH1JFUFJPRFVDVElWRV9PVVRDT01FX1NUSUxMQklSVEgQAxIkCiBSRVBST0RVQ1RJVkVfT1VUQ09NRV9NSVNDQVJSSUFHRRAEEiQKIFJFUFJPRFVDVElWRV9PVVRDT01FX1RFUk1JTkFUSU9OEAUSIAocUkVQUk9EVUNUSVZFX09VVENPTUVfRUNUT1BJQxAGKqABChBSZXByb2R1Y3RpdmVSb2xlEiEKHVJFUFJPRFVDVElWRV9ST0xFX1VOU1BFQ0lGSUVEEAASGgoWUkVQUk9EVUNUSVZFX1JPTEVfU0VMRhABEiIKHlJFUFJPRFVDVElWRV9ST0xFX0dBTUVURV9ET05PUhACEikKJVJFUFJPRFVDVElWRV9ST0xFX0dFU1RBVElPTkFMX0NBUlJJRVIQAyqEAwoOQW5ub3RhdGlvblR5cGUSHwobQU5OT1RBVElPTl9UWVBFX1VOU1BFQ0lGSUVEEAASHAoYQU5OT1RBVElPTl9UWVBFX0dFTk9UWVBFEAESGwoXQU5OT1RBVElPTl9UWVBFX1ZBUklBTlQQAhIdChlBTk5PVEFUSU9OX1RZUEVfUEhFTk9UWVBFEAMSFwoTQU5OT1RBVElPTl9UWVBFX0FHRRAEEiMKH0FOTk9UQVRJT05fVFlQRV9HRVNUQVRJT05BTF9BR0UQBRIdChlBTk5PVEFUSU9OX1RZUEVfS0FSWU9UWVBFEAYSHwobQU5OT1RBVElPTl9UWVBFX01FQVNVUkVNRU5UEAcSGwoXQU5OT1RBVElPTl9UWVBFX1BST05PVU4QCBIfChtBTk5PVEFUSU9OX1RZUEVfQ0hPU0VOX05BTUUQCRIZChVBTk5PVEFUSU9OX1RZUEVfT1RIRVIQChIgChxBTk5PVEFUSU9OX1RZUEVfQUdFX0FUX0RFQVRIEAsqhgIKEElkZW50aWZpZXJTY2hlbWUSIQodSURFTlRJRklFUl9TQ0hFTUVfVU5TUEVDSUZJRUQQABIaChZJREVOVElGSUVSX1NDSEVNRV9IR1ZTEAESGgoWSURFTlRJRklFUl9TQ0hFTUVfUlNJRBACEh0KGUlERU5USUZJRVJfU0NIRU1FX0NMSU5WQVIQAxIkCiBJREVOVElGSUVSX1NDSEVNRV9DTElOR0VOX0FMTEVMRRAEEhoKFklERU5USUZJRVJfU0NIRU1FX1NQREkQBRIZChVJREVOVElGSUVSX1NDSEVNRV9WUlMQBhIbChdJREVOVElGSUVSX1NDSEVNRV9PVEhFUhAHKp8BChJSZWxhdGlvbnNoaXBTdGF0dXMSIwofUkVMQVRJT05TSElQX1NUQVRVU19VTlNQRUNJRklFRBAAEh8KG1JFTEFUSU9OU0hJUF9TVEFUVVNfQ1VSUkVOVBABEiEKHVJFTEFUSU9OU0hJUF9TVEFUVVNfU0VQQVJBVEVEEAISIAocUkVMQVRJT05TSElQX1NUQVRVU19ESVZPUkNFRBADKoIBCg1DaGlsZGxlc3NuZXNzEh0KGUNISUxETEVTU05FU1NfVU5TUEVDSUZJRUQQABIWChJDSElMRExFU1NORVNTX05PTkUQARIbChdDSElMRExFU1NORVNTX0JZX0NIT0lDRRACEh0KGUNISUxETEVTU05FU1NfSU5GRVJUSUxJVFkQAyqiAQoMWnlnb3NpdHlUeXBlEh0KGVpZR09TSVRZX1RZUEVfVU5TUEVDSUZJRUQQABIdChlaWUdPU0lUWV9UWVBFX01PTk9aWUdPVElDEAESGwoXWllHT1NJVFlfVFlQRV9ESVpZR09USUMQAhIZChVaWUdPU0lUWV9UWVBFX1VOS05PV04QAxIcChhaWUdPU0lUWV9UWVBFX1RSSVpZR09USUMQBCptCglQYXJlbnRhZ2USGQoVUEFSRU5UQUdFX1VOU1BFQ0lGSUVEEAASGAoUUEFSRU5UQUdFX0JJT0xPR0lDQUwQARIWChJQQVJFTlRBR0VfQURPUFRJVkUQAhITCg9QQVJFTlRBR0VfRE9OT1IQAyp0CghBZG9wdGlvbhIYChRBRE9QVElPTl9VTlNQRUNJRklFRBAAEhEKDUFET1BUSU9OX05PTkUQARIPCgtBRE9QVElPTl9JThACEhAKDEFET1BUSU9OX09VVBADEhgKFEFET1BUSU9OX0JZX1JFTEFUSVZFEAQqmQEKCUxhYmVsS2luZBIaChZMQUJFTF9LSU5EX1VOU1BFQ0lGSUVEEAASFQoRTEFCRUxfS0lORF9GQU1JTFkQARIUChBMQUJFTF9LSU5EX1BBTkVMEAISEwoPTEFCRUxfS0lORF9HRU5FEAMSGAoUTEFCRUxfS0lORF9QSEVOT1RZUEUQBBIUChBMQUJFTF9LSU5EX09USEVSEAViBnByb3RvMw", [file_buf_validate_validate]);
+  fileDesc("ChpncnVzL21vZGVscy9wZWRpZ3JlZS5wcm90bxIUZ3J1cy5tb2RlbHMucGVkaWdyZWUiPwoIUG9zaXRpb24SGwoKZ2VuZXJhdGlvbhgBIAEoBUIHukgEGgIoARIWCgVpbmRleBgCIAEoBUIHukgEGgIoASLeAQoIS2V5RW50cnkSEwoCaWQYASABKAlCB7pIBHICEAESDAoEdGV4dBgCIAEoCRI0CglwaGVub3R5cGUYAyABKAsyHy5ncnVzLm1vZGVscy5wZWRpZ3JlZS5QaGVub3R5cGVIABI5CghnZW5vdHlwZRgEIAEoCzIlLmdydXMubW9kZWxzLnBlZGlncmVlLkdlbm90eXBlUGF0dGVybkgAEiwKBW90aGVyGAUgASgLMhsuZ3J1cy5tb2RlbHMucGVkaWdyZWUuT3RoZXJIAEIQCgdkZW5vdGVzEgW6SAIIASJ2CglQaGVub3R5cGUSOwoLaW5oZXJpdGFuY2UYASABKA4yIS5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Jbmhlcml0YW5jZUgAiAEBEhwKBmdyYWRlcxgCIAMoCUIMukgJkgEGIgRyAhABQg4KDF9pbmhlcml0YW5jZSK0AgoPR2Vub3R5cGVQYXR0ZXJuEhkKCGxvY3VzX2lkGAEgASgJQge6SARyAhABEiEKB2FsbGVsZXMYAiADKAlCELpIDZIBCggBEAIiBHICEAESFwoPY29waWVzX3Vuc3RhdGVkGAMgASgIOskBukjFARrCAQopZ2Vub3R5cGVfcGF0dGVybi51bnN0YXRlZF9jb3BpZXNfZGlzdGluY3QSPGEgcGF0dGVybiB3aG9zZSBjb3BpZXMgYXJlIG5vdCBzdGF0ZWQgbGlzdHMgZWFjaCBhbGxlbGUgb25jZRpXIXRoaXMuY29waWVzX3Vuc3RhdGVkIHx8IHRoaXMuYWxsZWxlcy5zaXplKCkgPT0gMSB8fCB0aGlzLmFsbGVsZXNbMF0gIT0gdGhpcy5hbGxlbGVzWzFdIgcKBU90aGVyIoMCCgRNYXJrEhcKBmtleV9pZBgBIAEoCUIHukgEcgIQARI3CgZzdGF0dXMYAiABKA4yJS5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Db25kaXRpb25TdGF0dXNIABIYCgVncmFkZRgDIAEoCUIHukgEcgIQAUgAEhYKCW9uc2V0X2FnZRgEIAEoCUgBiAEBOmC6SF0aWwoVbWFyay5zdGF0dXNfc3BlY2lmaWVkEhtzdGF0dXMgbXVzdCBiZSBhIHJlYWwgdmFsdWUaJSFoYXModGhpcy5zdGF0dXMpIHx8IHRoaXMuc3RhdHVzICE9IDBCBwoFc3RhdGVCDAoKX29uc2V0X2FnZSLaBwoKSW5kaXZpZHVhbBIbCgpnZW5lcmF0aW9uGAEgASgFQge6SAQaAigBEhYKBWluZGV4GAIgASgFQge6SAQaAigBEiwKBmdlbmRlchgDIAEoDjIcLmdydXMubW9kZWxzLnBlZGlncmVlLkdlbmRlchJMChVzZXhfYXNzaWduZWRfYXRfYmlydGgYBCABKA4yKC5ncnVzLm1vZGVscy5wZWRpZ3JlZS5TZXhBc3NpZ25lZEF0QmlydGhIAIgBARIpCgVtYXJrcxgRIAMoCzIaLmdydXMubW9kZWxzLnBlZGlncmVlLk1hcmsSEAoIZGVjZWFzZWQYBiABKAgSDwoHcHJvYmFuZBgHIAEoCBISCgpjb25zdWx0YW5kGAggASgIEkwKFHJlcHJvZHVjdGl2ZV9vdXRjb21lGAkgASgOMikuZ3J1cy5tb2RlbHMucGVkaWdyZWUuUmVwcm9kdWN0aXZlT3V0Y29tZUgBiAEBEkYKEXJlcHJvZHVjdGl2ZV9yb2xlGAogASgOMiYuZ3J1cy5tb2RlbHMucGVkaWdyZWUuUmVwcm9kdWN0aXZlUm9sZUgCiAEBEhsKBWNvdW50GAsgASgFQge6SAQaAigBSAOIAQESGQoRY291bnRfdW5zcGVjaWZpZWQYDCABKAgSNQoLYW5ub3RhdGlvbnMYDSADKAsyIC5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Bbm5vdGF0aW9uEhgKC2V4dGVybmFsX2lkGA4gASgJSASIAQESHQoVZG9jdW1lbnRlZF9ldmFsdWF0aW9uGA8gASgIEjEKCWdlbm90eXBlcxgQIAMoCzIeLmdydXMubW9kZWxzLnBlZGlncmVlLkdlbm90eXBlOtIBukjOARpMChtpbmRpdmlkdWFsLmdlbmRlcl9zcGVjaWZpZWQSG2dlbmRlciBtdXN0IGJlIGEgcmVhbCB2YWx1ZRoQdGhpcy5nZW5kZXIgIT0gMBp+ChppbmRpdmlkdWFsLmNvdW50X2V4Y2x1c2l2ZRIyY291bnQgYW5kIGNvdW50X3Vuc3BlY2lmaWVkIGFyZSBtdXR1YWxseSBleGNsdXNpdmUaLCEoaGFzKHRoaXMuY291bnQpICYmIHRoaXMuY291bnRfdW5zcGVjaWZpZWQpQhgKFl9zZXhfYXNzaWduZWRfYXRfYmlydGhCFwoVX3JlcHJvZHVjdGl2ZV9vdXRjb21lQhQKEl9yZXByb2R1Y3RpdmVfcm9sZUIICgZfY291bnRCDgoMX2V4dGVybmFsX2lkSgQIBRAGUgpjb25kaXRpb25zIsABCgpBbm5vdGF0aW9uEhUKBHRleHQYASABKAlCB7pIBHICEAESMgoEdHlwZRgCIAEoDjIkLmdydXMubW9kZWxzLnBlZGlncmVlLkFubm90YXRpb25UeXBlEhoKBGxvY2kYAyADKAlCDLpICZIBBiIEcgIQATpLukhIGkYKGWFubm90YXRpb24udHlwZV9zcGVjaWZpZWQSGXR5cGUgbXVzdCBiZSBhIHJlYWwgdmFsdWUaDnRoaXMudHlwZSAhPSAwIq8BCgpJZGVudGlmaWVyEjYKBnNjaGVtZRgBIAEoDjImLmdydXMubW9kZWxzLnBlZGlncmVlLklkZW50aWZpZXJTY2hlbWUSFgoFdmFsdWUYAiABKAlCB7pIBHICEAE6UbpIThpMChtpZGVudGlmaWVyLnNjaGVtZV9zcGVjaWZpZWQSG3NjaGVtZSBtdXN0IGJlIGEgcmVhbCB2YWx1ZRoQdGhpcy5zY2hlbWUgIT0gMCJ5CgZBbGxlbGUSFwoGc3ltYm9sGAEgASgJQge6SARyAhABEgwKBG5hbWUYAiABKAkSEQoJcmVmZXJlbmNlGAMgASgIEjUKC2lkZW50aWZpZXJzGAQgAygLMiAuZ3J1cy5tb2RlbHMucGVkaWdyZWUuSWRlbnRpZmllciKIAQoFTG9jdXMSEwoCaWQYASABKAlCB7pIBHICEAESDAoEbmFtZRgCIAEoCRIaCgRnZW5lGAMgASgJQge6SARyAhABSACIAQESNwoHYWxsZWxlcxgEIAMoCzIcLmdydXMubW9kZWxzLnBlZGlncmVlLkFsbGVsZUIIukgFkgECCAFCBwoFX2dlbmUi5AMKCEdlbm90eXBlEhkKCGxvY3VzX2lkGAEgASgJQge6SARyAhABEiEKB2FsbGVsZXMYAiADKAlCELpIDZIBCggBEAIiBHICEAESHwoJcGhhc2Vfc2V0GAMgASgJQge6SARyAhABSACIAQESFwoPY29waWVzX3Vuc3RhdGVkGAQgASgIOtECukjNAhqMAQohZ2Vub3R5cGUudW5zdGF0ZWRfY29waWVzX3VucGhhc2VkEjdhIGdlbm90eXBlIHdob3NlIGNvcGllcyBhcmUgbm90IHN0YXRlZCBoYXMgbm8gcGhhc2Ugc2V0Gi4hKHRoaXMuY29waWVzX3Vuc3RhdGVkICYmIGhhcyh0aGlzLnBoYXNlX3NldCkpGrsBCiFnZW5vdHlwZS51bnN0YXRlZF9jb3BpZXNfZGlzdGluY3QSPWEgZ2Vub3R5cGUgd2hvc2UgY29waWVzIGFyZSBub3Qgc3RhdGVkIGxpc3RzIGVhY2ggYWxsZWxlIG9uY2UaVyF0aGlzLmNvcGllc191bnN0YXRlZCB8fCB0aGlzLmFsbGVsZXMuc2l6ZSgpID09IDEgfHwgdGhpcy5hbGxlbGVzWzBdICE9IHRoaXMuYWxsZWxlc1sxXUIMCgpfcGhhc2Vfc2V0IrQDCgZNYXRpbmcSNgoJcGFydG5lcl9hGAEgASgLMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuUG9zaXRpb25IAIgBARI2CglwYXJ0bmVyX2IYAiABKAsyHi5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Qb3NpdGlvbkgBiAEBEhYKDmNvbnNhbmd1aW5lb3VzGAMgASgIEj0KBnN0YXR1cxgEIAEoDjIoLmdydXMubW9kZWxzLnBlZGlncmVlLlJlbGF0aW9uc2hpcFN0YXR1c0gCiAEBEj8KDWNoaWxkbGVzc25lc3MYBSABKA4yIy5ncnVzLm1vZGVscy5wZWRpZ3JlZS5DaGlsZGxlc3NuZXNzSAOIAQESMgoJb2Zmc3ByaW5nGAYgAygLMh8uZ3J1cy5tb2RlbHMucGVkaWdyZWUuT2Zmc3ByaW5nEjUKC2Fubm90YXRpb25zGAcgAygLMiAuZ3J1cy5tb2RlbHMucGVkaWdyZWUuQW5ub3RhdGlvbkIMCgpfcGFydG5lcl9hQgwKCl9wYXJ0bmVyX2JCCQoHX3N0YXR1c0IQCg5fY2hpbGRsZXNzbmVzcyKcAwoJT2Zmc3ByaW5nEi0KBWNoaWxkGAEgASgLMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuUG9zaXRpb24SFwoKdHdpbl9ncm91cBgCIAEoBUgAiAEBEjUKCXR3aW5fdHlwZRgDIAEoDjIiLmdydXMubW9kZWxzLnBlZGlncmVlLlp5Z29zaXR5VHlwZRI3CglwYXJlbnRhZ2UYBCABKA4yHy5ncnVzLm1vZGVscy5wZWRpZ3JlZS5QYXJlbnRhZ2VIAYgBARI1CghhZG9wdGlvbhgFIAEoDjIeLmdydXMubW9kZWxzLnBlZGlncmVlLkFkb3B0aW9uSAKIAQE6drpIcxpxCh1vZmZzcHJpbmcudHdpbl90eXBlX2lmZl9ncm91cBIhdHdpbl90eXBlIHNldCBpZmYgaW4gYSB0d2luIGdyb3VwGi1oYXModGhpcy50d2luX2dyb3VwKSA9PSAodGhpcy50d2luX3R5cGUgIT0gMClCDQoLX3R3aW5fZ3JvdXBCDAoKX3BhcmVudGFnZUILCglfYWRvcHRpb24ilQEKBUxhYmVsEhUKBHRleHQYASABKAlCB7pIBHICEAESLQoEa2luZBgCIAEoDjIfLmdydXMubW9kZWxzLnBlZGlncmVlLkxhYmVsS2luZDpGukhDGkEKFGxhYmVsLmtpbmRfc3BlY2lmaWVkEhlraW5kIG11c3QgYmUgYSByZWFsIHZhbHVlGg50aGlzLmtpbmQgIT0gMCLMAgoIUGVkaWdyZWUSDwoCaWQYASABKAlIAIgBARIrCgZsYWJlbHMYAiADKAsyGy5ncnVzLm1vZGVscy5wZWRpZ3JlZS5MYWJlbBI/CgtpbmRpdmlkdWFscxgDIAMoCzIgLmdydXMubW9kZWxzLnBlZGlncmVlLkluZGl2aWR1YWxCCLpIBZIBAggBEi0KB21hdGluZ3MYBCADKAsyHC5ncnVzLm1vZGVscy5wZWRpZ3JlZS5NYXRpbmcSOQoKcHJvdmVuYW5jZRgFIAEoCzIgLmdydXMubW9kZWxzLnBlZGlncmVlLlByb3ZlbmFuY2VIAYgBARIQCghldmlkZW5jZRgGIAMoCRIvCghzdXBwb3J0cxgHIAMoCzIdLmdydXMubW9kZWxzLnBlZGlncmVlLlN1cHBvcnRCBQoDX2lkQg0KC19wcm92ZW5hbmNlIsECCgtQZWRpZ3JlZVNldBIxCglwZWRpZ3JlZXMYASADKAsyHi5ncnVzLm1vZGVscy5wZWRpZ3JlZS5QZWRpZ3JlZRI5Cgpwcm92ZW5hbmNlGAIgASgLMiAuZ3J1cy5tb2RlbHMucGVkaWdyZWUuUHJvdmVuYW5jZUgAiAEBEjEKCWNpdGF0aW9ucxgDIAMoCzIeLmdydXMubW9kZWxzLnBlZGlncmVlLkNpdGF0aW9uEhAKCGV2aWRlbmNlGAQgAygJEjMKC2tleV9lbnRyaWVzGAcgAygLMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuS2V5RW50cnkSKQoEbG9jaRgGIAMoCzIbLmdydXMubW9kZWxzLnBlZGlncmVlLkxvY3VzQg0KC19wcm92ZW5hbmNlSgQIBRAGUgpjb25kaXRpb25zIo8BCghDaXRhdGlvbhITCgJpZBgBIAEoCUIHukgEcgIQARITCgtkb2N1bWVudF9pZBgCIAEoCRIYCgVxdW90ZRgDIAEoCUIHukgEcgIQAUgAEi4KBnJlZ2lvbhgEIAEoCzIcLmdydXMubW9kZWxzLnBlZGlncmVlLlJlZ2lvbkgAQg8KBmFuY2hvchIFukgCCAEiugEKBlJlZ2lvbhIVCgRwYWdlGAEgASgFQge6SAQaAigAEgoKAngwGAIgASgCEgoKAnkwGAMgASgCEgoKAngxGAQgASgCEgoKAnkxGAUgASgCOmm6SGYaZAoWcmVnaW9uLnBvc2l0aXZlX2V4dGVudBIiYSByZWdpb24gbmVlZHMgeDEgPiB4MCBhbmQgeTEgPiB5MBomdGhpcy54MSA+IHRoaXMueDAgJiYgdGhpcy55MSA+IHRoaXMueTAijwIKB1N1cHBvcnQSGwoJY2l0YXRpb25zGAEgAygJQgi6SAWSAQIIARIWCgVmaWVsZBgCIAEoCUIHukgEcgIQARIcCgZrZXlfaWQYCCABKAlCB7pIBHICEAFIAIgBARIzCgtpbmRpdmlkdWFscxgEIAMoCzIeLmdydXMubW9kZWxzLnBlZGlncmVlLlBvc2l0aW9uEjAKB21hdGluZ3MYBSADKAsyHy5ncnVzLm1vZGVscy5wZWRpZ3JlZS5NYXRpbmdSZWYSGgoEbG9jaRgHIAMoCUIMukgJkgEGIgRyAhABQgkKB19rZXlfaWRKBAgDEARKBAgGEAdSCWNvbmRpdGlvblIMY29uZGl0aW9uX2lkIpcBCglNYXRpbmdSZWYSNgoJcGFydG5lcl9hGAEgASgLMh4uZ3J1cy5tb2RlbHMucGVkaWdyZWUuUG9zaXRpb25IAIgBARI2CglwYXJ0bmVyX2IYAiABKAsyHi5ncnVzLm1vZGVscy5wZWRpZ3JlZS5Qb3NpdGlvbkgBiAEBQgwKCl9wYXJ0bmVyX2FCDAoKX3BhcnRuZXJfYiKuAQoKUHJvdmVuYW5jZRIXCgpmaWd1cmVfdXJpGAEgASgJSACIAQESEAoDZG9pGAIgASgJSAGIAQESHAoPZXh0cmFjdG9yX21vZGVsGAMgASgJSAKIAQESGgoNc291cmNlX2Zvcm1hdBgEIAEoCUgDiAEBQg0KC19maWd1cmVfdXJpQgYKBF9kb2lCEgoQX2V4dHJhY3Rvcl9tb2RlbEIQCg5fc291cmNlX2Zvcm1hdCpsCgZHZW5kZXISFgoSR0VOREVSX1VOU1BFQ0lGSUVEEAASDgoKR0VOREVSX01BThABEhAKDEdFTkRFUl9XT01BThACEhQKEEdFTkRFUl9OT05CSU5BUlkQAxISCg5HRU5ERVJfVU5LTk9XThAEKqMBChJTZXhBc3NpZ25lZEF0QmlydGgSJQohU0VYX0FTU0lHTkVEX0FUX0JJUlRIX1VOU1BFQ0lGSUVEEAASHgoaU0VYX0FTU0lHTkVEX0FUX0JJUlRIX01BTEUQARIgChxTRVhfQVNTSUdORURfQVRfQklSVEhfRkVNQUxFEAISJAogU0VYX0FTU0lHTkVEX0FUX0JJUlRIX1VOQVNTSUdORUQQAyrUAQoPQ29uZGl0aW9uU3RhdHVzEiAKHENPTkRJVElPTl9TVEFUVVNfVU5TUEVDSUZJRUQQABIfChtDT05ESVRJT05fU1RBVFVTX1VOQUZGRUNURUQQARIdChlDT05ESVRJT05fU1RBVFVTX0FGRkVDVEVEEAISHAoYQ09ORElUSU9OX1NUQVRVU19DQVJSSUVSEAMSIwofQ09ORElUSU9OX1NUQVRVU19QUkVTWU1QVE9NQVRJQxAEEhwKGENPTkRJVElPTl9TVEFUVVNfVU5LTk9XThAFKvMBCgtJbmhlcml0YW5jZRIbChdJTkhFUklUQU5DRV9VTlNQRUNJRklFRBAAEiIKHklOSEVSSVRBTkNFX0FVVE9TT01BTF9ET01JTkFOVBABEiMKH0lOSEVSSVRBTkNFX0FVVE9TT01BTF9SRUNFU1NJVkUQAhIhCh1JTkhFUklUQU5DRV9YX0xJTktFRF9ET01JTkFOVBADEiIKHklOSEVSSVRBTkNFX1hfTElOS0VEX1JFQ0VTU0lWRRAEEhgKFElOSEVSSVRBTkNFX1lfTElOS0VEEAUSHQoZSU5IRVJJVEFOQ0VfTUlUT0NIT05EUklBTBAGKpECChNSZXByb2R1Y3RpdmVPdXRjb21lEiQKIFJFUFJPRFVDVElWRV9PVVRDT01FX1VOU1BFQ0lGSUVEEAASHQoZUkVQUk9EVUNUSVZFX09VVENPTUVfTElWRRABEiIKHlJFUFJPRFVDVElWRV9PVVRDT01FX1BSRUdOQU5DWRACEiMKH1JFUFJPRFVDVElWRV9PVVRDT01FX1NUSUxMQklSVEgQAxIkCiBSRVBST0RVQ1RJVkVfT1VUQ09NRV9NSVNDQVJSSUFHRRAEEiQKIFJFUFJPRFVDVElWRV9PVVRDT01FX1RFUk1JTkFUSU9OEAUSIAocUkVQUk9EVUNUSVZFX09VVENPTUVfRUNUT1BJQxAGKqABChBSZXByb2R1Y3RpdmVSb2xlEiEKHVJFUFJPRFVDVElWRV9ST0xFX1VOU1BFQ0lGSUVEEAASGgoWUkVQUk9EVUNUSVZFX1JPTEVfU0VMRhABEiIKHlJFUFJPRFVDVElWRV9ST0xFX0dBTUVURV9ET05PUhACEikKJVJFUFJPRFVDVElWRV9ST0xFX0dFU1RBVElPTkFMX0NBUlJJRVIQAyqEAwoOQW5ub3RhdGlvblR5cGUSHwobQU5OT1RBVElPTl9UWVBFX1VOU1BFQ0lGSUVEEAASHAoYQU5OT1RBVElPTl9UWVBFX0dFTk9UWVBFEAESGwoXQU5OT1RBVElPTl9UWVBFX1ZBUklBTlQQAhIdChlBTk5PVEFUSU9OX1RZUEVfUEhFTk9UWVBFEAMSFwoTQU5OT1RBVElPTl9UWVBFX0FHRRAEEiMKH0FOTk9UQVRJT05fVFlQRV9HRVNUQVRJT05BTF9BR0UQBRIdChlBTk5PVEFUSU9OX1RZUEVfS0FSWU9UWVBFEAYSHwobQU5OT1RBVElPTl9UWVBFX01FQVNVUkVNRU5UEAcSGwoXQU5OT1RBVElPTl9UWVBFX1BST05PVU4QCBIfChtBTk5PVEFUSU9OX1RZUEVfQ0hPU0VOX05BTUUQCRIZChVBTk5PVEFUSU9OX1RZUEVfT1RIRVIQChIgChxBTk5PVEFUSU9OX1RZUEVfQUdFX0FUX0RFQVRIEAsqhgIKEElkZW50aWZpZXJTY2hlbWUSIQodSURFTlRJRklFUl9TQ0hFTUVfVU5TUEVDSUZJRUQQABIaChZJREVOVElGSUVSX1NDSEVNRV9IR1ZTEAESGgoWSURFTlRJRklFUl9TQ0hFTUVfUlNJRBACEh0KGUlERU5USUZJRVJfU0NIRU1FX0NMSU5WQVIQAxIkCiBJREVOVElGSUVSX1NDSEVNRV9DTElOR0VOX0FMTEVMRRAEEhoKFklERU5USUZJRVJfU0NIRU1FX1NQREkQBRIZChVJREVOVElGSUVSX1NDSEVNRV9WUlMQBhIbChdJREVOVElGSUVSX1NDSEVNRV9PVEhFUhAHKp8BChJSZWxhdGlvbnNoaXBTdGF0dXMSIwofUkVMQVRJT05TSElQX1NUQVRVU19VTlNQRUNJRklFRBAAEh8KG1JFTEFUSU9OU0hJUF9TVEFUVVNfQ1VSUkVOVBABEiEKHVJFTEFUSU9OU0hJUF9TVEFUVVNfU0VQQVJBVEVEEAISIAocUkVMQVRJT05TSElQX1NUQVRVU19ESVZPUkNFRBADKoIBCg1DaGlsZGxlc3NuZXNzEh0KGUNISUxETEVTU05FU1NfVU5TUEVDSUZJRUQQABIWChJDSElMRExFU1NORVNTX05PTkUQARIbChdDSElMRExFU1NORVNTX0JZX0NIT0lDRRACEh0KGUNISUxETEVTU05FU1NfSU5GRVJUSUxJVFkQAyqiAQoMWnlnb3NpdHlUeXBlEh0KGVpZR09TSVRZX1RZUEVfVU5TUEVDSUZJRUQQABIdChlaWUdPU0lUWV9UWVBFX01PTk9aWUdPVElDEAESGwoXWllHT1NJVFlfVFlQRV9ESVpZR09USUMQAhIZChVaWUdPU0lUWV9UWVBFX1VOS05PV04QAxIcChhaWUdPU0lUWV9UWVBFX1RSSVpZR09USUMQBCptCglQYXJlbnRhZ2USGQoVUEFSRU5UQUdFX1VOU1BFQ0lGSUVEEAASGAoUUEFSRU5UQUdFX0JJT0xPR0lDQUwQARIWChJQQVJFTlRBR0VfQURPUFRJVkUQAhITCg9QQVJFTlRBR0VfRE9OT1IQAyp0CghBZG9wdGlvbhIYChRBRE9QVElPTl9VTlNQRUNJRklFRBAAEhEKDUFET1BUSU9OX05PTkUQARIPCgtBRE9QVElPTl9JThACEhAKDEFET1BUSU9OX09VVBADEhgKFEFET1BUSU9OX0JZX1JFTEFUSVZFEAQqmQEKCUxhYmVsS2luZBIaChZMQUJFTF9LSU5EX1VOU1BFQ0lGSUVEEAASFQoRTEFCRUxfS0lORF9GQU1JTFkQARIUChBMQUJFTF9LSU5EX1BBTkVMEAISEwoPTEFCRUxfS0lORF9HRU5FEAMSGAoUTEFCRUxfS0lORF9QSEVOT1RZUEUQBBIUChBMQUJFTF9LSU5EX09USEVSEAViBnByb3RvMw", [file_buf_validate_validate]);
 
 /**
  * ── Identity / reference key ────────────────────────────────────────────────────────────────────
@@ -61,12 +62,12 @@ export const PositionSchema: GenMessage<Position> = /*@__PURE__*/
   messageDesc(file_grus_models_pedigree, 0);
 
 /**
- * A condition, declared once per set (PedigreeSet.conditions) and referenced by id from each person's entry
- * (docs/design/ir.md, "Conditions are declared once, by id").
+ * One entry of the figure's key, declared once per set (PedigreeSet.key_entries) and referenced by id. A figure with no
+ * key has an implied one: the unnamed phenotype, an entry with empty text ("filled = affected").
  *
- * @generated from message grus.models.pedigree.ConditionDef
+ * @generated from message grus.models.pedigree.KeyEntry
  */
-export type ConditionDef = Message<"grus.models.pedigree.ConditionDef"> & {
+export type KeyEntry = Message<"grus.models.pedigree.KeyEntry"> & {
   /**
    * local ("k1"), unique in the set
    *
@@ -75,44 +76,155 @@ export type ConditionDef = Message<"grus.models.pedigree.ConditionDef"> & {
   id: string;
 
   /**
-   * as printed, e.g. "cystic fibrosis"; "" = the figure's sole, unnamed one
+   * as printed in the key, unique in the set; "" only for the unnamed
    *
-   * @generated from field: string name = 2;
+   * @generated from field: string text = 2;
    */
-  name: string;
+  text: string;
 
   /**
-   * absent = UNSPECIFIED; recorded when the figure states it, never inferred
+   * phenotype ("filled = affected")
    *
-   * @generated from field: optional grus.models.pedigree.Inheritance inheritance = 3;
+   * @generated from oneof grus.models.pedigree.KeyEntry.denotes
    */
-  inheritance?: Inheritance | undefined;
+  denotes: {
+    /**
+     * a disease, trait or finding, named by `text`; marked with a status or grade
+     *
+     * @generated from field: grus.models.pedigree.Phenotype phenotype = 3;
+     */
+    value: Phenotype;
+    case: "phenotype";
+  } | {
+    /**
+     * never marked: a person shows it when their genotype matches
+     *
+     * @generated from field: grus.models.pedigree.GenotypePattern genotype = 4;
+     */
+    value: GenotypePattern;
+    case: "genotype";
+  } | {
+    /**
+     * neither: "Control", "examined"; `text` is all it says
+     *
+     * @generated from field: grus.models.pedigree.Other other = 5;
+     */
+    value: Other;
+    case: "other";
+  } | { case: undefined; value?: undefined };
 };
 
 /**
- * Describes the message grus.models.pedigree.ConditionDef.
- * Use `create(ConditionDefSchema)` to create a new message.
+ * Describes the message grus.models.pedigree.KeyEntry.
+ * Use `create(KeyEntrySchema)` to create a new message.
  */
-export const ConditionDefSchema: GenMessage<ConditionDef> = /*@__PURE__*/
+export const KeyEntrySchema: GenMessage<KeyEntry> = /*@__PURE__*/
   messageDesc(file_grus_models_pedigree, 1);
 
 /**
- * A person's entry for one declared condition: which condition, and what is true of this person.
- *
- * @generated from message grus.models.pedigree.Condition
+ * @generated from message grus.models.pedigree.Phenotype
  */
-export type Condition = Message<"grus.models.pedigree.Condition"> & {
+export type Phenotype = Message<"grus.models.pedigree.Phenotype"> & {
   /**
-   * a ConditionDef id in the set
+   * absent = UNSPECIFIED; recorded when the figure states it, never inferred
    *
-   * @generated from field: string condition_id = 5;
+   * @generated from field: optional grus.models.pedigree.Inheritance inheritance = 1;
    */
-  conditionId: string;
+  inheritance?: Inheritance | undefined;
 
   /**
-   * @generated from field: grus.models.pedigree.ConditionStatus status = 2;
+   * Grades the key defines beyond the standard statuses, as printed ("suspected from history, not examined"); a
+   * person's mark names one in place of a status.
+   *
+   * @generated from field: repeated string grades = 2;
    */
-  status: ConditionStatus;
+  grades: string[];
+};
+
+/**
+ * Describes the message grus.models.pedigree.Phenotype.
+ * Use `create(PhenotypeSchema)` to create a new message.
+ */
+export const PhenotypeSchema: GenMessage<Phenotype> = /*@__PURE__*/
+  messageDesc(file_grus_models_pedigree, 2);
+
+/**
+ * A genotype at a declared locus, as a key states it. With copies stated it matches a genotype of the same copies;
+ * with copies_unstated, any genotype carrying every listed allele.
+ *
+ * @generated from message grus.models.pedigree.GenotypePattern
+ */
+export type GenotypePattern = Message<"grus.models.pedigree.GenotypePattern"> & {
+  /**
+   * @generated from field: string locus_id = 1;
+   */
+  locusId: string;
+
+  /**
+   * symbols of the locus's alleles
+   *
+   * @generated from field: repeated string alleles = 2;
+   */
+  alleles: string[];
+
+  /**
+   * @generated from field: bool copies_unstated = 3;
+   */
+  copiesUnstated: boolean;
+};
+
+/**
+ * Describes the message grus.models.pedigree.GenotypePattern.
+ * Use `create(GenotypePatternSchema)` to create a new message.
+ */
+export const GenotypePatternSchema: GenMessage<GenotypePattern> = /*@__PURE__*/
+  messageDesc(file_grus_models_pedigree, 3);
+
+/**
+ * @generated from message grus.models.pedigree.Other
+ */
+export type Other = Message<"grus.models.pedigree.Other"> & {
+};
+
+/**
+ * Describes the message grus.models.pedigree.Other.
+ * Use `create(OtherSchema)` to create a new message.
+ */
+export const OtherSchema: GenMessage<Other> = /*@__PURE__*/
+  messageDesc(file_grus_models_pedigree, 4);
+
+/**
+ * A person's reference to a phenotype or other key entry their symbol shows. A phenotype mark says what is true of the
+ * person: a standard status or one of the entry's grades. An other mark says only that the person shows the entry.
+ *
+ * @generated from message grus.models.pedigree.Mark
+ */
+export type Mark = Message<"grus.models.pedigree.Mark"> & {
+  /**
+   * a phenotype or other KeyEntry id in the set
+   *
+   * @generated from field: string key_id = 1;
+   */
+  keyId: string;
+
+  /**
+   * @generated from oneof grus.models.pedigree.Mark.state
+   */
+  state: {
+    /**
+     * @generated from field: grus.models.pedigree.ConditionStatus status = 2;
+     */
+    value: ConditionStatus;
+    case: "status";
+  } | {
+    /**
+     * one of the phenotype's grades
+     *
+     * @generated from field: string grade = 3;
+     */
+    value: string;
+    case: "grade";
+  } | { case: undefined; value?: undefined };
 
   /**
    * as-drawn age at onset/diagnosis for THIS person, verbatim
@@ -123,11 +235,11 @@ export type Condition = Message<"grus.models.pedigree.Condition"> & {
 };
 
 /**
- * Describes the message grus.models.pedigree.Condition.
- * Use `create(ConditionSchema)` to create a new message.
+ * Describes the message grus.models.pedigree.Mark.
+ * Use `create(MarkSchema)` to create a new message.
  */
-export const ConditionSchema: GenMessage<Condition> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 2);
+export const MarkSchema: GenMessage<Mark> = /*@__PURE__*/
+  messageDesc(file_grus_models_pedigree, 5);
 
 /**
  * @generated from message grus.models.pedigree.Individual
@@ -158,13 +270,16 @@ export type Individual = Message<"grus.models.pedigree.Individual"> & {
   sexAssignedAtBirth?: SexAssignedAtBirth | undefined;
 
   /**
-   * empty = status not indicated
+   * phenotype and other entries the symbol shows (a
    *
-   * @generated from field: repeated grus.models.pedigree.Condition conditions = 5;
+   * @generated from field: repeated grus.models.pedigree.Mark marks = 17;
    */
-  conditions: Condition[];
+  marks: Mark[];
 
   /**
+   * genotype entry shows through genotypes); empty =
+   * none marked, status not indicated
+   *
    * slash
    *
    * @generated from field: bool deceased = 6;
@@ -249,7 +364,7 @@ export type Individual = Message<"grus.models.pedigree.Individual"> & {
  * Use `create(IndividualSchema)` to create a new message.
  */
 export const IndividualSchema: GenMessage<Individual> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 3);
+  messageDesc(file_grus_models_pedigree, 6);
 
 /**
  * @generated from message grus.models.pedigree.Annotation
@@ -279,7 +394,7 @@ export type Annotation = Message<"grus.models.pedigree.Annotation"> & {
  * Use `create(AnnotationSchema)` to create a new message.
  */
 export const AnnotationSchema: GenMessage<Annotation> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 4);
+  messageDesc(file_grus_models_pedigree, 7);
 
 /**
  * A resolvable name for an allele, as printed; normalising it is a consumer's job.
@@ -303,7 +418,7 @@ export type Identifier = Message<"grus.models.pedigree.Identifier"> & {
  * Use `create(IdentifierSchema)` to create a new message.
  */
 export const IdentifierSchema: GenMessage<Identifier> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 5);
+  messageDesc(file_grus_models_pedigree, 8);
 
 /**
  * One allele at a locus: the symbol genotypes use, and what the source says it stands for. One allele may be several
@@ -346,7 +461,7 @@ export type Allele = Message<"grus.models.pedigree.Allele"> & {
  * Use `create(AlleleSchema)` to create a new message.
  */
 export const AlleleSchema: GenMessage<Allele> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 6);
+  messageDesc(file_grus_models_pedigree, 9);
 
 /**
  * A place some people are genotyped at: one variant, a gene with several, or a marker. Declared once per set
@@ -389,7 +504,7 @@ export type Locus = Message<"grus.models.pedigree.Locus"> & {
  * Use `create(LocusSchema)` to create a new message.
  */
 export const LocusSchema: GenMessage<Locus> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 7);
+  messageDesc(file_grus_models_pedigree, 10);
 
 /**
  * One person's genotype at one locus. `alleles` are copies, so zygosity is how often a symbol repeats: [M, M]
@@ -417,6 +532,14 @@ export type Genotype = Message<"grus.models.pedigree.Genotype"> & {
    * @generated from field: optional string phase_set = 3;
    */
   phaseSet?: string | undefined;
+
+  /**
+   * The source says the person carries each of `alleles` but not how many copies: [M] is "carries M", not hemizygous.
+   * Each allele is listed once, and the genotype has no phase set.
+   *
+   * @generated from field: bool copies_unstated = 4;
+   */
+  copiesUnstated: boolean;
 };
 
 /**
@@ -424,7 +547,7 @@ export type Genotype = Message<"grus.models.pedigree.Genotype"> & {
  * Use `create(GenotypeSchema)` to create a new message.
  */
 export const GenotypeSchema: GenMessage<Genotype> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 8);
+  messageDesc(file_grus_models_pedigree, 11);
 
 /**
  * KIN codes (GA4GH Family History Relations Ontology) on the mating vocabulary, for a mechanical export:
@@ -490,7 +613,7 @@ export type Mating = Message<"grus.models.pedigree.Mating"> & {
  * Use `create(MatingSchema)` to create a new message.
  */
 export const MatingSchema: GenMessage<Mating> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 9);
+  messageDesc(file_grus_models_pedigree, 12);
 
 /**
  * @generated from message grus.models.pedigree.Offspring
@@ -533,7 +656,7 @@ export type Offspring = Message<"grus.models.pedigree.Offspring"> & {
  * Use `create(OffspringSchema)` to create a new message.
  */
 export const OffspringSchema: GenMessage<Offspring> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 10);
+  messageDesc(file_grus_models_pedigree, 13);
 
 /**
  * @generated from message grus.models.pedigree.Label
@@ -555,7 +678,7 @@ export type Label = Message<"grus.models.pedigree.Label"> & {
  * Use `create(LabelSchema)` to create a new message.
  */
 export const LabelSchema: GenMessage<Label> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 11);
+  messageDesc(file_grus_models_pedigree, 14);
 
 /**
  * @generated from message grus.models.pedigree.Pedigree
@@ -608,7 +731,7 @@ export type Pedigree = Message<"grus.models.pedigree.Pedigree"> & {
  * Use `create(PedigreeSchema)` to create a new message.
  */
 export const PedigreeSchema: GenMessage<Pedigree> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 12);
+  messageDesc(file_grus_models_pedigree, 15);
 
 /**
  * @generated from message grus.models.pedigree.PedigreeSet
@@ -639,11 +762,11 @@ export type PedigreeSet = Message<"grus.models.pedigree.PedigreeSet"> & {
   evidence: string[];
 
   /**
-   * every condition the set's entries reference, once
+   * the figure's key: every entry someone shows, once
    *
-   * @generated from field: repeated grus.models.pedigree.ConditionDef conditions = 5;
+   * @generated from field: repeated grus.models.pedigree.KeyEntry key_entries = 7;
    */
-  conditions: ConditionDef[];
+  keyEntries: KeyEntry[];
 
   /**
    * every locus the set's genotypes reference, once
@@ -658,7 +781,7 @@ export type PedigreeSet = Message<"grus.models.pedigree.PedigreeSet"> & {
  * Use `create(PedigreeSetSchema)` to create a new message.
  */
 export const PedigreeSetSchema: GenMessage<PedigreeSet> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 13);
+  messageDesc(file_grus_models_pedigree, 16);
 
 /**
  * ── Citations: where the record came from (docs/design/ir.md) ───────────────────────────────────
@@ -712,7 +835,7 @@ export type Citation = Message<"grus.models.pedigree.Citation"> & {
  * Use `create(CitationSchema)` to create a new message.
  */
 export const CitationSchema: GenMessage<Citation> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 14);
+  messageDesc(file_grus_models_pedigree, 17);
 
 /**
  * An area of one page of the SOURCE (never of a rendering): page units, origin top left — PDF points on a PDF
@@ -754,7 +877,7 @@ export type Region = Message<"grus.models.pedigree.Region"> & {
  * Use `create(RegionSchema)` to create a new message.
  */
 export const RegionSchema: GenMessage<Region> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 15);
+  messageDesc(file_grus_models_pedigree, 18);
 
 /**
  * One kind of fact about some people, couples or the whole pedigree, and the citations that back it.
@@ -777,14 +900,14 @@ export type Support = Message<"grus.models.pedigree.Support"> & {
   field: string;
 
   /**
-   * a ConditionDef id, iff `field`
+   * a KeyEntry id, iff `field` starts "mark."
    *
-   * @generated from field: optional string condition_id = 6;
+   * @generated from field: optional string key_id = 8;
    */
-  conditionId?: string | undefined;
+  keyId?: string | undefined;
 
   /**
-   * starts "condition."
+   * or "key."
    *
    * scope; neither individuals nor matings = the whole pedigree
    *
@@ -813,7 +936,7 @@ export type Support = Message<"grus.models.pedigree.Support"> & {
  * Use `create(SupportSchema)` to create a new message.
  */
 export const SupportSchema: GenMessage<Support> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 16);
+  messageDesc(file_grus_models_pedigree, 19);
 
 /**
  * @generated from message grus.models.pedigree.MatingRef
@@ -835,7 +958,7 @@ export type MatingRef = Message<"grus.models.pedigree.MatingRef"> & {
  * Use `create(MatingRefSchema)` to create a new message.
  */
 export const MatingRefSchema: GenMessage<MatingRef> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 17);
+  messageDesc(file_grus_models_pedigree, 20);
 
 /**
  * harness metadata, never model-emitted (panel moved to Label)
@@ -871,7 +994,7 @@ export type Provenance = Message<"grus.models.pedigree.Provenance"> & {
  * Use `create(ProvenanceSchema)` to create a new message.
  */
 export const ProvenanceSchema: GenMessage<Provenance> = /*@__PURE__*/
-  messageDesc(file_grus_models_pedigree, 18);
+  messageDesc(file_grus_models_pedigree, 21);
 
 /**
  * ── Gender + sex assigned at birth (Bennett 2022 model) ─────────────────────────────────────────
@@ -965,10 +1088,9 @@ export const SexAssignedAtBirthSchema: GenEnum<SexAssignedAtBirth> = /*@__PURE__
   enumDesc(file_grus_models_pedigree, 1);
 
 /**
- * ── Conditions (affection + carrier, per condition) ─────────────────────────────────────────────
- * 2022 draws carrier by FILL (dot deprecated) and multiple conditions by PARTITIONING the symbol, so a
- * person's clinical status is a repeated per-condition list, not one enum. One Condition = one fill
- * region keyed to the legend.
+ * ── The key: what a person's marks mean (docs/design/ir.md, "The key") ───────────────────────────
+ * 2022 draws carrier by FILL (dot deprecated) and multiple conditions by PARTITIONING the symbol, so what a symbol shows
+ * is a repeated per-entry list, not one enum. One Mark = one fill region keyed to the legend.
  *
  * @generated from enum grus.models.pedigree.ConditionStatus
  */
@@ -1019,9 +1141,9 @@ export const ConditionStatusSchema: GenEnum<ConditionStatus> = /*@__PURE__*/
   enumDesc(file_grus_models_pedigree, 2);
 
 /**
- * Mode of inheritance of a condition, recorded only when the figure or legend states/draws it (not inferred
- * from the pedigree pattern — see the no-inference non-goal). Absent = UNSPECIFIED. A renderer MAY use it to
- * choose a carrier convention, but the glyph is a render option, not implied by this field.
+ * Mode of inheritance of a phenotype, recorded only when the figure or legend states/draws it (not inferred from the
+ * pedigree pattern — see the no-inference non-goal). Absent = UNSPECIFIED. A renderer MAY use it to choose a carrier
+ * convention, but the glyph is a render option, not implied by this field.
  *
  * @generated from enum grus.models.pedigree.Inheritance
  */
@@ -1261,7 +1383,7 @@ export const AnnotationTypeSchema: GenEnum<AnnotationType> = /*@__PURE__*/
 /**
  * ── Loci, alleles and genotypes (docs/design/ir.md, "Genotypes") ───────────────────────────────
  * A genotype table: rows are people, columns are loci, cells are genotypes. Loci are declared once per set, like
- * conditions, and referenced by id; a person carries a genotype at some of them. Recorded as the source states
+ * key entries, and referenced by id; a person carries a genotype at some of them. Recorded as the source states
  * them: an untested person has no genotype, an obligate carrier is not filled in.
  *
  * @generated from enum grus.models.pedigree.IdentifierScheme

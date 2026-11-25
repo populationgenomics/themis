@@ -13,13 +13,14 @@ import re
 from collections.abc import Mapping, Sequence
 
 import anthropic
+import jsonschema
 import PIL.Image
 import protovalidate
 import pytest
 from grus import ir
 from grus.models import pedigree_pb2
 
-from themis.litcache import claude_images, ocr, pdf, pedigree_extract
+from themis.litcache import claude_images, ocr, pdf, pedigree_extract, pedigree_schema
 from themis.testing import anthropic_sse
 
 _PDF = (pathlib.Path(__file__).resolve().parents[1] / 'fixtures' / 'litcache' / 'oa' / 'source.pdf').read_bytes()
@@ -29,14 +30,14 @@ _FIGURE_LABEL_RE = re.compile(r'Transcribe the pedigrees of "Figure (\d+)"')
 
 
 def _answer_set(*, page: int = 1) -> dict[str, object]:
-    condition: dict[str, object] = {'id': 'k1', 'name': 'retinitis pigmentosa'}
-    supports: list[dict[str, object]] = [{'field': 'condition.name', 'condition_id': 'k1', 'citations': ['c2']}]
+    entry: dict[str, object] = {'id': 'k1', 'text': 'retinitis pigmentosa', 'phenotype': {}}
+    supports: list[dict[str, object]] = [{'field': 'key.text', 'key_id': 'k1', 'citations': ['c2']}]
     citations: list[dict[str, object]] = [
         {'id': 'c1', 'region': {'page': page, 'x0': 10, 'y0': 20, 'x1': 200, 'y1': 150}},
         {'id': 'c2', 'quote': 'retinitis pigmentosa'},
     ]
     return {
-        'conditions': [condition],
+        'key_entries': [entry],
         'pedigrees': [
             {
                 'individuals': [
@@ -47,7 +48,7 @@ def _answer_set(*, page: int = 1) -> dict[str, object]:
                         'index': 1,
                         'gender': 'GENDER_WOMAN',
                         'proband': True,
-                        'conditions': [{'condition_id': 'k1', 'status': 'CONDITION_STATUS_AFFECTED'}],
+                        'marks': [{'key_id': 'k1', 'status': 'CONDITION_STATUS_AFFECTED'}],
                     },
                 ],
                 'matings': [
@@ -277,6 +278,40 @@ def test_each_figure_is_its_own_set_and_one_symbol_may_mean_different_variants_i
         assert len(_proband(one.pedigrees[0]).genotypes) == 1
         ir.validate_set(one)
     assert names == ['c.123A>G', 'c.800del']
+
+
+def _every_kind_of_key_entry() -> dict[str, object]:
+    """An answer whose key has a graded phenotype, a genotype at the proband's locus and an other entry, each shown."""
+    answer = _genotyped(_answer_set())
+    answer['key_entries'] = [
+        {'id': 'k1', 'text': 'retinitis pigmentosa', 'phenotype': {'grades': ['suspected, not examined']}},
+        {'id': 'k2', 'text': 'c.123A>G heterozygous', 'genotype': {'locus_id': 'l1', 'alleles': ['M', '+']}},
+        {'id': 'k3', 'text': 'examined', 'other': {}},
+    ]
+    pedigrees = answer['pedigrees']
+    assert isinstance(pedigrees, list)
+    individuals = pedigrees[0]['individuals']
+    individuals[1]['marks'] = [{'key_id': 'k1', 'grade': 'suspected, not examined'}]
+    individuals[2]['marks'] = [
+        {'key_id': 'k1', 'status': 'CONDITION_STATUS_AFFECTED'},
+        {'key_id': 'k3'},
+    ]
+    return answer
+
+
+def test_an_answer_with_every_kind_of_key_entry_meets_the_schema_the_model_is_given() -> None:
+    jsonschema.validate(_every_kind_of_key_entry(), pedigree_schema.pedigree_set_schema())
+
+
+def test_a_graded_phenotype_a_genotype_entry_and_an_other_entry_are_kept_in_the_figure_s_set() -> None:
+    reading = _read(anthropic_sse.Harness([_answer(_every_kind_of_key_entry())]))
+
+    one = _only(reading)
+    kinds = {e.text: e.WhichOneof('denotes') for e in one.key_entries}
+    assert kinds == {'retinitis pigmentosa': 'phenotype', 'c.123A>G heterozygous': 'genotype', 'examined': 'other'}
+    mother = next(i for i in one.pedigrees[0].individuals if (i.generation, i.index) == (1, 2))
+    assert [(m.key_id, m.grade) for m in mother.marks] == [('k1', 'suspected, not examined')]
+    assert sorted(m.key_id for m in _proband(one.pedigrees[0]).marks) == ['k1', 'k3']
 
 
 def test_a_figure_read_with_no_pedigree_on_it_is_recorded_with_an_empty_set() -> None:

@@ -2,7 +2,7 @@
 // the text form, not just render round-trip. Covers the full Bennett/NSGC concept space (2008 + 2022),
 // even where the extraction prompt does not yet emit a field and the renderer does not yet draw it.
 //
-// Meaning-only: WHO is in the pedigree, their gender/clinical status, and how they relate — never
+// Meaning-only: WHO is in the pedigree, their gender, what their symbols show, and how they relate — never
 // geometry. The only semantic horizontal ordering is sibling birth order (Mating.offspring order).
 //
 // Referential integrity (loader-enforced, cross-message; protovalidate covers only field-local rules):
@@ -10,8 +10,9 @@
 // within a Pedigree; a mating's two partners are distinct; offspring exist; acyclic for tier-1 render.
 // Citations (optional provenance) are checked there too: unique ids, every reference resolves, a Support's
 // field on the closed path list, its scope in the pedigree.
-// Conditions are declared once per set and referenced by id: every id resolves, declarations are unique and
-// each is referenced, and no person has two entries for one condition.
+// Key entries are declared once per set and referenced by id: every id resolves, ids and texts are unique, each entry
+// is shown by someone, a person marks an entry at most once and never a genotype entry, and a mark's grade is one its
+// phenotype declares.
 // Loci are declared the same way: ids are unique, a named locus's (gene, name) is declared once, each locus is
 // referenced; every genotype's locus resolves and each allele is one of its symbols, at most one genotype per person
 // per locus, genotypes sharing a phase set have equal ploidy, and an annotation's loci are ones its person has a
@@ -51,10 +52,9 @@ enum SexAssignedAtBirth {
   SEX_ASSIGNED_AT_BIRTH_UNASSIGNED = 3;  // UAAB
 }
 
-// ── Conditions (affection + carrier, per condition) ─────────────────────────────────────────────
-// 2022 draws carrier by FILL (dot deprecated) and multiple conditions by PARTITIONING the symbol, so a
-// person's clinical status is a repeated per-condition list, not one enum. One Condition = one fill
-// region keyed to the legend.
+// ── The key: what a person's marks mean (docs/design/ir.md, "The key") ───────────────────────────
+// 2022 draws carrier by FILL (dot deprecated) and multiple conditions by PARTITIONING the symbol, so what a symbol shows
+// is a repeated per-entry list, not one enum. One Mark = one fill region keyed to the legend.
 enum ConditionStatus {
   CONDITION_STATUS_UNSPECIFIED = 0;
   CONDITION_STATUS_UNAFFECTED = 1;
@@ -64,9 +64,9 @@ enum ConditionStatus {
   CONDITION_STATUS_PRESYMPTOMATIC = 4;  // unaffected now, may manifest (dominant) — vertical-line symbol
   CONDITION_STATUS_UNKNOWN = 5;         // "?" — not reported
 }
-// Mode of inheritance of a condition, recorded only when the figure or legend states/draws it (not inferred
-// from the pedigree pattern — see the no-inference non-goal). Absent = UNSPECIFIED. A renderer MAY use it to
-// choose a carrier convention, but the glyph is a render option, not implied by this field.
+// Mode of inheritance of a phenotype, recorded only when the figure or legend states/draws it (not inferred from the
+// pedigree pattern — see the no-inference non-goal). Absent = UNSPECIFIED. A renderer MAY use it to choose a carrier
+// convention, but the glyph is a render option, not implied by this field.
 enum Inheritance {
   INHERITANCE_UNSPECIFIED = 0;
   INHERITANCE_AUTOSOMAL_DOMINANT = 1;
@@ -76,24 +76,54 @@ enum Inheritance {
   INHERITANCE_Y_LINKED = 5;
   INHERITANCE_MITOCHONDRIAL = 6;
 }
-// A condition, declared once per set (PedigreeSet.conditions) and referenced by id from each person's entry
-// (docs/design/ir.md, "Conditions are declared once, by id").
-message ConditionDef {
+// One entry of the figure's key, declared once per set (PedigreeSet.key_entries) and referenced by id. A figure with no
+// key has an implied one: the unnamed phenotype, an entry with empty text ("filled = affected").
+message KeyEntry {
   string id = 1 [(buf.validate.field).string.min_len = 1];  // local ("k1"), unique in the set
-  string name = 2;                        // as printed, e.g. "cystic fibrosis"; "" = the figure's sole, unnamed one
-  optional Inheritance inheritance = 3;   // absent = UNSPECIFIED; recorded when the figure states it, never inferred
+  string text = 2;                        // as printed in the key, unique in the set; "" only for the unnamed
+                                          // phenotype ("filled = affected")
+  oneof denotes {
+    option (buf.validate.oneof).required = true;
+    Phenotype phenotype = 3;              // a disease, trait or finding, named by `text`; marked with a status or grade
+    GenotypePattern genotype = 4;         // never marked: a person shows it when their genotype matches
+    Other other = 5;                      // neither: "Control", "examined"; `text` is all it says
+  }
 }
-// A person's entry for one declared condition: which condition, and what is true of this person.
-message Condition {
+message Phenotype {
+  optional Inheritance inheritance = 1;   // absent = UNSPECIFIED; recorded when the figure states it, never inferred
+  // Grades the key defines beyond the standard statuses, as printed ("suspected from history, not examined"); a
+  // person's mark names one in place of a status.
+  repeated string grades = 2 [(buf.validate.field).repeated.items.string.min_len = 1];
+}
+// A genotype at a declared locus, as a key states it. With copies stated it matches a genotype of the same copies;
+// with copies_unstated, any genotype carrying every listed allele.
+message GenotypePattern {
   option (buf.validate.message).cel = {
-    id: "condition.status_specified", message: "status must be a real value", expression: "this.status != 0"
+    id: "genotype_pattern.unstated_copies_distinct",
+    message: "a pattern whose copies are not stated lists each allele once",
+    expression: "!this.copies_unstated || this.alleles.size() == 1 || this.alleles[0] != this.alleles[1]"
   };
-  reserved 1, 3;                          // were name and inheritance (pre-1.0): now on the ConditionDef
-  reserved "name", "inheritance";
-  string condition_id = 5 [(buf.validate.field).string.min_len = 1];  // a ConditionDef id in the set
-  ConditionStatus status = 2;
+  string locus_id = 1 [(buf.validate.field).string.min_len = 1];
+  repeated string alleles = 2 [(buf.validate.field).repeated = {
+    min_items: 1, max_items: 2, items: {string: {min_len: 1}}
+  }];                                     // symbols of the locus's alleles
+  bool copies_unstated = 3;
+}
+message Other {}
+// A person's reference to a phenotype or other key entry their symbol shows. A phenotype mark says what is true of the
+// person: a standard status or one of the entry's grades. An other mark says only that the person shows the entry.
+message Mark {
+  option (buf.validate.message).cel = {
+    id: "mark.status_specified", message: "status must be a real value",
+    expression: "!has(this.status) || this.status != 0"
+  };
+  string key_id = 1 [(buf.validate.field).string.min_len = 1];  // a phenotype or other KeyEntry id in the set
+  oneof state {
+    ConditionStatus status = 2;
+    string grade = 3 [(buf.validate.field).string.min_len = 1];  // one of the phenotype's grades
+  }
   optional string onset_age = 4;          // as-drawn age at onset/diagnosis for THIS person, verbatim
-                                          // ("42", "40s", "b.1975", "prenatal") — bound to the entry
+                                          // ("42", "40s", "b.1975", "prenatal") — bound to the mark
 }
 
 // ── Reproductive outcome / role (the node is a pregnancy/loss, or a donor/surrogate) ────────────
@@ -125,7 +155,11 @@ message Individual {
   int32 index = 2 [(buf.validate.field).int32.gte = 1];
   Gender gender = 3;
   optional SexAssignedAtBirth sex_assigned_at_birth = 4;       // AMAB/AFAB/UAAB when annotated
-  repeated Condition conditions = 5;                           // empty = status not indicated
+  reserved 5;                                                  // was conditions (0.4): now marks
+  reserved "conditions";
+  repeated Mark marks = 17;                                    // phenotype and other entries the symbol shows (a
+                                                               // genotype entry shows through genotypes); empty =
+                                                               // none marked, status not indicated
   bool deceased = 6;                                           // slash
   bool proband = 7;                                            // arrow + P
   bool consultand = 8;                                         // arrow, no P
@@ -170,7 +204,7 @@ message Annotation {
 
 // ── Loci, alleles and genotypes (docs/design/ir.md, "Genotypes") ───────────────────────────────
 // A genotype table: rows are people, columns are loci, cells are genotypes. Loci are declared once per set, like
-// conditions, and referenced by id; a person carries a genotype at some of them. Recorded as the source states
+// key entries, and referenced by id; a person carries a genotype at some of them. Recorded as the source states
 // them: an untested person has no genotype, an obligate carrier is not filled in.
 enum IdentifierScheme {
   IDENTIFIER_SCHEME_UNSPECIFIED = 0;
@@ -210,6 +244,14 @@ message Locus {
 // One person's genotype at one locus. `alleles` are copies, so zygosity is how often a symbol repeats: [M, M]
 // homozygous, [M, +] heterozygous, [M] hemizygous.
 message Genotype {
+  option (buf.validate.message).cel = {
+    id: "genotype.unstated_copies_unphased", message: "a genotype whose copies are not stated has no phase set",
+    expression: "!(this.copies_unstated && has(this.phase_set))"
+  };
+  option (buf.validate.message).cel = {
+    id: "genotype.unstated_copies_distinct", message: "a genotype whose copies are not stated lists each allele once",
+    expression: "!this.copies_unstated || this.alleles.size() == 1 || this.alleles[0] != this.alleles[1]"
+  };
   string locus_id = 1 [(buf.validate.field).string.min_len = 1];
   repeated string alleles = 2 [(buf.validate.field).repeated = {
     min_items: 1, max_items: 2, items: {string: {min_len: 1}}
@@ -217,6 +259,9 @@ message Genotype {
   // Stated phase, as VCF's PS: one person's genotypes sharing a phase set align slot by slot, slot i across them
   // being one haplotype — so l1 [M, +] and l2 [+, M] in one set are in trans. Absent = phase not stated.
   optional string phase_set = 3 [(buf.validate.field).string.min_len = 1];
+  // The source says the person carries each of `alleles` but not how many copies: [M] is "carries M", not hemizygous.
+  // Each allele is listed once, and the genotype has no phase set.
+  bool copies_unstated = 4;
 }
 
 // ── Matings ─────────────────────────────────────────────────────────────────────────────────────
@@ -276,7 +321,9 @@ message PedigreeSet {
   optional Provenance provenance = 2;
   repeated Citation citations = 3;                        // the normalised list evidence and supports refer to
   repeated string evidence = 4;                           // Citation ids: the figure as a whole, its caption
-  repeated ConditionDef conditions = 5;                   // every condition the set's entries reference, once
+  reserved 5;                                             // was conditions (0.4): now key_entries
+  reserved "conditions";
+  repeated KeyEntry key_entries = 7;                      // the figure's key: every entry someone shows, once
   repeated Locus loci = 6;                                // every locus the set's genotypes reference, once
 }
 
@@ -313,8 +360,10 @@ message Support {
   string field = 2 [(buf.validate.field).string.min_len = 1];  // a path into the IR, from the loader's closed list
   reserved 3;                         // was condition, by name (pre-1.0)
   reserved "condition";
-  optional string condition_id = 6 [(buf.validate.field).string.min_len = 1];  // a ConditionDef id, iff `field`
-                                      // starts "condition."
+  reserved 6;                         // was condition_id (0.4): now key_id
+  reserved "condition_id";
+  optional string key_id = 8 [(buf.validate.field).string.min_len = 1];  // a KeyEntry id, iff `field` starts "mark."
+                                      // or "key."
   repeated Position individuals = 4;  // scope; neither individuals nor matings = the whole pedigree
   repeated MatingRef matings = 5;     // a couple (or lone parent), by its partners' positions
   // Locus ids, non-empty iff `field` starts "genotype." or "locus."; several when one source states a fact across

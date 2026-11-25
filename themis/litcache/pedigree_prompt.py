@@ -1,10 +1,10 @@
 """What the pedigree reader is told: grus's extraction prompt, its page, zoom and citation addenda, and genotypes.
 
-Folded in from grus's internal extraction work: the extraction prompt at version 13 and the page addenda at version
-6, the versions grus's reading ladder measured. Themis changes them in one way: genotypes the figure, its legend or
-the paper states are recorded as grus's genotype table (`GENOTYPE_ADDENDUM`), so the reader is also given the
-paper's checked variants and the lines that print them. Every text here is part of the extraction's harness
-version, so a change to one gives existing records work for a run that names the step.
+Derived from grus's internal extraction prompt and page addenda, and measured on grus's reading ladder and on paired
+readings of real figures. Genotypes the figure, its legend or the paper states are recorded as grus's genotype table
+(`GENOTYPE_ADDENDUM`), so the reader is also given the paper's checked variants and the lines that print them. Every
+text here is part of the extraction's harness version, so a change to one gives existing records work for a run
+that names the step.
 """
 
 from __future__ import annotations
@@ -41,38 +41,57 @@ GENDER + SEX (Bennett 2022):
 - `sex_assigned_at_birth` (AMAB -> SAB_MALE, AFAB -> SAB_FEMALE, UAAB -> SAB_UNASSIGNED): ONLY when the
   figure explicitly annotates it. Omit otherwise.
 
-CONDITIONS — declared ONCE, then referenced by id:
-- The answer's top-level `conditions` lists every condition the figure's symbols show, ONCE each, for all its
-  pedigrees together: `{id, name, inheritance}`. `id` is a short handle you choose ("k1", "k2", ... unique in the
-  answer). `name` is the condition as the legend, key or caption names it (a disease, OR a specific variant when
-  the halves distinguish alleles); leave it empty when nothing names it — the common "filled = affected" figure is
-  one declaration with an empty name. Two declarations never share a name.
+KEY — the figure's key, declared ONCE, then referenced by id:
+- The answer's top-level `key_entries` lists each entry of the figure's key that some person shows, ONCE for all
+  its pedigrees together: `{id, text}` and exactly one of `phenotype`, `genotype` or `other`. `id` is a short
+  handle you choose ("k1", "k2", ... unique in the answer, and never a citation's or locus's id). `text` is the
+  entry as the key, legend or caption prints it; two entries never share a text. A figure that keys nothing has one
+  phenotype entry: the common "filled = affected" figure.
+- What an entry stands for:
+  - `phenotype` — a disease, trait or finding ("hearing loss", "abnormal EEG"). `{inheritance, grades}`, both
+    optional. Its `text` names the condition itself, minimally and as a presence: "glaucoma", never "affected by
+    glaucoma", "glaucoma patients" or "no glaucoma". The status words a key adds are not part of the name: a key
+    that prints one phenotype on several lines, one per status ("Affected: cystic fibrosis", "Carrier: cystic
+    fibrosis"), shows one entry, "cystic fibrosis", and each person's mark gives the status. A key line that
+    gives only a status ("Affected", "Unaffected", "Carrier") names no phenotype. When the key names none, the
+    name comes from the caption or the paper's text where it says which condition this family's fills show
+    (quoted in a `key.text` support); otherwise the text is empty.
+  - `genotype` — carrying a variant or a genotype ("p.Arg256Cys", "mutation present", "homozygous c.123A>G").
+    `{locus_id, alleles, copies_unstated}`, the locus declared in `loci` (GENOTYPES). When the figure states the
+    copies, `alleles` lists each copy (["M", "M"] homozygous, ["M", "+"] heterozygous); otherwise `alleles` lists the
+    variant once with `copies_unstated: true`. The copies are stated only by words in the key, legend or text
+    ("heterozygous", "homozygous", "+/-"), or by a contrast the figure draws for the same variant: a half fill
+    beside a full fill reads as one copy against two. A half or quadrant fill on its own is the region of the
+    symbol that shows the entry, not a number of copies. A key that grades zygosity is two entries at one locus.
+  - `other: {}` — neither: "Control", "examined", "DNA available". Its `text` is all it says.
 - `inheritance`: set it ONLY when text in the figure, its legend or its caption STATES the mode for that
-  condition ("X-linked recessive", "autosomal dominant ...": AD / AR / XLD / XLR / Y-linked / mitochondrial).
+  phenotype ("X-linked recessive", "autosomal dominant ...": AD / AR / XLD / XLR / Y-linked / mitochondrial).
   Never infer it: not from the symbols, the pattern of affected relatives, "de novo", or what you know of the gene
   or disease. Omit it otherwise.
-- Declare only conditions some symbol shows; a declaration no symbol references is invalid.
+- `grades`: a phenotype's grades the key defines beyond the standard statuses below, each as printed ("suspected
+  from history, not examined").
+- Declare only entries some person shows; an entry no one shows is invalid.
 
-CLINICAL STATUS — each person's `conditions`, one entry per condition the symbol shows, `{condition_id, status}`,
-`condition_id` naming its declaration. A person has at most ONE entry per condition:
-- A fully filled / shaded symbol -> one entry with status CONDITION_STATUS_AFFECTED.
+WHAT A SYMBOL SHOWS — each person's `marks`, one per phenotype or other entry their symbol shows, `{key_id}`
+naming the entry, and for a phenotype exactly one of `status` or `grade`. A person has at most ONE mark per entry:
+- A fully filled / shaded symbol -> status CONDITION_STATUS_AFFECTED.
 - A symbol PARTITIONED into regions — quadrants, or a HALF / SECTION filled (NOT a small central dot) —
-  encodes one condition PER region. Emit one entry per filled region, each referencing the declaration of the
-  legend key that region maps to (a compound heterozygote whose two halves key to two variants references two
-  declarations; the sequence/segregation panels tell you which). Give each the region's own status — AFFECTED
-  for a solid disease region; CARRIER when the region marks carrying a variant (a heterozygous, clinically
-  unaffected parent). Do NOT collapse a partitioned symbol to a single AFFECTED, and do NOT reduce a keyed
-  half/section fill to a carrier of an UNNAMED condition — the region's legend name (the disease or variant it keys
-  to) is the load-bearing detail that distinguishes it from another carrier.
-- A carrier glyph (a central dot, a half-filled or hatched section, or a fill the legend keys to carrying) ->
-  CONDITION_STATUS_CARRIER. The glyph NEVER sets the declaration's `inheritance`: a central dot marks a carrier
-  of an autosomal or an X-linked condition alike (Bennett 2008), and a fill says nothing about the mode. Name
-  the condition only if the legend or caption does.
-- A vertical line through the symbol -> CONDITION_STATUS_PRESYMPTOMATIC. A "?" inside ->
-  CONDITION_STATUS_UNKNOWN.
-- An ordinary empty (unaffected) symbol needs NO conditions — omit the list.
+  shows one entry PER region. Emit one mark per filled region, each naming the entry the key maps that region to.
+  Do NOT collapse a partitioned symbol to a single mark.
+- A carrier glyph (a central dot, or a fill the key defines as carrying a phenotype) -> status
+  CONDITION_STATUS_CARRIER. The glyph NEVER sets `inheritance`: a central dot marks a carrier of an autosomal or an
+  X-linked condition alike (Bennett 2008), and a fill says nothing about the mode.
+- A vertical line through the symbol -> CONDITION_STATUS_PRESYMPTOMATIC. A "?" inside the symbol ->
+  CONDITION_STATUS_UNKNOWN. A "?" printed beside a symbol means what the legend says it means (often "not
+  tested"), not a status.
+- A fill the key defines as one of a phenotype's grades -> `grade`, that grade's text, and no status. Such a fill
+  is never CONDITION_STATUS_UNKNOWN, which is only the "?" inside a symbol.
+- An other entry is marked with `key_id` alone.
+- A genotype entry is NEVER marked: a person shows it through their genotype at its locus. A person whose symbol
+  carries a genotype entry's fill has a `genotypes` entry matching it (GENOTYPES).
+- An ordinary empty (unaffected) symbol needs NO marks — omit the list.
 
-OTHER PER-PERSON MARKS:
+OTHER PER-PERSON FACTS:
 - A diagonal slash through the symbol -> `deceased: true`. Look for it deliberately on EVERY symbol — a thin
   slash is easy to overlook and is clinically load-bearing; do not assume a person is living by default.
 - An arrow with "P" (always on an affected person) -> `proband: true`. A bare arrow: `proband: true` if it
@@ -130,8 +149,9 @@ RELATIONSHIPS:
   nothing below it, or a crossed/double-crossed descent line, marks infertility or childlessness.
 
 ENUMS — NEVER emit a `*_UNSPECIFIED` value; it is a sentinel. Every individual needs a real `gender`, every
-condition entry a real `status`. For an OPTIONAL field whose value is the ordinary default (a live individual, a
-biological/current/childless-none relationship), simply OMIT it rather than emitting the default member.
+phenotype mark a real `status` or a `grade`. For an OPTIONAL field whose value is the ordinary default (a live
+individual, a biological/current/childless-none relationship), simply OMIT it rather than emitting the default
+member.
 
 ENUMERATION — A FIGURE IS A SET OF PEDIGREES.
 Emit a `pedigrees` array with one entry per DISTINCT pedigree drawn:
@@ -141,15 +161,15 @@ Emit a `pedigrees` array with one entry per DISTINCT pedigree drawn:
   - LABEL_KIND_FAMILY: the family's name or number as printed ("Family 3", "DUH family", "CH0175").
   - LABEL_KIND_PANEL: the panel letter, only when the figure has several panels and this pedigree is one.
   - LABEL_KIND_GENE: a gene named for this pedigree ("FLNA").
-  - LABEL_KIND_PHENOTYPE: a condition's name as printed ("Leber congenital amaurosis"), the same text as the
-    `name` of the condition declaration it labels.
+  - LABEL_KIND_PHENOTYPE: a phenotype's name as printed ("Leber congenital amaurosis"), the same text as the
+    `text` of the phenotype key entry it labels.
   - LABEL_KIND_OTHER: another short title printed with the pedigree (an assay such as "WGS").
   Copy a printed title WHOLE even when it carries a variant ("Family B (c.797G>A)"), and keep its gene or
   phenotype as its own label too. Names from the legend or caption count ("the CH0175 family"). A label is a
   name, never a sentence: never copy a caption sentence, and an identifier the caption mentions that is not
   this pedigree's own name (a patient code such as "P03") is not a label.
 - A KEY drawn in the figure (sample symbols beside text, often boxed or set apart, e.g. "Affected: X",
-  "Carrier: Y") defines what each fill or pattern means. Use it to name conditions and statuses; its sample
+  "Carrier: Y") defines what each fill or pattern means: its entries are the `key_entries`. Its sample
   symbols are NOT individuals and never enter the pedigree.
 - Ignore non-pedigree panels. If the figure contains NO pedigree, emit an EMPTY `pedigrees` array; never
   invent a pedigree from a non-pedigree panel.
@@ -165,7 +185,7 @@ when that is another. Each page holds body text, one or more figures, and their 
 - Read the figure legend: it can define symbols, fills and panel identities that the figure itself does not.
 - A figure can continue from one page to the next. A family drawn across a page break is one pedigree.
 - The caption, the pages' body text and the lines of the paper given with its variants (before the pages) may
-  add facts the figure does not draw (a stillbirth, a condition's name, a stated mode of inheritance, who the
+  add facts the figure does not draw (a stillbirth, a key entry's text, a stated mode of inheritance, who the
   proband is), but only when the text clearly refers to this family and person, and only what it states:
   "de novo" does not make inheritance dominant, and a gene's usual mode is not a statement about this family.
   Every such fact needs a support quoting the text (CITING SOURCES). Text about other families, cohorts or
@@ -197,13 +217,12 @@ Say where each pedigree was read, and where any fact the figure does not draw ca
   ids.
 - Every pedigree's `evidence` lists the ids of region citations boxing the panel it is drawn in: the whole
   pedigree and its labels, nothing else. A pedigree drawn across two pages has one region on each.
-- A fact you record that the figure does not draw (a stillbirth, a condition's name, a mode of inheritance, a
+- A fact you record that the figure does not draw (a stillbirth, a key entry's text, a mode of inheritance, a
   proband named only in the caption) gets a `supports` entry on its pedigree: `field` (one of: {fields}),
-  `condition_id` naming the condition's declaration when the field starts "condition.", `loci` naming the loci
-  when it starts "genotype." or "locus.", the `individuals` (or
-  `matings`, by their partners) it applies to, none for the whole pedigree, and `citations` listing the quote that
-  states it. `condition.name`, `condition.inheritance` and the `locus.` fields describe a declaration, so their
-  supports list no individuals. One field per support; several supports may share one citation.
+  `key_id` naming the key entry when the field starts "key." or "mark.", `loci` naming the loci when it starts
+  "genotype." or "locus.", the `individuals` (or `matings`, by their partners) it applies to, none for the whole
+  pedigree, and `citations` listing the quote that states it. The `key.` and `locus.` fields describe a
+  declaration, so their supports list no individuals. One field per support; several supports may share one citation.
 """
 
 GENOTYPE_ADDENDUM = """\
@@ -212,25 +231,28 @@ GENOTYPES — a table of loci, and each person's genotype at them.
   ONCE in the answer's top-level `loci`, `{id, name, gene, alleles}`, and give each such person a `genotypes`
   entry `{locus_id, alleles}` per locus.
 - A locus is one variant, a gene with several, or a marker. `id` is a short handle you choose ("l1", "l2", ...
-  unique in the answer, and never a citation's or condition's id). `name` and `gene` as printed.
+  unique in the answer, and never a citation's or key entry's id). `name` and `gene` as printed.
 - Each allele: `symbol` as the genotypes use it ("+", "M", "M1", "G", "*"); `name`, what the figure, legend or
   paper says it is, as printed ("c.1234A>G", "p.Trp370*", "wild type"), empty when nothing says; `reference`
   when it is stated to be the wild-type or reference allele; and `identifiers` for each resolvable name printed
   for it (`IDENTIFIER_SCHEME_HGVS` with or without a reference sequence, an rsID, a ClinVar id).
-- A genotype's `alleles` are copies: ["M", "+"] heterozygous, ["M", "M"] homozygous, ["M"] hemizygous. Set
-  `phase_set` only when phase is stated ("in trans", maternal or paternal): genotypes sharing one align slot by
-  slot, so l1 ["M1", "+"] and l2 ["+", "M2"] in one phase set are in trans.
+- A genotype's `alleles` are copies: ["M", "+"] heterozygous, ["M", "M"] homozygous, ["M"] hemizygous. When
+  the source says a person carries a variant but not how many copies, list it once with `copies_unstated: true`
+  (["M"] is then "carries M", not hemizygous). Set `phase_set` only when phase is stated ("in trans", maternal
+  or paternal): genotypes sharing one align slot by slot, so l1 ["M1", "+"] and l2 ["+", "M2"] in one phase set
+  are in trans.
 - The paper's checked variants are listed before the pages, each with the lines that print it. Use them to
   learn what a symbol stands for ("M1 and M2 denote c.123A>G and c.456del", a table of each family member's
   genotype), but only where a line clearly refers to this family. When an allele is one of them, give it the name
   the figure or paper prints, and the checked name as an `IDENTIFIER_SCHEME_HGVS` identifier. Otherwise leave the
   allele's `name` empty.
-- Record a genotype only where it is stated for that person, by a label drawn beside them or by text naming them.
-  Never infer one: not for an obligate carrier, an untested relative, or from a person's affected status.
+- Record a genotype only where it is stated for that person: by a label drawn beside them, by a genotype key
+  entry's fill on their symbol, or by text naming them. Never infer one: not for an obligate carrier, an untested
+  relative, or from a person's affected status.
 - A GENOTYPE or VARIANT annotation names in its `loci` the loci whose genotype it shows. Its person then has a
-  genotype at each, so a label naming a variant without saying how many copies ("c.797G>A" alone, with nothing in
-  the legend or text saying heterozygous or homozygous) names no loci and gives no genotype. Keep the annotation's
-  `text` verbatim: the genotype says what it means.
+  genotype at each; a label naming a variant without saying how many copies ("c.797G>A" alone, with nothing in
+  the legend or text saying heterozygous or homozygous) gives a genotype with `copies_unstated: true`. Keep the
+  annotation's `text` verbatim: the genotype says what it means.
 - Declare only loci some person has a genotype at: a variant named with no carriers is a label.
 - A genotype or an allele's name learnt from text gets a supports entry citing the quote that states it:
   `genotype.alleles` or `genotype.phase_set` with its `loci` and `individuals`, or `locus.name`, `locus.gene` or

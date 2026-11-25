@@ -26,8 +26,9 @@ _REQUIRED: dict[str, tuple[str, ...]] = {
     pedigree_pb2.Pedigree.DESCRIPTOR.full_name: ('individuals',),
     pedigree_pb2.Position.DESCRIPTOR.full_name: ('generation', 'index'),
     pedigree_pb2.Individual.DESCRIPTOR.full_name: ('generation', 'index', 'gender'),
-    pedigree_pb2.ConditionDef.DESCRIPTOR.full_name: ('id',),  # an empty name is the figure's sole, unnamed condition
-    pedigree_pb2.Condition.DESCRIPTOR.full_name: ('condition_id', 'status'),
+    pedigree_pb2.KeyEntry.DESCRIPTOR.full_name: ('id', 'text'),  # "" is the figure's sole, unnamed phenotype
+    pedigree_pb2.GenotypePattern.DESCRIPTOR.full_name: ('locus_id', 'alleles'),
+    pedigree_pb2.Mark.DESCRIPTOR.full_name: ('key_id',),  # with a status or one of its phenotype's grades
     pedigree_pb2.Annotation.DESCRIPTOR.full_name: ('text', 'type'),
     pedigree_pb2.Mating.DESCRIPTOR.full_name: (),  # no partner is a founder sibship; one is a single parent
     pedigree_pb2.Offspring.DESCRIPTOR.full_name: ('child',),

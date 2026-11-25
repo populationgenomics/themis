@@ -58,30 +58,35 @@ twins. Those marks are what a reader misses when the figure is small.
 grus's record says who is in a pedigree and how they relate, never where anything is drawn. Each person is keyed by
 their drawn label, generation and index, so "II-3" stays "II-3" from the figure to the record. Each mating names its two
 partners and lists its children in birth order, which lets single parents, separated couples, consanguinity and
-childlessness each be stated directly. A person's clinical status is a list, one entry per condition, because one symbol
-can show several. The conditions themselves are declared once for the whole set and referred to by id.
+childlessness each be stated directly.
+
+The figure's key is declared once for the whole set, and each entry says what one fill or mark stands for: a phenotype
+("hearing loss"), a genotype (carrying a variant, with its copies when the figure states them), or something else
+("examined", "DNA available"). A person carries one mark per phenotype or other entry their symbol shows, because one
+symbol can show several. A genotype entry has no marks: the people it applies to carry that genotype in the genotype
+table instead. So a half-filled symbol keyed "c.123A>G" becomes a variant the person carries, not a disease they have.
 
 A pedigree set holds every pedigree read from one source, and carries citations. A citation is either a region of one
 page of the source or a verbatim quote from it. Each pedigree points at the regions it was drawn in, one for each page
-it is drawn on. A fact the figure does not draw, such as a condition's name that only the caption gives, is attached to
-the people it applies to with the quote that states it.
+it is drawn on. A fact the figure does not draw, such as a phenotype's name that only the caption gives, carries the
+quote that states it.
 
 A shortened example:
 
 ```
-conditions { id: "k1" name: "junctional epidermolysis bullosa" }
+key_entries { id: "k1" text: "junctional epidermolysis bullosa" phenotype {} }
 pedigrees {
-  labels { text: "Family 1" }
+  labels { text: "Family 1" kind: LABEL_KIND_FAMILY }
   labels { text: "LAMA3" kind: LABEL_KIND_GENE }
   individuals { generation: 1 index: 1 gender: GENDER_MAN }
   individuals { generation: 1 index: 2 gender: GENDER_WOMAN }
   individuals { generation: 2 index: 1 gender: GENDER_WOMAN proband: true
-                conditions { condition_id: "k1" status: CONDITION_STATUS_AFFECTED } }
+                marks { key_id: "k1" status: CONDITION_STATUS_AFFECTED } }
   individuals { generation: 2 index: 2 gender: GENDER_WOMAN deceased: true }
   matings { partner_a { generation: 1 index: 1 } partner_b { generation: 1 index: 2 } consanguineous: true
             offspring { child { generation: 2 index: 1 } } offspring { child { generation: 2 index: 2 } } }
   evidence: "c1"
-  supports { field: "condition.name" condition_id: "k1" citations: "c2" }
+  supports { field: "key.text" key_id: "k1" citations: "c2" }
 }
 citations { id: "c1" region { page: 3 x0: 52 y0: 410 x1: 300 y1: 610 } }
 citations { id: "c2" quote: "junctional epidermolysis bullosa" }
@@ -250,18 +255,18 @@ anyway.
 
 ### The record holds one grus pedigree set per figure
 
-The obvious record is one grus pedigree set for the whole paper: every family the paper draws, with each condition and
+The obvious record is one grus pedigree set for the whole paper: every family the paper draws, with each key entry and
 each locus declared once. A case record would then read one grus record per paper, and grus's checks would cover the
 whole of it.
 
 That set has to be made by merging the figures, and a merge across figures needs judgements that no figure states. A
-figure's legend defines its symbols and its conditions for the families it draws, and nothing more. Take a paper whose
-Figure 1 legend says "SLC26A4: M1, c.1234A>G" and whose Figure 3 legend says "SLC26A4: M1, c.2000del". grus's loader
-refuses a set that declares two loci with the same gene and printed name, so in one set the two figures' SLC26A4 loci
-have to be one. Within a locus grus keys an allele by its printed symbol, so the two M1s cannot both be in it: one
-figure's genotypes would have to be dropped, or given a symbol neither figure prints. Conditions have the same problem,
-since grus also refuses two conditions with the same name, the empty name included. A paper that shades a deaf family in
-one figure and a cardiomyopathy family in another, naming neither, would have the two unnamed conditions taken as one.
+figure's legend defines its symbols and its key for the families it draws, and nothing more. Take a paper whose Figure 1
+legend says "SLC26A4: M1, c.1234A>G" and whose Figure 3 legend says "SLC26A4: M1, c.2000del". grus's loader refuses a
+set that declares two loci with the same gene and printed name, so in one set the two figures' SLC26A4 loci have to be
+one. Within a locus grus keys an allele by its printed symbol, so the two M1s cannot both be in it: one figure's
+genotypes would have to be dropped, or given a symbol neither figure prints. Key entries have the same problem, since
+grus also refuses two entries with the same text, the empty text included. A paper that shades a deaf family in one
+figure and a cardiomyopathy family in another, naming neither, would have the two unnamed phenotypes taken as one.
 Within one figure none of this arises: the legend makes the shared declarations a fact the figure states, which grus's
 loader checks. grus already treats a figure as the source of one set
 ([`ir.md`](https://github.com/populationgenomics/grus/blob/main/docs/design/ir.md), "Figure scope").
@@ -273,14 +278,14 @@ the example, Figure 1's set declares an SLC26A4 locus whose M1 carries the check
 Figure 3's set declares its own, whose M1 carries `NM_000441.2:c.2000del`. Nothing is dropped and nothing is renamed. A
 case record that wants to know whether two families carry the same variant compares the alleles' checked names, which
 the reader gives each allele from the paper's checked variants (previous section), so the comparison is an exact match
-of identifiers rather than a reading of symbols. An unnamed condition stays the condition of its own figure.
+of identifiers rather than a reading of symbols. An unnamed phenotype stays the phenotype of its own figure.
 
-A figure drawn across two pages is one conversation and one answer, so its set needs no joining: its symbols and
-conditions come from one reading of one legend.
+A figure drawn across two pages is one conversation and one answer, so its set needs no joining: its symbols and key
+come from one reading of one legend.
 
 The cost is that a paper is not one grus record. A consumer iterates over the figures, and grus's checks, and its
 comparison of two sets, stop at a figure's edge. Two families of one paper are compared through their alleles' checked
-names and their conditions' names, which is what a case record does anyway.
+names and their phenotypes' names, which is what a case record does anyway.
 
 A citation's document id is left for the caller to stamp, and its region names a page. The step stamps the hash of the
 PDF revision the pages belong to, so every pedigree is traceable to the exact pages it was read from.

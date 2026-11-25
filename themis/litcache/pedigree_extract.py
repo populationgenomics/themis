@@ -343,7 +343,7 @@ class Reading:
 
     Attributes:
         pedigrees: For each figure whose answer was accepted, the grus set read from it: its pedigrees, the
-            conditions and loci its legend declares, and the citations that place them.
+            key entries and loci its legend declares, and the citations that place them.
         construction: How it was made, for the record: every figure read, a failed one with the reason.
         usage: Each turn's token usage: each conversation's turns in order, the conversations in figure order.
     """
