@@ -25,9 +25,12 @@ sibling BIRTH ORDER (left to right within one sibship), carried by the order of 
 IDENTITY — every individual has a POSITION: generation + index (both integers).
 - `generation`: the row, as an integer — the top generation is 1 (drawn "I"), the next 2 ("II"), and so on.
 - `index`: the individual's arabic number within that generation ("II-3" -> generation 2, index 3).
-- Assign an `index` to EVERY drawn individual, left to right, even when the figure prints no number for
-  them (e.g. a married-in spouse). Within one pedigree the (generation, index) pair is unique and is how
-  matings and offspring refer to a person.
+- Assign an `index` to EVERY drawn individual. A person the figure numbers keeps that number. A person it
+  prints no number for (often a married-in spouse) gets the next free index in their generation, after the
+  highest number printed there, the unnumbered taken left to right; numbering them in among the printed
+  numbers would move people the paper's text names. When the figure numbers no one in a generation, number
+  it left to right. Within one pedigree the (generation, index) pair is unique and is how matings and
+  offspring refer to a person.
 
 GENDER + SEX (Bennett 2022):
 - The SYMBOL SHAPE is the person's gender: square -> GENDER_MAN, circle -> GENDER_WOMAN, diamond ->
@@ -107,6 +110,16 @@ RELATIONSHIPS:
   OMITTED, listing those siblings as its offspring in birth order. Do NOT invent parent symbols. This applies
   only to TWO OR MORE siblings sharing one bare sibship line; a single individual with no drawn parents is
   just a founder — leave it in no mating.
+- OMITTED RELATIVES: papers often leave out the parents of a top sibship and the partners who married in,
+  without drawing any marker for them. A horizontal line joining the tops of two or more symbols, with nothing
+  drawn above it, is a FOUNDER SIBSHIP; it never applies to people whose descent from drawn parents is shown,
+  so a person is in a founder sibship only when no line leads up from them to anyone. A line dropping from the
+  bottom of one person's symbol to a sibship below makes that person a SINGLE PARENT of it. Both can hold for
+  the same person: a founder sibling is often the single parent of their own children, as when a cousin
+  marriage is drawn without the grandparents or the partners who married in. CHECK a top-row man and woman
+  before reading them as a couple, especially when that reading would make two of their children a
+  consanguineous couple: a couple is joined side to side and their children hang from ONE descent line; founder
+  siblings are joined from above and each has their own descent line to their own children.
 - Twins: offspring whose descent lines CONVERGE to one point on the sibship line (instead of each dropping
   straight down) share a `twin_group` number — look for this convergence deliberately, it is easy to miss.
   A horizontal bar joining the twins -> MONOZYGOTIC, none -> DIZYGOTIC, a "?" -> ZYGOSITY_TYPE_UNKNOWN.
